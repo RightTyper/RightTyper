@@ -1,3 +1,4 @@
+import click
 import inspect
 import logging
 import multiprocessing
@@ -7,6 +8,8 @@ import signal
 import sys
 import threading
 import time
+import importlib.metadata
+
 from collections import defaultdict
 from functools import cache
 from types import (
@@ -43,6 +46,12 @@ from righttyper.righttyper_runtime import (
     requires_import,
     should_skip_function,
     update_argtypes,
+)
+from righttyper.righttyper_tool import (
+    register_monitoring_callbacks,
+    reset_monitoring,
+    setup_timer,
+    setup_tool_id,
 )
 from righttyper.righttyper_types import (
     ArgInfo,
@@ -715,10 +724,6 @@ def should_update_file(
         return False
     return t not in existing_spec or s != existing_spec[t]
 
-# import importlib
-import importlib.metadata
-
-import logging
 
 FORMAT = "[%(filename)s:%(lineno)s] %(message)s"
 logging.basicConfig(
@@ -727,29 +732,6 @@ logging.basicConfig(
     format=FORMAT,
 )
 logger = logging.getLogger("righttyper")
-
-import os
-from typing import Any, List, Tuple
-
-import click
-
-from righttyper.righttyper import (
-    call_handler,
-    post_process,
-    enter_function,
-    execute_script_or_module,
-    exit_function,
-    yield_function,
-    handle_clear_seen_funcs,
-    initialize_globals,
-)
-from righttyper.righttyper_tool import (
-    register_monitoring_callbacks,
-    reset_monitoring,
-    setup_timer,
-    setup_tool_id,
-)
-from righttyper.righttyper_utils import TOOL_NAME
 
 
 class ScriptParamType(click.ParamType):
