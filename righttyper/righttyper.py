@@ -173,7 +173,7 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     # Record the start time of the function, keyed to the current thread
     native_tid = threading.get_native_id()
     start_time[(t, native_tid)] = time.perf_counter_ns()
-    print(f"[ entering {t} {code} {native_tid=}")
+    # print(f"[ entering {t} {code} {native_tid=}")
 
     sampled_funcs.add(t)
     visited_funcs.add(t)
@@ -287,11 +287,6 @@ def exit_function_worker(
         exec_time = current_time - start_time[(t, native_tid)]
         execution_time[t].add(exec_time)
         del start_time[(t, native_tid)]
-        print(f"] exiting {t} {code} {event_type=} {native_tid=}")
-        if exec_time > 1_000_000:
-            print("NOOO")
-
-        print(f"  execution time for {t} = {exec_time}")
 
     # Special handling for functions that yielded.
     if t in yielded_funcs:
