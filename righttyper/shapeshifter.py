@@ -99,6 +99,8 @@ def handle_start(code, instruction_offset):
     class_name = get_class_name_from_stack()
     print("START:", class_name, code.co_qualname)
     frame = inspect.currentframe()
+    assert frame
+    assert frame.f_back
     # Get info from the caller
     args, varargs, varkw, the_values = inspect.getargvalues(frame.f_back)
     shapes = []
