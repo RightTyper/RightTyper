@@ -5,6 +5,8 @@ from functools import lru_cache
 from types import ModuleType
 from typing import Any, List, FrozenSet, Tuple
 
+from righttyper.righttyper_types import ImportDetails, ImportInfo
+
 import libcst as cst
 
 logger = logging.getLogger("righttyper")
@@ -13,7 +15,7 @@ logger = logging.getLogger("righttyper")
 # @lru_cache
 def get_import_details(
     obj: Any,
-) -> Tuple[str, FrozenSet[str], str, FrozenSet[str]]:
+) -> ImportDetails:
     """
     Get details about the import of an object, including its name, aliases, module name, and module aliases.
 
@@ -94,7 +96,7 @@ def get_import_details(
                     obj_aliases.add(alias_name)
 
         frame = frame.f_back
-    tup = (
+    tup = ImportDetails(
         obj_name,
         frozenset(obj_aliases),
         module_name,
@@ -183,7 +185,7 @@ def print_possible_imports(
 
 
 def generate_import_nodes(
-    details: Tuple[str, FrozenSet[str], str, FrozenSet[str]],
+    details: ImportInfo,
 ) -> List[cst.Import | cst.ImportFrom | cst.EmptyLine]:
     """
     Generate import nodes for libcst based on the details provided.
