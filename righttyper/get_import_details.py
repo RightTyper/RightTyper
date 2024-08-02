@@ -5,7 +5,7 @@ from functools import lru_cache
 from types import ModuleType
 from typing import Any, List, FrozenSet, Tuple
 
-from righttyper_types import ImportDetails, ImportInfo
+from righttyper.righttyper_types import ImportDetails, ImportInfo
 
 import libcst as cst
 
