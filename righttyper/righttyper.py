@@ -57,9 +57,11 @@ from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
     ArgumentType,
+    ExecInfo,
     Filename,
     FuncInfo,
     FunctionName,
+    ImportInfo,
     Typename,
     TypenameFrequency,
     TypenameSet,
@@ -121,30 +123,12 @@ not_annotated: Dict[FuncInfo, Set[str]] = defaultdict(set)
 # including 'return')
 existing_annotations: Dict[FuncInfo, Dict[str, str]] = defaultdict(dict)
 
-# Track execution time of functions to adjust sampling
-start_time: Dict[Tuple[FuncInfo, int], float] = dict()
-execution_time: Dict[FuncInfo, Set[float]] = defaultdict(set)
+exec_info = ExecInfo()
 
 # Track the file names and class names for classes
 # that will need import statements
-
-# 1. filename where the function lives
-# 2. filename where the class lives
-# 3. the name of the class
-# 4. details for possible imports (see get_import_details).
-imports: Set[
-    Tuple[
-        Filename,
-        Filename,
-        str,
-        Tuple[
-            str,
-            FrozenSet[str],
-            str,
-            FrozenSet[str],
-        ],
-    ]
-] = set()
+        
+imports: Set[ImportInfo] = set()
 
 namespace: Dict[str, Any] = {}
 script_dir = ""
@@ -181,7 +165,7 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
 
     # Record the start time of the function, keyed to the current thread
     native_tid = threading.get_native_id()
-    start_time[(t, native_tid)] = time.perf_counter_ns()
+    exec_info.start_time[(t, native_tid)] = time.perf_counter_ns()
     # print(f"[ entering {t} {code} {native_tid=}")
 
     sampled_funcs.add(t)
@@ -262,7 +246,7 @@ def exit_function_worker(
 
     - If the function name is in the excluded list, it will disable the monitoring right away.
     - Otherwise, it calculates the execution time of the function, adds the type of the return value to a set for that function,
-      and then disable the monitoring.
+      and then disables the monitoring if appropriate.
 
     Args:
     code (CodeType): bytecode of the function.
@@ -292,10 +276,10 @@ def exit_function_worker(
     # Update execution time
     current_time = time.perf_counter_ns()
     native_tid = threading.get_native_id()
-    if (t, native_tid) in start_time:
-        exec_time = current_time - start_time[(t, native_tid)]
-        execution_time[t].add(exec_time)
-        del start_time[(t, native_tid)]
+    if (t, native_tid) in exec_info.start_time:
+        exec_time = current_time - exec_info.start_time[(t, native_tid)]
+        exec_info.execution_time[t].add(exec_time)
+        del exec_info.start_time[(t, native_tid)]
 
     # Special handling for functions that yielded.
     if t in yielded_funcs:
@@ -450,7 +434,7 @@ def update_function_annotations(
 def add_new_import(filename: str, value: Any) -> None:
     class_src_file = get_class_source_file(value.__class__)
     deets = get_import_details(value)
-    new_import = (
+    new_import = ImportInfo(
         Filename(filename),
         Filename(class_src_file),
         value.__class__.__name__,

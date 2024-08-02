@@ -5,25 +5,13 @@ import libcst as cst
 from righttyper.get_import_details import (
     generate_import_nodes,
 )
-from righttyper.righttyper_types import Filename
+from righttyper.righttyper_types import ImportInfo, Filename
 
 
 class ConstructImportTransformer(cst.CSTTransformer):
     def __init__(
         self,
-        imports: Set[
-            Tuple[
-                Filename,
-                Filename,
-                str,
-                Tuple[
-                    str,
-                    FrozenSet[str],
-                    str,
-                    FrozenSet[str],
-                ],
-            ]
-        ],
+        imports: Set[ImportInfo],
         root_path: str,
     ) -> None:
         self.imports = imports
@@ -45,13 +33,8 @@ class ConstructImportTransformer(cst.CSTTransformer):
         # platstdlib = sysconfig.get_paths()["platstdlib"]
         # userlib = site.getusersitepackages()
 
-        for (
-            function_file_path,
-            class_file_path,
-            class_name,
-            import_details,
-        ) in self.imports:
-            q = generate_import_nodes(import_details)
+        for imp in self.imports:
+            q = generate_import_nodes(imp.import_details)
             new_imports.extend(q)
 
         # Add all import statements at the beginning of the module

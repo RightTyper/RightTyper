@@ -32,6 +32,7 @@ from righttyper.righttyper_types import (
     Filename,
     FuncInfo,
     FunctionName,
+    ImportInfo,
     Typename,
     TypenameSet,
 )
@@ -65,19 +66,7 @@ def process_file(
             Typename,
         ],
     ],
-    imports: Set[
-        Tuple[
-            Filename,
-            Filename,
-            str,
-            Tuple[
-                str,
-                FrozenSet[str],
-                str,
-                FrozenSet[str],
-            ],
-        ]
-    ],
+    imports: Set[ImportInfo],
     overwrite: bool,
     not_annotated: Dict[FuncInfo, Set[str]],
     ignore_annotations: bool = False,
@@ -127,7 +116,7 @@ def process_file(
     transformed = preface_with_typing_import(modified_tree.code)
 
     # If there are needed imports for class defs, process these
-    needed_imports = set(imp for imp in imports if imp[0] == filename)
+    needed_imports = set(imp for imp in imports if imp.function_fname == filename)
     if needed_imports:
         tree = cst.parse_module(transformed)
         import_transformer = ConstructImportTransformer(
@@ -203,19 +192,7 @@ def collect_data(
 def output_stub_files(
     namespace: Dict[str, Any],
     root_path: str,
-    imports: Set[
-        Tuple[
-            Filename,
-            Filename,
-            str,
-            Tuple[
-                str,
-                FrozenSet[str],
-                str,
-                FrozenSet[str],
-            ],
-        ]
-    ],
+    imports: Set[ImportInfo],
     visited_funcs: Set[FuncInfo],
     script_dir: str,
     include_all: bool,
@@ -245,38 +222,41 @@ def output_stub_files(
 
     # Precompute imports mapping
     imports_map = {}
-    for (
-        function_file_path,
-        class_file_path,
-        class_name,
-        import_details,
-    ) in imports:
+    for imp in imports:
+        #FIXME
+        #(
+        #function_file_path,
+        #class_file_path,
+        #class_name,
+        #import_details,
+        #) = imp
+        
         if (
-            class_file_path.startswith(purelib)
-            or class_file_path.startswith(userlib)
-            or class_file_path.startswith(platstdlib)
+            imp.class_fname.startswith(purelib)
+            or imp.class_fname.startswith(userlib)
+            or imp.class_fname.startswith(platstdlib)
         ):
-            if class_file_path.startswith(
+            if imp.class_fname.startswith(
                 purelib
-            ) or class_file_path.startswith(userlib):
-                class_src_file = os.path.dirname(class_file_path)
+            ) or imp.class_fname.startswith(userlib):
+                class_src_file = os.path.dirname(imp.class_fname)
                 class_src_file = class_src_file.removeprefix(purelib + os.sep)
                 class_src_file = class_src_file.removeprefix(userlib + os.sep)
             else:
-                class_src_file = class_file_path.removeprefix(platstdlib)
+                class_src_file = imp.class_fname.removeprefix(platstdlib)
                 class_src_file = os.path.basename(class_src_file)
                 class_src_file, _ = os.path.splitext(class_src_file)
 
             class_src_file = class_src_file.replace(os.sep, ".")
-            imports_map[(function_file_path, class_name)] = class_src_file
+            imports_map[(imp.function_fname, imp.class_name)] = class_src_file
             continue
-        if class_file_path == "":
+        if imp.class_fname == "":
             # Note: not sure why this is happening.
             continue
         try:
-            normalized_path = os.path.relpath(class_file_path, start=root_path)
+            normalized_path = os.path.relpath(imp.class_fname, start=root_path)
         except ValueError:
-            logger.warning(f"ValueError: {class_file_path=} {root_path=}")
+            logger.warning(f"ValueError: {imp.class_fname=} {root_path=}")
             continue
         module_path, _ = os.path.splitext(normalized_path)
         if module_path.startswith(".."):  # SOMETHING HAS GONE OF THE TRACKS
@@ -288,7 +268,7 @@ def output_stub_files(
             ".."
         )  # SOMETHING HAS GONE OF THE TRACKS
 
-        imports_map[(function_file_path, class_name)] = module_path
+        imports_map[(imp.function_fname, imp.class_name)] = module_path
 
     for t in visited_funcs:
         if skip_this_file(
