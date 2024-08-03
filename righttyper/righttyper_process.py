@@ -2,7 +2,6 @@ from collections import defaultdict
 from typing import (
     Any,
     Dict,
-    FrozenSet,
     List,
     Set,
     Tuple,
@@ -116,7 +115,9 @@ def process_file(
     transformed = preface_with_typing_import(modified_tree.code)
 
     # If there are needed imports for class defs, process these
-    needed_imports = set(imp for imp in imports if imp.function_fname == filename)
+    needed_imports = set(
+        imp for imp in imports if imp.function_fname == filename
+    )
     if needed_imports:
         tree = cst.parse_module(transformed)
         import_transformer = ConstructImportTransformer(

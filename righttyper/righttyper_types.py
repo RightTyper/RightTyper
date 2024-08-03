@@ -62,28 +62,29 @@ class ArgInfo:
     value_type: Type[Any]
     type_name_set: TypenameSet
 
+
 @dataclass
 class ImportDetails:
     object_name: str
     object_aliases: FrozenSet[str]
     import_module_name: str
     module_aliases: FrozenSet[str]
-    
+
 
 @dataclass
 class ImportInfo:
     # 1. filename where the function lives
-    function_fname : Filename
+    function_fname: Filename
     # 2. filename where the class lives
-    class_fname : Filename
+    class_fname: Filename
     # 3. the name of the class
-    class_name : str
+    class_name: str
     # 4. details for possible imports (see get_import_details).
-    import_details : ImportDetails
-    
+    import_details: ImportDetails
+
 
 # Track execution time of functions to adjust sampling
 class ExecInfo(threading.local):
     def __init__(self) -> None:
-        self.start_time : Dict[Tuple[FuncInfo, int], float] = dict() 
-        self.execution_time : Dict[FuncInfo, Set[float]] = defaultdict(set)
+        self.start_time: Dict[Tuple[FuncInfo, int], float] = dict()
+        self.execution_time: Dict[FuncInfo, Set[float]] = defaultdict(set)

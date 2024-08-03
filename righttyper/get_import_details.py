@@ -3,9 +3,9 @@ import logging
 import sys
 from functools import lru_cache
 from types import ModuleType
-from typing import Any, List, FrozenSet, Tuple
+from typing import Any, List
 
-from righttyper.righttyper_types import ImportDetails, ImportInfo
+from righttyper.righttyper_types import ImportDetails
 
 import libcst as cst
 
@@ -48,7 +48,7 @@ def get_import_details(
 
     # Check if the object is built-in
     if module_name == "builtins":
-        return (
+        return ImportDetails(
             obj_name,
             frozenset(),
             "builtins",
@@ -147,13 +147,13 @@ def testme() -> None:
 
 
 def print_possible_imports(
-    details: Tuple[str, FrozenSet[str], str, FrozenSet[str]],
+    details: ImportDetails,
 ) -> None:
     """
     Print every possible import statement that might be needed based on the details provided.
 
     Parameters:
-    details (Tuple[str, FrozenSet[str], str, FrozenSet[str]]):
+    details (ImportDetails):
         The output from `get_import_details` function, containing:
         - The name of the object.
         - A set of aliases used for the object in the current global scope.
@@ -161,22 +161,17 @@ def print_possible_imports(
         - A set of aliases used for the module in the current global scope.
     """
 
-    (
-        obj_name,
-        obj_aliases,
-        module_name,
-        module_aliases,
-    ) = details
-
     # Print import statement for the object
-    print(f"from {module_name} import {obj_name}")
-    for alias in obj_aliases:
-        print(f"from {module_name} import {obj_name} as {alias}")
+    print(f"from {details.import_module_name} import {details.object_name}")
+    for alias in details.object_aliases:
+        print(
+            f"from {details.import_module_name} import {details.object_name} as {alias}"
+        )
 
     # Print import statement for the module
-    print(f"import {module_name}")
-    for alias in module_aliases:
-        print(f"import {module_name} as {alias}")
+    print(f"import {details.import_module_name}")
+    for alias in details.module_aliases:
+        print(f"import {details.import_module_name} as {alias}")
 
 
 # Example usage with the provided test data
@@ -185,7 +180,7 @@ def print_possible_imports(
 
 
 def generate_import_nodes(
-    details: ImportInfo,
+    details: ImportDetails,
 ) -> List[cst.Import | cst.ImportFrom | cst.EmptyLine]:
     """
     Generate import nodes for libcst based on the details provided.
@@ -202,12 +197,6 @@ def generate_import_nodes(
     List[cst.CSTNode]: A list of libcst import nodes.
     """
 
-    (
-        obj_name,
-        obj_aliases,
-        module_name,
-        module_aliases,
-    ) = details
     import_nodes: List[cst.Import | cst.ImportFrom | cst.EmptyLine] = []
 
     # Helper function to create a dotted name
@@ -227,22 +216,24 @@ def generate_import_nodes(
 
         import_nodes.append(
             cst.ImportFrom(
-                module=create_dotted_name(module_name),
-                names=[cst.ImportAlias(name=cst.Name(obj_name))],
+                module=create_dotted_name(details.import_module_name),
+                names=[cst.ImportAlias(name=cst.Name(details.object_name))],
             )
         )
         import_nodes.append(cst.EmptyLine())
     except cst.CSTValidationError:
-        logger.warning(f"Failed to add from {module_name=} import {obj_name=}")
+        logger.warning(
+            f"Failed to add from {details.import_module_name=} import {details.object_name=}"
+        )
 
-    for alias in obj_aliases:
+    for alias in details.object_aliases:
         try:
             import_nodes.append(
                 cst.ImportFrom(
-                    module=create_dotted_name(module_name),
+                    module=create_dotted_name(details.import_module_name),
                     names=[
                         cst.ImportAlias(
-                            name=cst.Name(obj_name),
+                            name=cst.Name(details.object_name),
                             asname=cst.AsName(name=cst.Name(alias)),
                         )
                     ],
@@ -250,21 +241,27 @@ def generate_import_nodes(
             )
             import_nodes.append(cst.EmptyLine())
         except cst.CSTValidationError:
-            logger.warning(f"Failed to add import {obj_name=} as {alias=}")
+            logger.warning(
+                f"Failed to add import {details.object_name=} as {alias=}"
+            )
 
     # Import statement for the module
     stmt = cst.Import(
-        names=[cst.ImportAlias(name=create_dotted_name(module_name))]
+        names=[
+            cst.ImportAlias(
+                name=create_dotted_name(details.import_module_name)
+            )
+        ]
     )
     import_nodes.append(stmt)
     import_nodes.append(cst.EmptyLine())
 
-    for alias in module_aliases:
+    for alias in details.module_aliases:
         import_nodes.append(
             cst.Import(
                 names=[
                     cst.ImportAlias(
-                        name=create_dotted_name(module_name),
+                        name=create_dotted_name(details.import_module_name),
                         asname=cst.AsName(name=cst.Name(alias)),
                     )
                 ]

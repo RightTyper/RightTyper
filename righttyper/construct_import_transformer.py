@@ -1,11 +1,11 @@
-from typing import FrozenSet, Set, Tuple
+from typing import Set
 
 import libcst as cst
 
 from righttyper.get_import_details import (
     generate_import_nodes,
 )
-from righttyper.righttyper_types import ImportInfo, Filename
+from righttyper.righttyper_types import ImportInfo
 
 
 class ConstructImportTransformer(cst.CSTTransformer):

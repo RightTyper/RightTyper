@@ -20,7 +20,6 @@ from types import (
 from typing import (
     Any,
     Dict,
-    FrozenSet,
     List,
     Optional,
     Set,
@@ -127,7 +126,7 @@ exec_info = ExecInfo()
 
 # Track the file names and class names for classes
 # that will need import statements
-        
+
 imports: Set[ImportInfo] = set()
 
 namespace: Dict[str, Any] = {}
