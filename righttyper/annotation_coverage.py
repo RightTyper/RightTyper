@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple, Union
 
 import click
 
-from .righttyper_utils import TOOL_NAME
+from righttyper.righttyper_utils import TOOL_NAME
 
 # Suppress SyntaxWarning during AST parsing
 warnings.filterwarnings("ignore", category=SyntaxWarning)
