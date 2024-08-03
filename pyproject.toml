@@ -41,6 +41,7 @@ dependencies = [ "libcst==1.2.0",
 		 "click>=8.1.7",
 		 "numpy >= 1.26.4",
 		 "rich >= 13.7.1",
+		 "runstats>=2.0.0",
 		 "scipy>=1.12.0",
 		 "boto3>=1.34.68",
 		 ]
