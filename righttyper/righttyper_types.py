@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import runstats
 import threading
 from collections import defaultdict
 from dataclasses import dataclass
@@ -8,9 +9,9 @@ from typing import (
     Any,
     Dict,
     FrozenSet,
+    List,
     NewType,
     Set,
-    Tuple,
     Type,
     TypeVar,
 )
@@ -86,5 +87,7 @@ class ImportInfo:
 # Track execution time of functions to adjust sampling
 class ExecInfo(threading.local):
     def __init__(self) -> None:
-        self.start_time: Dict[Tuple[FuncInfo, int], float] = dict()
-        self.execution_time: Dict[FuncInfo, Set[float]] = defaultdict(set)
+        self.start_time: Dict[FuncInfo, List[float]] = defaultdict(list)
+        self.execution_time: Dict[FuncInfo, runstats.Statistics] = defaultdict(
+            runstats.Statistics
+        )

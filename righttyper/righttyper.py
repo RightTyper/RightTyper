@@ -3,10 +3,10 @@ import inspect
 import logging
 import multiprocessing
 import os
+import random
 import runpy
 import signal
 import sys
-import threading
 import time
 import importlib.metadata
 
@@ -122,12 +122,13 @@ not_annotated: Dict[FuncInfo, Set[str]] = defaultdict(set)
 # including 'return')
 existing_annotations: Dict[FuncInfo, Dict[str, str]] = defaultdict(dict)
 
+# Thread-local execution time tracking for functions
 exec_info = ExecInfo()
 
 # Track the file names and class names for classes
 # that will need import statements
-
 imports: Set[ImportInfo] = set()
+
 
 namespace: Dict[str, Any] = {}
 script_dir = ""
@@ -163,8 +164,7 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
         return sys.monitoring.DISABLE
 
     # Record the start time of the function, keyed to the current thread
-    native_tid = threading.get_native_id()
-    exec_info.start_time[(t, native_tid)] = time.perf_counter_ns()
+    exec_info.start_time[t].append(time.perf_counter_ns())
     # print(f"[ entering {t} {code} {native_tid=}")
 
     sampled_funcs.add(t)
@@ -267,18 +267,21 @@ def exit_function_worker(
         include_files_regex,
     ):
         return sys.monitoring.DISABLE
+
     t = FuncInfo(
         Filename(filename),
         FunctionName(func_name),
     )
 
+    # Note: we use ns to avoid rounding issues
+    def disable_probability(overhead: int, duration: int, threshold_fraction: float):
+        return min(1.0, overhead / duration * 1.0 /(threshold_fraction))
+
     # Update execution time
     current_time = time.perf_counter_ns()
-    native_tid = threading.get_native_id()
-    if (t, native_tid) in exec_info.start_time:
-        exec_time = current_time - exec_info.start_time[(t, native_tid)]
-        exec_info.execution_time[t].add(exec_time)
-        del exec_info.start_time[(t, native_tid)]
+    if t in exec_info.start_time and len(exec_info.start_time[t]) > 0:
+        exec_time = current_time - exec_info.start_time[t].pop()
+        exec_info.execution_time[t].push(exec_time)
 
     # Special handling for functions that yielded.
     if t in yielded_funcs:
@@ -314,7 +317,23 @@ def exit_function_worker(
         visited_funcs_retval[t].add(TypenameFrequency(Typename(typename), 1))
 
     debug_print(f"exit processing, retval NOW {visited_funcs_retval[t]=}")
-    return sys.monitoring.DISABLE
+
+    try:
+        mean_duration = exec_info.execution_time[t].mean()
+        # FIXME: cost should be calibrated/computed automatically, and
+        # threshold should be cmd-line param
+        p_dis = disable_probability(2000, mean_duration, 0.05) 
+    except:
+        mean_duration = 1_000_000
+        p_dis = 0
+        
+    # Disable with this probability
+    if random.random() <= p_dis:
+        # print(f"DISABLE {p_dis=} {t=} {mean_duration=}")
+        return sys.monitoring.DISABLE
+    else:
+        # print(f"CONTINUE {p_dis=} {t=} {mean_duration=}")
+        return
 
 
 def process_function_arguments(
@@ -608,7 +627,6 @@ def process_all_files(
     insert_imports: bool,
     srcdir: str,
 ) -> None:
-
     use_multiprocessing = True  # False
 
     processes: List[multiprocessing.Process] = []

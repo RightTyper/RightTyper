@@ -11,6 +11,9 @@ from typing import (
 )
 
 import sys
+import inspect
+from functools import reduce
+
 
 captured_shapes = defaultdict(set)
 
@@ -77,6 +80,7 @@ def convert_to_jaxtyping(
     for index, arg_tuple in enumerate(output_tuples):
         args = list(arg_tuple)
         s = []
+        s_str = ""
         for arg in args:
             s.append(f"{arg}")
             s_str = " ".join(s)
@@ -115,8 +119,8 @@ def handle_start(code, instruction_offset):
 
 def handle_return(code, instruction_offset, retval):
     print("RETURN:", code.co_qualname)
-    func_name = code.co_qualname
-    filename = code.co_filename
+    # func_name = code.co_qualname
+    # filename = code.co_filename
     shapes = []
     if isinstance(retval, (pd.DataFrame, np.ndarray)):
         shapes.append(retval.shape)
@@ -129,8 +133,8 @@ def handle_return(code, instruction_offset, retval):
     pass
 
 
-import inspect
-from functools import reduce
+# import inspect
+# from functools import reduce
 
 TOOL_ID = 5
 EVENTS = frozenset(
