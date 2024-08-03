@@ -23,7 +23,7 @@ def get_import_details(
     obj (Any): The imported object (e.g., a class, function, or module) for which to retrieve import details.
 
     Returns:
-    Tuple[str, FrozenSet[str], str, FrozenSet[str]]:
+    ImportDetails:
         - The name of the object.
         - A set of aliases used for the object in the current global scope.
         - The name of the module from which the object was imported.
@@ -34,10 +34,10 @@ def get_import_details(
     import numpy as np
     from some.thing import thingy as barnacle
 
-    print(get_import_details(Banana))     # ("Console", ["Banana"], "rich.console", [])
-    print(get_import_details(np.ndarray)) # ("ndarray", [], "numpy", ["np"])
-    print(get_import_details(np))         # ("numpy", ["np"], "numpy", ["np"])
-    print(get_import_details(barnacle))   # ("thingy", ["barnacle"], "some.thing", [])
+    print(get_import_details(Banana))     # ImportDetails("Console", ["Banana"], "rich.console", [])
+    print(get_import_details(np.ndarray)) # ImportDetails("ndarray", [], "numpy", ["np"])
+    print(get_import_details(np))         # ImportDetails("numpy", ["np"], "numpy", ["np"])
+    print(get_import_details(barnacle))   # ImportDetails("thingy", ["barnacle"], "some.thing", [])
     """
     obj_name = obj.__name__ if hasattr(obj, "__name__") else type(obj).__name__
     module_name = (
@@ -113,32 +113,32 @@ def testme() -> None:
     from rich.console import Console as Banana
 
     # Test the functions
-    assert get_import_details(numpy.ndarray) == (
+    assert get_import_details(numpy.ndarray) == ImportDetails(
         "ndarray",
         frozenset({}),
         "numpy",
         frozenset({"np"}),
     )
-    assert get_import_details(np.ndarray) == (
+    assert get_import_details(np.ndarray) == ImportDetails(
         "ndarray",
         frozenset({}),
         "numpy",
         frozenset({"np"}),
     )
-    assert get_import_details(Banana) == (
+    assert get_import_details(Banana) == ImportDetails(
         "Console",
         frozenset({"ApplePie", "Banana"}),
         "rich.console",
         frozenset({}),
     )
     # print_possible_imports(get_import_details(Banana))
-    assert get_import_details(ApplePie) == (
+    assert get_import_details(ApplePie) == ImportDetails(
         "Console",
         frozenset({"ApplePie", "Banana"}),
         "rich.console",
         frozenset({}),
     )
-    assert get_import_details(lru_cache) == (
+    assert get_import_details(lru_cache) == ImportDetails(
         "lru_cache",
         frozenset({}),
         "functools",
