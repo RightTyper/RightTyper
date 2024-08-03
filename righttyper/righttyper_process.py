@@ -223,14 +223,6 @@ def output_stub_files(
     # Precompute imports mapping
     imports_map = {}
     for imp in imports:
-        #FIXME
-        #(
-        #function_file_path,
-        #class_file_path,
-        #class_name,
-        #import_details,
-        #) = imp
-        
         if (
             imp.class_fname.startswith(purelib)
             or imp.class_fname.startswith(userlib)
