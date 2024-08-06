@@ -541,8 +541,12 @@ def output_type_signatures(
             )
             if t in existing_spec and s == existing_spec[t]:
                 continue
-            s = f"{t.file_name},{s} ...\n"
-            print(s, file=file)
+            print(f"{t.file_name},{s} ...\n", file=file)
+            # Print diffs
+            import difflib
+            diffs = difflib.ndiff((existing_spec[t] + "\n").splitlines(1),
+                                  (s + "\n").splitlines(1))
+            print(''.join(diffs), file=file)
         except KeyError:
             # Something weird happened
             logger.exception(f"KeyError: {t=}")
