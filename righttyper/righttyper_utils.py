@@ -224,7 +224,7 @@ def make_type_signature(
             s += f"{arg_prefix}{argname}: {argtype_fullname}"
         else:
             if argname in existing_annotations[t]:
-                s += f"{arg_prefix}{argname} : {existing_annotations[t][argname]}"
+                s += f"{arg_prefix}{argname}: {existing_annotations[t][argname]}"
             else:
                 s += f"{arg_prefix}{argname}"
 
