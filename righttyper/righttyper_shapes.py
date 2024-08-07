@@ -107,7 +107,7 @@ def convert_to_jaxtyping(
 
     return result
 
-def update_arg_shapes(func, the_values):
+def update_arg_shapes(func: str, the_values: Dict[str, Any]) -> None:
     shapes = []
     for k in the_values:
         val = the_values[k]
@@ -120,7 +120,7 @@ def update_arg_shapes(func, the_values):
     current_shape[func].append(tuple(shapes))
 
 
-def update_retval_shapes(func, retval):
+def update_retval_shapes(func: str, retval: Any) -> None:
     if len(current_shape[func]) == 0:
         return
     shapes = []

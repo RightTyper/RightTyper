@@ -19,6 +19,7 @@ from types import (
 )
 from typing import (
     Any,
+    Callable,
     Dict,
     List,
     Optional,
@@ -95,9 +96,9 @@ total_instrumentation_time = 0
 # We do this to track instrumentation overhead
 
 import functools
-def track_instrumentation_overhead(func):
+def track_instrumentation_overhead(func: Callable[[Any], Any]) -> Callable[[Any], Any]:
     @functools.wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         global total_instrumentation_time  # Declare total_time as nonlocal to modify it inside the wrapper
         start_time = time.perf_counter_ns()  # Record start time
         result = func(*args, **kwargs)  # Call the original function
@@ -305,7 +306,7 @@ def exit_function_worker(
     )
 
     # Note: we use ns to avoid rounding issues
-    def disable_probability(overhead: int, duration: int, threshold_fraction: float):
+    def disable_probability(overhead: int, duration: float, threshold_fraction: float) -> float:
         return min(1.0, overhead / duration * 1.0 /(threshold_fraction))
 
     # Update execution time
@@ -354,6 +355,7 @@ def exit_function_worker(
     # FIXME: consider limiting wrt total execution time, not just per-function exec time
     try:
         mean_duration = exec_info.execution_time[t].mean()
+        assert isinstance(mean_duration, float)
         # FIXME: cost should be calibrated/computed automatically, and
         # threshold should be cmd-line param
         p_dis = disable_probability(2000, mean_duration, 0.05) 
