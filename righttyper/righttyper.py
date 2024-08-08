@@ -1,5 +1,7 @@
 import click
+import functools
 import inspect
+import itertools
 import logging
 import multiprocessing
 import os
@@ -11,7 +13,6 @@ import time
 import importlib.metadata
 
 from collections import defaultdict
-from functools import cache
 from types import (
     CodeType,
     FrameType,
@@ -91,21 +92,32 @@ try:
 except Exception:
     pass
 
-start_execution_time = time.perf_counter_ns()
+class StopWatch:
+    def __init__(self):
+        self.reset()
+        
+    @property
+    def start(self) -> int:
+        return self.start_time
+
+    def reset(self):
+        self.start_time = time.perf_counter_ns()
+        
+    def elapsed(self) -> int:
+        t = time.perf_counter_ns() - self.start_time
+        return t
+
+elapsed_time = StopWatch()
 total_instrumentation_time = 0
 
 # We do this to track instrumentation overhead
-
-import functools
-def track_instrumentation_overhead(func: Callable[[Any], Any]) -> Callable[[Any], Any]:
+def track_instrumentation_overhead(func: Any) -> Any:
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        global total_instrumentation_time  # Declare total_time as nonlocal to modify it inside the wrapper
-        start_time = time.perf_counter_ns()  # Record start time
-        result = func(*args, **kwargs)  # Call the original function
-        end_time = time.perf_counter_ns()  # Record end time
-        duration = end_time - start_time  # Calculate duration
-        total_instrumentation_time += duration  # Update total_time
+        global total_instrumentation_time
+        t = StopWatch()
+        result = func(*args, **kwargs)
+        total_instrumentation_time += t.elapsed()
         return result
 
     return wrapper
@@ -162,7 +174,28 @@ script_dir = ""
 include_files_regex = ""
 include_all = False
 
-# @track_instrumentation_overhead
+
+def weighted_random_choice(d: Dict[Any, int]) -> Any:
+    """Return one of the keys, weighted by its numeric value."""
+    # Sort the dictionary items by their numeric value, in descending order
+    weighted = sorted(d.items(), key=lambda x: x[1], reverse=True)
+    
+    # Calculate the total weight (sum of the lengths of all lists)
+    total_weight = sum(l for _, l in weighted)
+
+    # Generate a random threshold
+    threshold = random.random()
+
+    # Use itertools.accumulate to calculate cumulative weights
+    cumulative_weights = itertools.accumulate(l / total_weight for _, l in weighted)
+
+    # Find the index where the cumulative weight exceeds the threshold
+    index = next(i for i, cumulative_weight in enumerate(cumulative_weights) if cumulative_weight >= threshold)
+
+    return weighted[index][0]
+
+
+@track_instrumentation_overhead
 def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     """
     Process the function entry point, perform monitoring related operations,
@@ -189,11 +222,17 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
 
     # print(f"calling {t}")
     if t in sampled_funcs:
-        elapsed_time = time.perf_counter_ns() - start_execution_time
-        exec_fn_fraction = total_instrumentation_time / elapsed_time
-        if exec_fn_fraction > 0.05: # FIXME
-            # print(f"disabling {t} because sampled and too much overhead {exec_fn_fraction}.")
-            return sys.monitoring.DISABLE
+        elapsed = elapsed_time.elapsed()
+        exec_fn_fraction = total_instrumentation_time / elapsed
+        # If at least one second has elapsed (to avoid startup bias)
+        # and we are over our threshold, check to see if this function is a likely culprit.
+        # If so, disable this function.
+        if (elapsed > 1e9 and         
+            exec_fn_fraction > 0.05):
+                fn_iterations = { t : len(exec_info.execution_time[t]) for t in exec_info.execution_time }
+                if weighted_random_choice(fn_iterations) == t:
+                    # print(f"disabling {t} - too much overhead {exec_fn_fraction}.")
+                    return sys.monitoring.DISABLE
 
     # Record the start time of the function, keyed to the current thread
     exec_info.start_time[t].append(time.perf_counter_ns())
@@ -265,7 +304,7 @@ def exit_function(
     )
 
 
-# @track_instrumentation_overhead
+@track_instrumentation_overhead
 def exit_function_worker(
     code: CodeType,
     instruction_offset: int,
@@ -380,11 +419,13 @@ def process_function_arguments(
     t: FuncInfo,
     ignore_annotations: bool,
 ) -> None:
-    caller_frame = frame.f_back.f_back
+    # NOTE: this backtracking logic is brittle and must be
+    # adjusted if the call chain increases in length.
+    caller_frame = frame.f_back.f_back.f_back
     code = caller_frame.f_code
     class_name = get_class_name_from_stack()
     args, varargs, varkw, the_values = inspect.getargvalues(
-        frame.f_back.f_back
+        caller_frame
     )
     if varargs:
         args.append(varargs)
@@ -444,7 +485,7 @@ def process_function_arguments(
     update_visited_funcs_arguments(t, argtypes)
 
 
-@cache
+@functools.cache
 def get_function_type_hints(
     caller_frame: Any,
     code: CodeType,
