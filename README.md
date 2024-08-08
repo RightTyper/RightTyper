@@ -8,6 +8,12 @@ your code more than tenfold and cause it to consume huge amounts of
 memory, `righttyper` lets your code run at nearly full speed with
 almost no memory overhead.
 
+## Installation
+
+```bash
+python3 -m pip install git+https://github.com/RightTyper/righttyper
+```
+
 ## `righttyper`: high performance
 
 In the below example drawn from the pyperformance benchmark suite,
@@ -39,12 +45,6 @@ _NOTE: this is an alpha release and is not production ready._
 ## Requirements
 
 - Python 3.12 or higher
-
-## Installation
-
-```bash
-python3 -m pip install righttyper
-```
 
 ## Usage
 
