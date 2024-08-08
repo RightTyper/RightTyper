@@ -19,6 +19,7 @@ from types import (
 )
 from typing import (
     Any,
+    Callable,
     Dict,
     List,
     Optional,
@@ -45,6 +46,11 @@ from righttyper.righttyper_runtime import (
     requires_import,
     should_skip_function,
     update_argtypes,
+)
+from righttyper.righttyper_shapes import (
+    print_annotation,
+    update_arg_shapes,
+    update_retval_shapes,
 )
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
@@ -75,6 +81,7 @@ from righttyper.righttyper_utils import (
     reset_sampling_interval,
     skip_this_file,
     unannotated,
+    union_typeset_str,
     update_sampling_interval,
 )
 
@@ -83,6 +90,26 @@ try:
     import sys.monitoring  # pyright: ignore
 except Exception:
     pass
+
+start_execution_time = time.perf_counter_ns()
+total_instrumentation_time = 0
+
+# We do this to track instrumentation overhead
+
+import functools
+def track_instrumentation_overhead(func: Callable[[Any], Any]) -> Callable[[Any], Any]:
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        global total_instrumentation_time  # Declare total_time as nonlocal to modify it inside the wrapper
+        start_time = time.perf_counter_ns()  # Record start time
+        result = func(*args, **kwargs)  # Call the original function
+        end_time = time.perf_counter_ns()  # Record end time
+        duration = end_time - start_time  # Calculate duration
+        total_instrumentation_time += duration  # Update total_time
+        return result
+
+    return wrapper
+
 
 logger = logging.getLogger("righttyper")
 
@@ -110,7 +137,7 @@ visited_funcs_retval: Dict[FuncInfo, TypenameSet] = defaultdict(
 # For each function and argument, what type the argument is (e.g.,
 # kwarg, vararg)
 arg_types: Dict[
-    Tuple[Filename, FunctionName, ArgumentName],
+    Tuple[FuncInfo, ArgumentName],
     ArgumentType,
 ] = dict()
 
@@ -135,7 +162,7 @@ script_dir = ""
 include_files_regex = ""
 include_all = False
 
-
+# @track_instrumentation_overhead
 def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     """
     Process the function entry point, perform monitoring related operations,
@@ -160,8 +187,13 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
         FunctionName(code.co_qualname),
     )
 
+    # print(f"calling {t}")
     if t in sampled_funcs:
-        return sys.monitoring.DISABLE
+        elapsed_time = time.perf_counter_ns() - start_execution_time
+        exec_fn_fraction = total_instrumentation_time / elapsed_time
+        if exec_fn_fraction > 0.05: # FIXME
+            # print(f"disabling {t} because sampled and too much overhead {exec_fn_fraction}.")
+            return sys.monitoring.DISABLE
 
     # Record the start time of the function, keyed to the current thread
     exec_info.start_time[t].append(time.perf_counter_ns())
@@ -169,12 +201,12 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
 
     sampled_funcs.add(t)
     visited_funcs.add(t)
-
+    
     frame = inspect.currentframe()
     if frame and frame.f_back and frame.f_back.f_back:
         process_function_arguments(frame, t, ignore_annotations)
 
-    return sys.monitoring.DISABLE  # was sys.monitoring.events.PY_RETURN
+    return # sys.monitoring.DISABLE  # was sys.monitoring.events.PY_RETURN
 
 
 def call_handler(
@@ -233,6 +265,7 @@ def exit_function(
     )
 
 
+# @track_instrumentation_overhead
 def exit_function_worker(
     code: CodeType,
     instruction_offset: int,
@@ -274,7 +307,7 @@ def exit_function_worker(
     )
 
     # Note: we use ns to avoid rounding issues
-    def disable_probability(overhead: int, duration: int, threshold_fraction: float):
+    def disable_probability(overhead: int, duration: float, threshold_fraction: float) -> float:
         return min(1.0, overhead / duration * 1.0 /(threshold_fraction))
 
     # Update execution time
@@ -296,6 +329,7 @@ def exit_function_worker(
         visited_funcs_retval[t] = TypenameSet(set())
     debug_print(f"exit processing, retval was {visited_funcs_retval[t]=}")
 
+    update_retval_shapes(t, return_value)
     typename = get_adjusted_full_type(return_value, class_name)
     if event_type == sys.monitoring.events.PY_YIELD:
         # Yield: call it a generator
@@ -318,18 +352,23 @@ def exit_function_worker(
 
     debug_print(f"exit processing, retval NOW {visited_funcs_retval[t]=}")
 
+    # FIXME: consider limiting wrt total execution time, not just per-function exec time
     try:
         mean_duration = exec_info.execution_time[t].mean()
+        assert isinstance(mean_duration, float)
         # FIXME: cost should be calibrated/computed automatically, and
         # threshold should be cmd-line param
         p_dis = disable_probability(2000, mean_duration, 0.05) 
     except:
         mean_duration = 1_000_000
         p_dis = 0
-        
+
+
+    return 0 # FIXME DISABLED BELOW FUNCTIONALITY
+
     # Disable with this probability
     if random.random() <= p_dis:
-        # print(f"DISABLE {p_dis=} {t=} {mean_duration=}")
+        print(f"DISABLE {p_dis=} {t=} {mean_duration=}")
         return sys.monitoring.DISABLE
     else:
         # print(f"CONTINUE {p_dis=} {t=} {mean_duration=}")
@@ -355,6 +394,8 @@ def process_function_arguments(
     type_hints = get_function_type_hints(
         caller_frame, code, ignore_annotations
     )
+    update_arg_shapes(t, the_values)
+    
     update_function_annotations(
         t,
         caller_frame,
@@ -367,8 +408,8 @@ def process_function_arguments(
     for arg in args:
         if arg:
             index = (
-                Filename(caller_frame.f_code.co_filename),
-                FunctionName(code.co_qualname),
+                FuncInfo(Filename(caller_frame.f_code.co_filename),
+                         FunctionName(code.co_qualname)),
                 ArgumentName(arg),
             )
             update_argtypes(
@@ -519,8 +560,9 @@ def output_type_signatures(
     namespace: Dict[str, Any] = globals(),
 ) -> None:
     # Print all type signatures
-
-    for t in visited_funcs:
+    fname_printed : Dict[Filename, bool] = defaultdict(bool)
+    visited_funcs_by_fname = sorted(visited_funcs, key = lambda a: a.file_name + ":" + a.func_name)
+    for t in visited_funcs_by_fname:
         if skip_this_file(
             t.file_name,
             script_dir,
@@ -541,12 +583,30 @@ def output_type_signatures(
             )
             if t in existing_spec and s == existing_spec[t]:
                 continue
-            print(f"{t.file_name},{s} ...\n", file=file)
+            if not fname_printed[t.file_name]:
+                print(f"{t.file_name}:\n{'-' * (len(t.file_name) + 1)}\n", file=file)
+                fname_printed[t.file_name] = True
+            print(f"{s} ...\n", file=file)
             # Print diffs
             import difflib
-            diffs = difflib.ndiff((existing_spec[t] + "\n").splitlines(1),
-                                  (s + "\n").splitlines(1))
+            diffs = difflib.ndiff((existing_spec[t] + "\n").splitlines(True),
+                                  (s + "\n").splitlines(True))
             print(''.join(diffs), file=file)
+            # First try at shapes
+            annotations = print_annotation(t)
+            ret_annotation = annotations.pop()
+            if annotations:
+                print("# Shape annoations", file=file)
+                print("@beartype", file=file)
+                # Process all annotations
+                annotations = [visited_funcs_arguments[t][index].arg_name + ": " + annotation.format(union_typeset_str(t.file_name, visited_funcs_arguments[t][index].type_name_set, {})) for index, annotation in enumerate(annotations)]
+                if t in visited_funcs_retval:
+                    # Has a return value
+                    retval_type = union_typeset_str(t.file_name, visited_funcs_retval[t], {})
+                    print(f"def {t.func_name}({', '.join(annotations)}) -> {ret_annotation.format(retval_type)}: ...\n", file=file)
+                else:
+                    print(f"def {t.func_name}({', '.join(annotations)}) -> None: ...\n", file=file)
+                    
         except KeyError:
             # Something weird happened
             logger.exception(f"KeyError: {t=}")
