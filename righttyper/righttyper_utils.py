@@ -186,7 +186,7 @@ def make_type_signature(
     namespace: Dict[str, Any],
     not_annotated: Dict[FuncInfo, Set[str]],
     arg_types: Dict[
-        Tuple[Filename, FunctionName, ArgumentName],
+        Tuple[FuncInfo, ArgumentName],
         ArgumentType,
     ],
     existing_annotations: Dict[FuncInfo, Dict[str, str]],
@@ -200,8 +200,8 @@ def make_type_signature(
     for index, arginfo in enumerate(args):
         argname = arginfo.arg_name
         arg_type = arg_types[
-            Filename(file_name),
-            FunctionName(func_name),
+            FuncInfo(Filename(file_name),
+                     FunctionName(func_name)),
             argname,
         ]
         if arg_type == ArgumentType.vararg:

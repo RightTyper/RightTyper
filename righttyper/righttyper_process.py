@@ -202,7 +202,7 @@ def output_stub_files(
     visited_funcs_retval: Dict[FuncInfo, TypenameSet],
     not_annotated: Dict[FuncInfo, Set[str]],
     arg_types: Dict[
-        Tuple[Filename, FunctionName, ArgumentName],
+        Tuple[FuncInfo, ArgumentName],
         ArgumentType,
     ],
     existing_annotations: Dict[FuncInfo, Dict[str, str]],

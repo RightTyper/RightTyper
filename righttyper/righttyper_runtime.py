@@ -21,6 +21,7 @@ from righttyper.righttyper_types import (
     ArgumentType,
     Filename,
     FunctionName,
+    FuncInfo,
     T,
     Typename,
     TypenameFrequency,
@@ -306,10 +307,10 @@ def get_method_signature(method: Any) -> str:
 def update_argtypes(
     argtypes: List[ArgInfo],
     arg_types: Dict[
-        Tuple[Filename, FunctionName, ArgumentName],
+        Tuple[FuncInfo, ArgumentName],
         ArgumentType,
     ],
-    index: Tuple[Filename, FunctionName, ArgumentName],
+    index: Tuple[FuncInfo, ArgumentName],
     the_values: Dict[str, Any],
     class_name: Optional[str],
     arg: str,

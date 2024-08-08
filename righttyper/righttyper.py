@@ -136,7 +136,7 @@ visited_funcs_retval: Dict[FuncInfo, TypenameSet] = defaultdict(
 # For each function and argument, what type the argument is (e.g.,
 # kwarg, vararg)
 arg_types: Dict[
-    Tuple[Filename, FunctionName, ArgumentName],
+    Tuple[FuncInfo, ArgumentName],
     ArgumentType,
 ] = dict()
 
@@ -407,8 +407,8 @@ def process_function_arguments(
     for arg in args:
         if arg:
             index = (
-                Filename(caller_frame.f_code.co_filename),
-                FunctionName(code.co_qualname),
+                FuncInfo(Filename(caller_frame.f_code.co_filename),
+                         FunctionName(code.co_qualname)),
                 ArgumentName(arg),
             )
             update_argtypes(
@@ -559,7 +559,7 @@ def output_type_signatures(
     namespace: Dict[str, Any] = globals(),
 ) -> None:
     # Print all type signatures
-    fname_printed = defaultdict(bool)
+    fname_printed : Dict[Filename, bool] = defaultdict(bool)
     visited_funcs_by_fname = sorted(visited_funcs, key = lambda a: a.file_name + ":" + a.func_name)
     for t in visited_funcs_by_fname:
         if skip_this_file(
