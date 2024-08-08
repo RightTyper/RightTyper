@@ -561,8 +561,9 @@ def output_type_signatures(
     namespace: Dict[str, Any] = globals(),
 ) -> None:
     # Print all type signatures
-
-    for t in visited_funcs:
+    fname_printed = defaultdict(bool)
+    visited_funcs_by_fname = sorted(visited_funcs, key = lambda a: a.file_name + ":" + a.func_name)
+    for t in visited_funcs_by_fname:
         if skip_this_file(
             t.file_name,
             script_dir,
@@ -583,7 +584,10 @@ def output_type_signatures(
             )
             if t in existing_spec and s == existing_spec[t]:
                 continue
-            print(f"{t.file_name},{s} ...\n", file=file)
+            if not fname_printed[t.file_name]:
+                print(f"{t.file_name}:\n{'-' * (len(t.file_name) + 1)}\n", file=file)
+                fname_printed[t.file_name] = True
+            print(f"{s} ...\n", file=file)
             # Print diffs
             import difflib
             diffs = difflib.ndiff((existing_spec[t] + "\n").splitlines(True),
