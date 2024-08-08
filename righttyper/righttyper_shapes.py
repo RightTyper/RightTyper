@@ -106,7 +106,10 @@ def convert_to_jaxtyping(
         for arg in args:
             s.append(f"{arg}")
             s_str = " ".join(s)
-        declaration = f'{argument_datatypes[index]}[Array, "{s_str}"]'
+        if s_str:
+            declaration = f'{argument_datatypes[index]}[{{}}, "{s_str}"]'
+        else:
+            declaration = "{}"
         result.append(declaration)
 
     return result
@@ -140,10 +143,20 @@ def update_retval_shapes(func: FuncInfo, retval: Any) -> None:
     # print(f"Shape for {func} = {merged_shapes}")
     
     
+def print_annotation(func: FuncInfo) -> List[str]:
+    # No annotations if the shape was never captured
+    if func not in captured_shapes:
+        return []
+    # No annotations if all captured shapes are empty tuples
+    if all(all(s == () for s in shape) for shape in list(captured_shapes[func])):
+        return []
+    tups = transform_input(list(captured_shapes[func]))
+    n = len(tups)
+    annotations = convert_to_jaxtyping(["Float" for i in range(n)], tups)
+    return annotations
+
+
 def print_annotations() -> None:
     for func in captured_shapes:
-        tups = transform_input(list(captured_shapes[func]))
-        n = len(tups)
-        annotations = convert_to_jaxtyping(["Float" for i in range(n)], tups)
-        print(f"{func}: {annotations}")
+        print(f"{func}: {print_annotation(func)}")
 

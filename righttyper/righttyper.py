@@ -48,7 +48,7 @@ from righttyper.righttyper_runtime import (
     update_argtypes,
 )
 from righttyper.righttyper_shapes import (
-    print_annotations,
+    print_annotation,
     update_arg_shapes,
     update_retval_shapes,
 )
@@ -81,6 +81,7 @@ from righttyper.righttyper_utils import (
     reset_sampling_interval,
     skip_this_file,
     unannotated,
+    union_typeset_str,
     update_sampling_interval,
 )
 
@@ -591,6 +592,21 @@ def output_type_signatures(
             diffs = difflib.ndiff((existing_spec[t] + "\n").splitlines(True),
                                   (s + "\n").splitlines(True))
             print(''.join(diffs), file=file)
+            # First try at shapes
+            annotations = print_annotation(t)
+            ret_annotation = annotations.pop()
+            if annotations:
+                print("# Shape annoations", file=file)
+                print("@beartype", file=file)
+                # Process all annotations
+                annotations = [visited_funcs_arguments[t][index].arg_name + ": " + annotation.format(union_typeset_str(t.file_name, visited_funcs_arguments[t][index].type_name_set, {})) for index, annotation in enumerate(annotations)]
+                if t in visited_funcs_retval:
+                    # Has a return value
+                    retval_type = union_typeset_str(t.file_name, visited_funcs_retval[t], {})
+                    print(f"def {t.func_name}({', '.join(annotations)}) -> {ret_annotation.format(retval_type)}: ...\n", file=file)
+                else:
+                    print(f"def {t.func_name}({', '.join(annotations)}) -> None: ...\n", file=file)
+                    
         except KeyError:
             # Something weird happened
             logger.exception(f"KeyError: {t=}")
@@ -641,8 +657,6 @@ def post_process(
 ) -> None:
     global namespace
     output_type_signatures_to_file(namespace)
-    # FIXME output_shapes
-    print_annotations()
     if generate_stubs:
         output_stub_files(
             namespace,
