@@ -41,10 +41,14 @@ import sys
 import inspect
 from functools import reduce
 
-# FIXME needs to be thread local
-current_shape : Dict[str, List[Tuple[int, ...]]] = defaultdict(list)
+from righttyper.righttyper_types import (
+    FuncInfo
+)
 
-captured_shapes : Dict[str, Set[Tuple[int, ...]]] = defaultdict(set)
+# FIXME needs to be thread local
+current_shape : Dict[FuncInfo, List[Tuple[int, ...]]] = defaultdict(list)
+
+captured_shapes : Dict[FuncInfo, Set[Tuple[int, ...]]] = defaultdict(set)
 
 def transform_input(
     inp: List[Any],
@@ -107,7 +111,7 @@ def convert_to_jaxtyping(
 
     return result
 
-def update_arg_shapes(func: str, the_values: Dict[str, Any]) -> None:
+def update_arg_shapes(func: FuncInfo, the_values: Dict[str, Any]) -> None:
     shapes = []
     for k in the_values:
         val = the_values[k]
@@ -120,7 +124,7 @@ def update_arg_shapes(func: str, the_values: Dict[str, Any]) -> None:
     current_shape[func].append(tuple(shapes))
 
 
-def update_retval_shapes(func: str, retval: Any) -> None:
+def update_retval_shapes(func: FuncInfo, retval: Any) -> None:
     if len(current_shape[func]) == 0:
         return
     shapes = []

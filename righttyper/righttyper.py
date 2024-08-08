@@ -328,8 +328,7 @@ def exit_function_worker(
         visited_funcs_retval[t] = TypenameSet(set())
     debug_print(f"exit processing, retval was {visited_funcs_retval[t]=}")
 
-    # FIXME potentially use FuncInfo and not func_name as index
-    update_retval_shapes(t.func_name, return_value)
+    update_retval_shapes(t, return_value)
     typename = get_adjusted_full_type(return_value, class_name)
     if event_type == sys.monitoring.events.PY_YIELD:
         # Yield: call it a generator
@@ -394,8 +393,7 @@ def process_function_arguments(
     type_hints = get_function_type_hints(
         caller_frame, code, ignore_annotations
     )
-    # possible FIXME: use FuncInfo instead of func_name as index
-    update_arg_shapes(t.func_name, the_values)
+    update_arg_shapes(t, the_values)
     
     update_function_annotations(
         t,
