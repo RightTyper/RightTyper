@@ -24,9 +24,11 @@ from typing import (
     Dict,
     List,
     Optional,
+    ParamSpec,
     Set,
     TextIO,
     Tuple,
+    TypeVar,
     get_type_hints,
 )
 
@@ -110,10 +112,13 @@ class StopWatch:
 elapsed_time = StopWatch()
 total_instrumentation_time = 0
 
+P = ParamSpec('P')
+R = TypeVar('R')
+
 # We do this to track instrumentation overhead
-def track_instrumentation_overhead(func: Any) -> Any:
+def track_instrumentation_overhead(func: Callable[P, R]) -> Callable[P, R]:
     @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         global total_instrumentation_time
         t = StopWatch()
         result = func(*args, **kwargs)
