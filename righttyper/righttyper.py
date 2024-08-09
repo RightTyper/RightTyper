@@ -640,7 +640,10 @@ def output_type_signatures(
             print(''.join(diffs), file=file)
             # First try at shapes
             annotations = print_annotation(t)
-            ret_annotation = annotations.pop()
+            try:
+                ret_annotation = annotations.pop()
+            except:
+                ret_annotation = None
             if annotations:
                 print("# Shape annoations", file=file)
                 print("@beartype", file=file)
