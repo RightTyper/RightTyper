@@ -10,6 +10,19 @@ downs in your code or large memory consumption while using it,
 allowing you to integrate it with your standard tests and development
 process.
 
+You can run RightTyper with arbitrary Python programs and it will generate
+types for every function that gets executed. It works great in combination with PyTest:
+
+```bash
+python3 -m righttyper -m pytest --continue-on-collection-errors /your/test/dir
+```
+
+In addition to generating types, RightTyper has the following features:
+
+* Efficiently computes type annotation "coverage" for a file or directory of files
+* Infers shape annotations for NumPy/JAX/PyTorch tensors, compatible with `jaxtyping` and `beartype` or `typeguard`.
+
+
 ## Installation
 
 To install the latest version of RightTyper from its repository,
@@ -19,10 +32,86 @@ just use `pip` as shown below:
 python3 -m pip install git+https://github.com/RightTyper/righttyper
 ```
 
+
+## Usage
+
+To use RightTyper, simply run your script with `righttyper` instead of `python3`:
+
+```bash
+righttyper your_script.py [args...]
+```
+
+This will execute `your_script.py` with RightTyper's monitoring
+enabled. The type signatures of all functions will be recorded and
+output to a file named `righttyper.out`. The file contains, for every
+function, the signature, and a diff of the original function with the
+annotated version. It also generates `jaxtyping`-compatible shape
+annotations for NumPy/JAX/PyTorch tensors. Below is an example:
+
+```
+test-hints.py:
+--------------
+
+def barnacle(x: numpy.ndarray) -> numpy.ndarray: ...
+
+- def barnacle(x):
++ def barnacle(x: numpy.ndarray) -> numpy.ndarray:
+
+# Shape annoations
+@beartype
+def barnacle(x: Float[numpy.ndarray, "10 dim0"]) -> Float[numpy.ndarray, "dim0"]: ...
+
+def fooq(x: int, y: str) -> bool: ...
+
+- def fooq(x: int, y) -> bool:
++ def fooq(x: int, y: str) -> bool:
+?                   +++++
+```
+
+Below is the full list of options:
+
+```bash
+Usage: python -m righttyper [OPTIONS] [SCRIPT] [ARGS]...
+
+  RightTyper efficiently generates types for your function arguments and
+  return values.
+
+Options:
+  --all-files                     Process any files encountered, including in
+                                  libraries (except for those specified in
+                                  --include-files)
+  --include-files TEXT            Include only files matching the given regex
+                                  pattern.
+  --srcdir DIRECTORY              Use this as the base for imports.
+  --overwrite / --no-overwrite    Overwrite files with type information.
+                                  [default: no-overwrite]
+  --ignore-annotations            Ignore existing annotations and overwrite
+                                  with type information.
+  -m, --module                    Run the script as a module.
+  --verbose                       Print diagnostic information.
+  --insert-imports                Insert import statements for missing classes
+                                  (MAY LEAD TO CIRCULAR IMPORTS).
+  --generate-stubs                Generate stub files (.pyi).
+  --type-coverage-by-directory DIRECTORY
+                                  Report per-directory type annotation
+                                  coverage for all Python files in a directory
+                                  and its children.
+  --type-coverage-by-file DIRECTORY
+                                  Report per-file type annotation coverage for
+                                  all Python files in a directory or its
+                                  children.
+  --type-coverage-summary DIRECTORY
+                                  Report uncovered and partially covered files
+                                  and functions when performing type
+                                  annotation coverage analysis.
+  --version                       Show the version and exit.
+  --help                          Show this message and exit.
+```
+
 ## `righttyper`: high performance
 
 In the below example drawn from the pyperformance benchmark suite,
-`monkeytype` runs **40x slower** than the original program or when
+`monkeytype` runs 40x slower than the original program or when
 running with `righttyper` (which runs under 3% slower).
 
 ```bash
@@ -45,25 +134,11 @@ By contrast, `righttyper`'s memory consumption is just a small
 increment over the original program: it consumes about 24MB, just 15%
 more.
 
-_NOTE: this is an alpha release and is not production ready._
+_NOTE: this is an alpha release and should not be considered production ready._
 
 ## Requirements
 
 - Python 3.12 or higher
-
-## Usage
-
-To use RightTyper, simply run your script with `righttyper` instead of `python3`:
-
-```bash
-righttyper your_script.py [args...]
-```
-
-This will execute `your_script.py` with RightTyper's monitoring enabled. The type signatures of all functions will be recorded and output to a file named `righttyper.out`. Each line represents a function signature in the following format:
-
-```
-filename:def function_name(arg1: arg1_type, arg2: arg2_type, ...) -> return_type
-```
 
 ## How it works
 
@@ -74,14 +149,8 @@ database.
 
 By contrast, RightTyper leverages Python 3.12's new `sys.monitoring`
 mechanism to allow it to add and remove type checking. It always
-checks the very first invocation and exit of every function, and then
-disables monitoring. It re-enables monitoring periodically with
-decreasing frequency. Of course, sampling makes it unlikely to capture
-rare events, which may correspond to different types (e.g., conditions
-that result in `None` being returned). RightTyper avoids this pitfall
-by employing a heuristic that reactivates monitoring when events occur
-that we expect to be highly correlated with the use of different
-types. Specifically, RightTyper re-enables monitoring in functions
-when the program executes branches and lines for the first time. This
-approach ensures that RightTyper finds any type differences that are
-based on control flow.
+checks the very first invocation and exit of every function.  As long
+as instrumentation overhead remains below a threshold, it continues to
+track functions. When necessary to reduce overhead, it selectively
+de-instruments functions that have already been sampled many times. It
+re-enables monitoring periodically with decreasing frequency.
