@@ -91,3 +91,4 @@ class ExecInfo(threading.local):
         self.execution_time: Dict[FuncInfo, runstats.Statistics] = defaultdict(
             runstats.Statistics
         )
+        self.total_function_calls: int = 0

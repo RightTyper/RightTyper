@@ -1,7 +1,6 @@
 import click
 import functools
 import inspect
-import itertools
 import logging
 import multiprocessing
 import os
@@ -179,27 +178,6 @@ script_dir = ""
 include_files_regex = ""
 include_all = False
 
-
-def weighted_random_choice(d: Dict[Any, int]) -> Any:
-    """Return one of the keys, weighted by its numeric value."""
-    # Sort the dictionary items by their numeric value, in descending order
-    weighted = sorted(d.items(), key=lambda x: x[1], reverse=True)
-    
-    # Calculate the total weight (sum of the lengths of all lists)
-    total_weight = sum(l for _, l in weighted)
-
-    # Generate a random threshold
-    threshold = random.random()
-
-    # Use itertools.accumulate to calculate cumulative weights
-    cumulative_weights = itertools.accumulate(l / total_weight for _, l in weighted)
-
-    # Find the index where the cumulative weight exceeds the threshold
-    index = next(i for i, cumulative_weight in enumerate(cumulative_weights) if cumulative_weight >= threshold)
-
-    return weighted[index][0]
-
-
 @track_instrumentation_overhead
 def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     """
@@ -225,19 +203,21 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
         FunctionName(code.co_qualname),
     )
 
+    exec_info.total_function_calls += 1
+    
     # print(f"calling {t}")
     if t in sampled_funcs:
         elapsed = elapsed_time.elapsed()
         exec_fn_fraction = total_instrumentation_time / elapsed
         # If at least one second has elapsed (to avoid startup bias)
-        # and we are over our threshold, check to see if this function is a likely culprit.
-        # If so, disable this function.
-        if (elapsed > 1e9 and         
-            exec_fn_fraction > 0.05):
-                fn_iterations = { t : len(exec_info.execution_time[t]) for t in exec_info.execution_time }
-                if weighted_random_choice(fn_iterations) == t:
-                    # print(f"disabling {t} - too much overhead {exec_fn_fraction}.")
-                    return sys.monitoring.DISABLE
+        # and we are over our threshold, disable this function with probability
+        # proportional to its frequency.
+        if elapsed > 1e9 and exec_fn_fraction > 0.05:
+            r = random.random()
+            if r <= len(exec_info.execution_time[t]) / exec_info.total_function_calls:
+                # Disable this function call.
+                # NOTE: TBD handle disabling returns as well.
+                return sys.monitoring.DISABLE
 
     # Record the start time of the function, keyed to the current thread
     exec_info.start_time[t].append(time.perf_counter_ns())
@@ -350,10 +330,6 @@ def exit_function_worker(
         FunctionName(func_name),
     )
 
-    # Note: we use ns to avoid rounding issues
-    def disable_probability(overhead: int, duration: float, threshold_fraction: float) -> float:
-        return min(1.0, overhead / duration * 1.0 /(threshold_fraction))
-
     # Update execution time
     current_time = time.perf_counter_ns()
     if t in exec_info.start_time and len(exec_info.start_time[t]) > 0:
@@ -394,29 +370,9 @@ def exit_function_worker(
     if not found:
         visited_funcs_retval[t].add(TypenameFrequency(Typename(typename), 1))
 
-    debug_print(f"exit processing, retval NOW {visited_funcs_retval[t]=}")
-
-    # FIXME: consider limiting wrt total execution time, not just per-function exec time
-    try:
-        mean_duration = exec_info.execution_time[t].mean()
-        assert isinstance(mean_duration, float)
-        # FIXME: cost should be calibrated/computed automatically, and
-        # threshold should be cmd-line param
-        p_dis = disable_probability(2000, mean_duration, 0.05) 
-    except:
-        mean_duration = 1_000_000
-        p_dis = 0
-
-
     return 0 # FIXME DISABLED BELOW FUNCTIONALITY
-
-    # Disable with this probability
-    if random.random() <= p_dis:
-        print(f"DISABLE {p_dis=} {t=} {mean_duration=}")
-        return sys.monitoring.DISABLE
-    else:
-        # print(f"CONTINUE {p_dis=} {t=} {mean_duration=}")
-        return
+    # TODO: placeholder for handling disabling properly, see above enter handler
+    # return sys.monitoring.DISABLE
 
 
 def process_function_arguments(
