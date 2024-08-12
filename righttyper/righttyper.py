@@ -211,12 +211,18 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
 
     # If at least one second has elapsed (to avoid startup bias)
     # and we are over our threshold, disable this function with probability
-    # proportional to its frequency.
+    # proportional to frequency / execution time.
     elapsed = elapsed_time.elapsed()
     exec_fn_fraction = total_instrumentation_time / elapsed
     if elapsed > 1e9 and exec_fn_fraction > (target_overhead / 100.0):
+        # num function calls / total execution time for this function
+        this_function_call_time_ratio = len(exec_info.execution_time[t]) / sum(exec_info.execution_time[t])
+        # total num function calls / total execution time of all functions
+        total_function_call_time_ratio = exec_info.total_function_calls / (elapsed - total_instrumentation_time)
         r = random.random()
-        if r <= len(exec_info.execution_time[t]) / exec_info.total_function_calls:
+        if r <= this_function_call_time_ratio / total_function_call_time_ratio:
+        # WAS:
+        # if r <= len(exec_info.execution_time[t]) / exec_info.total_function_calls:
             # Disable this function call until the next sampling period.
             disabled_funcs.add(t)
 
