@@ -1,45 +1,16 @@
-from dataclasses import dataclass
+import numpy as np
+import pandas as pd
+import torch
 
-import_failures = set()
-
-try:
-    import numpy as np
-except ModuleNotFoundError:
-    import_failures.add("numpy")
-
-try:
-    import pandas as pd
-except ModuleNotFoundError:
-    @dataclass
-    class pd:
-        DataFrame = type(list)
-    import_failures.add("pandas")
-
-try:
-    import torch
-except ModuleNotFoundError:
-    @dataclass
-    class torch:
-        Tensor = type(list)
-    import_failures.add("torch")
-
-if len(import_failures) > 0:
-    print(f"Warning: these missing imports limit RightTyper's shape analysis: {', '.join(list(import_failures))}")
-    
 from collections import defaultdict
 from typing import (
     Any,
-    Callable,
     Dict,
     List,
     Optional,
     Set,
     Tuple,
 )
-
-import sys
-import inspect
-from functools import reduce
 
 from righttyper.righttyper_types import (
     FuncInfo
@@ -119,7 +90,7 @@ def update_arg_shapes(func: FuncInfo, the_values: Dict[str, Any]) -> None:
     for k in the_values:
         val = the_values[k]
         if isinstance(val, (pd.DataFrame, np.ndarray)):
-            shapes.append(val.shape)
+            shapes.append(tuple(val.shape))
         elif isinstance(val, torch.Tensor):
             shapes.append(tuple(val.shape))
         else:
