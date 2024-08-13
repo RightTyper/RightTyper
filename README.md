@@ -48,9 +48,9 @@ function, the signature, and a diff of the original function with the
 annotated version. It also generates `jaxtyping`-compatible shape
 annotations for NumPy/JAX/PyTorch tensors. Below is an example:
 
-```
+```diff
 test-hints.py:
---------------
+==============
 
 def barnacle(x: numpy.ndarray) -> numpy.ndarray: ...
 
