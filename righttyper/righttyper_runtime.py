@@ -19,8 +19,6 @@ from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
     ArgumentType,
-    Filename,
-    FunctionName,
     FuncInfo,
     T,
     Typename,

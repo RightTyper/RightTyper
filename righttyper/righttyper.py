@@ -1,7 +1,6 @@
 import click
 import functools
 import inspect
-import itertools
 import logging
 import multiprocessing
 import os
@@ -111,6 +110,7 @@ class StopWatch:
 
 elapsed_time = StopWatch()
 total_instrumentation_time = 0
+target_overhead = 5 # default
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -135,6 +135,9 @@ visited_funcs: Set[FuncInfo] = set()
 
 # All sampled functions (may be cleared, always a subset of visited_funcs).
 sampled_funcs: Set[FuncInfo] = set()
+
+# All disabled functions (may be cleared, always a subset of sampled_funcs).
+disabled_funcs: Set[FuncInfo] = set()
 
 # Any function that yielded at least once (and so will be treated as a
 # Generator)
@@ -179,27 +182,6 @@ script_dir = ""
 include_files_regex = ""
 include_all = False
 
-
-def weighted_random_choice(d: Dict[Any, int]) -> Any:
-    """Return one of the keys, weighted by its numeric value."""
-    # Sort the dictionary items by their numeric value, in descending order
-    weighted = sorted(d.items(), key=lambda x: x[1], reverse=True)
-    
-    # Calculate the total weight (sum of the lengths of all lists)
-    total_weight = sum(l for _, l in weighted)
-
-    # Generate a random threshold
-    threshold = random.random()
-
-    # Use itertools.accumulate to calculate cumulative weights
-    cumulative_weights = itertools.accumulate(l / total_weight for _, l in weighted)
-
-    # Find the index where the cumulative weight exceeds the threshold
-    index = next(i for i, cumulative_weight in enumerate(cumulative_weights) if cumulative_weight >= threshold)
-
-    return weighted[index][0]
-
-
 @track_instrumentation_overhead
 def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     """
@@ -212,6 +194,7 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     Returns:
         str: Status of monitoring
     """
+    
     if should_skip_function(
         code,
         script_dir,
@@ -224,25 +207,22 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
         Filename(code.co_filename),
         FunctionName(code.co_qualname),
     )
+    exec_info.total_function_calls += 1
 
-    # print(f"calling {t}")
-    if t in sampled_funcs:
-        elapsed = elapsed_time.elapsed()
-        exec_fn_fraction = total_instrumentation_time / elapsed
-        # If at least one second has elapsed (to avoid startup bias)
-        # and we are over our threshold, check to see if this function is a likely culprit.
-        # If so, disable this function.
-        if (elapsed > 1e9 and         
-            exec_fn_fraction > 0.05):
-                fn_iterations = { t : len(exec_info.execution_time[t]) for t in exec_info.execution_time }
-                if weighted_random_choice(fn_iterations) == t:
-                    # print(f"disabling {t} - too much overhead {exec_fn_fraction}.")
-                    return sys.monitoring.DISABLE
+    # If at least one second has elapsed (to avoid startup bias)
+    # and we are over our threshold, disable this function with probability
+    # proportional to frequency.
+    elapsed = elapsed_time.elapsed()
+    exec_fn_fraction = total_instrumentation_time / elapsed
+    if elapsed > 1e9 and exec_fn_fraction > (target_overhead / 100.0):
+        r = random.random()
+        if r <= len(exec_info.execution_time[t]) / exec_info.total_function_calls:
+            # Disable this function call until the next sampling period.
+            disabled_funcs.add(t)
 
     # Record the start time of the function, keyed to the current thread
     exec_info.start_time[t].append(time.perf_counter_ns())
-    # print(f"[ entering {t} {code} {native_tid=}")
-
+    
     sampled_funcs.add(t)
     visited_funcs.add(t)
     
@@ -250,7 +230,10 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     if frame and frame.f_back and frame.f_back.f_back:
         process_function_arguments(frame, t, ignore_annotations)
 
-    return # sys.monitoring.DISABLE  # was sys.monitoring.events.PY_RETURN
+    if t in disabled_funcs:
+        return sys.monitoring.DISABLE
+    
+    return None
 
 
 def call_handler(
@@ -269,7 +252,9 @@ def call_handler(
         ):
             return sys.monitoring.DISABLE
         try:
+            # FIXME? do we still need the below line?
             sampled_funcs.clear()
+            
             sys.monitoring.set_local_events(
                 TOOL_ID,
                 callable.__code__,
@@ -350,10 +335,6 @@ def exit_function_worker(
         FunctionName(func_name),
     )
 
-    # Note: we use ns to avoid rounding issues
-    def disable_probability(overhead: int, duration: float, threshold_fraction: float) -> float:
-        return min(1.0, overhead / duration * 1.0 /(threshold_fraction))
-
     # Update execution time
     current_time = time.perf_counter_ns()
     if t in exec_info.start_time and len(exec_info.start_time[t]) > 0:
@@ -394,29 +375,10 @@ def exit_function_worker(
     if not found:
         visited_funcs_retval[t].add(TypenameFrequency(Typename(typename), 1))
 
-    debug_print(f"exit processing, retval NOW {visited_funcs_retval[t]=}")
-
-    # FIXME: consider limiting wrt total execution time, not just per-function exec time
-    try:
-        mean_duration = exec_info.execution_time[t].mean()
-        assert isinstance(mean_duration, float)
-        # FIXME: cost should be calibrated/computed automatically, and
-        # threshold should be cmd-line param
-        p_dis = disable_probability(2000, mean_duration, 0.05) 
-    except:
-        mean_duration = 1_000_000
-        p_dis = 0
-
-
-    return 0 # FIXME DISABLED BELOW FUNCTIONALITY
-
-    # Disable with this probability
-    if random.random() <= p_dis:
-        print(f"DISABLE {p_dis=} {t=} {mean_duration=}")
+    if t in disabled_funcs:
         return sys.monitoring.DISABLE
-    else:
-        # print(f"CONTINUE {p_dis=} {t=} {mean_duration=}")
-        return
+
+    return None
 
 
 def process_function_arguments(
@@ -580,7 +542,7 @@ def update_argument_type(
             reset_sampling_interval()
 
 
-def handle_clear_seen_funcs(_signum: int, _frame: Optional[FrameType]) -> None:
+def restart_sampling(_signum: int, _frame: Optional[FrameType]) -> None:
     """
     This function handles the task of clearing the seen functions.
     Called when a timer signal is received.
@@ -589,8 +551,9 @@ def handle_clear_seen_funcs(_signum: int, _frame: Optional[FrameType]) -> None:
         _signum: The signal number
         _frame: The current stack frame
     """
-    # Clear the sampled functions
+    # Clear the sampled and disabled functions
     sampled_funcs.clear()
+    disabled_funcs.clear()
     # Set a timer for the next round of sampling.
     update_sampling_interval()
     signal.setitimer(
@@ -650,6 +613,7 @@ def output_type_signatures(
                 # Process all annotations
                 annotations = [visited_funcs_arguments[t][index].arg_name + ": " + annotation.format(union_typeset_str(t.file_name, visited_funcs_arguments[t][index].type_name_set, {})) for index, annotation in enumerate(annotations)]
                 if t in visited_funcs_retval:
+                    assert ret_annotation
                     # Has a return value
                     retval_type = union_typeset_str(t.file_name, visited_funcs_retval[t], {})
                     print(f"def {t.func_name}({', '.join(annotations)}) -> {ret_annotation.format(retval_type)}: ...\n", file=file)
@@ -666,13 +630,14 @@ def initialize_globals(
     _include_all: bool,
     script: str,
     verbose: bool,
+    _target_overhead: float
 ) -> None:
     debug_print_set_level(verbose)
-    global include_files_regex, include_all, script_dir
+    global include_files_regex, include_all, script_dir, target_overhead
     include_files_regex = include_files
     include_all = _include_all
     script_dir = os.path.dirname(os.path.realpath(script))
-
+    target_overhead = _target_overhead
 
 def execute_script_or_module(
     script: str,
@@ -953,6 +918,11 @@ SCRIPT = ScriptParamType()
     version=importlib.metadata.version(TOOL_NAME),
     prog_name=TOOL_NAME,
 )
+@click.option(
+    "--target-overhead",
+    type=float,
+    help="Target overhead, as a percentage (e.g., 5).",
+)
 def main(
     script: str,
     all_files: bool,
@@ -969,6 +939,7 @@ def main(
     insert_imports: bool,
     generate_stubs: bool,
     srcdir: str,
+    target_overhead: float,
 ) -> None:
     """
     RightTyper efficiently generates types for your function
@@ -1004,7 +975,7 @@ def main(
         annotation_coverage.print_file_summary(file_summary)
         return
 
-    initialize_globals(include_files, all_files, script, verbose)
+    initialize_globals(include_files, all_files, script, verbose, target_overhead)
     tool_args, script_args = split_args_at_triple_dash(args)
     setup_tool_id()
     register_monitoring_callbacks(
@@ -1014,7 +985,7 @@ def main(
         yield_function,
         ignore_annotations,
     )
-    setup_timer(handle_clear_seen_funcs)
+    setup_timer(restart_sampling)
     execute_script_or_module(script, module, tool_args, script_args)
     reset_monitoring()
     post_process(
