@@ -593,7 +593,7 @@ def output_type_signatures(
             if t in existing_spec and s == existing_spec[t]:
                 continue
             if not fname_printed[t.file_name]:
-                print(f"{t.file_name}:\n{'-' * (len(t.file_name) + 1)}\n", file=file)
+                print(f"{t.file_name}:\n{'=' * (len(t.file_name) + 1)}\n", file=file)
                 fname_printed[t.file_name] = True
             print(f"{s} ...\n", file=file)
             # Print diffs
