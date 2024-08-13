@@ -1,7 +1,3 @@
-import numpy as np
-import pandas as pd
-import torch
-
 from collections import defaultdict
 from typing import (
     Any,
@@ -86,6 +82,10 @@ def convert_to_jaxtyping(
     return result
 
 def update_arg_shapes(func: FuncInfo, the_values: Dict[str, Any]) -> None:
+    import numpy as np
+    import pandas as pd
+    import torch
+
     shapes = []
     for k in the_values:
         val = the_values[k]
@@ -99,6 +99,10 @@ def update_arg_shapes(func: FuncInfo, the_values: Dict[str, Any]) -> None:
 
 
 def update_retval_shapes(func: FuncInfo, retval: Any) -> None:
+    import numpy as np
+    import pandas as pd
+    import torch
+
     if len(current_shape[func]) == 0:
         return
     shapes = []
