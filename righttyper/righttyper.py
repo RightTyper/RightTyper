@@ -119,6 +119,10 @@ R = TypeVar('R')
 def track_instrumentation_overhead(func: Callable[P, R]) -> Callable[P, R]:
     @functools.wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        result = func(*args, **kwargs)
+        return func
+
+    
         global total_instrumentation_time
         t = StopWatch()
         result = func(*args, **kwargs)
@@ -182,7 +186,7 @@ script_dir = ""
 include_files_regex = ""
 include_all = False
 
-@track_instrumentation_overhead
+# @track_instrumentation_overhead
 def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     """
     Process the function entry point, perform monitoring related operations,
@@ -194,7 +198,6 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     Returns:
         str: Status of monitoring
     """
-    
     if should_skip_function(
         code,
         script_dir,
@@ -207,21 +210,6 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
         Filename(code.co_filename),
         FunctionName(code.co_qualname),
     )
-    exec_info.total_function_calls += 1
-
-    # If at least one second has elapsed (to avoid startup bias)
-    # and we are over our threshold, disable this function with probability
-    # proportional to frequency.
-    elapsed = elapsed_time.elapsed()
-    exec_fn_fraction = total_instrumentation_time / elapsed
-    if elapsed > 1e9 and exec_fn_fraction > (target_overhead / 100.0):
-        r = random.random()
-        if r <= len(exec_info.execution_time[t]) / exec_info.total_function_calls:
-            # Disable this function call until the next sampling period.
-            disabled_funcs.add(t)
-
-    # Record the start time of the function, keyed to the current thread
-    exec_info.start_time[t].append(time.perf_counter_ns())
     
     sampled_funcs.add(t)
     visited_funcs.add(t)
@@ -230,10 +218,7 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     if frame and frame.f_back and frame.f_back.f_back:
         process_function_arguments(frame, t, ignore_annotations)
 
-    if t in disabled_funcs:
-        return sys.monitoring.DISABLE
-    
-    return None
+    return sys.monitoring.DISABLE
 
 
 def call_handler(
@@ -294,7 +279,7 @@ def exit_function(
     )
 
 
-@track_instrumentation_overhead
+# @track_instrumentation_overhead
 def exit_function_worker(
     code: CodeType,
     instruction_offset: int,
@@ -318,7 +303,6 @@ def exit_function_worker(
     Returns:
     int: indicator whether to continue the monitoring, always returns sys.monitoring.DISABLE in this function.
     """
-
     # Check if the function name is in the excluded list
     func_name = code.co_qualname
     filename = code.co_filename
@@ -334,12 +318,6 @@ def exit_function_worker(
         Filename(filename),
         FunctionName(func_name),
     )
-
-    # Update execution time
-    current_time = time.perf_counter_ns()
-    if t in exec_info.start_time and len(exec_info.start_time[t]) > 0:
-        exec_time = current_time - exec_info.start_time[t].pop()
-        exec_info.execution_time[t].push(exec_time)
 
     # Special handling for functions that yielded.
     if t in yielded_funcs:
@@ -375,8 +353,7 @@ def exit_function_worker(
     if not found:
         visited_funcs_retval[t].add(TypenameFrequency(Typename(typename), 1))
 
-    if t in disabled_funcs:
-        return sys.monitoring.DISABLE
+    return sys.monitoring.DISABLE
 
     return None
 
@@ -664,6 +641,7 @@ def execute_script_or_module(
 
 def post_process(
     overwrite: bool = True,
+    output_files: bool = True,
     ignore_annotations: bool = False,
     insert_imports: bool = False,
     generate_stubs: bool = False,
@@ -686,12 +664,13 @@ def post_process(
             arg_types,
             existing_annotations,
         )
-    process_all_files(
-        ignore_annotations,
-        overwrite,
-        insert_imports,
-        srcdir,
-    )
+    if output_files:
+        process_all_files(
+            ignore_annotations,
+            overwrite,
+            insert_imports,
+            srcdir,
+        )
 
 
 def output_type_signatures_to_file(namespace: Dict[str, Any]) -> None:
@@ -863,6 +842,12 @@ SCRIPT = ScriptParamType()
     show_default=True,
 )
 @click.option(
+    "--output-files/--no-output-files",
+    help="Output annotated files (possibly overwriting, if specified).",
+    default=False,
+    show_default=True,
+)
+@click.option(
     "--ignore-annotations",
     is_flag=True,
     help="Ignore existing annotations and overwrite with type information.",
@@ -936,6 +921,7 @@ def main(
     type_coverage_summary: str,
     verbose: bool,
     overwrite: bool,
+    output_files: bool,
     ignore_annotations: bool,
     insert_imports: bool,
     generate_stubs: bool,
@@ -991,6 +977,7 @@ def main(
     reset_monitoring()
     post_process(
         overwrite=overwrite,
+        output_files=output_files,
         ignore_annotations=ignore_annotations,
         insert_imports=insert_imports,
         generate_stubs=generate_stubs,

@@ -36,7 +36,12 @@ def transform_input(
         for j in range(len(tup[i])):
             v = []
             for input_entry in inp:
-                v.append(input_entry[i][j])
+                try:
+                    v.append(input_entry[i][j])
+                except IndexError:
+                    # FIXME - we should filter out the case where there are no shapes (all tuples are ()).
+                    # print(f"{i=} {j=} {input_entry=}")
+                    continue
             if len(set(v)) == 1:
                 # All the same
                 output_vals[i][j] = f"{v[0]}"
