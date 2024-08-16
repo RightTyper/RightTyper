@@ -921,6 +921,7 @@ SCRIPT = ScriptParamType()
 @click.option(
     "--target-overhead",
     type=float,
+    default=target_overhead,
     help="Target overhead, as a percentage (e.g., 5).",
 )
 def main(
