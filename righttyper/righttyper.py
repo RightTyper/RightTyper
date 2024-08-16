@@ -595,8 +595,8 @@ def output_type_signatures(
                         # Has a return value
                         retval_type = union_typeset_str(t.file_name, visited_funcs_retval[t], {})
                         print(f"def {t.func_name}({', '.join(annotations)}) -> {ret_annotation.format(retval_type)}: ...\n", file=file)
-                else:
-                    print(f"def {t.func_name}({', '.join(annotations)}) -> None: ...\n", file=file)
+                    else:
+                        print(f"def {t.func_name}({', '.join(annotations)}) -> None: ...\n", file=file)
                 except IndexError:
                     # FIXME this should not happen, to track down later
                     logger.exception(f"IndexError in annotations")
