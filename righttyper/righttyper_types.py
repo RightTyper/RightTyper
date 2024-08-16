@@ -64,7 +64,7 @@ class ArgInfo:
     type_name_set: TypenameSet
 
 
-@dataclass
+@dataclass(eq=True, frozen=True)
 class ImportDetails:
     object_name: str
     object_aliases: FrozenSet[str]
@@ -72,7 +72,7 @@ class ImportDetails:
     module_aliases: FrozenSet[str]
 
 
-@dataclass
+@dataclass(eq=True, frozen=True)
 class ImportInfo:
     # 1. filename where the function lives
     function_fname: Filename
