@@ -585,17 +585,22 @@ def output_type_signatures(
             except:
                 ret_annotation = None
             if annotations:
-                print("# Shape annoations", file=file)
-                print("@beartype", file=file)
                 # Process all annotations
-                annotations = [visited_funcs_arguments[t][index].arg_name + ": " + annotation.format(union_typeset_str(t.file_name, visited_funcs_arguments[t][index].type_name_set, {})) for index, annotation in enumerate(annotations)]
-                if t in visited_funcs_retval:
-                    assert ret_annotation
-                    # Has a return value
-                    retval_type = union_typeset_str(t.file_name, visited_funcs_retval[t], {})
-                    print(f"def {t.func_name}({', '.join(annotations)}) -> {ret_annotation.format(retval_type)}: ...\n", file=file)
+                try:
+                    annotations = [visited_funcs_arguments[t][index].arg_name + ": " + annotation.format(union_typeset_str(t.file_name, visited_funcs_arguments[t][index].type_name_set, {})) for index, annotation in enumerate(annotations)]
+                    print("# Shape annoations", file=file)
+                    print("@beartype", file=file)
+                    if t in visited_funcs_retval:
+                        assert ret_annotation
+                        # Has a return value
+                        retval_type = union_typeset_str(t.file_name, visited_funcs_retval[t], {})
+                        print(f"def {t.func_name}({', '.join(annotations)}) -> {ret_annotation.format(retval_type)}: ...\n", file=file)
                 else:
                     print(f"def {t.func_name}({', '.join(annotations)}) -> None: ...\n", file=file)
+                except IndexError:
+                    # FIXME this should not happen, to track down later
+                    logger.exception(f"IndexError in annotations")
+                    
                     
         except KeyError:
             # Something weird happened
