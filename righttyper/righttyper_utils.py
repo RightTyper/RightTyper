@@ -25,7 +25,7 @@ from righttyper.righttyper_types import (
 
 TOOL_ID: int = 3
 TOOL_NAME: Final[str] = "righttyper"
-_SAMPLING_INTERVAL = 1.0
+_SAMPLING_INTERVAL = 0.01
 _DEBUG_PRINT: bool = False
 
 logger = logging.getLogger("righttyper")
@@ -42,7 +42,7 @@ def get_sampling_interval() -> float:
 
 def update_sampling_interval() -> None:
     global _SAMPLING_INTERVAL
-    _SAMPLING_INTERVAL *= 1.5
+    ## FIXME _SAMPLING_INTERVAL *= 1.5
 
 
 def debug_print(args: Any, *varargs: Any, **kwargs: Any) -> None:
