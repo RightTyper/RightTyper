@@ -111,6 +111,8 @@ class StopWatch:
 elapsed_time = StopWatch()
 total_instrumentation_time = 0
 target_overhead = 5 # default
+sample_count_instrumentation = 0.0
+sample_count_total = 0.0
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -519,7 +521,7 @@ def update_argument_type(
             reset_sampling_interval()
 
 
-def restart_sampling(_signum: int, _frame: Optional[FrameType]) -> None:
+def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
     """
     This function handles the task of clearing the seen functions.
     Called when a timer signal is received.
@@ -528,6 +530,17 @@ def restart_sampling(_signum: int, _frame: Optional[FrameType]) -> None:
         _signum: The signal number
         _frame: The current stack frame
     """
+    # Walk the stack to see if righttyper instrumentation is running (and thus instrumentation)
+    global sample_count_instrumentation, sample_count_total
+    sample_count_total += 1.0
+    f = frame
+    while f:
+        func_name = f.f_code.co_qualname
+        if func_name in { 'enter_function', 'call_handler', 'exit_function_worker' }:
+            sample_count_instrumentation += 1.0
+            break
+        f = f.f_back
+    print(f"instrumentation overhead = {sample_count_instrumentation / sample_count_total}")
     # Clear the sampled and disabled functions
     sampled_funcs.clear()
     disabled_funcs.clear()
