@@ -30,26 +30,19 @@ def register_monitoring_callbacks(
         event_set |= event
 
     sys.monitoring.set_events(TOOL_ID, event_set)
-    sys.monitoring.register_callback(
-        TOOL_ID,
-        sys.monitoring.events.PY_START,
-        lambda x, y: enter_function(ignore_annotations, x),
-    )
-    sys.monitoring.register_callback(
-        TOOL_ID,
-        sys.monitoring.events.CALL,
-        call_handler,
-    )
-    sys.monitoring.register_callback(
-        TOOL_ID,
-        sys.monitoring.events.PY_RETURN,
-        exit_function,
-    )
-    sys.monitoring.register_callback(
-        TOOL_ID,
-        sys.monitoring.events.PY_YIELD,
-        yield_function,
-    )
+
+    fns = { sys.monitoring.events.PY_START : (lambda x, y: enter_function(ignore_annotations, x)),
+            sys.monitoring.events.CALL : call_handler,
+            sys.monitoring.events.PY_RETURN : exit_function,
+            sys.monitoring.events.PY_YIELD : yield_function,
+           }
+
+    for event in fns:
+        sys.monitoring.register_callback(
+            TOOL_ID,
+            event,
+            fns[event],
+        )
 
 
 def reset_monitoring() -> None:
