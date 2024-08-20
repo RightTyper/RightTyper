@@ -64,7 +64,6 @@ from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
     ArgumentType,
-    ExecInfo,
     Filename,
     FuncInfo,
     FunctionName,
@@ -134,9 +133,6 @@ not_annotated: Dict[FuncInfo, Set[str]] = defaultdict(set)
 # Existing annotations (variable to type annotations, optionally
 # including 'return')
 existing_annotations: Dict[FuncInfo, Dict[str, str]] = defaultdict(dict)
-
-# Thread-local execution time tracking for functions
-exec_info = ExecInfo()
 
 # Track the file names and class names for classes
 # that will need import statements
