@@ -37,16 +37,12 @@ version = "0.0.5"
 authors = [
   { name="Emery Berger", email="emerydb@amazon.com" },
 ]
-dependencies = [ "libcst==1.2.0",
-		 "click>=8.1.7",
-		 "numpy >= 1.26.4",
-		 "pandas >= 2.2.0",
-		 "torch >= 2.3.1",
+dependencies = [ "libcst >= 1.2.0",
+		 "click >= 8.1.7",
 		 "rich >= 13.7.1",
 		 "runstats>=2.0.0",
-		 "scipy>=1.12.0",
-		 "boto3>=1.34.68",
 		 ]
+	 
 description = "A fast runtime type hint assistant for Python code."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -54,6 +50,14 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+shapes = [
+    "beartype",
+    "numpy >= 1.26.4",
+    "pandas >= 2.2.0",
+    "torch >= 2.3.1",
 ]
 
 [project.scripts]

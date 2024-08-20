@@ -91,16 +91,16 @@ def update_arg_shapes(func: FuncInfo, the_values: Dict[str, Any]) -> None:
     import pandas as pd
     import torch
 
-    shapes = []
+    the_shapes : List[Any] = []
     for k in the_values:
         val = the_values[k]
         if isinstance(val, (pd.DataFrame, np.ndarray)):
-            shapes.append(tuple(val.shape))
+            the_shapes.append(tuple(val.shape))
         elif isinstance(val, torch.Tensor):
-            shapes.append(tuple(val.shape))
+            the_shapes.append(tuple(val.shape))
         else:
-            shapes.append(tuple())
-    current_shape[func].append(tuple(shapes))
+            the_shapes.append(tuple())
+    current_shape[func].append(tuple(the_shapes))
 
 
 def update_retval_shapes(func: FuncInfo, retval: Any) -> None:
