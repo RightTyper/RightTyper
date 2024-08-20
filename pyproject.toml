@@ -33,14 +33,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "righttyper"
-version = "0.0.5"
+version = "0.0.6"
 authors = [
   { name="Emery Berger", email="emerydb@amazon.com" },
 ]
 dependencies = [ "libcst >= 1.2.0",
 		 "click >= 8.1.7",
 		 "rich >= 13.7.1",
-		 "runstats>=2.0.0",
 		 ]
 	 
 description = "A fast runtime type hint assistant for Python code."
