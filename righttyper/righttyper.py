@@ -78,13 +78,13 @@ from righttyper.righttyper_utils import (
     TOOL_NAME,
     debug_print,
     debug_print_set_level,
-    get_sampling_interval,
     make_type_signature,
-    reset_sampling_interval,
+#    get_sampling_interval,
+#    update_sampling_interval,
+#    reset_sampling_interval,
     skip_this_file,
     unannotated,
     union_typeset_str,
-    update_sampling_interval,
 )
 
 # Below is to mollify mypy.
@@ -93,55 +93,17 @@ try:
 except Exception:
     pass
 
-class StopWatch:
-    def __init__(self):
-        self.reset()
-        
-    @property
-    def start(self) -> int:
-        return self.start_time
-
-    def reset(self):
-        self.start_time = time.perf_counter_ns()
-        
-    def elapsed(self) -> int:
-        t = time.perf_counter_ns() - self.start_time
-        return t
-
-elapsed_time = StopWatch()
-total_instrumentation_time = 0
-target_overhead = 5 # default
-
-P = ParamSpec('P')
-R = TypeVar('R')
-
-# We do this to track instrumentation overhead
-def track_instrumentation_overhead(func: Callable[P, R]) -> Callable[P, R]:
-    @functools.wraps(func)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        result = func(*args, **kwargs)
-        return func
-
     
-        global total_instrumentation_time
-        t = StopWatch()
-        result = func(*args, **kwargs)
-        total_instrumentation_time += t.elapsed()
-        return result
-
-    return wrapper
-
+target_overhead : float = 5.0 # default
+instrumentation_overhead = 0.0
+alpha = 0.9
+sample_count_instrumentation = 0.0
+sample_count_total = 0.0
 
 logger = logging.getLogger("righttyper")
 
 # All visited functions (file name and function name)
 visited_funcs: Set[FuncInfo] = set()
-
-# All sampled functions (may be cleared, always a subset of visited_funcs).
-sampled_funcs: Set[FuncInfo] = set()
-
-# All disabled functions (may be cleared, always a subset of sampled_funcs).
-disabled_funcs: Set[FuncInfo] = set()
 
 # Any function that yielded at least once (and so will be treated as a
 # Generator)
@@ -185,8 +147,8 @@ namespace: Dict[str, Any] = {}
 script_dir = ""
 include_files_regex = ""
 include_all = False
+infer_shapes = False # tensor shape inference
 
-# @track_instrumentation_overhead
 def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     """
     Process the function entry point, perform monitoring related operations,
@@ -211,7 +173,6 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
         FunctionName(code.co_qualname),
     )
     
-    sampled_funcs.add(t)
     visited_funcs.add(t)
     
     frame = inspect.currentframe()
@@ -237,9 +198,6 @@ def call_handler(
         ):
             return sys.monitoring.DISABLE
         try:
-            # FIXME? do we still need the below line?
-            sampled_funcs.clear()
-            
             sys.monitoring.set_local_events(
                 TOOL_ID,
                 callable.__code__,
@@ -279,7 +237,6 @@ def exit_function(
     )
 
 
-# @track_instrumentation_overhead
 def exit_function_worker(
     code: CodeType,
     instruction_offset: int,
@@ -332,7 +289,8 @@ def exit_function_worker(
         visited_funcs_retval[t] = TypenameSet(set())
     debug_print(f"exit processing, retval was {visited_funcs_retval[t]=}")
 
-    update_retval_shapes(t, return_value)
+    if infer_shapes:
+        update_retval_shapes(t, return_value)
     typename = get_adjusted_full_type(return_value, class_name)
     if event_type == sys.monitoring.events.PY_YIELD:
         # Yield: call it a generator
@@ -355,8 +313,6 @@ def exit_function_worker(
 
     return sys.monitoring.DISABLE
 
-    return None
-
 
 def process_function_arguments(
     frame: Any,
@@ -365,7 +321,7 @@ def process_function_arguments(
 ) -> None:
     # NOTE: this backtracking logic is brittle and must be
     # adjusted if the call chain increases in length.
-    caller_frame = frame.f_back.f_back.f_back
+    caller_frame = frame.f_back.f_back # .f_back
     code = caller_frame.f_code
     class_name = get_class_name_from_stack()
     args, varargs, varkw, the_values = inspect.getargvalues(
@@ -379,7 +335,8 @@ def process_function_arguments(
     type_hints = get_function_type_hints(
         caller_frame, code, ignore_annotations
     )
-    update_arg_shapes(t, the_values)
+    if infer_shapes:
+        update_arg_shapes(t, the_values)
     
     update_function_annotations(
         t,
@@ -516,10 +473,12 @@ def update_argument_type(
                     break
         else:
             old_arginfo.type_name_set.add(next(iter(full_type_name_set)))
-            reset_sampling_interval()
+            # reset_sampling_interval()
 
 
-def restart_sampling(_signum: int, _frame: Optional[FrameType]) -> None:
+instrumentation_functions = { 'enter_function', 'call_handler', 'exit_function_worker', 'restart_sampling' }
+
+def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
     """
     This function handles the task of clearing the seen functions.
     Called when a timer signal is received.
@@ -528,17 +487,40 @@ def restart_sampling(_signum: int, _frame: Optional[FrameType]) -> None:
         _signum: The signal number
         _frame: The current stack frame
     """
-    # Clear the sampled and disabled functions
-    sampled_funcs.clear()
-    disabled_funcs.clear()
+    # Walk the stack to see if righttyper instrumentation is running (and thus instrumentation).
+    # We use this information to estimate instrumentation overhead, and put off restarting
+    # instrumentation until overhead drops below the target threshold.
+    global sample_count_instrumentation, sample_count_total
+    global instrumentation_overhead
+    sample_count_total += 1.0
+    in_instrumentation = 0.0
+    f = frame
+    # We stop walking the stack after a given number of frames to
+    # limit overhead. The instrumentation code should be fairly
+    # shallow, so this heuristic should have no impact on accuracy
+    # while improving performance.
+    countdown = 10 
+    while f and countdown > 0:
+        func_name = f.f_code.co_qualname
+        filename = f.f_code.co_filename
+        if func_name in instrumentation_functions and 'righttyper.py' in filename:
+            # In instrumentation code
+            sample_count_instrumentation += 1.0
+            break
+        f = f.f_back
+        countdown -= 1
+    instrumentation_overhead = sample_count_instrumentation / sample_count_total
+    if instrumentation_overhead <= target_overhead / 100.0:
+        # Instrumentation overhead remains low enough; restart instrumentation.
+        # Restart the system monitoring events
+        sys.monitoring.restart_events()
+    else:
+        pass
     # Set a timer for the next round of sampling.
-    update_sampling_interval()
     signal.setitimer(
         signal.ITIMER_REAL,
-        get_sampling_interval(),
+        0.01,
     )
-    # Restart the system monitoring events
-    sys.monitoring.restart_events()
 
 
 def output_type_signatures(
@@ -574,21 +556,22 @@ def output_type_signatures(
                 fname_printed[t.file_name] = True
             print(f"{s} ...\n", file=file)
             # Print diffs
-            import difflib
-            diffs = difflib.ndiff((existing_spec[t] + "\n").splitlines(True),
-                                  (s + "\n").splitlines(True))
-            print(''.join(diffs), file=file)
+            if t in existing_spec:
+                import difflib
+                diffs = difflib.ndiff((existing_spec[t] + "\n").splitlines(True),
+                                      (s + "\n").splitlines(True))
+                print(''.join(diffs), file=file)
             # First try at shapes
             annotations = print_annotation(t)
             try:
                 ret_annotation = annotations.pop()
             except:
                 ret_annotation = None
-            if annotations:
+            if annotations and infer_shapes:
                 # Process all annotations
                 try:
                     annotations = [visited_funcs_arguments[t][index].arg_name + ": " + annotation.format(union_typeset_str(t.file_name, visited_funcs_arguments[t][index].type_name_set, {})) for index, annotation in enumerate(annotations)]
-                    print("# Shape annoations", file=file)
+                    print("# Shape annotations", file=file)
                     print("@beartype", file=file)
                     if t in visited_funcs_retval:
                         assert ret_annotation
@@ -612,14 +595,16 @@ def initialize_globals(
     _include_all: bool,
     script: str,
     verbose: bool,
-    _target_overhead: float
+    _target_overhead: float,
+    shapes_: bool
 ) -> None:
     debug_print_set_level(verbose)
-    global include_files_regex, include_all, script_dir, target_overhead
+    global include_files_regex, include_all, script_dir, target_overhead, infer_shapes
     include_files_regex = include_files
     include_all = _include_all
     script_dir = os.path.dirname(os.path.realpath(script))
     target_overhead = _target_overhead
+    infer_shapes = shapes_
 
 def execute_script_or_module(
     script: str,
@@ -835,10 +820,17 @@ SCRIPT = ScriptParamType()
     help="Include only files matching the given regex pattern.",
 )
 @click.option(
+    "--infer-shapes",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Produce tensor shape annotations (compatible with jaxtyping)."
+)
+@click.option(
     "--srcdir",
     type=click.Path(exists=True, file_okay=False),
     default=os.getcwd(),
-    help="Use this as the base for imports.",
+    help="Use this directory as the base for imports.",
 )
 @click.option(
     "--overwrite/--no-overwrite",
@@ -930,6 +922,7 @@ def main(
     ignore_annotations: bool,
     insert_imports: bool,
     generate_stubs: bool,
+    infer_shapes: bool,
     srcdir: str,
     target_overhead: float,
 ) -> None:
@@ -937,6 +930,23 @@ def main(
     RightTyper efficiently generates types for your function
     arguments and return values.
     """
+    if infer_shapes:
+        found = defaultdict(bool)
+        try:
+            import numpy as np
+            found['numpy'] = True
+            import pandas as pd
+            found['pandas'] = True
+            import torch
+        except ModuleNotFoundError as e:
+            print("At least one of the following packages need to be installed:")
+            if not found['numpy']:
+                print("  * numpy")
+            if not found['pandas']:
+                print("  * pandas")
+            print("  * torch")
+            sys.exit(1)
+            
     if (
         type_coverage_by_directory or type_coverage_by_file
     ) and type_coverage_summary:
@@ -967,7 +977,7 @@ def main(
         annotation_coverage.print_file_summary(file_summary)
         return
 
-    initialize_globals(include_files, all_files, script, verbose, target_overhead)
+    initialize_globals(include_files, all_files, script, verbose, target_overhead, infer_shapes)
     tool_args, script_args = split_args_at_triple_dash(args)
     setup_tool_id()
     register_monitoring_callbacks(
