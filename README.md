@@ -32,7 +32,6 @@ just use `pip` as shown below:
 python3 -m pip install git+https://github.com/RightTyper/righttyper
 ```
 
-
 ## Usage
 
 To use RightTyper, simply run your script with `righttyper` instead of `python3`:
@@ -45,7 +44,7 @@ This will execute `your_script.py` with RightTyper's monitoring
 enabled. The type signatures of all functions will be recorded and
 output to a file named `righttyper.out`. The file contains, for every
 function, the signature, and a diff of the original function with the
-annotated version. It also generates `jaxtyping`-compatible shape
+annotated version. It also optionally generates `jaxtyping`-compatible shape
 annotations for NumPy/JAX/PyTorch tensors. Below is an example:
 
 ```diff

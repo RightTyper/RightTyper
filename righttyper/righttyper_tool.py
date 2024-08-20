@@ -1,7 +1,7 @@
 import signal
 import sys
 from types import CodeType, FrameType
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from righttyper.righttyper_utils import (
     TOOL_ID,
@@ -31,11 +31,12 @@ def register_monitoring_callbacks(
 
     sys.monitoring.set_events(TOOL_ID, event_set)
 
-    fns = { sys.monitoring.events.PY_START : (lambda x, y: enter_function(ignore_annotations, x)),
-            sys.monitoring.events.CALL : call_handler,
-            sys.monitoring.events.PY_RETURN : exit_function,
-            sys.monitoring.events.PY_YIELD : yield_function,
-           }
+    fns : Dict[Any, Callable[..., Any]]  = {
+        sys.monitoring.events.PY_START : (lambda x, y: enter_function(ignore_annotations, x)),
+        sys.monitoring.events.CALL : call_handler,
+        sys.monitoring.events.PY_RETURN : exit_function,
+        sys.monitoring.events.PY_YIELD : yield_function,
+    }
 
     for event in fns:
         sys.monitoring.register_callback(
@@ -62,12 +63,12 @@ def reset_monitoring() -> None:
 
 
 def setup_timer(
-    handle_clear_seen_funcs: Callable[[int, Optional[FrameType]], None],
+    func: Callable[[int, Optional[FrameType]], None],
 ) -> None:
-    signal.signal(signal.SIGALRM, handle_clear_seen_funcs)
+    signal.signal(signal.SIGALRM, func)
     signal.setitimer(
         signal.ITIMER_REAL,
-        get_sampling_interval(),
+        0.01,
     )
 
 
