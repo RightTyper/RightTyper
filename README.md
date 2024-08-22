@@ -2,7 +2,7 @@
 
 RightTyper is a Python tool that generates types for your function
 arguments and return values. It is inspired by and produces much the
-same results as Instagram's `monkeytype`.  At the same time,
+same results as Instagram's [`monkeytype`](https://github.com/Instagram/MonkeyType).  At the same time,
 RightTyper's approach ends up being more flexible and up to fifty
 times faster. RightTyper lets your code run at nearly full speed with
 almost no memory overhead. As a result, you won't experience slow
@@ -20,7 +20,7 @@ python3 -m righttyper -m pytest --continue-on-collection-errors /your/test/dir
 In addition to generating types, RightTyper has the following features:
 
 * Efficiently computes type annotation "coverage" for a file or directory of files
-* Infers shape annotations for NumPy/JAX/PyTorch tensors, compatible with `jaxtyping` and `beartype` or `typeguard`.
+* Infers shape annotations for NumPy/JAX/PyTorch tensors, compatible with [`jaxtyping`](https://docs.kidger.site/jaxtyping/) and [`beartype`](https://github.com/beartype/beartype) or [`typeguard`](https://typeguard.readthedocs.io/en/latest/).
 
 
 ## Installation
