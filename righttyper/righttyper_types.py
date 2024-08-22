@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import runstats
 import threading
 from collections import defaultdict
 from dataclasses import dataclass
@@ -82,13 +81,3 @@ class ImportInfo:
     class_name: str
     # 4. details for possible imports (see get_import_details).
     import_details: ImportDetails
-
-
-# Track execution time of functions to adjust sampling
-class ExecInfo(threading.local):
-    def __init__(self) -> None:
-        self.start_time: Dict[FuncInfo, List[float]] = defaultdict(list)
-        self.execution_time: Dict[FuncInfo, runstats.Statistics] = defaultdict(
-            runstats.Statistics
-        )
-        self.total_function_calls: int = 0
