@@ -151,6 +151,7 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     and manage the profiling of function execution.
 
     Args:
+        ignore_annotations: true if we ignore existing annotations
         code : CodeType object
 
     Returns:
@@ -168,7 +169,6 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
         Filename(code.co_filename),
         FunctionName(code.co_qualname),
     )
-    
     visited_funcs.add(t)
     
     frame = inspect.currentframe()
@@ -472,8 +472,6 @@ def update_argument_type(
             # reset_sampling_interval()
 
 
-instrumentation_functions = { 'enter_function', 'call_handler', 'exit_function_worker', 'restart_sampling' }
-
 def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
     """
     This function handles the task of clearing the seen functions.
@@ -497,9 +495,7 @@ def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
     # while improving performance.
     countdown = 10 
     while f and countdown > 0:
-        func_name = f.f_code.co_qualname
-        filename = f.f_code.co_filename
-        if func_name in instrumentation_functions and 'righttyper.py' in filename:
+        if f.f_code in instrumentation_functions_code:
             # In instrumentation code
             sample_count_instrumentation += 1.0
             break
@@ -518,6 +514,12 @@ def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
         0.01,
     )
 
+instrumentation_functions_code = set([
+        enter_function.__code__,
+        call_handler.__code__,
+        exit_function_worker.__code__,
+        restart_sampling.__code__,
+])
 
 def output_type_signatures(
     file: TextIO = sys.stdout,
