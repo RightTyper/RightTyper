@@ -24,11 +24,29 @@ class InsertTypingImportTransformer(cst.CSTTransformer):
     ) -> cst.Module:
         if not self.has_typing_import:
             # Create the import statement
-            typing_import = cst.SimpleStatementLine(
+            typing_import_star = cst.SimpleStatementLine(
                 body=[
                     cst.ImportFrom(
                         module=cst.Name(value="typing"),
                         names=cst.ImportStar(),
+                    )
+                ]
+            )
+            typing_import = cst.SimpleStatementLine(
+                body=[
+                    cst.ImportFrom(
+                        module=cst.Name(value="typing"),
+                        names=[
+                            cst.ImportAlias(name=cst.Name(value="Any")),
+                            cst.ImportAlias(name=cst.Name(value="Dict")),
+                            cst.ImportAlias(name=cst.Name(value="FrozenSet")),
+                            cst.ImportAlias(name=cst.Name(value="List")),
+                            cst.ImportAlias(name=cst.Name(value="None")),
+                            cst.ImportAlias(name=cst.Name(value="Optional")),
+                            cst.ImportAlias(name=cst.Name(value="Set")),
+                            cst.ImportAlias(name=cst.Name(value="Tuple")),
+                            cst.ImportAlias(name=cst.Name(value="Union")),
+                        ],
                     )
                 ]
             )
