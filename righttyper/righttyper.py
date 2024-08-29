@@ -324,7 +324,7 @@ def process_function_arguments(
         args.append(varkw)
 
     type_hints = get_function_type_hints(
-        caller_frame, code, ignore_annotations
+        caller_frame, code
     )
     if infer_shapes:
         update_arg_shapes(t, the_values)
@@ -383,7 +383,6 @@ def process_function_arguments(
 def get_function_type_hints(
     caller_frame: Any,
     code: CodeType,
-    ignore_annotations: bool,
 ) -> Dict[str, str]:
     for (
         name,
