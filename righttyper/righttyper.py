@@ -877,12 +877,6 @@ SCRIPT = ScriptParamType()
     help="Print diagnostic information.",
 )
 @click.option(
-    "--insert-imports",
-    is_flag=True,
-    help="Insert import statements for missing classes (MAY LEAD TO CIRCULAR IMPORTS).",
-    default=False,
-)
-@click.option(
     "--generate-stubs",
     is_flag=True,
     help="Generate stub files (.pyi).",
@@ -935,7 +929,6 @@ def main(
     overwrite: bool,
     output_files: bool,
     ignore_annotations: bool,
-    insert_imports: bool,
     generate_stubs: bool,
     infer_shapes: bool,
     srcdir: str,
@@ -1009,7 +1002,7 @@ def main(
         overwrite=overwrite,
         output_files=output_files,
         ignore_annotations=ignore_annotations,
-        insert_imports=insert_imports,
+        insert_imports=False, # disable inserting imports
         generate_stubs=generate_stubs,
         srcdir=srcdir,
     )
