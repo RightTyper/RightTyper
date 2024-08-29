@@ -25,8 +25,14 @@ In addition to generating types, RightTyper has the following features:
 
 ## Installation
 
-To install the latest version of RightTyper from its repository,
-just use `pip` as shown below:
+To install the latest released version, use `pip` as shown below:
+
+```bash
+python3 -m pip install righttyper
+```
+
+To install the development (current) version of RightTyper from its repository,
+use `pip` as shown below:
 
 ```bash
 python3 -m pip install git+https://github.com/RightTyper/righttyper
@@ -95,8 +101,6 @@ Options:
                                   with type information.
   -m, --module                    Run the script as a module.
   --verbose                       Print diagnostic information.
-  --insert-imports                Insert import statements for missing classes
-                                  (MAY LEAD TO CIRCULAR IMPORTS).
   --generate-stubs                Generate stub files (.pyi).
   --type-coverage-by-directory DIRECTORY
                                   Report per-directory type annotation

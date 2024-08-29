@@ -7,6 +7,7 @@ import os
 import runpy
 import signal
 import sys
+import importlib.util
 import importlib.metadata
 
 from collections import defaultdict

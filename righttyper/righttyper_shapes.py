@@ -8,14 +8,13 @@ from typing import (
     Tuple,
 )
 
-from righttyper.righttyper_types import (
-    FuncInfo
-)
+from righttyper.righttyper_types import FuncInfo
 
 # FIXME needs to be thread local
-current_shape : Dict[FuncInfo, List[Tuple[int, ...]]] = defaultdict(list)
+current_shape: Dict[FuncInfo, List[Tuple[int, ...]]] = defaultdict(list)
 
-captured_shapes : Dict[FuncInfo, Set[Tuple[int, ...]]] = defaultdict(set)
+captured_shapes: Dict[FuncInfo, Set[Tuple[int, ...]]] = defaultdict(set)
+
 
 def transform_input(
     inp: List[Any],
@@ -66,6 +65,7 @@ def transform_input(
     output_tuples = [tuple(i) for i in output_vals]
     return output_tuples
 
+
 def convert_to_jaxtyping(
     argument_datatypes: List[str],
     output_tuples: List[Tuple[Optional[str], ...]],
@@ -86,12 +86,13 @@ def convert_to_jaxtyping(
 
     return result
 
+
 def update_arg_shapes(func: FuncInfo, the_values: Dict[str, Any]) -> None:
     import numpy as np
     import pandas as pd
     import torch
 
-    the_shapes : List[Any] = []
+    the_shapes: List[Any] = []
     for k in the_values:
         val = the_values[k]
         if isinstance(val, (pd.DataFrame, np.ndarray)):
@@ -121,14 +122,16 @@ def update_retval_shapes(func: FuncInfo, retval: Any) -> None:
     merged_shapes = tuple(curr_shape + shapes)
     captured_shapes[func].add(merged_shapes)
     # print(f"Shape for {func} = {merged_shapes}")
-    
-    
+
+
 def print_annotation(func: FuncInfo) -> List[str]:
     # No annotations if the shape was never captured
     if func not in captured_shapes:
         return []
     # No annotations if all captured shapes are empty tuples
-    if all(all(s == () for s in shape) for shape in list(captured_shapes[func])):
+    if all(
+        all(s == () for s in shape) for shape in list(captured_shapes[func])
+    ):
         return []
     tups = transform_input(list(captured_shapes[func]))
     n = len(tups)
@@ -139,4 +142,3 @@ def print_annotation(func: FuncInfo) -> List[str]:
 def print_annotations() -> None:
     for func in captured_shapes:
         print(f"{func}: {print_annotation(func)}")
-

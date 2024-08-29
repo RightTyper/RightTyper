@@ -38,6 +38,7 @@ class InsertTypingImportTransformer(cst.CSTTransformer):
                         module=cst.Name(value="typing"),
                         names=[
                             cst.ImportAlias(name=cst.Name(value="Any")),
+                            cst.ImportAlias(name=cst.Name(value="Callable")),
                             cst.ImportAlias(name=cst.Name(value="Dict")),
                             cst.ImportAlias(name=cst.Name(value="FrozenSet")),
                             cst.ImportAlias(name=cst.Name(value="List")),

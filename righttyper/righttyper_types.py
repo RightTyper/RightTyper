@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import threading
-from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
     Any,
-    Dict,
     FrozenSet,
-    List,
     NewType,
     Set,
     Type,

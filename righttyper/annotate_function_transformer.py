@@ -26,24 +26,6 @@ class TypeNameExtractor(cst.CSTVisitor):
         self.names.add(node.value)
         return True
 
-    def leave_ClassDef(
-        self,
-        original_node: cst.ClassDef,
-        updated_node: cst.ClassDef,
-    ) -> Union[cst.BaseStatement, cst.RemovalSentinel]:
-        self.class_name.pop()
-        return original_node
-
-    def _should_output_as_string(self, annotation: str) -> bool:
-        # Parse the annotation expression and extract all names
-        parsed_expr = cst.parse_expression(annotation)
-        extractor = TypeNameExtractor()
-        parsed_expr.visit(extractor)
-        components = extractor.names
-        
-        # Check if all extracted names are in the allowed types list
-        return not all(comp in self.allowed_types for comp in components)
-    
     def visit_Attribute(self, node: cst.Attribute) -> Optional[bool]:
         # Handle cases like typing.List or custom_module.MyType
         full_name = node.attr.value
@@ -56,7 +38,7 @@ class TypeNameExtractor(cst.CSTVisitor):
         self.names.add(full_name)
         return True
 
-    
+
 class AnnotateFunctionTransformer(cst.CSTTransformer):
     def __init__(
         self,
@@ -69,7 +51,7 @@ class AnnotateFunctionTransformer(cst.CSTTransformer):
             ],
         ],
         not_annotated: Dict[FuncInfo, Set[str]],
-        allowed_types: List[str] = None,
+        allowed_types: List[str] = [],
         # generate_annotations_as_strings: bool = False,
     ) -> None:
         self.filename = filename
@@ -81,6 +63,7 @@ class AnnotateFunctionTransformer(cst.CSTTransformer):
             "Any",
             "bool",
             "bytes",
+            "Callable",
             "complex",
             "Dict",
             "dict",
@@ -96,29 +79,12 @@ class AnnotateFunctionTransformer(cst.CSTTransformer):
             "set",
             "str",
             "Tuple",
-            "Union"
+            "Union",
         ]
 
     def visit_ClassDef(self, node: cst.ClassDef) -> Optional[bool]:
         self.class_name.append(node.name.value)
         return None
-
-    def leave_ClassDef(
-        self,
-        original_node: cst.ClassDef,
-        updated_node: cst.ClassDef,
-    ) -> Union[cst.BaseStatement, cst.RemovalSentinel]:
-        self.class_name.pop()
-        return original_node
-
-
-    def leave_ClassDef(
-        self,
-        original_node: cst.ClassDef,
-        updated_node: cst.ClassDef,
-    ) -> Union[cst.BaseStatement, cst.RemovalSentinel]:
-        self.class_name.pop()
-        return original_node
 
     def leave_ClassDef(
         self,
@@ -134,7 +100,7 @@ class AnnotateFunctionTransformer(cst.CSTTransformer):
         extractor = TypeNameExtractor()
         parsed_expr.visit(extractor)
         components = extractor.names
-        
+
         # Check if all extracted names are in the allowed types list
         return not all(comp in self.allowed_types for comp in components)
 
@@ -193,5 +159,4 @@ class AnnotateFunctionTransformer(cst.CSTTransformer):
                         params=new_parameters
                     ),
                 )
-        return updated_node    
-
+        return updated_node

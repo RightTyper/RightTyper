@@ -40,7 +40,9 @@ def get_sampling_interval() -> float:
     return _SAMPLING_INTERVAL
 
 
-def update_sampling_interval(instrumentation_overhead, target_overhead) -> None:
+def update_sampling_interval(
+    instrumentation_overhead, target_overhead
+) -> None:
     global _SAMPLING_INTERVAL
     if instrumentation_overhead < target_overhead:
         _SAMPLING_INTERVAL *= 0.9
@@ -205,8 +207,7 @@ def make_type_signature(
     for index, arginfo in enumerate(args):
         argname = arginfo.arg_name
         arg_type = arg_types[
-            FuncInfo(Filename(file_name),
-                     FunctionName(func_name)),
+            FuncInfo(Filename(file_name), FunctionName(func_name)),
             argname,
         ]
         if arg_type == ArgumentType.vararg:

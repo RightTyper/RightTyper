@@ -228,9 +228,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
             if len(value) == 0:
                 tuple_str = "Tuple"
             else:
-                tuple_str = (
-                    f"Tuple[{', '.join(get_full_type(elem, depth + 1) for elem in value)}]"
-                )
+                tuple_str = f"Tuple[{', '.join(get_full_type(elem, depth + 1) for elem in value)}]"
             return tuple_str
     elif inspect.ismethod(value):
         return get_mypy_type_fn(value)
@@ -322,13 +320,15 @@ def update_argtypes(
         values: Any,
         arg_type_enum: ArgumentType,
     ) -> None:
-        types = TypenameSet({
-            TypenameFrequency(
-                Typename(get_adjusted_full_type(val, class_name)),
-                1,
-            )
-            for val in values
-        })
+        types = TypenameSet(
+            {
+                TypenameFrequency(
+                    Typename(get_adjusted_full_type(val, class_name)),
+                    1,
+                )
+                for val in values
+            }
+        )
         argtypes.append(
             ArgInfo(
                 ArgumentName(argument_name),
