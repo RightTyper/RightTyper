@@ -206,8 +206,8 @@ def get_full_type(value: Any, depth: int = 0) -> str:
                 f" {get_full_type(val, depth + 1)}]"
             )
         else:
-            # If the dictionary is empty, we just return 'dict' as the type
-            return "Dict[Any]"
+            # If the dictionary is empty, we just return a generic dict as the type
+            return "Dict[Any, Any]"
     elif isinstance(value, list):
         # Checking if the value is a list
         if value:

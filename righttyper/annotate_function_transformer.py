@@ -70,6 +70,7 @@ class AnnotateFunctionTransformer(cst.CSTTransformer):
             "float",
             "FrozenSet",
             "frozenset",
+            "Generator",
             "int",
             "List",
             "list",

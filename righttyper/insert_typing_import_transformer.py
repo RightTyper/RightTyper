@@ -41,6 +41,7 @@ class InsertTypingImportTransformer(cst.CSTTransformer):
                             cst.ImportAlias(name=cst.Name(value="Callable")),
                             cst.ImportAlias(name=cst.Name(value="Dict")),
                             cst.ImportAlias(name=cst.Name(value="FrozenSet")),
+                            cst.ImportAlias(name=cst.Name(value="Generator")),
                             cst.ImportAlias(name=cst.Name(value="List")),
                             cst.ImportAlias(name=cst.Name(value="Optional")),
                             cst.ImportAlias(name=cst.Name(value="Set")),
