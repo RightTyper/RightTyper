@@ -798,6 +798,23 @@ class ScriptParamType(click.ParamType):
             return ""
 
 
+def split_args_at_triple_dash(
+    args: List[str],
+) -> Tuple[List[str], List[str]]:
+    tool_args = []
+    script_args = []
+    triple_dash_found = False
+    for arg in args:
+        if arg == "---":
+            triple_dash_found = True
+            continue
+        if triple_dash_found:
+            script_args.append(arg)
+        else:
+            tool_args.append(arg)
+    return tool_args, script_args
+
+
 SCRIPT = ScriptParamType()
 
 
@@ -860,12 +877,6 @@ SCRIPT = ScriptParamType()
     help="Print diagnostic information.",
 )
 @click.option(
-    "--insert-imports",
-    is_flag=True,
-    help="Insert import statements for missing classes (MAY LEAD TO CIRCULAR IMPORTS).",
-    default=False,
-)
-@click.option(
     "--generate-stubs",
     is_flag=True,
     help="Generate stub files (.pyi).",
@@ -918,7 +929,6 @@ def main(
     overwrite: bool,
     output_files: bool,
     ignore_annotations: bool,
-    insert_imports: bool,
     generate_stubs: bool,
     infer_shapes: bool,
     srcdir: str,
@@ -992,24 +1002,7 @@ def main(
         overwrite=overwrite,
         output_files=output_files,
         ignore_annotations=ignore_annotations,
-        insert_imports=insert_imports,
+        insert_imports=False, # disable inserting imports
         generate_stubs=generate_stubs,
         srcdir=srcdir,
     )
-
-
-def split_args_at_triple_dash(
-    args: List[str],
-) -> Tuple[List[str], List[str]]:
-    tool_args = []
-    script_args = []
-    triple_dash_found = False
-    for arg in args:
-        if arg == "---":
-            triple_dash_found = True
-            continue
-        if triple_dash_found:
-            script_args.append(arg)
-        else:
-            tool_args.append(arg)
-    return tool_args, script_args
