@@ -798,6 +798,23 @@ class ScriptParamType(click.ParamType):
             return ""
 
 
+def split_args_at_triple_dash(
+    args: List[str],
+) -> Tuple[List[str], List[str]]:
+    tool_args = []
+    script_args = []
+    triple_dash_found = False
+    for arg in args:
+        if arg == "---":
+            triple_dash_found = True
+            continue
+        if triple_dash_found:
+            script_args.append(arg)
+        else:
+            tool_args.append(arg)
+    return tool_args, script_args
+
+
 SCRIPT = ScriptParamType()
 
 
@@ -996,20 +1013,3 @@ def main(
         generate_stubs=generate_stubs,
         srcdir=srcdir,
     )
-
-
-def split_args_at_triple_dash(
-    args: List[str],
-) -> Tuple[List[str], List[str]]:
-    tool_args = []
-    script_args = []
-    triple_dash_found = False
-    for arg in args:
-        if arg == "---":
-            triple_dash_found = True
-            continue
-        if triple_dash_found:
-            script_args.append(arg)
-        else:
-            tool_args.append(arg)
-    return tool_args, script_args
