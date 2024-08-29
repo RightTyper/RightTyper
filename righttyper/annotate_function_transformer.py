@@ -77,7 +77,27 @@ class AnnotateFunctionTransformer(cst.CSTTransformer):
         self.not_annotated = not_annotated
         self.class_name: List[str] = []
         # Initialize allowed types or use a default list
-        self.allowed_types = allowed_types or ["list", "str", "Any", "None", "Dict", "List", "Tuple", "int", "float", "bool", "Optional", "Union", "FrozenSet", "frozenset"]
+        self.allowed_types = allowed_types or [
+            "Any",
+            "bool",
+            "bytes",
+            "complex",
+            "Dict",
+            "dict",
+            "float",
+            "FrozenSet",
+            "frozenset",
+            "int",
+            "List",
+            "list",
+            "None",
+            "Optional",
+            "Set",
+            "set",
+            "str",
+            "Tuple",
+            "Union"
+        ]
 
     def visit_ClassDef(self, node: cst.ClassDef) -> Optional[bool]:
         self.class_name.append(node.name.value)
