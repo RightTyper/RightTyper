@@ -4,11 +4,9 @@ import inspect
 import logging
 import multiprocessing
 import os
-import random
 import runpy
 import signal
 import sys
-import time
 import importlib.metadata
 
 from collections import defaultdict
@@ -19,15 +17,12 @@ from types import (
 )
 from typing import (
     Any,
-    Callable,
     Dict,
     List,
     Optional,
-    ParamSpec,
     Set,
     TextIO,
     Tuple,
-    TypeVar,
     get_type_hints,
 )
 
@@ -78,9 +73,9 @@ from righttyper.righttyper_utils import (
     debug_print,
     debug_print_set_level,
     make_type_signature,
-#    get_sampling_interval,
-#    update_sampling_interval,
-#    reset_sampling_interval,
+    #    get_sampling_interval,
+    #    update_sampling_interval,
+    #    reset_sampling_interval,
     skip_this_file,
     unannotated,
     union_typeset_str,
@@ -92,8 +87,8 @@ try:
 except Exception:
     pass
 
-    
-target_overhead : float = 5.0 # default
+
+target_overhead: float = 5.0  # default
 instrumentation_overhead = 0.0
 alpha = 0.9
 sample_count_instrumentation = 0.0
@@ -143,7 +138,8 @@ namespace: Dict[str, Any] = {}
 script_dir = ""
 include_files_regex = ""
 include_all = False
-infer_shapes = False # tensor shape inference
+infer_shapes = False  # tensor shape inference
+
 
 def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
     """
@@ -170,7 +166,7 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
         FunctionName(code.co_qualname),
     )
     visited_funcs.add(t)
-    
+
     frame = inspect.currentframe()
     if frame and frame.f_back and frame.f_back.f_back:
         process_function_arguments(frame, t, ignore_annotations)
@@ -317,12 +313,10 @@ def process_function_arguments(
 ) -> None:
     # NOTE: this backtracking logic is brittle and must be
     # adjusted if the call chain increases in length.
-    caller_frame = frame.f_back.f_back # .f_back
+    caller_frame = frame.f_back.f_back  # .f_back
     code = caller_frame.f_code
     class_name = get_class_name_from_stack()
-    args, varargs, varkw, the_values = inspect.getargvalues(
-        caller_frame
-    )
+    args, varargs, varkw, the_values = inspect.getargvalues(caller_frame)
     if varargs:
         args.append(varargs)
     if varkw:
@@ -333,7 +327,7 @@ def process_function_arguments(
     )
     if infer_shapes:
         update_arg_shapes(t, the_values)
-    
+
     update_function_annotations(
         t,
         caller_frame,
@@ -346,8 +340,10 @@ def process_function_arguments(
     for arg in args:
         if arg:
             index = (
-                FuncInfo(Filename(caller_frame.f_code.co_filename),
-                         FunctionName(code.co_qualname)),
+                FuncInfo(
+                    Filename(caller_frame.f_code.co_filename),
+                    FunctionName(code.co_qualname),
+                ),
                 ArgumentName(arg),
             )
             update_argtypes(
@@ -487,13 +483,12 @@ def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
     global sample_count_instrumentation, sample_count_total
     global instrumentation_overhead
     sample_count_total += 1.0
-    in_instrumentation = 0.0
     f = frame
     # We stop walking the stack after a given number of frames to
     # limit overhead. The instrumentation code should be fairly
     # shallow, so this heuristic should have no impact on accuracy
     # while improving performance.
-    countdown = 10 
+    countdown = 10
     while f and countdown > 0:
         if f.f_code in instrumentation_functions_code:
             # In instrumentation code
@@ -501,7 +496,9 @@ def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
             break
         f = f.f_back
         countdown -= 1
-    instrumentation_overhead = sample_count_instrumentation / sample_count_total
+    instrumentation_overhead = (
+        sample_count_instrumentation / sample_count_total
+    )
     if instrumentation_overhead <= target_overhead / 100.0:
         # Instrumentation overhead remains low enough; restart instrumentation.
         # Restart the system monitoring events
@@ -514,20 +511,26 @@ def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
         0.01,
     )
 
-instrumentation_functions_code = set([
+
+instrumentation_functions_code = set(
+    [
         enter_function.__code__,
         call_handler.__code__,
         exit_function_worker.__code__,
         restart_sampling.__code__,
-])
+    ]
+)
+
 
 def output_type_signatures(
     file: TextIO = sys.stdout,
     namespace: Dict[str, Any] = globals(),
 ) -> None:
     # Print all type signatures
-    fname_printed : Dict[Filename, bool] = defaultdict(bool)
-    visited_funcs_by_fname = sorted(visited_funcs, key = lambda a: a.file_name + ":" + a.func_name)
+    fname_printed: Dict[Filename, bool] = defaultdict(bool)
+    visited_funcs_by_fname = sorted(
+        visited_funcs, key=lambda a: a.file_name + ":" + a.func_name
+    )
     for t in visited_funcs_by_fname:
         if skip_this_file(
             t.file_name,
@@ -550,39 +553,65 @@ def output_type_signatures(
             if t in existing_spec and s == existing_spec[t]:
                 continue
             if not fname_printed[t.file_name]:
-                print(f"{t.file_name}:\n{'=' * (len(t.file_name) + 1)}\n", file=file)
+                print(
+                    f"{t.file_name}:\n{'=' * (len(t.file_name) + 1)}\n",
+                    file=file,
+                )
                 fname_printed[t.file_name] = True
             print(f"{s} ...\n", file=file)
             # Print diffs
             if t in existing_spec:
                 import difflib
-                diffs = difflib.ndiff((existing_spec[t] + "\n").splitlines(True),
-                                      (s + "\n").splitlines(True))
-                print(''.join(diffs), file=file)
+
+                diffs = difflib.ndiff(
+                    (existing_spec[t] + "\n").splitlines(True),
+                    (s + "\n").splitlines(True),
+                )
+                print("".join(diffs), file=file)
             # First try at shapes
             annotations = print_annotation(t)
             try:
                 ret_annotation = annotations.pop()
-            except:
+            except IndexError:
                 ret_annotation = None
             if annotations and infer_shapes:
                 # Process all annotations
                 try:
-                    annotations = [visited_funcs_arguments[t][index].arg_name + ": " + annotation.format(union_typeset_str(t.file_name, visited_funcs_arguments[t][index].type_name_set, {})) for index, annotation in enumerate(annotations)]
+                    annotations = [
+                        visited_funcs_arguments[t][index].arg_name
+                        + ": "
+                        + annotation.format(
+                            union_typeset_str(
+                                t.file_name,
+                                visited_funcs_arguments[t][
+                                    index
+                                ].type_name_set,
+                                {},
+                            )
+                        )
+                        for index, annotation in enumerate(annotations)
+                    ]
                     print("# Shape annotations", file=file)
                     print("@beartype", file=file)
                     if t in visited_funcs_retval:
                         assert ret_annotation
                         # Has a return value
-                        retval_type = union_typeset_str(t.file_name, visited_funcs_retval[t], {})
-                        print(f"def {t.func_name}({', '.join(annotations)}) -> {ret_annotation.format(retval_type)}: ...\n", file=file)
+                        retval_type = union_typeset_str(
+                            t.file_name, visited_funcs_retval[t], {}
+                        )
+                        print(
+                            f"def {t.func_name}({', '.join(annotations)}) -> {ret_annotation.format(retval_type)}: ...\n",
+                            file=file,
+                        )
                     else:
-                        print(f"def {t.func_name}({', '.join(annotations)}) -> None: ...\n", file=file)
+                        print(
+                            f"def {t.func_name}({', '.join(annotations)}) -> None: ...\n",
+                            file=file,
+                        )
                 except IndexError:
                     # FIXME this should not happen, to track down later
-                    logger.exception(f"IndexError in annotations")
-                    
-                    
+                    logger.exception("IndexError in annotations")
+
         except KeyError:
             # Something weird happened
             logger.exception(f"KeyError: {t=}")
@@ -594,7 +623,7 @@ def initialize_globals(
     script: str,
     verbose: bool,
     _target_overhead: float,
-    shapes_: bool
+    shapes_: bool,
 ) -> None:
     debug_print_set_level(verbose)
     global include_files_regex, include_all, script_dir, target_overhead, infer_shapes
@@ -603,6 +632,7 @@ def initialize_globals(
     script_dir = os.path.dirname(os.path.realpath(script))
     target_overhead = _target_overhead
     infer_shapes = shapes_
+
 
 def execute_script_or_module(
     script: str,
@@ -839,7 +869,7 @@ SCRIPT = ScriptParamType()
     is_flag=True,
     default=False,
     show_default=True,
-    help="Produce tensor shape annotations (compatible with jaxtyping)."
+    help="Produce tensor shape annotations (compatible with jaxtyping).",
 )
 @click.option(
     "--srcdir",
@@ -939,22 +969,22 @@ def main(
     arguments and return values.
     """
     if infer_shapes:
-        found = defaultdict(bool)
-        try:
-            import numpy as np
-            found['numpy'] = True
-            import pandas as pd
-            found['pandas'] = True
-            import torch
-        except ModuleNotFoundError as e:
-            print("At least one of the following packages need to be installed:")
-            if not found['numpy']:
-                print("  * numpy")
-            if not found['pandas']:
-                print("  * pandas")
-            print("  * torch")
+        # Check for required packages for shape inference
+        found_package = defaultdict(bool)
+        packages = [ "numpy", "pandas", "torch" ]
+        all_packages_found = True
+        for package in packages:
+            found_package[package] = importlib.util.find_spec(package) is not None
+            all_packages_found &= found_package[package]
+        if not all_packages_found:
+            print(
+                "The following package(s) need to be installed:"
+            )
+            for package in packages:
+                if not found_package[package]:
+                    print(f" * {package}")
             sys.exit(1)
-            
+
     if (
         type_coverage_by_directory or type_coverage_by_file
     ) and type_coverage_summary:
@@ -985,7 +1015,14 @@ def main(
         annotation_coverage.print_file_summary(file_summary)
         return
 
-    initialize_globals(include_files, all_files, script, verbose, target_overhead, infer_shapes)
+    initialize_globals(
+        include_files,
+        all_files,
+        script,
+        verbose,
+        target_overhead,
+        infer_shapes,
+    )
     tool_args, script_args = split_args_at_triple_dash(args)
     setup_tool_id()
     register_monitoring_callbacks(
@@ -1002,7 +1039,7 @@ def main(
         overwrite=overwrite,
         output_files=output_files,
         ignore_annotations=ignore_annotations,
-        insert_imports=False, # disable inserting imports
+        insert_imports=False,  # disable inserting imports
         generate_stubs=generate_stubs,
         srcdir=srcdir,
     )
