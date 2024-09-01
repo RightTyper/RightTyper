@@ -22,22 +22,22 @@ class ConstructImportTransformer(cst.CSTTransformer):
         original_node: cst.Module,
         updated_node: cst.Module,
     ) -> cst.Module:
-        new_imports = []  # set()
-
-        # import site
-        # import sysconfig
-
-        # Paths to the main and user libraries, with an os separator added
-        # Used to generate import statements later.
-        # purelib = sysconfig.get_paths()["purelib"]
-        # platstdlib = sysconfig.get_paths()["platstdlib"]
-        # userlib = site.getusersitepackages()
-
+        new_imports = []
         for imp in self.imports:
             q = generate_import_nodes(imp.import_details)
             new_imports.extend(q)
 
-        # Add all import statements at the beginning of the module
+
+        # Ensure that we only add valid statements, not EmptyLine nodes
+        valid_imports = [imp for imp in new_imports if not isinstance(imp, cst.EmptyLine)]
+            
+        # Create an If(TYPE_CHECKING) node
+        type_checking_imports = cst.If(
+            test=cst.Name("TYPE_CHECKING"),
+            body=cst.IndentedBlock(body=[cst.SimpleStatementLine([imp]) for imp in valid_imports]),
+        )
+
+        # Add the TYPE_CHECKING block at the beginning of the module
         return updated_node.with_changes(
-            body=list(new_imports) + list(updated_node.body)
+            body=[type_checking_imports] + list(updated_node.body)
         )

@@ -98,7 +98,7 @@ def get_import_details(
         frame = frame.f_back
     tup = ImportDetails(
         obj_name,
-        frozenset(obj_aliases),
+        frozenset(), # temporarily disabling this: frozenset(obj_aliases) - this was intended to capture import aliases but is not reliable
         module_name,
         frozenset(module_aliases),
     )
@@ -228,17 +228,16 @@ def generate_import_nodes(
 
     for alias in details.object_aliases:
         try:
-            import_nodes.append(
-                cst.ImportFrom(
-                    module=create_dotted_name(details.import_module_name),
-                    names=[
-                        cst.ImportAlias(
-                            name=cst.Name(details.object_name),
-                            asname=cst.AsName(name=cst.Name(alias)),
-                        )
-                    ],
-                )
+            stmt = cst.ImportFrom(
+                module=create_dotted_name(details.import_module_name),
+                names=[
+                    cst.ImportAlias(
+                        name=cst.Name(details.object_name),
+                        asname=cst.AsName(name=cst.Name(alias)),
+                    )
+                ],
             )
+            import_nodes.append(stmt)
             import_nodes.append(cst.EmptyLine())
         except cst.CSTValidationError:
             logger.warning(
@@ -257,16 +256,15 @@ def generate_import_nodes(
     import_nodes.append(cst.EmptyLine())
 
     for alias in details.module_aliases:
-        import_nodes.append(
-            cst.Import(
-                names=[
-                    cst.ImportAlias(
-                        name=create_dotted_name(details.import_module_name),
-                        asname=cst.AsName(name=cst.Name(alias)),
-                    )
-                ]
-            )
+        stmt = cst.Import(
+            names=[
+                cst.ImportAlias(
+                    name=create_dotted_name(details.import_module_name),
+                    asname=cst.AsName(name=cst.Name(alias)),
+                )
+            ]
         )
+        import_nodes.append(stmt)
         import_nodes.append(cst.EmptyLine())
 
     return import_nodes

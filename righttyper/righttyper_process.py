@@ -110,16 +110,12 @@ def process_file(
     if modified_tree.code == source:
         return
 
-    # Add an import statement if needed.
-    # FIXME: this messes with from __future__ imports, which need to be the first import
-    transformed = preface_with_typing_import(modified_tree.code)
-
     # If there are needed imports for class defs, process these
     needed_imports = set(
         imp for imp in imports if imp.function_fname == filename
     )
     if needed_imports:
-        tree = cst.parse_module(transformed)
+        tree = cst.parse_module(modified_tree.code)
         import_transformer = ConstructImportTransformer(
             imports=needed_imports,
             root_path=srcdir,
@@ -133,6 +129,11 @@ def process_file(
             print(traceback.format_exc())
             print(e)
 
+    # Add an import statement if needed.
+    # FIXME: this messes with from __future__ imports, which need to be the first import
+    transformed = preface_with_typing_import(transformed)
+
+            
     with open(
         filename + ("" if overwrite else ".typed"),
         "w",

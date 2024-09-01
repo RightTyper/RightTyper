@@ -1039,7 +1039,7 @@ def main(
         overwrite=overwrite,
         output_files=output_files,
         ignore_annotations=ignore_annotations,
-        insert_imports=False,  # disable inserting imports
+        insert_imports=True,
         generate_stubs=generate_stubs,
         srcdir=srcdir,
     )
