@@ -98,7 +98,7 @@ def get_import_details(
         frame = frame.f_back
     tup = ImportDetails(
         obj_name,
-        frozenset(), # temporarily disabling this: frozenset(obj_aliases),
+        frozenset(), # temporarily disabling this: frozenset(obj_aliases) - this was intended to capture import aliases but is not reliable
         module_name,
         frozenset(module_aliases),
     )
