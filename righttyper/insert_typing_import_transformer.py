@@ -46,6 +46,7 @@ class InsertTypingImportTransformer(cst.CSTTransformer):
                             cst.ImportAlias(name=cst.Name(value="Optional")),
                             cst.ImportAlias(name=cst.Name(value="Set")),
                             cst.ImportAlias(name=cst.Name(value="Tuple")),
+                            cst.ImportAlias(name=cst.Name(value="TYPE_CHECKING")),
                             cst.ImportAlias(name=cst.Name(value="Union")),
                         ],
                     )
