@@ -121,8 +121,7 @@ def process_file(
             root_path=srcdir,
         )
         try:
-            transformed_tree = tree.visit(import_transformer)
-            transformed = transformed_tree.code
+            modified_tree = tree.visit(import_transformer)
         except Exception as e:
             import traceback
 
@@ -131,8 +130,7 @@ def process_file(
 
     # Add an import statement if needed.
     # FIXME: this messes with from __future__ imports, which need to be the first import
-    transformed = preface_with_typing_import(transformed)
-
+    transformed = preface_with_typing_import(modified_tree.code)
             
     with open(
         filename + ("" if overwrite else ".typed"),
