@@ -7,16 +7,6 @@ class InsertTypingImportTransformer(cst.CSTTransformer):
     def __init__(self) -> None:
         self.has_typing_import = False
 
-    def visit_ImportFrom(self, node: cst.ImportFrom) -> Optional[bool]:
-        # Check if there is already an import from 'typing' with '*'
-        if (
-            isinstance(node.module, cst.Name)
-            and node.module.value == "typing"
-            and isinstance(node.names, cst.ImportStar)
-        ):
-            self.has_typing_import = True
-        return None
-
     def leave_Module(
         self,
         original_node: cst.Module,
