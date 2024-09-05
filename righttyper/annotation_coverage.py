@@ -1,4 +1,5 @@
 import ast
+import io
 import os
 import warnings
 from typing import Dict, List, Tuple, Union
@@ -224,17 +225,15 @@ def print_directory_summary(summary: Dict[str, List[int]]) -> None:
     for row in data:
         table.add_row(*row)
 
-    console = Console(width=255, record=True)
-    with console.capture() as _:
-        console.print(table)
+    output_buffer = io.StringIO()
+    console = Console(file=output_buffer, width=255, record=True)
+    console.print(table)
     html_output = console.export_html()
 
     # Save the HTML output to a file
     with open(f"{TOOL_NAME}-coverage.html", "w") as file:
         file.write(html_output)
     print(f"Report saved in {TOOL_NAME}-coverage.html")
-
-    # console.print(table)
 
 
 def print_file_summary(summary: Dict[str, List[int]]) -> None:
@@ -308,9 +307,9 @@ def print_file_summary(summary: Dict[str, List[int]]) -> None:
         f"{summary_row[3]} unannotated, {summary_row[2]} partially annotated, {summary_row[1]} fully annotated ({summary_row[4]})"
     )
 
-    console = Console(width=255, record=True)
-    with console.capture() as _:
-        console.print(table)
+    output_buffer = io.StringIO()
+    console = Console(file=output_buffer, width=255, record=True)
+    console.print(table)
     html_output = console.export_html()
 
     # Save the HTML output to a file
