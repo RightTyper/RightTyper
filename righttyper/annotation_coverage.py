@@ -127,41 +127,41 @@ def analyze_directory(
     if directory in cache:
         return cache[directory]
 
-    directory_summary: List[int] = [
-        0,
-        0,
-        0,
-    ]  # [fully annotated, partially annotated, not annotated]
+    directory_summary: List[int] = [0, 0, 0]  # [fully annotated, partially annotated, not annotated]
 
-    for root, dirs, files in os.walk(directory):
-        if root != directory:
-            # Skip processing subdirectories separately in this loop
-            continue
+    # Check if the directory argument is a single file
+    if os.path.isfile(directory):
+        files = [os.path.basename(directory)]
+        dirs = []
+        root = os.path.dirname(directory)
+    else:
+        for root, dirs, files in os.walk(directory):
+            break  # We only need the top-level directory content
 
-        for file_name in files:
-            if file_name.endswith(".py"):
-                file_path = os.path.join(root, file_name)
-                (
-                    fully_annotated_count,
-                    partially_annotated_count,
-                    not_annotated_count,
-                ) = parse_python_file(file_path)
-                directory_summary[0] += fully_annotated_count
-                directory_summary[1] += partially_annotated_count
-                directory_summary[2] += not_annotated_count
-                # Update file-level summary in cache
-                cache[file_path] = [
-                    fully_annotated_count,
-                    partially_annotated_count,
-                    not_annotated_count,
-                ]
+    for file_name in files:
+        if file_name.endswith(".py"):
+            file_path = os.path.join(root, file_name)
+            (
+                fully_annotated_count,
+                partially_annotated_count,
+                not_annotated_count,
+            ) = parse_python_file(file_path)
+            directory_summary[0] += fully_annotated_count
+            directory_summary[1] += partially_annotated_count
+            directory_summary[2] += not_annotated_count
+            # Update file-level summary in cache
+            cache[file_path] = [
+                fully_annotated_count,
+                partially_annotated_count,
+                not_annotated_count,
+            ]
 
-        for dir_name in dirs:
-            dir_path = os.path.join(root, dir_name)
-            subdir_summary = analyze_directory(dir_path, cache)
-            directory_summary[0] += subdir_summary[0]  # fully annotated
-            directory_summary[1] += subdir_summary[1]  # partially annotated
-            directory_summary[2] += subdir_summary[2]  # not annotated
+    for dir_name in dirs:
+        dir_path = os.path.join(root, dir_name)
+        subdir_summary = analyze_directory(dir_path, cache)
+        directory_summary[0] += subdir_summary[0]  # fully annotated
+        directory_summary[1] += subdir_summary[1]  # partially annotated
+        directory_summary[2] += subdir_summary[2]  # not annotated
 
     cache[directory] = directory_summary
     return directory_summary
