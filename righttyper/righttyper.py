@@ -914,17 +914,17 @@ SCRIPT = ScriptParamType()
 )
 @click.option(
     "--type-coverage-by-directory",
-    type=click.Path(exists=True, file_okay=False),
-    help="Report per-directory type annotation coverage for all Python files in a directory and its children.",
+    type=click.Path(exists=True, file_okay=True),
+    help="Report per-directory type annotation coverage for a single file or all Python files in a directory and its children.",
 )
 @click.option(
     "--type-coverage-by-file",
-    type=click.Path(exists=True, file_okay=False),
-    help="Report per-file type annotation coverage for all Python files in a directory or its children.",
+    type=click.Path(exists=True, file_okay=True),
+    help="Report per-file type annotation coverage for a single file or all Python files in a directory and its children.",
 )
 @click.option(
     "--type-coverage-summary",
-    type=click.Path(exists=True, file_okay=False),
+    type=click.Path(exists=True, file_okay=True),
     help="Report uncovered and partially covered files and functions when performing type annotation coverage analysis.",
 )  # Note: should only be available if coverage-by-directory or coverage-by-file are specified
 @click.option(
