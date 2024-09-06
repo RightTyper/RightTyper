@@ -16,7 +16,7 @@ CATEGORIES = {
     "name-defined": "Name Error: Name is not defined or used before assignment.",
     "operator": "Operator: Unsupported operation for the types involved.",
     "return-value": "Return Value: Return type is incompatible with the declared type.",
-    "union-attr": "Union Attribute: Attribute access on a union type, not available in all members.",
+    "union-attr": "Union Attribute: Attribute access on a union type not available in all members.",
     "unreachable": "Unreachable Code: Code detected that is never executed.",
     "misc": "Miscellaneous: General errors that don't fall into other categories.",
     "attr-assign": "Attribute Assignment: Assignment of an attribute with an incompatible type.",
@@ -39,17 +39,17 @@ CATEGORIES = {
     "var-no-assigned": "Variable Not Assigned: Variable declared but not assigned a value.",
     "var-incompatible": "Variable Incompatible: Variable assigned with an incompatible type.",
     "var-no-annotated": "Variable No Annotated: Missing type annotation where required.",
-    "var-implicit-none": "Implicit None: Variable is implicitly None, potentially leading to errors.",
+    "var-implicit-none": "Implicit None: Variable is implicitly None potentially leading to errors.",
     "redundant-operation": "Redundant Operation: Unnecessary operations like adding zero.",
     "return-incompatible": "Return Incompatible: Return value doesn't match the function's return type.",
     "return-not-required": "Return Not Required: Return statement in a function that doesn't need one.",
     "shadowed": "Shadowed Name: A name is shadowed by another name in the same scope.",
-    "star-import": "Star Import: Star imports (e.g., `from module import *`) are discouraged.",
+    "star-import": "Star Import: Star imports (e.g. `from module import *`) are discouraged.",
     "str-bytes-concat": "String Bytes Concatenation: Concatenating a string with bytes is not allowed.",
     "syntax": "Syntax: General syntax errors detected.",
     "too-many-locals": "Too Many Locals: Function has too many local variables.",
     "too-many-returns": "Too Many Returns: Function has too many return statements.",
-    "too-many-statements": "Too Many Statements: Function has too many statements, consider refactoring.",
+    "too-many-statements": "Too Many Statements: Function has too many statements; consider refactoring.",
     "tuple-index": "Tuple Index: Invalid index operation on a tuple.",
     "tuple-item": "Tuple Item: Invalid tuple item access.",
     "used-before-definition": "Used Before Definition: Variable used before it was defined.",
@@ -131,11 +131,38 @@ def display_summary(summary, total_errors):
     console.print(f"\nTotal Errors: {total_errors}\n")
 
 
+def display_summary_markdown(summary, total_errors):
+    # Generate markdown table
+    markdown_table = "# Mypy Error Summary\n\n"
+    markdown_table += "| Category | Count | Percentage |\n"
+    markdown_table += "|---|---|---|\n"
+    
+    for category, count, percentage in summary:
+        markdown_table += f"| {category} | {count} | {percentage} |\n"
+
+    markdown_table += f"\n**Total Errors**: {total_errors}\n"
+
+    print(markdown_table)
+
+    
+def display_summary_csv(summary, total_errors):
+    # Generate CSV-style output
+    csv_table = "Category,Count,Percentage\n"
+    
+    for category, count, percentage in summary:
+        csv_table += f"{category},{count},{percentage}\n"
+
+    csv_table += f"\nTotal Errors,{total_errors},\n"
+    print(csv_table)
+    
+
 @click.command()
+@click.option("--markdown", is_flag=True, default=False)
+@click.option("--csv", is_flag=True, default=False)
 @click.argument("file",
                 type=click.Path(exists=True, file_okay=True, dir_okay=False),
                 required=True)
-def main(file):
+def main(file, markdown, csv):
     # MyPy output is in jsonl format (JSON Lines); parse accordingly.
     errors = []
     with open(file) as f:
@@ -144,14 +171,13 @@ def main(file):
     
     classified_errors = classify_errors(errors)
     
-    # List all errors and their categories
-    #for category, errors in classified_errors.items():
-    #    print(f"\nCategory: {category}")
-    #    for error in errors:
-    #        print(f"  File: {error['file']}, Line: {error['line']}, Message: {error['message']}")
-
     summary, total_errors = summarize_errors(classified_errors)
-    display_summary(summary, total_errors)
+    if csv:
+        display_summary_csv(summary, total_errors)
+    elif markdown:
+        display_summary_markdown(summary, total_errors)
+    else:
+        display_summary(summary, total_errors)
 
 if __name__ == "__main__":
     main()
