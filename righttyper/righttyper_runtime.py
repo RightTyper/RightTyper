@@ -1,6 +1,7 @@
 import inspect
 import random
 import sys
+import typing
 from collections.abc import Generator
 from functools import cache
 from itertools import islice
@@ -117,64 +118,64 @@ def get_mypy_type_fn(func: Any) -> str:
     return f"Callable[[{arg_types_str}], {return_type_str}]"
 
 
-def get_type_name(value: Any, depth: int = 0) -> str:
-    # print(f"get_type_name {value}")
-    orig_value = value
-    if inspect.ismodule(value):
-        # For modules, use their __name__ directly
-        if getattr(value, "__name__", None):
-            return value.__name__
+def get_type_name(obj: object, depth: int = 2) -> str:
+    orig_value = obj
+
+    # Handle module types
+    if inspect.ismodule(obj):
+        if getattr(obj, "__name__", None):
+            return obj.__name__
         else:
-            return str(type(value))
-    elif not inspect.isclass(value):
-        # If the value is an instance, get its class
-        value = type(value)
+            return str(type(obj))
 
-    # print(f"HERE FOR {value}")
-    # For types, use their __module__ and __name__
-    module_name = value.__module__
-    type_name = value.__name__
+    # Handle class instances by retrieving their type
+    if not inspect.isclass(obj):
+        obj = type(obj)
 
-    if module_name == "builtins":
-        if type_name == "frame":
+    # Handle numpy and other libraries using dtype
+    if hasattr(orig_value, 'dtype'):
+        dtype = getattr(orig_value, 'dtype')
+        # Use type(dtype).__module__ and type(dtype).__name__ to get the fully qualified name for the dtype
+        return f"{obj.__module__}.{obj.__name__}[Any, {type(dtype).__module__}.{type(dtype).__name__}]"
+   
+
+    # Handle built-in types (like list, tuple, NoneType, etc.)
+    if obj.__module__ == "builtins":
+        if obj.__name__ == "frame":
             return "FrameType"
-        if type_name == "function":
+        elif obj.__name__ == "function":
             return get_mypy_type_fn(orig_value)
-        if type_name == "NoneType":
+        elif obj.__name__ == "NoneType":
             return "None"
-        if type_name == "list":
+        elif obj.__name__ in {"list", "tuple"}:
             return get_full_type(orig_value)
-        if type_name == "tuple":
-            return get_full_type(orig_value)
-        if type_name == "Module":
-            return get_full_type(orig_value)
-        if type_name == "code":
+        elif obj.__name__ == "code":
             return "types.CodeType"
-        return str(type_name)
+        else:
+            return obj.__name__
 
-    # Get the current global namespace
-    current_namespace = sys._getframe(depth + 2).f_globals
-
-    # Check if the type is accessible directly from the current namespace
-    if (
-        type_name in current_namespace
-        and current_namespace[type_name] is value
-    ):
-        return str(type_name)
+    # Check if the type is accessible from the current global namespace
+    current_namespace = sys._getframe(depth).f_globals
+    if obj.__name__ in current_namespace and current_namespace[obj.__name__] is obj:
+        return obj.__name__
 
     # Check if the type is accessible from a module in the current namespace
-    for name, obj in current_namespace.items():
-        if (
-            inspect.ismodule(obj)
-            and hasattr(obj, type_name)
-            and getattr(obj, type_name) is value
-        ):
-            return f"{name}.{type_name}"
+    for name, mod in current_namespace.items():
+        if inspect.ismodule(mod) and hasattr(mod, obj.__name__) and getattr(mod, obj.__name__) is obj:
+            return f"{name}.{obj.__name__}"
 
-    if module_name and module_name != "__main__":
-        return f"{module_name}.{type_name}"
-    else:
-        return str(type_name)
+    # Handle generic types (like List, Dict, etc.)
+    origin = typing.get_origin(obj)
+    if origin:
+        type_name = f"{origin.__module__}.{origin.__name__}"
+        type_params = ", ".join(get_full_type_name(arg) for arg in typing.get_args(obj))
+        return f"{type_name}[{type_params}]"
+
+    # Handle all other types with fully qualified names
+    if obj.__module__ and obj.__module__ != "__main__":
+        return f"{obj.__module__}.{obj.__name__}"
+
+    return obj.__name__
 
 
 def get_full_type(value: Any, depth: int = 0) -> str:
@@ -248,7 +249,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
     else:
         # If the value passed is not a dictionary, list, set, or tuple,
         # we return the type of the value as a string
-        retval = get_type_name(value, depth)
+        retval = get_type_name(value)
         return retval
 
 
