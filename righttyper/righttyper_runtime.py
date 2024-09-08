@@ -118,7 +118,7 @@ def get_mypy_type_fn(func: Any) -> str:
     return f"Callable[[{arg_types_str}], {return_type_str}]"
 
 
-def get_type_name(obj: object, depth: int = 2) -> str:
+def get_type_name(obj: object, depth: int = 0) -> str:
     orig_value = obj
 
     # Handle module types
@@ -148,14 +148,14 @@ def get_type_name(obj: object, depth: int = 2) -> str:
         elif obj.__name__ == "NoneType":
             return "None"
         elif obj.__name__ in {"list", "tuple"}:
-            return get_full_type(orig_value)
+            return get_full_type(orig_value, depth + 1)
         elif obj.__name__ == "code":
             return "types.CodeType"
         else:
             return obj.__name__
 
     # Check if the type is accessible from the current global namespace
-    current_namespace = sys._getframe(depth).f_globals
+    current_namespace = sys._getframe(depth + 2).f_globals
     if obj.__name__ in current_namespace and current_namespace[obj.__name__] is obj:
         return obj.__name__
 
@@ -168,7 +168,7 @@ def get_type_name(obj: object, depth: int = 2) -> str:
     origin = typing.get_origin(obj)
     if origin:
         type_name = f"{origin.__module__}.{origin.__name__}"
-        type_params = ", ".join(get_full_type_name(arg) for arg in typing.get_args(obj))
+        type_params = ", ".join(get_full_type_name(arg, depth + 1) for arg in typing.get_args(obj))
         return f"{type_name}[{type_params}]"
 
     # Handle all other types with fully qualified names
@@ -249,7 +249,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
     else:
         # If the value passed is not a dictionary, list, set, or tuple,
         # we return the type of the value as a string
-        retval = get_type_name(value)
+        retval = get_type_name(value, depth + 1)
         return retval
 
 
