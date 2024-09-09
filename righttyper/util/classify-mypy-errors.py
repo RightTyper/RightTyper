@@ -94,7 +94,7 @@ CATEGORIES = {
 
 def classify_errors(errors):
     classified_errors = defaultdict(list)
-    for error in track(errors, description="Classifying errors..."):
+    for error in errors:
         if error['severity'] != "error":
             continue
         category = CATEGORIES.get(error['code'], "Unknown")
@@ -167,7 +167,10 @@ def main(file, markdown, csv):
     errors = []
     with open(file) as f:
         for line in f:
-            errors.append(json.loads(line))
+            try:
+                errors.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass # ignore non-JSON lines
     
     classified_errors = classify_errors(errors)
     
