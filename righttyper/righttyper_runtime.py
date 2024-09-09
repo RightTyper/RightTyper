@@ -133,11 +133,14 @@ def get_type_name(obj: object, depth: int = 0) -> str:
         obj = type(obj)
 
     # Handle numpy and other libraries using dtype
-    if hasattr(orig_value, 'dtype'):
-        dtype = getattr(orig_value, 'dtype')
-        # Use type(dtype).__module__ and type(dtype).__name__ to get the fully qualified name for the dtype
-        return f"{obj.__module__}.{obj.__name__}[Any, {type(dtype).__module__}.{type(dtype).__name__}]"
-   
+    try: # workaround failure in Pelican
+        if hasattr(orig_value, 'dtype'):
+            dtype = getattr(orig_value, 'dtype')
+            # Use type(dtype).__module__ and type(dtype).__name__ to get the fully qualified name for the dtype
+            return f"{obj.__module__}.{obj.__name__}[Any, {type(dtype).__module__}.{type(dtype).__name__}]"
+    except RuntimeError:
+        pass
+        
 
     # Handle built-in types (like list, tuple, NoneType, etc.)
     if obj.__module__ == "builtins":
