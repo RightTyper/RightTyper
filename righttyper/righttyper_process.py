@@ -106,22 +106,17 @@ def process_file(
     )
     modified_tree = cst_tree.visit(transformer)
 
-    # No changes, just skip the rest
-    if modified_tree.code == source:
-        return
-
     # If there are needed imports for class defs, process these
     needed_imports = set(
         imp for imp in imports if imp.function_fname == filename
     )
     if needed_imports:
-        tree = cst.parse_module(modified_tree.code)
         import_transformer = ConstructImportTransformer(
             imports=needed_imports,
             root_path=srcdir,
         )
         try:
-            modified_tree = tree.visit(import_transformer)
+            modified_tree = modified_tree.visit(import_transformer)
         except Exception as e:
             import traceback
 
@@ -130,13 +125,14 @@ def process_file(
 
     # Add an import statement if needed.
     # FIXME: this messes with from __future__ imports, which need to be the first import
-    transformed = preface_with_typing_import(modified_tree.code)
+    insert_imports_transformer = InsertTypingImportTransformer()
+    transformed = modified_tree.visit(insert_imports_transformer)
             
     with open(
         filename + ("" if overwrite else ".typed"),
         "w",
     ) as file:
-        file.write(transformed)
+        file.write(transformed.code)
 
 
 # Convert the collected data into the expected format for type_annotations
