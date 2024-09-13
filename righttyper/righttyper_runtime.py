@@ -144,7 +144,7 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
             # Use type(dtype).__module__ and type(dtype).__name__ to get the fully qualified name for the dtype
             retval = f"{obj.__module__}.{obj.__name__}[Any, {type(dtype).__module__}.{type(dtype).__name__}]"
             # Forcibly strip builtins, which are somehow getting in there
-            retval = retval.replace("builtins.", "")
+            # retval = retval.replace("builtins.", "")
             return retval
     except RuntimeError:
         pass
