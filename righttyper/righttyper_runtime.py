@@ -119,6 +119,11 @@ def get_mypy_type_fn(func: Any) -> str:
 
 
 def get_type_name(obj: object, depth: int = 0) -> str:
+    retval = get_type_name_helper(obj, depth)
+    return retval
+
+        
+def get_type_name_helper(obj: object, depth: int = 0) -> str:
     orig_value = obj
 
     # Handle module types
@@ -137,7 +142,10 @@ def get_type_name(obj: object, depth: int = 0) -> str:
         if hasattr(orig_value, 'dtype'):
             dtype = getattr(orig_value, 'dtype')
             # Use type(dtype).__module__ and type(dtype).__name__ to get the fully qualified name for the dtype
-            return f"{obj.__module__}.{obj.__name__}[Any, {type(dtype).__module__}.{type(dtype).__name__}]"
+            retval = f"{obj.__module__}.{obj.__name__}[Any, {type(dtype).__module__}.{type(dtype).__name__}]"
+            # Forcibly strip builtins, which are somehow getting in there
+            retval = retval.replace("builtins.", "")
+            return retval
     except RuntimeError:
         pass
         
@@ -171,7 +179,7 @@ def get_type_name(obj: object, depth: int = 0) -> str:
     origin = typing.get_origin(obj)
     if origin:
         type_name = f"{origin.__module__}.{origin.__name__}"
-        type_params = ", ".join(get_full_type_name(arg, depth + 1) for arg in typing.get_args(obj))
+        type_params = ", ".join(get_full_type(arg, depth + 1) for arg in typing.get_args(obj))
         return f"{type_name}[{type_params}]"
 
     # Handle all other types with fully qualified names
@@ -183,7 +191,7 @@ def get_type_name(obj: object, depth: int = 0) -> str:
 
 def get_full_type(value: Any, depth: int = 0) -> str:
     """
-    get_full_type function takes a value as input and returns a string representing the type of the value.
+    get_full_type takes a value as input and returns a string representing the type of the value.
 
     If the value is of type dictionary, it randomly selects a pair of key and value from the dictionary
     and recursively determines their types.
@@ -194,6 +202,11 @@ def get_full_type(value: Any, depth: int = 0) -> str:
 
     For other types, it returns the name of the type.
     """
+    if depth > 255:
+        # We have likely fallen into an infinite recursion.
+        # Fail gracefully to return "Any" while reporting the warning.
+        print(f"Warning: RightTyper failed to compute the type of {value}.")
+        return "Any"
     if isinstance(value, dict):
         # Checking if the value is a dictionary
         if value:

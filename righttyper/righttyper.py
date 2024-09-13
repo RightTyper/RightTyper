@@ -108,7 +108,7 @@ yielded_funcs: Set[FuncInfo] = set()
 existing_spec: Dict[FuncInfo, str] = dict()
 
 # For each visited function, all the info about its arguments
-visited_funcs_arguments: Dict[FuncInfo, List[ArgInfo]] = dict()
+visited_funcs_arguments: Dict[FuncInfo, List[ArgInfo]] = defaultdict(list)
 
 # For each visited function, all the info about its return value
 visited_funcs_retval: Dict[FuncInfo, TypenameSet] = defaultdict(

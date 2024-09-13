@@ -100,7 +100,12 @@ def process_file(
         )
 
     # Now, rewrite all function definitions with annotations.
-    cst_tree = cst.parse_module(source)
+    try:
+        cst_tree = cst.parse_module(source)
+    except cst._exceptions.ParserSyntaxError:
+        print(f"Failed to parse source for {filename}.")
+        return
+
     transformer = AnnotateFunctionTransformer(
         filename, type_annotations, not_annotated
     )
