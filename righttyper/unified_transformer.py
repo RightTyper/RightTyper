@@ -1,5 +1,5 @@
 import libcst as cst
-from typing import Dict, List, Set, Tuple, Optional, Union
+from typing import Dict, List, Set, Tuple, Optional
 from righttyper.righttyper_types import ArgumentName, Filename, FuncInfo, FunctionName, Typename, ImportInfo
 from righttyper.get_import_details import generate_import_nodes
 
