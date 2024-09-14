@@ -178,9 +178,9 @@ def process_file(
         not_annotated,
         [],
         needed_imports,
-        root_path)
+        srcdir)
     
-    modified_tree = cst_tree.visit(transformer)
+    transformed = cst_tree.visit(transformer)
 
     with open(
         filename + ("" if overwrite else ".typed"),
