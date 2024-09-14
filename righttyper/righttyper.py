@@ -735,6 +735,7 @@ def process_all_files(
         rich.progress.TimeRemainingColumn(),
         transient=True,
         expand=True,
+        auto_refresh=False,
     ) as progress:
         task1 = progress.add_task(description="", total=len(fnames))
         for fname in fnames:
@@ -766,18 +767,25 @@ def process_all_files(
             else:
                 process_file(*args)
                 progress.update(task1, advance=1)
+                progress.refresh()
 
         if use_multiprocessing:
-            while processes:
-                for (
-                    p
-                ) in (
-                    processes
-                ):  # multiprocessing.connection.wait(processes, timeout=None):
-                    p.join()
-                    processes.remove(p)
+            sentinels = [p.sentinel for p in processes]
+            total = len(processes)
+            completed = 0
+            progress.start()
+            while completed < total:
+                ready_sentinels = multiprocessing.connection.wait(sentinels)  # Wait for any process sentinel to become ready
+                for sentinel in ready_sentinels:
+                    completed += 1
                     progress.update(task1, advance=1)
-
+                    progress.refresh()
+                    # Remove the sentinel to avoid double counting
+                    sentinels.remove(sentinel)
+            # Ensure all processes have finished
+            for process in processes:
+                process.join()
+            progress.update(task1, completed=total)
 
 def should_update_file(
     t: FuncInfo,
