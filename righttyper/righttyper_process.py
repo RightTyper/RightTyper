@@ -46,6 +46,58 @@ from righttyper.righttyper_utils import (
 
 logger = logging.getLogger("righttyper")
 
+def correct_indentation_issues(file_contents: str) -> str:
+    """Return a string corresponding to the file contents, but with indentation issues fixed if needed."""
+    original_lines = file_contents.splitlines(keepends=True)  # Preserve line endings
+
+    indent_stack = []
+    corrected_lines = []
+    issues_found = False
+
+    for line_number, line in enumerate(original_lines, start=1):
+        stripped_line = line.lstrip()
+
+        if not stripped_line or stripped_line.startswith('#'):
+            # Preserve empty lines and comments
+            corrected_lines.append(line)
+            continue
+
+        leading_whitespace = line[:len(line) - len(stripped_line)]
+        
+        # Convert tabs to spaces (assuming 4 spaces per tab)
+        corrected_leading_whitespace = leading_whitespace.replace('\t', ' ' * 4)
+        
+        # Check for mixed tabs and spaces and correct them
+        if ' ' in leading_whitespace and '\t' in leading_whitespace:
+            # print(f"Line {line_number}: Mixed spaces and tabs detected. Correcting to spaces.")
+            leading_whitespace = corrected_leading_whitespace
+            issues_found = True
+
+        indent_level = len(corrected_leading_whitespace)
+
+        # Check if the indentation level matches the current stack
+        if indent_stack and indent_level < indent_stack[-1]:
+            # If a dedent is found, adjust the stack accordingly
+            while indent_stack and indent_level < indent_stack[-1]:
+                indent_stack.pop()
+
+        # Push the new indentation level if a new block starts
+        if stripped_line.endswith(':'):  # Detect start of a block
+            indent_stack.append(indent_level)
+
+        # Reconstruct the corrected line and append to corrected lines list
+        corrected_line = corrected_leading_whitespace + stripped_line
+        corrected_lines.append(corrected_line)
+
+    # Join corrected lines into a single string
+    corrected_content = ''.join(corrected_lines)
+
+    # Return the corrected content if changes were made, otherwise return original content
+    if corrected_content != file_contents:
+        return corrected_content
+    else:
+        return file_contents
+
 
 def preface_with_typing_import(
     source_code: str,
@@ -100,28 +152,33 @@ def process_file(
         )
 
     # Now, rewrite all function definitions with annotations.
-    cst_tree = cst.parse_module(source)
+    try:
+        cst_tree = cst.parse_module(source)
+    except cst._exceptions.ParserSyntaxError:
+        try:
+            # Initial parse failed; fix any indentation issues and try again
+            source = correct_indentation_issues(source)
+            cst_tree = cst.parse_module(source)
+        except:
+            print(f"Failed to parse source for {filename}.")
+            return
+
     transformer = AnnotateFunctionTransformer(
         filename, type_annotations, not_annotated
     )
     modified_tree = cst_tree.visit(transformer)
-
-    # No changes, just skip the rest
-    if modified_tree.code == source:
-        return
 
     # If there are needed imports for class defs, process these
     needed_imports = set(
         imp for imp in imports if imp.function_fname == filename
     )
     if needed_imports:
-        tree = cst.parse_module(modified_tree.code)
         import_transformer = ConstructImportTransformer(
             imports=needed_imports,
             root_path=srcdir,
         )
         try:
-            modified_tree = tree.visit(import_transformer)
+            modified_tree = modified_tree.visit(import_transformer)
         except Exception as e:
             import traceback
 
@@ -130,13 +187,14 @@ def process_file(
 
     # Add an import statement if needed.
     # FIXME: this messes with from __future__ imports, which need to be the first import
-    transformed = preface_with_typing_import(modified_tree.code)
+    insert_imports_transformer = InsertTypingImportTransformer()
+    transformed = modified_tree.visit(insert_imports_transformer)
             
     with open(
         filename + ("" if overwrite else ".typed"),
         "w",
     ) as file:
-        file.write(transformed)
+        file.write(transformed.code)
 
 
 # Convert the collected data into the expected format for type_annotations
