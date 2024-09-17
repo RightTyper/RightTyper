@@ -30,7 +30,24 @@ from righttyper.righttyper_utils import (
     skip_this_file,
 )
 
+from righttyper.random_dict import (
+    RandomDict,
+)
 
+def get_random_element_from_dict(value: Dict[Any, Any]) -> Any:
+    if isinstance(value, RandomDict):
+        # If it's a RandomDict, use its built-in random_item method
+        # print("RandomDict")
+        return value.random_item()
+    else:
+        # For a regular dict, use islice to select a random element
+        # We limit the range to the first few elements to keep this O(1).
+        # print("ordinary dict")
+        MAX_ELEMENTS = 10
+        n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
+        return next(islice(value.items(), n, n + 1))
+
+    
 @cache
 def should_skip_function(
     code: CodeType,
@@ -210,14 +227,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
     if isinstance(value, dict):
         # Checking if the value is a dictionary
         if value:
-            # If the dictionary is non-empty
-            # we sample one of its items randomly.
-            n = random.randint(0, len(value) - 1)
-            # Here we are using islice with a starting position n and stopping at n + 1
-            # to get a random key-value pair from the dictionary
-            # FIXME: this is potentially costly and we should cap the range
-            key, val = next(islice(value.items(), n, n + 1))
-            # We return the type of the dictionary as 'dict[key_type: value_type]'
+            key, val = get_random_element_from_dict(value)
             return (
                 f"Dict[{get_full_type(key, depth + 1)},"
                 f" {get_full_type(val, depth + 1)}]"

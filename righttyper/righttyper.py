@@ -81,6 +81,7 @@ from righttyper.righttyper_utils import (
     unannotated,
     union_typeset_str,
 )
+from righttyper import replace_dicts
 
 # Below is to mollify mypy.
 try:
@@ -1033,6 +1034,7 @@ def main(
         ignore_annotations,
     )
     setup_timer(restart_sampling)
+    replace_dicts.replace_dicts()
     execute_script_or_module(script, module, tool_args, script_args)
     reset_monitoring()
     post_process(
