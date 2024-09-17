@@ -37,12 +37,10 @@ from righttyper.random_dict import (
 def get_random_element_from_dict(value: Dict[Any, Any]) -> Any:
     if isinstance(value, RandomDict):
         # If it's a RandomDict, use its built-in random_item method
-        # print("RandomDict")
         return value.random_item()
     else:
         # For a regular dict, use islice to select a random element
         # We limit the range to the first few elements to keep this O(1).
-        # print("ordinary dict")
         MAX_ELEMENTS = 10
         n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
         return next(islice(value.items(), n, n + 1))
