@@ -468,6 +468,22 @@ def update_argument_type(
             old_arginfo.type_name_set.add(next(iter(full_type_name_set)))
             # reset_sampling_interval()
 
+def in_instrumentation_code(frame: FrameType) -> bool:
+    # We stop walking the stack after a given number of frames to
+    # limit overhead. The instrumentation code should be fairly
+    # shallow, so this heuristic should have no impact on accuracy
+    # while improving performance.
+    f = frame
+    countdown = 10
+    while f and countdown > 0:
+        if f.f_code in instrumentation_functions_code:
+            # In instrumentation code
+            return True
+            break
+        f = f.f_back
+        countdown -= 1
+    return False
+
 
 def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
     """
@@ -484,19 +500,8 @@ def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
     global sample_count_instrumentation, sample_count_total
     global instrumentation_overhead
     sample_count_total += 1.0
-    f = frame
-    # We stop walking the stack after a given number of frames to
-    # limit overhead. The instrumentation code should be fairly
-    # shallow, so this heuristic should have no impact on accuracy
-    # while improving performance.
-    countdown = 10
-    while f and countdown > 0:
-        if f.f_code in instrumentation_functions_code:
-            # In instrumentation code
-            sample_count_instrumentation += 1.0
-            break
-        f = f.f_back
-        countdown -= 1
+    if in_instrumentation_code(frame):
+        sample_count_instrumentation += 1.0
     instrumentation_overhead = (
         sample_count_instrumentation / sample_count_total
     )
@@ -736,6 +741,7 @@ def process_all_files(
         rich.progress.TimeRemainingColumn(),
         transient=True,
         expand=True,
+        auto_refresh=False,
     ) as progress:
         task1 = progress.add_task(description="", total=len(fnames))
         for fname in fnames:
@@ -767,18 +773,25 @@ def process_all_files(
             else:
                 process_file(*args)
                 progress.update(task1, advance=1)
+                progress.refresh()
 
         if use_multiprocessing:
-            while processes:
-                for (
-                    p
-                ) in (
-                    processes
-                ):  # multiprocessing.connection.wait(processes, timeout=None):
-                    p.join()
-                    processes.remove(p)
+            sentinels = [p.sentinel for p in processes]
+            total = len(processes)
+            completed = 0
+            progress.start()
+            while completed < total:
+                ready_sentinels = multiprocessing.connection.wait(sentinels)  # Wait for any process sentinel to become ready
+                for sentinel in ready_sentinels:
+                    completed += 1
                     progress.update(task1, advance=1)
-
+                    progress.refresh()
+                    # Remove the sentinel to avoid double counting
+                    sentinels.remove(sentinel)
+            # Ensure all processes have finished
+            for process in processes:
+                process.join()
+            progress.update(task1, completed=total)
 
 def should_update_file(
     t: FuncInfo,
@@ -1033,6 +1046,7 @@ def main(
         yield_function,
         ignore_annotations,
     )
+    sys.monitoring.restart_events()
     setup_timer(restart_sampling)
     replace_dicts.replace_dicts()
     execute_script_or_module(script, module, tool_args, script_args)

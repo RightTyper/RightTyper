@@ -12,17 +12,12 @@ import logging
 import os
 import pathlib
 
-from righttyper.annotate_function_transformer import (
-    AnnotateFunctionTransformer,
-)
-from righttyper.construct_import_transformer import (
-    ConstructImportTransformer,
+
+from righttyper.unified_transformer import (
+    UnifiedTransformer,
 )
 from righttyper.generate_stubs import (
     generate_stub,
-)
-from righttyper.insert_typing_import_transformer import (
-    InsertTypingImportTransformer,
 )
 from righttyper.righttyper_types import (
     ArgInfo,
@@ -52,7 +47,6 @@ def correct_indentation_issues(file_contents: str) -> str:
 
     indent_stack = []
     corrected_lines = []
-    issues_found = False
 
     for line_number, line in enumerate(original_lines, start=1):
         stripped_line = line.lstrip()
@@ -71,7 +65,6 @@ def correct_indentation_issues(file_contents: str) -> str:
         if ' ' in leading_whitespace and '\t' in leading_whitespace:
             # print(f"Line {line_number}: Mixed spaces and tabs detected. Correcting to spaces.")
             leading_whitespace = corrected_leading_whitespace
-            issues_found = True
 
         indent_level = len(corrected_leading_whitespace)
 
@@ -97,15 +90,6 @@ def correct_indentation_issues(file_contents: str) -> str:
         return corrected_content
     else:
         return file_contents
-
-
-def preface_with_typing_import(
-    source_code: str,
-) -> str:
-    tree = cst.parse_module(source_code)
-    transformer = InsertTypingImportTransformer()
-    new_tree = tree.visit(transformer)
-    return new_tree.code
 
 
 def process_file(
@@ -163,33 +147,21 @@ def process_file(
             print(f"Failed to parse source for {filename}.")
             return
 
-    transformer = AnnotateFunctionTransformer(
-        filename, type_annotations, not_annotated
-    )
-    modified_tree = cst_tree.visit(transformer)
-
     # If there are needed imports for class defs, process these
     needed_imports = set(
         imp for imp in imports if imp.function_fname == filename
     )
-    if needed_imports:
-        import_transformer = ConstructImportTransformer(
-            imports=needed_imports,
-            root_path=srcdir,
-        )
-        try:
-            modified_tree = modified_tree.visit(import_transformer)
-        except Exception as e:
-            import traceback
+    
+    transformer = UnifiedTransformer(
+        filename,
+        type_annotations,
+        not_annotated,
+        [],
+        needed_imports,
+        srcdir)
+    
+    transformed = cst_tree.visit(transformer)
 
-            print(traceback.format_exc())
-            print(e)
-
-    # Add an import statement if needed.
-    # FIXME: this messes with from __future__ imports, which need to be the first import
-    insert_imports_transformer = InsertTypingImportTransformer()
-    transformed = modified_tree.visit(insert_imports_transformer)
-            
     with open(
         filename + ("" if overwrite else ".typed"),
         "w",
