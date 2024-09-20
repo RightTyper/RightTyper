@@ -109,7 +109,7 @@ def summarize_errors(classified_errors):
     for category, errors in classified_errors.items():
         count = len(errors)
         percentage = (count / total_errors) * 100
-        summary.append((category, f"[bold]{errors[0]['code']}[/bold]", count, f"{percentage:.2f}%"))
+        summary.append((category, f"{errors[0]['code']}", count, f"{percentage:.2f}%"))
 
     # Sort by percentage in descending order
     summary.sort(key=lambda x: float(x[3][:-1]), reverse=True)
@@ -125,7 +125,7 @@ def display_summary(summary, total_errors):
     table.add_column("Percentage", justify="right", style="green")
 
     for category, error_code, count, percentage in summary:
-        table.add_row(category, error_code, str(count), percentage)
+        table.add_row(category, f"[bold]{error_code}[/bold]", str(count), percentage)
 
     console.print(table)
     console.print(f"\nTotal Errors: {total_errors}\n")
@@ -134,11 +134,11 @@ def display_summary(summary, total_errors):
 def display_summary_markdown(summary, total_errors):
     # Generate markdown table
     markdown_table = "# Mypy Error Summary\n\n"
-    markdown_table += "| Category | Count | Percentage |\n"
-    markdown_table += "|---|---|---|\n"
+    markdown_table += "| Category | Error Code | Count | Percentage |\n"
+    markdown_table += "|---|---|---|---|\n"
     
-    for category, count, percentage in summary:
-        markdown_table += f"| {category} | {count} | {percentage} |\n"
+    for category, error_code, count, percentage in summary:
+        markdown_table += f"| {category} | {error_code} | {count} | {percentage} |\n"
 
     markdown_table += f"\n**Total Errors**: {total_errors}\n"
 
@@ -147,10 +147,10 @@ def display_summary_markdown(summary, total_errors):
     
 def display_summary_csv(summary, total_errors):
     # Generate CSV-style output
-    csv_table = "Category,Count,Percentage\n"
-    
-    for category, count, percentage in summary:
-        csv_table += f"{category},{count},{percentage}\n"
+    csv_table = "Category,Error Code,Count,Percentage\n"
+
+    for category, error_code, count, percentage in summary:
+        csv_table += f"{category},{error_code},{count},{percentage}\n"
 
     csv_table += f"\nTotal Errors,{total_errors},\n"
     print(csv_table)
@@ -175,6 +175,7 @@ def main(file, markdown, csv):
     classified_errors = classify_errors(errors)
     
     summary, total_errors = summarize_errors(classified_errors)
+
     if csv:
         display_summary_csv(summary, total_errors)
     elif markdown:
