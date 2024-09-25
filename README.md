@@ -63,7 +63,7 @@ def barnacle(x: numpy.ndarray) -> numpy.ndarray: ...
 - def barnacle(x):
 + def barnacle(x: numpy.ndarray) -> numpy.ndarray:
 
-# Shape annoations
+# Shape annotations
 @beartype
 def barnacle(x: Float[numpy.ndarray, "10 dim0"]) -> Float[numpy.ndarray, "dim0"]: ...
 
@@ -76,7 +76,7 @@ def fooq(x: int, y: str) -> bool: ...
 
 Below is the full list of options:
 
-```bash
+```
 Usage: python -m righttyper [OPTIONS] [SCRIPT] [ARGS]...
 
   RightTyper efficiently generates types for your function arguments and
