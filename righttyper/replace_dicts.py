@@ -168,32 +168,18 @@ class TransformingLoader(Loader):
 
     def exec_module(self, module):
         # Apply transformation only if the module is in the user code path
-        if hasattr(module, '__file__'):
-            if module.__file__ and module.__file__.endswith(os.extsep + "py"):
-                if not is_system_installed_package_file(module.__file__):
-                    source = self.loader.get_source(module.__name__)
-                    if source is None:
-                        return
-                    tree = ast.parse(source)
-                    transformer = DictTransformer()
-                    tree = transformer.visit(tree)
-                    ast.fix_missing_locations(tree)
-                    code = compile(tree, filename=module.__file__, mode='exec')
-                    exec(code, module.__dict__)
-                    return
-        # If not in user code path, run the module without transformation
-        self.loader.exec_module(module)
+        source = self.loader.get_source(module.__name__)
+        if source is None:
+            return
+        tree = ast.parse(source)
+        transformer = DictTransformer()
+        tree = transformer.visit(tree)
+        ast.fix_missing_locations(tree)
+        code = compile(tree, filename=module.__file__, mode='exec')
+        exec(code, module.__dict__)
 
     def get_code(self, fullname):
         return self.loader.get_code(fullname)
-    
-        # Get the source code using the original loader
-        source = self.loader.get_source(fullname)
-        # Transform the source code with your AST transformations
-        tree = ast.parse(source)
-        tree = DictTransformer().visit(tree)
-        transformed_code = compile(tree, filename="<ast>", mode="exec")
-        return transformed_code        
 
 class TransformingFinder(MetaPathFinder):
     def __init__(self):
@@ -207,7 +193,8 @@ class TransformingFinder(MetaPathFinder):
             if finder is self:
                 continue
             spec = finder.find_spec(fullname, path, target)
-            if spec and spec.loader:
+            if (spec and spec.origin and spec.origin.endswith(os.extsep + "py")
+                and not is_system_installed_package_file(spec.origin)):
                 spec.loader = TransformingLoader(spec.loader)
                 return spec
         return None

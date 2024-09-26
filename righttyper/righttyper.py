@@ -3,6 +3,7 @@ import functools
 import inspect
 import logging
 import multiprocessing
+import multiprocessing.connection
 import os
 import runpy
 import signal
