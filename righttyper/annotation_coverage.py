@@ -63,7 +63,10 @@ def parse_python_file(
     not_annotated_count = 0
 
     with open(file_path, "r") as file:
-        tree = ast.parse(file.read(), filename=file_path)
+        try:
+            tree = ast.parse(file.read(), filename=file_path)
+        except SyntaxError:
+            tree = ast.parse("", filename=file_path)
 
     qualified_names = generate_fully_qualified_names_dict(tree)
 
