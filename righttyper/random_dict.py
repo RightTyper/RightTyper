@@ -3,22 +3,38 @@ import random
 __version__ = '0.2.2'
 
 class RandomDict(dict):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._random_vector = list(self.keys())  # Directly convert the keys into a list
+        self._update_internal_vectors()
 
-        # Create the _keys dictionary with indexes corresponding to _random_vector
+    def __new__(cls, *args, **kwargs):
+        instance = super().__new__(cls)
+        instance._keys = dict()
+        instance._random_vector = []
+        return instance
+
+    def _update_internal_vectors(self):
+        """Helper method to update _random_vector and _keys."""
+        self._random_vector = list(self.keys())  # Rebuild the list of keys
         self._keys = {key: idx for idx, key in enumerate(self._random_vector)}
 
-        # Set last_index based on the length of _random_vector
-        self.last_index = len(self._random_vector) - 1
+    def update(self, *args, **kwargs):
+        """Update the dictionary and ensure _random_vector is in sync."""
+        super().update(*args, **kwargs)
+        self._update_internal_vectors()
+
+    def setdefault(self, key, default=None):
+        """Override setdefault to ensure consistency of _random_vector."""
+        if key not in self:
+            self[key] = default
+        return self[key]
 
     def copy(self):
         """ Return a shallow copy of the RandomDict """
         new_rd = RandomDict(super().copy())
         new_rd._keys = self._keys.copy()
         new_rd._random_vector = self._random_vector[:]
-        new_rd.last_index = self.last_index
         return new_rd
 
     @classmethod
@@ -27,6 +43,7 @@ class RandomDict(dict):
         rd = cls()
         for key in keys:
             rd[key] = value
+        rd._update_internal_vectors()  # Make sure _random_vector is populated
         return rd
 
     def __setitem__(self, key, value):
@@ -36,9 +53,8 @@ class RandomDict(dict):
 
         if i == -1:
             # Add new key
-            self.last_index += 1
             self._random_vector.append(key)
-            self._keys[key] = self.last_index
+            self._keys[key] = len(self._random_vector) - 1
 
     def __delitem__(self, key):
         """ Delete item by swapping with the last element in the random vector """
@@ -52,21 +68,20 @@ class RandomDict(dict):
         move_key = self._random_vector.pop()
 
         # Only swap if we are not deleting the last item
-        if i != self.last_index:
+        if len(self._random_vector) > i:
             # Move the last item into the location of the deleted item
             self._random_vector[i] = move_key
             self._keys[move_key] = i
 
-        self.last_index -= 1
         del self._keys[key]
         super().__delitem__(key)
 
     def random_key(self):
         """ Return a random key from this dictionary in O(1) time """
-        if len(self) == 0:
+        if len(self._random_vector) == 0:
+            print(f"Debug: _random_vector is empty. Current dict: {self}")  # Debug print statement
             raise KeyError("RandomDict is empty")
-        i = random.randint(0, self.last_index)
-        return self._random_vector[i]
+        return random.choice(self._random_vector)
 
     def random_value(self):
         """ Return a random value from this dictionary in O(1) time """

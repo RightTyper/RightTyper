@@ -1,4 +1,5 @@
 import inspect
+import os
 import random
 import sys
 import typing
@@ -11,6 +12,7 @@ from typing import (
     Any,
     Dict,
     List,
+    Never,
     Optional,
     Tuple,
     Type,
@@ -61,7 +63,7 @@ def should_skip_function(
             include_all,
             include_files_regex,
         )
-        or "righttyper" in code.co_filename
+        or "righttyper" + os.sep in code.co_filename
     ):
         return True
     if not (code.co_flags & 0x2):
@@ -219,9 +221,9 @@ def get_full_type(value: Any, depth: int = 0) -> str:
     """
     if depth > 255:
         # We have likely fallen into an infinite recursion.
-        # Fail gracefully to return "Any" while reporting the warning.
+        # Fail gracefully to return "Never" while reporting the warning.
         print(f"Warning: RightTyper failed to compute the type of {value}.")
-        return "Any"
+        return "Never"
     if isinstance(value, dict):
         # Checking if the value is a dictionary
         if value:
@@ -231,8 +233,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
                 f" {get_full_type(val, depth + 1)}]"
             )
         else:
-            # If the dictionary is empty, we just return a generic dict as the type
-            return "Dict[Any, Any]"
+            return "Dict[Never, Never]"
     elif isinstance(value, list):
         # Checking if the value is a list
         if value:
@@ -243,8 +244,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
             # We return the type of the list as 'list[element_type]'
             return f"List[{get_full_type(elem, depth + 1)}]"
         else:
-            # If the list is empty, we return 'list'
-            return "List[Any]"
+            return "List[Never]"
     elif isinstance(value, tuple):
         if isinstance_namedtuple(value):
             return f"{value.__class__.__name__}"
@@ -263,7 +263,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
             elem = next(islice(value, n, n + 1))
             return f"Set[{get_full_type(elem, depth + 1)}]"
         else:
-            return "Set[Any]"
+            return "Set[Never]"
     elif isinstance(value, Generator):
         # FIXME DISABLED FOR NOW
         # (q, g) = peek(value)

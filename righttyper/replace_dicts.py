@@ -21,12 +21,40 @@ def get_homebrew_cellar_path() -> str:
         return ""
 
     
+import site
+
+@lru_cache()
+def get_homebrew_cellar_path() -> str:
+    """Returns the Homebrew Cellar path by running `brew --cellar`."""
+    try:
+        result = subprocess.run(["brew", "--cellar"], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+@lru_cache()
+def get_venv_site_packages() -> str:
+    """
+    Returns the site-packages path for a virtual environment, based on sys.prefix.
+    This function supports both Linux/macOS and Windows.
+    """
+    # Determine the correct location of site-packages depending on the platform
+    if platform.system() == "Windows":
+        return os.path.join(sys.prefix, 'Lib', 'site-packages')
+    else:
+        return os.path.join(sys.prefix, 'lib', f'python{sys.version[:3]}', 'site-packages')
+
+@lru_cache()
+def get_user_site_packages() -> str:
+    """Returns the path to the user-specific site-packages directory."""
+    return site.getusersitepackages()
+
 @lru_cache()
 def is_system_installed_package_file(file_path: str) -> bool:
     """
     Checks whether a given file belongs to a system-installed package, including
-    Python's standard library, installed packages in site-packages, and platform-specific
-    directories such as lib-dynload and Homebrew paths.
+    Python's standard library, installed packages in site-packages, platform-specific
+    directories such as lib-dynload, Homebrew paths, and virtual environments.
     
     Args:
         file_path (str): The absolute path to the file to check.
@@ -59,6 +87,15 @@ def is_system_installed_package_file(file_path: str) -> bool:
         if brew_cellar_path:
             package_dirs.append(brew_cellar_path)
 
+    # Detect if we're in a virtual environment
+    if sys.prefix != sys.base_prefix:  # Virtual environment detection
+        venv_site_packages = get_venv_site_packages()
+        package_dirs.append(venv_site_packages)
+
+    # Add the user-specific site-packages (locally installed packages)
+    user_site_packages = get_user_site_packages()
+    package_dirs.append(user_site_packages)
+
     # Normalize and clean the paths for comparison
     package_dirs = [os.path.normcase(os.path.abspath(path)) for path in package_dirs if path]
 
@@ -68,6 +105,7 @@ def is_system_installed_package_file(file_path: str) -> bool:
             return True
 
     return False
+
 
 
 class DictTransformer(ast.NodeTransformer):
@@ -83,8 +121,16 @@ class DictTransformer(ast.NodeTransformer):
                 names=[ast.alias(name='RandomDict', asname=None)],
                 level=0
             )
-            # Insert the import statement at the beginning of the module
-            node.body.insert(0, import_node)
+            
+            # Find the last future import
+            last_future_import_idx = -1
+            for idx, n in enumerate(node.body):
+                if isinstance(n, ast.ImportFrom) and n.module == '__future__':
+                    last_future_import_idx = idx
+            
+            # Insert the import statement right after the last __future__ import
+            insert_position = last_future_import_idx + 1
+            node.body.insert(insert_position, import_node)
 
         # Continue with other transformations
         self.generic_visit(node)
@@ -122,20 +168,18 @@ class TransformingLoader(Loader):
 
     def exec_module(self, module):
         # Apply transformation only if the module is in the user code path
-        if module.__file__ and module.__file__.endswith(os.extsep + "py"):
-            if not is_system_installed_package_file(module.__file__):
-                source = self.loader.get_source(module.__name__)
-                if source is None:
-                    return
-                tree = ast.parse(source)
-                transformer = DictTransformer()
-                tree = transformer.visit(tree)
-                ast.fix_missing_locations(tree)
-                code = compile(tree, filename=module.__file__, mode='exec')
-                exec(code, module.__dict__)
-                return
-        # If not in user code path, run the module without transformation
-        self.loader.exec_module(module)
+        source = self.loader.get_source(module.__name__)
+        if source is None:
+            return
+        tree = ast.parse(source)
+        transformer = DictTransformer()
+        tree = transformer.visit(tree)
+        ast.fix_missing_locations(tree)
+        code = compile(tree, filename=module.__file__, mode='exec')
+        exec(code, module.__dict__)
+
+    def get_code(self, fullname):
+        return self.loader.get_code(fullname)
 
 class TransformingFinder(MetaPathFinder):
     def __init__(self):
@@ -149,7 +193,8 @@ class TransformingFinder(MetaPathFinder):
             if finder is self:
                 continue
             spec = finder.find_spec(fullname, path, target)
-            if spec and spec.loader:
+            if (spec and spec.origin and spec.origin.endswith(os.extsep + "py")
+                and not is_system_installed_package_file(spec.origin)):
                 spec.loader = TransformingLoader(spec.loader)
                 return spec
         return None

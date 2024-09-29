@@ -144,9 +144,15 @@ def union_typeset_str(
             )
             # If None is one of the typenames, make the union an optional over the remaining types.
             if len(not_none_typenames) < len(typenames):
-                return Typename(
-                    "Optional[" + ", ".join(not_none_typenames) + "]"
-                )
+                if len(not_none_typenames) > 1:
+                    return Typename(
+                        "Optional[" + "Union[" + ", ".join(not_none_typenames) + "]" + "]"
+                    )
+                else:
+                    return Typename(
+                        "Optional[" + ", ".join(not_none_typenames) + "]"
+                    )
+                    
             if len(typenames) > 1:
                 # Just Union everything.
                 return Typename("Union[" + ", ".join(typenames) + "]")
@@ -271,5 +277,4 @@ def skip_this_file(
         should_skip = should_skip or not re.search(
             include_files_regex, filename
         )
-    # print(f"result  skip_this_file {filename}: {should_skip=}")
     return should_skip
