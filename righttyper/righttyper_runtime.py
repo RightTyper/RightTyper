@@ -1,4 +1,5 @@
 import inspect
+import os
 import random
 import sys
 import typing
@@ -61,7 +62,7 @@ def should_skip_function(
             include_all,
             include_files_regex,
         )
-        or "righttyper" in code.co_filename
+        or "righttyper" + os.sep in code.co_filename
     ):
         return True
     if not (code.co_flags & 0x2):
