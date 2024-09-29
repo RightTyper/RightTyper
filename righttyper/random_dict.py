@@ -8,6 +8,12 @@ class RandomDict(dict):
         super().__init__(*args, **kwargs)
         self._update_internal_vectors()
 
+    def __new__(cls, *args, **kwargs):
+        instance = super().__new__(cls)
+        instance._keys = dict()
+        instance._random_vector = []
+        return instance
+
     def _update_internal_vectors(self):
         """Helper method to update _random_vector and _keys."""
         self._random_vector = list(self.keys())  # Rebuild the list of keys
