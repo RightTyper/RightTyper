@@ -3,7 +3,6 @@ from typing import Dict, List, Set, Tuple, Optional
 from righttyper.righttyper_types import ArgumentName, Filename, FuncInfo, FunctionName, Typename, ImportInfo
 from righttyper.get_import_details import generate_import_nodes
 
-
 class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
         self,
@@ -37,6 +36,9 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         # Initialize InsertTypingImportTransformer data
         self.has_typing_import = False
+
+        # Track `from __future__` imports
+        self.future_imports: List[cst.SimpleStatementLine] = []
 
     # Helper method from AnnotateFunctionTransformer
     def _should_output_as_string(self, annotation: str) -> bool:
@@ -91,25 +93,38 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     # ConstructImportTransformer logic
     def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
-        # Add imports if any
+        # Step 1: Collect `from __future__` imports and remove them
+        new_body = []
+        for stmt in updated_node.body:
+            if isinstance(stmt, cst.SimpleStatementLine):
+                if any(
+                    isinstance(imp, cst.ImportFrom) and imp.module and isinstance(imp.module, cst.Name) and imp.module.value == "__future__"
+                    for imp in stmt.body
+                ):
+                    # Collect future imports to lift later
+                    self.future_imports.append(stmt)
+                else:
+                    new_body.append(stmt)
+            else:
+                new_body.append(stmt)
+            updated_node = updated_node.with_changes(body=new_body)
+
+        # Add additional imports if needed
         if self.imports:
             new_imports = []
             for imp in self.imports:
                 new_imports.extend(generate_import_nodes(imp.import_details))
 
-            # Filter valid import statements
             valid_imports = [imp for imp in new_imports if not isinstance(imp, cst.EmptyLine)]
-            
-            # Create If(TYPE_CHECKING) node
+
             type_checking_imports = cst.If(
                 test=cst.Name("TYPE_CHECKING"),
                 body=cst.IndentedBlock(body=[cst.SimpleStatementLine([imp]) for imp in valid_imports]),
             )
 
-            # Add the TYPE_CHECKING block at the beginning of the module
-            updated_node = updated_node.with_changes(body=[type_checking_imports] + list(updated_node.body))
+            new_body = [type_checking_imports] + list(new_body)
+            updated_node = updated_node.with_changes(body=new_body)
 
-        # Insert typing import if needed (InsertTypingImportTransformer logic)
         if not self.has_typing_import:
             typing_import = cst.SimpleStatementLine(
                 body=[
@@ -122,6 +137,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                             cst.ImportAlias(name=cst.Name(value="FrozenSet")),
                             cst.ImportAlias(name=cst.Name(value="Generator")),
                             cst.ImportAlias(name=cst.Name(value="List")),
+                            cst.ImportAlias(name=cst.Name(value="Never")),
                             cst.ImportAlias(name=cst.Name(value="Optional")),
                             cst.ImportAlias(name=cst.Name(value="Set")),
                             cst.ImportAlias(name=cst.Name(value="Tuple")),
@@ -131,11 +147,24 @@ class UnifiedTransformer(cst.CSTTransformer):
                     )
                 ]
             )
-            updated_node = updated_node.with_changes(body=[typing_import] + list(updated_node.body))
+            new_body = [typing_import] + list(updated_node.body)
+            updated_node = updated_node.with_changes(body=new_body)
             self.has_typing_import = True
 
-        return updated_node
+        # Step 2: Determine where to insert the `from __future__` imports
+        insertion_index = 0
+        for i, stmt in enumerate(new_body):
+            if isinstance(stmt, cst.EmptyLine) or isinstance(stmt, cst.SimpleStatementLine) and isinstance(stmt.body[0], cst.Expr) and isinstance(stmt.body[0].value, cst.SimpleString):
+                insertion_index += 1
+            else:
+                break
 
+        # Insert future imports at the top (after comments and whitespace)
+        new_body = new_body[:insertion_index] + self.future_imports + new_body[insertion_index:]
+
+        updated_node = updated_node.with_changes(body=new_body)
+
+        return updated_node
 
 # TypeNameExtractor helper class remains unchanged
 class TypeNameExtractor(cst.CSTVisitor):
