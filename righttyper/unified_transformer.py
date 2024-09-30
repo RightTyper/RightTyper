@@ -113,7 +113,9 @@ class UnifiedTransformer(cst.CSTTransformer):
         if self.imports:
             new_imports = []
             for imp in self.imports:
-                new_imports.extend(generate_import_nodes(imp.import_details))
+                # Make sure not to include imports specific to righttyper
+                if "righttyper" not in imp.function_fname:
+                    new_imports.extend(generate_import_nodes(imp.import_details))
 
             valid_imports = [imp for imp in new_imports if not isinstance(imp, cst.EmptyLine)]
 

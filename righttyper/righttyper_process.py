@@ -159,8 +159,14 @@ def process_file(
         [],
         needed_imports,
         srcdir)
-    
-    transformed = cst_tree.visit(transformer)
+
+    try:
+        transformed = cst_tree.visit(transformer)
+    except TypeError:
+        # This happens when "Mock" is passed around.
+        # Print a warning and bail.
+        print(f"Failed to transform {filename}.")
+        return
 
     with open(
         filename + ("" if overwrite else ".typed"),
