@@ -1049,7 +1049,7 @@ def main(
     )
     sys.monitoring.restart_events()
     setup_timer(restart_sampling)
-    replace_dicts.replace_dicts()
+    # replace_dicts.replace_dicts()
     execute_script_or_module(script, module, tool_args, script_args)
     reset_monitoring()
     post_process(
