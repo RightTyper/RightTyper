@@ -4,24 +4,13 @@ import os
 import pathlib
 import platform
 import runpy
+import site
 import subprocess
 import sys
 import sysconfig
 from functools import lru_cache
 from importlib.abc import Loader, MetaPathFinder
 
-
-@lru_cache()
-def get_homebrew_cellar_path() -> str:
-    """Returns the Homebrew Cellar path by running `brew --cellar`."""
-    try:
-        result = subprocess.run(["brew", "--cellar"], capture_output=True, text=True, check=True)
-        return result.stdout.strip()
-    except subprocess.CalledProcessError:
-        return ""
-
-    
-import site
 
 @lru_cache()
 def get_homebrew_cellar_path() -> str:
