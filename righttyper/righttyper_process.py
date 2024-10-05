@@ -45,7 +45,7 @@ def correct_indentation_issues(file_contents: str) -> str:
     """Return a string corresponding to the file contents, but with indentation issues fixed if needed."""
     original_lines = file_contents.splitlines(keepends=True)  # Preserve line endings
 
-    indent_stack = []
+    indent_stack : List[int] = []
     corrected_lines = []
 
     for line_number, line in enumerate(original_lines, start=1):
@@ -103,7 +103,7 @@ def process_file(
     ],
     imports: Set[ImportInfo],
     overwrite: bool,
-    not_annotated: Dict[FuncInfo, Set[str]],
+    not_annotated: Dict[FuncInfo, Set[ArgumentName]],
     ignore_annotations: bool = False,
     srcdir: str = "",
 ) -> None:
@@ -234,12 +234,12 @@ def output_stub_files(
     include_files_regex: str,
     visited_funcs_arguments: Dict[FuncInfo, List[ArgInfo]],
     visited_funcs_retval: Dict[FuncInfo, TypenameSet],
-    not_annotated: Dict[FuncInfo, Set[str]],
+    not_annotated: Dict[FuncInfo, Set[ArgumentName]],
     arg_types: Dict[
         Tuple[FuncInfo, ArgumentName],
         ArgumentType,
     ],
-    existing_annotations: Dict[FuncInfo, Dict[str, str]],
+    existing_annotations: Dict[FuncInfo, Dict[ArgumentName, str]],
 ) -> None:
     # Print all type signatures
     output_str: Dict[str, str] = defaultdict(str)  # map file name to str

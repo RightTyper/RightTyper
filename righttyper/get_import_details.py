@@ -228,7 +228,7 @@ def generate_import_nodes(
 
     for alias in details.object_aliases:
         try:
-            stmt = cst.ImportFrom(
+            import_from_stmt = cst.ImportFrom(
                 module=create_dotted_name(details.import_module_name),
                 names=[
                     cst.ImportAlias(
@@ -237,7 +237,7 @@ def generate_import_nodes(
                     )
                 ],
             )
-            import_nodes.append(stmt)
+            import_nodes.append(import_from_stmt)
             import_nodes.append(cst.EmptyLine())
         except cst.CSTValidationError:
             logger.warning(
@@ -256,7 +256,7 @@ def generate_import_nodes(
     import_nodes.append(cst.EmptyLine())
 
     for alias in details.module_aliases:
-        stmt = cst.Import(
+        import_stmt = cst.Import(
             names=[
                 cst.ImportAlias(
                     name=create_dotted_name(details.import_module_name),
@@ -264,7 +264,7 @@ def generate_import_nodes(
                 )
             ]
         )
-        import_nodes.append(stmt)
+        import_nodes.append(import_stmt)
         import_nodes.append(cst.EmptyLine())
 
     return import_nodes
