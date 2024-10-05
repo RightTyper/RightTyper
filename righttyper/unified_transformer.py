@@ -14,16 +14,14 @@ class UnifiedTransformer(cst.CSTTransformer):
                 Typename,
             ],
         ],
-        not_annotated: Dict[FuncInfo, Set[str]],
-        allowed_types: List[str] = [],
+        not_annotated: Dict[FuncInfo, Set[ArgumentName]],
+        allowed_types: List[Typename] = [],
         imports: Set[ImportInfo] = set(),
-        root_path: str = "",
     ) -> None:
         # Initialize AnnotateFunctionTransformer data
         self.filename = filename
         self.type_annotations = type_annotations
         self.not_annotated = not_annotated
-        self.class_name: List[str] = []
         self.allowed_types = allowed_types or [
             "Any", "bool", "bytes", "Callable", "complex", "Dict", "dict",
             "float", "FrozenSet", "frozenset", "Generator", "int", "List",
@@ -32,7 +30,6 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         # Initialize ConstructImportTransformer data
         self.imports = imports
-        self.root_path = root_path
 
         # Initialize InsertTypingImportTransformer data
         self.has_typing_import = False
@@ -62,7 +59,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             for parameter in updated_node.params.params:
                 for arg, annotation_ in args:
                     if parameter.name.value == arg:
-                        if arg not in self.not_annotated[key]:
+                        if arg not in self.not_annotated.get(key, set()):
                             continue
                         if self._should_output_as_string(annotation_):
                             annotation_expr = cst.SimpleString(f'"{annotation_}"')
@@ -80,7 +77,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             else:
                 return_type_expr = cst.parse_expression(return_type)
 
-            if "return" in self.not_annotated[key]:
+            if "return" in self.not_annotated.get(key, set()):
                 updated_node = updated_node.with_changes(
                     params=updated_node.params.with_changes(params=new_parameters),
                     returns=cst.Annotation(annotation=return_type_expr),
