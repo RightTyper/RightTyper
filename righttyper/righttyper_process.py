@@ -157,8 +157,7 @@ def process_file(
         type_annotations,
         not_annotated,
         [],
-        needed_imports,
-        srcdir)
+        needed_imports)
 
     try:
         transformed = cst_tree.visit(transformer)
