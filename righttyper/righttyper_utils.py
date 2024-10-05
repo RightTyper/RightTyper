@@ -2,15 +2,7 @@ import logging
 import os
 import re
 from functools import cache
-from typing import (
-    Any,
-    Dict,
-    Final,
-    List,
-    Optional,
-    Set,
-    Tuple,
-)
+from typing import Any, Dict, Final, List, Optional, Set, Tuple
 
 from righttyper.righttyper_types import (
     ArgInfo,
@@ -77,7 +69,9 @@ def adjusted_type_name(fname: str, typename: str) -> Typename:
     return Typename(new_typename)
 
 
-def unannotated(f: object, ignore_annotations: bool = False) -> Set[ArgumentName]:
+def unannotated(
+    f: object, ignore_annotations: bool = False
+) -> Set[ArgumentName]:
     """
     Returns a set of the unannotated arguments and, if
     unannotated, the return value (called "return"), for the
@@ -146,13 +140,17 @@ def union_typeset_str(
             if len(not_none_typenames) < len(typenames):
                 if len(not_none_typenames) > 1:
                     return Typename(
-                        "Optional[" + "Union[" + ", ".join(not_none_typenames) + "]" + "]"
+                        "Optional["
+                        + "Union["
+                        + ", ".join(not_none_typenames)
+                        + "]"
+                        + "]"
                     )
                 else:
                     return Typename(
                         "Optional[" + ", ".join(not_none_typenames) + "]"
                     )
-                    
+
             if len(typenames) > 1:
                 # Just Union everything.
                 return Typename("Union[" + ", ".join(typenames) + "]")

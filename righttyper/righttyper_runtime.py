@@ -7,17 +7,9 @@ from collections.abc import Generator
 from functools import cache
 from itertools import islice
 from types import CodeType, ModuleType
+from typing import Any, Dict, List, Optional, Tuple, Type
 
-from typing import (
-    Any,
-    Dict,
-    List,
-    Never,
-    Optional,
-    Tuple,
-    Type,
-)
-
+from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
@@ -28,13 +20,8 @@ from righttyper.righttyper_types import (
     TypenameFrequency,
     TypenameSet,
 )
-from righttyper.righttyper_utils import (
-    skip_this_file,
-)
+from righttyper.righttyper_utils import skip_this_file
 
-from righttyper.random_dict import (
-    RandomDict,
-)
 
 def get_random_element_from_dict(value: Dict[Any, Any]) -> Any:
     if isinstance(value, RandomDict):
@@ -47,7 +34,7 @@ def get_random_element_from_dict(value: Dict[Any, Any]) -> Any:
         n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
         return next(islice(value.items(), n, n + 1))
 
-    
+
 @cache
 def should_skip_function(
     code: CodeType,
@@ -139,7 +126,7 @@ def get_type_name(obj: object, depth: int = 0) -> str:
     retval = get_type_name_helper(obj, depth)
     return retval
 
-        
+
 def get_type_name_helper(obj: object, depth: int = 0) -> str:
     orig_value = obj
 
@@ -155,9 +142,9 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
         obj = type(obj)
 
     # Handle numpy and other libraries using dtype
-    try: # workaround failure in Pelican
-        if hasattr(orig_value, 'dtype'):
-            dtype = getattr(orig_value, 'dtype')
+    try:  # workaround failure in Pelican
+        if hasattr(orig_value, "dtype"):
+            dtype = getattr(orig_value, "dtype")
             # Use type(dtype).__module__ and type(dtype).__name__ to get the fully qualified name for the dtype
             retval = f"{obj.__module__}.{obj.__name__}[Any, {type(dtype).__module__}.{type(dtype).__name__}]"
             # Forcibly strip builtins, which are somehow getting in there
@@ -165,7 +152,6 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
             return retval
     except RuntimeError:
         pass
-        
 
     # Handle built-in types (like list, tuple, NoneType, etc.)
     if obj.__module__ == "builtins":
@@ -184,19 +170,28 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
 
     # Check if the type is accessible from the current global namespace
     current_namespace = sys._getframe(depth + 2).f_globals
-    if obj.__name__ in current_namespace and current_namespace[obj.__name__] is obj:
+    if (
+        obj.__name__ in current_namespace
+        and current_namespace[obj.__name__] is obj
+    ):
         return obj.__name__
 
     # Check if the type is accessible from a module in the current namespace
     for name, mod in current_namespace.items():
-        if inspect.ismodule(mod) and hasattr(mod, obj.__name__) and getattr(mod, obj.__name__) is obj:
+        if (
+            inspect.ismodule(mod)
+            and hasattr(mod, obj.__name__)
+            and getattr(mod, obj.__name__) is obj
+        ):
             return f"{name}.{obj.__name__}"
 
     # Handle generic types (like List, Dict, etc.)
     origin = typing.get_origin(obj)
     if origin:
         type_name = f"{origin.__module__}.{origin.__name__}"
-        type_params = ", ".join(get_full_type(arg, depth + 1) for arg in typing.get_args(obj))
+        type_params = ", ".join(
+            get_full_type(arg, depth + 1) for arg in typing.get_args(obj)
+        )
         return f"{type_name}[{type_params}]"
 
     # Handle all other types with fully qualified names

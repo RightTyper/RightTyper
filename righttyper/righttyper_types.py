@@ -2,14 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import (
-    Any,
-    FrozenSet,
-    NewType,
-    Set,
-    Type,
-    TypeVar,
-)
+from typing import Any, FrozenSet, NewType, Set, Type, TypeVar
 
 T = TypeVar("T")
 

@@ -130,12 +130,19 @@ def analyze_directory(
     if directory in cache:
         return cache[directory]
 
-    directory_summary: List[int] = [0, 0, 0]  # [fully annotated, partially annotated, not annotated]
+    directory_summary: List[int] = [
+        0,
+        0,
+        0,
+    ]  # [fully annotated, partially annotated, not annotated]
 
     # Check if the directory argument is a single file
+    files: List[str] = []
+    dirs: List[str] = []
+    root = ""
     if os.path.isfile(directory):
         files = [os.path.basename(directory)]
-        dirs : List[str] = []
+        dirs = []
         root = os.path.dirname(directory)
     else:
         for root, dirs, files in os.walk(directory):

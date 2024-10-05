@@ -1,24 +1,12 @@
-from collections import defaultdict
-from typing import (
-    Any,
-    Dict,
-    List,
-    Set,
-    Tuple,
-)
-
-import libcst as cst
 import logging
 import os
 import pathlib
+from collections import defaultdict
+from typing import Any, Dict, List, Set, Tuple
 
+import libcst as cst
 
-from righttyper.unified_transformer import (
-    UnifiedTransformer,
-)
-from righttyper.generate_stubs import (
-    generate_stub,
-)
+from righttyper.generate_stubs import generate_stub
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
@@ -38,31 +26,37 @@ from righttyper.righttyper_utils import (
     skip_this_file,
     union_typeset_str,
 )
+from righttyper.unified_transformer import UnifiedTransformer
 
 logger = logging.getLogger("righttyper")
 
+
 def correct_indentation_issues(file_contents: str) -> str:
     """Return a string corresponding to the file contents, but with indentation issues fixed if needed."""
-    original_lines = file_contents.splitlines(keepends=True)  # Preserve line endings
+    original_lines = file_contents.splitlines(
+        keepends=True
+    )  # Preserve line endings
 
-    indent_stack : List[int] = []
+    indent_stack: List[int] = []
     corrected_lines = []
 
     for line_number, line in enumerate(original_lines, start=1):
         stripped_line = line.lstrip()
 
-        if not stripped_line or stripped_line.startswith('#'):
+        if not stripped_line or stripped_line.startswith("#"):
             # Preserve empty lines and comments
             corrected_lines.append(line)
             continue
 
-        leading_whitespace = line[:len(line) - len(stripped_line)]
-        
+        leading_whitespace = line[: len(line) - len(stripped_line)]
+
         # Convert tabs to spaces (assuming 4 spaces per tab)
-        corrected_leading_whitespace = leading_whitespace.replace('\t', ' ' * 4)
-        
+        corrected_leading_whitespace = leading_whitespace.replace(
+            "\t", " " * 4
+        )
+
         # Check for mixed tabs and spaces and correct them
-        if ' ' in leading_whitespace and '\t' in leading_whitespace:
+        if " " in leading_whitespace and "\t" in leading_whitespace:
             # print(f"Line {line_number}: Mixed spaces and tabs detected. Correcting to spaces.")
             leading_whitespace = corrected_leading_whitespace
 
@@ -75,7 +69,7 @@ def correct_indentation_issues(file_contents: str) -> str:
                 indent_stack.pop()
 
         # Push the new indentation level if a new block starts
-        if stripped_line.endswith(':'):  # Detect start of a block
+        if stripped_line.endswith(":"):  # Detect start of a block
             indent_stack.append(indent_level)
 
         # Reconstruct the corrected line and append to corrected lines list
@@ -83,7 +77,7 @@ def correct_indentation_issues(file_contents: str) -> str:
         corrected_lines.append(corrected_line)
 
     # Join corrected lines into a single string
-    corrected_content = ''.join(corrected_lines)
+    corrected_content = "".join(corrected_lines)
 
     # Return the corrected content if changes were made, otherwise return original content
     if corrected_content != file_contents:
@@ -143,7 +137,7 @@ def process_file(
             # Initial parse failed; fix any indentation issues and try again
             source = correct_indentation_issues(source)
             cst_tree = cst.parse_module(source)
-        except:
+        except cst._exceptions.ParserSyntaxError:
             print(f"Failed to parse source for {filename}.")
             return
 
@@ -151,13 +145,10 @@ def process_file(
     needed_imports = set(
         imp for imp in imports if imp.function_fname == filename
     )
-    
+
     transformer = UnifiedTransformer(
-        filename,
-        type_annotations,
-        not_annotated,
-        [],
-        needed_imports)
+        filename, type_annotations, not_annotated, [], needed_imports
+    )
 
     try:
         transformed = cst_tree.visit(transformer)

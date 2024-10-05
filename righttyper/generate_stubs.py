@@ -1,9 +1,7 @@
 import ast
 from typing import TextIO
 
-from righttyper.righttyper_types import (
-    FunctionName,
-)
+from righttyper.righttyper_types import FunctionName
 
 
 def generate_stub(
