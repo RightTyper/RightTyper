@@ -135,7 +135,7 @@ def analyze_directory(
     # Check if the directory argument is a single file
     if os.path.isfile(directory):
         files = [os.path.basename(directory)]
-        dirs = []
+        dirs : List[str] = []
         root = os.path.dirname(directory)
     else:
         for root, dirs, files in os.walk(directory):

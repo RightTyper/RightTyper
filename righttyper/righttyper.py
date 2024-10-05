@@ -126,11 +126,11 @@ arg_types: Dict[
 
 # For each function, the variables (and, potentially, 'return') that
 # have no type annotations
-not_annotated: Dict[FuncInfo, Set[str]] = defaultdict(set)
+not_annotated: Dict[FuncInfo, Set[ArgumentName]] = defaultdict(set)
 
 # Existing annotations (variable to type annotations, optionally
 # including 'return')
-existing_annotations: Dict[FuncInfo, Dict[str, str]] = defaultdict(dict)
+existing_annotations: Dict[FuncInfo, Dict[ArgumentName, str]] = defaultdict(dict)
 
 # Track the file names and class names for classes
 # that will need import statements
@@ -421,7 +421,7 @@ def update_function_annotations(
             )
             not_annotated[t] = unannotated(obj, ignore_annotations)
             existing_annotations[t] = {
-                name: format_annotation(type_hints[name])
+                ArgumentName(name): format_annotation(type_hints[name])
                 for name in type_hints
             }
 
@@ -474,7 +474,7 @@ def in_instrumentation_code(frame: FrameType) -> bool:
     # limit overhead. The instrumentation code should be fairly
     # shallow, so this heuristic should have no impact on accuracy
     # while improving performance.
-    f = frame
+    f : Optional[FrameType] = frame
     countdown = 10
     while f and countdown > 0:
         if f.f_code in instrumentation_functions_code:
@@ -501,6 +501,7 @@ def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
     global sample_count_instrumentation, sample_count_total
     global instrumentation_overhead
     sample_count_total += 1.0
+    assert frame is not None
     if in_instrumentation_code(frame):
         sample_count_instrumentation += 1.0
     instrumentation_overhead = (
@@ -783,12 +784,14 @@ def process_all_files(
             progress.start()
             while completed < total:
                 ready_sentinels = multiprocessing.connection.wait(sentinels)  # Wait for any process sentinel to become ready
+
                 for sentinel in ready_sentinels:
-                    completed += 1
-                    progress.update(task1, advance=1)
-                    progress.refresh()
-                    # Remove the sentinel to avoid double counting
-                    sentinels.remove(sentinel)
+                    if type(sentinel) == int: # should be true for all, mollifying mypy
+                        completed += 1
+                        progress.update(task1, advance=1)
+                        progress.refresh()
+                        # Remove the sentinel to avoid double counting
+                        sentinels.remove(sentinel)
             # Ensure all processes have finished
             for process in processes:
                 process.join()

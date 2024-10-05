@@ -22,11 +22,11 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.filename = filename
         self.type_annotations = type_annotations
         self.not_annotated = not_annotated
-        self.allowed_types = allowed_types or [
+        self.allowed_types = allowed_types or [Typename(t) for t in [
             "Any", "bool", "bytes", "Callable", "complex", "Dict", "dict",
             "float", "FrozenSet", "frozenset", "Generator", "int", "List",
             "list", "None", "Optional", "Set", "set", "str", "Tuple", "Union",
-        ]
+        ] ]
 
         # Initialize ConstructImportTransformer data
         self.imports = imports
@@ -64,7 +64,8 @@ class UnifiedTransformer(cst.CSTTransformer):
                         if self._should_output_as_string(annotation_):
                             annotation_expr = cst.SimpleString(f'"{annotation_}"')
                         else:
-                            annotation_expr = cst.parse_expression(annotation_)
+                            parsed_expr = cst.parse_expression(annotation_)
+                            annotation_expr = parsed_expr
                         new_parameters.append(
                             parameter.with_changes(annotation=cst.Annotation(annotation=annotation_expr))
                         )

@@ -164,6 +164,7 @@ class TransformingLoader(Loader):
         transformer = DictTransformer()
         tree = transformer.visit(tree)
         ast.fix_missing_locations(tree)
+        assert module.__file__ is not None
         code = compile(tree, filename=module.__file__, mode='exec')
         exec(code, module.__dict__)
 
