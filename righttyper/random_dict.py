@@ -2,36 +2,37 @@ import random
 
 __version__ = "0.2.2"
 
+from typing import Any, Tuple
 
 class RandomDict(dict):
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._update_internal_vectors()
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls, *args, **kwargs) -> 'RandomDict':
         instance = super().__new__(cls)
         instance._keys = dict()
         instance._random_vector = []
         return instance
 
-    def _update_internal_vectors(self):
+    def _update_internal_vectors(self) -> None:
         """Helper method to update _random_vector and _keys."""
         self._random_vector = list(self.keys())  # Rebuild the list of keys
         self._keys = {key: idx for idx, key in enumerate(self._random_vector)}
 
-    def update(self, *args, **kwargs):
+    def update(self, *args, **kwargs) -> None:
         """Update the dictionary and ensure _random_vector is in sync."""
         super().update(*args, **kwargs)
         self._update_internal_vectors()
 
-    def setdefault(self, key, default=None):
+    def setdefault(self, key, default=None) -> Any:
         """Override setdefault to ensure consistency of _random_vector."""
         if key not in self:
             self[key] = default
         return self[key]
 
-    def copy(self):
+    def copy(self) -> 'RandomDict':
         """Return a shallow copy of the RandomDict"""
         new_rd = RandomDict(super().copy())
         new_rd._keys = self._keys.copy()
@@ -39,7 +40,7 @@ class RandomDict(dict):
         return new_rd
 
     @classmethod
-    def fromkeys(cls, keys, value=None):
+    def fromkeys(cls, keys, value=None) -> 'RandomDict':
         """Create a RandomDict from an iterable of keys, all mapped to the same value."""
         rd = cls()
         for key in keys:
@@ -47,7 +48,7 @@ class RandomDict(dict):
         rd._update_internal_vectors()  # Make sure _random_vector is populated
         return rd
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key, value) -> None:
         """Insert or update a key-value pair"""
         super().__setitem__(key, value)
         i = self._keys.get(key, -1)
@@ -57,7 +58,7 @@ class RandomDict(dict):
             self._random_vector.append(key)
             self._keys[key] = len(self._random_vector) - 1
 
-    def __delitem__(self, key):
+    def __delitem__(self, key) -> None:
         """Delete item by swapping with the last element in the random vector"""
         if key not in self._keys:
             raise KeyError(key)
@@ -77,7 +78,7 @@ class RandomDict(dict):
         del self._keys[key]
         super().__delitem__(key)
 
-    def random_key(self):
+    def random_key(self) -> Any:
         """Return a random key from this dictionary in O(1) time"""
         if len(self._random_vector) == 0:
             print(
@@ -86,11 +87,11 @@ class RandomDict(dict):
             raise KeyError("RandomDict is empty")
         return random.choice(self._random_vector)
 
-    def random_value(self):
+    def random_value(self) -> Any:
         """Return a random value from this dictionary in O(1) time"""
         return self[self.random_key()]
 
-    def random_item(self):
+    def random_item(self) -> Tuple[Any, Any]:
         """Return a random key-value pair from this dictionary in O(1) time"""
         k = self.random_key()
         return k, self[k]
@@ -100,7 +101,7 @@ def replace_dicts():
     # Replace dict with RandomDict
     import builtins
 
-    builtins.dict = RandomDict
+    builtins.dict = RandomDict # type: ignore
 
     # Replace defaultdict with RandomDict
 
