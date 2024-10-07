@@ -2,15 +2,7 @@ import logging
 import os
 import re
 from functools import cache
-from typing import (
-    Any,
-    Dict,
-    Final,
-    List,
-    Optional,
-    Set,
-    Tuple,
-)
+from typing import Any, Dict, Final, List, Optional, Set, Tuple
 
 from righttyper.righttyper_types import (
     ArgInfo,
@@ -77,7 +69,9 @@ def adjusted_type_name(fname: str, typename: str) -> Typename:
     return Typename(new_typename)
 
 
-def unannotated(f: object, ignore_annotations: bool = False) -> Set[str]:
+def unannotated(
+    f: object, ignore_annotations: bool = False
+) -> Set[ArgumentName]:
     """
     Returns a set of the unannotated arguments and, if
     unannotated, the return value (called "return"), for the
@@ -92,9 +86,9 @@ def unannotated(f: object, ignore_annotations: bool = False) -> Set[str]:
 
     for name, param in sig.parameters.items():
         if ignore_annotations or param.annotation is param.empty:
-            unannotated_args.add(name)
+            unannotated_args.add(ArgumentName(name))
     if ignore_annotations or sig.return_annotation == inspect.Signature.empty:
-        unannotated_args.add("return")
+        unannotated_args.add(ArgumentName("return"))
 
     return unannotated_args
 
@@ -146,13 +140,17 @@ def union_typeset_str(
             if len(not_none_typenames) < len(typenames):
                 if len(not_none_typenames) > 1:
                     return Typename(
-                        "Optional[" + "Union[" + ", ".join(not_none_typenames) + "]" + "]"
+                        "Optional["
+                        + "Union["
+                        + ", ".join(not_none_typenames)
+                        + "]"
+                        + "]"
                     )
                 else:
                     return Typename(
                         "Optional[" + ", ".join(not_none_typenames) + "]"
                     )
-                    
+
             if len(typenames) > 1:
                 # Just Union everything.
                 return Typename("Union[" + ", ".join(typenames) + "]")
@@ -197,12 +195,12 @@ def make_type_signature(
     args: List[ArgInfo],
     retval: TypenameSet,
     namespace: Dict[str, Any],
-    not_annotated: Dict[FuncInfo, Set[str]],
+    not_annotated: Dict[FuncInfo, Set[ArgumentName]],
     arg_types: Dict[
         Tuple[FuncInfo, ArgumentName],
         ArgumentType,
     ],
-    existing_annotations: Dict[FuncInfo, Dict[str, str]],
+    existing_annotations: Dict[FuncInfo, Dict[ArgumentName, str]],
 ) -> str:
     # print(f"make_type_signature {file_name} {func_name} {args} {retval}")
     t = FuncInfo(
@@ -244,7 +242,7 @@ def make_type_signature(
             s += ", "
     s += ")"
     if "return" in existing_annotations[t]:
-        retval_name = Typename(existing_annotations[t]["return"])
+        retval_name = Typename(existing_annotations[t][ArgumentName("return")])
     else:
         # if "return" in not_annotated[t]:
         retval_name = union_typeset_str(file_name, retval, namespace)

@@ -1,6 +1,7 @@
-import click
 import json
 from collections import defaultdict
+
+import click
 from rich.console import Console
 from rich.table import Table
 
@@ -82,25 +83,27 @@ CATEGORIES = {
     "set-item": "Set Item: Access or assignment of a set item with an incompatible type",
     "none-return": "None Return: Returning `None` where a non-None type is expected",
     "none-arg": "None Argument: Passing `None` where a non-None type is expected",
-    'import-not-found' : "Import Not Found: Missing or uninstalled import",
-    'override': "Override: Subclass method violates Liskov substitutability principle",
-    'func-returns-value': "Function Returns Value: Function returns `None` but a value is expected",
-    'has-type': "Has Type: Cannot determine type of a variable",
-    'return': "Return: Missing return statement",
-    'name-match': "Name Match: Argument type mismatch in a namedtuple",
-    'truthy-function': "Truthy Function: Function is always true in a boolean context (conditional)",
+    "import-not-found": "Import Not Found: Missing or uninstalled import",
+    "override": "Override: Subclass method violates Liskov substitutability principle",
+    "func-returns-value": "Function Returns Value: Function returns `None` but a value is expected",
+    "has-type": "Has Type: Cannot determine type of a variable",
+    "return": "Return: Missing return statement",
+    "name-match": "Name Match: Argument type mismatch in a namedtuple",
+    "truthy-function": "Truthy Function: Function is always true in a boolean context (conditional)",
 }
+
 
 def classify_errors(errors):
     classified_errors = defaultdict(list)
     for error in errors:
-        if error['severity'] != "error":
+        if error["severity"] != "error":
             continue
-        category = CATEGORIES.get(error['code'], "Unknown")
+        category = CATEGORIES.get(error["code"], "Unknown")
         if category == "Unknown":
             print(error)
         classified_errors[category].append(error)
     return classified_errors
+
 
 def summarize_errors(classified_errors):
     total_errors = sum(len(errors) for errors in classified_errors.values())
@@ -109,12 +112,15 @@ def summarize_errors(classified_errors):
     for category, errors in classified_errors.items():
         count = len(errors)
         percentage = (count / total_errors) * 100
-        summary.append((category, f"{errors[0]['code']}", count, f"{percentage:.2f}%"))
+        summary.append(
+            (category, f"{errors[0]['code']}", count, f"{percentage:.2f}%")
+        )
 
     # Sort by percentage in descending order
     summary.sort(key=lambda x: float(x[3][:-1]), reverse=True)
-        
+
     return summary, total_errors
+
 
 def display_summary(summary, total_errors):
     console = Console()
@@ -125,7 +131,9 @@ def display_summary(summary, total_errors):
     table.add_column("Percentage", justify="right", style="green")
 
     for category, error_code, count, percentage in summary:
-        table.add_row(category, f"[bold]{error_code}[/bold]", str(count), percentage)
+        table.add_row(
+            category, f"[bold]{error_code}[/bold]", str(count), percentage
+        )
 
     console.print(table)
     console.print(f"\nTotal Errors: {total_errors}\n")
@@ -136,15 +144,17 @@ def display_summary_markdown(summary, total_errors):
     markdown_table = "# Mypy Error Summary\n\n"
     markdown_table += "| Category | Error Code | Count | Percentage |\n"
     markdown_table += "|---|---|---|---|\n"
-    
+
     for category, error_code, count, percentage in summary:
-        markdown_table += f"| {category} | {error_code} | {count} | {percentage} |\n"
+        markdown_table += (
+            f"| {category} | {error_code} | {count} | {percentage} |\n"
+        )
 
     markdown_table += f"\n**Total Errors**: {total_errors}\n"
 
     print(markdown_table)
 
-    
+
 def display_summary_csv(summary, total_errors):
     # Generate CSV-style output
     csv_table = "Category,Error Code,Count,Percentage\n"
@@ -154,14 +164,16 @@ def display_summary_csv(summary, total_errors):
 
     csv_table += f"\nTotal Errors,{total_errors},\n"
     print(csv_table)
-    
+
 
 @click.command()
 @click.option("--markdown", is_flag=True, default=False)
 @click.option("--csv", is_flag=True, default=False)
-@click.argument("file",
-                type=click.Path(exists=True, file_okay=True, dir_okay=False),
-                required=True)
+@click.argument(
+    "file",
+    type=click.Path(exists=True, file_okay=True, dir_okay=False),
+    required=True,
+)
 def main(file, markdown, csv):
     # MyPy output is in jsonl format (JSON Lines); parse accordingly.
     errors = []
@@ -170,10 +182,10 @@ def main(file, markdown, csv):
             try:
                 errors.append(json.loads(line))
             except json.JSONDecodeError:
-                pass # ignore non-JSON lines
-    
+                pass  # ignore non-JSON lines
+
     classified_errors = classify_errors(errors)
-    
+
     summary, total_errors = summarize_errors(classified_errors)
 
     if csv:
@@ -182,6 +194,7 @@ def main(file, markdown, csv):
         display_summary_markdown(summary, total_errors)
     else:
         display_summary(summary, total_errors)
+
 
 if __name__ == "__main__":
     main()

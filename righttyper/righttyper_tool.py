@@ -3,10 +3,7 @@ import sys
 from types import CodeType, FrameType
 from typing import Any, Callable, Dict, Optional
 
-from righttyper.righttyper_utils import (
-    TOOL_ID,
-    TOOL_NAME,
-)
+from righttyper.righttyper_utils import TOOL_ID, TOOL_NAME
 
 _EVENTS = frozenset(
     {

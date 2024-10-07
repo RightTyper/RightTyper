@@ -1,6 +1,7 @@
 import random
 
-__version__ = '0.2.2'
+__version__ = "0.2.2"
+
 
 class RandomDict(dict):
 
@@ -31,7 +32,7 @@ class RandomDict(dict):
         return self[key]
 
     def copy(self):
-        """ Return a shallow copy of the RandomDict """
+        """Return a shallow copy of the RandomDict"""
         new_rd = RandomDict(super().copy())
         new_rd._keys = self._keys.copy()
         new_rd._random_vector = self._random_vector[:]
@@ -47,7 +48,7 @@ class RandomDict(dict):
         return rd
 
     def __setitem__(self, key, value):
-        """ Insert or update a key-value pair """
+        """Insert or update a key-value pair"""
         super().__setitem__(key, value)
         i = self._keys.get(key, -1)
 
@@ -57,7 +58,7 @@ class RandomDict(dict):
             self._keys[key] = len(self._random_vector) - 1
 
     def __delitem__(self, key):
-        """ Delete item by swapping with the last element in the random vector """
+        """Delete item by swapping with the last element in the random vector"""
         if key not in self._keys:
             raise KeyError(key)
 
@@ -77,18 +78,20 @@ class RandomDict(dict):
         super().__delitem__(key)
 
     def random_key(self):
-        """ Return a random key from this dictionary in O(1) time """
+        """Return a random key from this dictionary in O(1) time"""
         if len(self._random_vector) == 0:
-            print(f"Debug: _random_vector is empty. Current dict: {self}")  # Debug print statement
+            print(
+                f"Debug: _random_vector is empty. Current dict: {self}"
+            )  # Debug print statement
             raise KeyError("RandomDict is empty")
         return random.choice(self._random_vector)
 
     def random_value(self):
-        """ Return a random value from this dictionary in O(1) time """
+        """Return a random value from this dictionary in O(1) time"""
         return self[self.random_key()]
 
     def random_item(self):
-        """ Return a random key-value pair from this dictionary in O(1) time """
+        """Return a random key-value pair from this dictionary in O(1) time"""
         k = self.random_key()
         return k, self[k]
 
@@ -96,6 +99,7 @@ class RandomDict(dict):
 def replace_dicts():
     # Replace dict with RandomDict
     import builtins
+
     builtins.dict = RandomDict
 
     # Replace defaultdict with RandomDict
@@ -107,7 +111,7 @@ def replace_dicts():
         """Intercept imports of defaultdict to route to RandomDict"""
         module = _original_import(name, globals, locals, fromlist, level)
         if name == "collections" or (fromlist and "defaultdict" in fromlist):
-            module.__dict__['defaultdict'] = RandomDict
+            module.__dict__["defaultdict"] = RandomDict
         return module
 
     # Monkey-patch __import__

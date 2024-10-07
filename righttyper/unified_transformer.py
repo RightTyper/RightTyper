@@ -1,7 +1,17 @@
+from typing import Dict, List, Optional, Set, Tuple
+
 import libcst as cst
-from typing import Dict, List, Set, Tuple, Optional
-from righttyper.righttyper_types import ArgumentName, Filename, FuncInfo, FunctionName, Typename, ImportInfo
+
 from righttyper.get_import_details import generate_import_nodes
+from righttyper.righttyper_types import (
+    ArgumentName,
+    Filename,
+    FuncInfo,
+    FunctionName,
+    ImportInfo,
+    Typename,
+)
+
 
 class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
@@ -23,9 +33,30 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.type_annotations = type_annotations
         self.not_annotated = not_annotated
         self.allowed_types = allowed_types or [
-            "Any", "bool", "bytes", "Callable", "complex", "Dict", "dict",
-            "float", "FrozenSet", "frozenset", "Generator", "int", "List",
-            "list", "None", "Optional", "Set", "set", "str", "Tuple", "Union",
+            Typename(t)
+            for t in [
+                "Any",
+                "bool",
+                "bytes",
+                "Callable",
+                "complex",
+                "Dict",
+                "dict",
+                "float",
+                "FrozenSet",
+                "frozenset",
+                "Generator",
+                "int",
+                "List",
+                "list",
+                "None",
+                "Optional",
+                "Set",
+                "set",
+                "str",
+                "Tuple",
+                "Union",
+            ]
         ]
 
         # Initialize ConstructImportTransformer data
@@ -62,11 +93,18 @@ class UnifiedTransformer(cst.CSTTransformer):
                         if arg not in self.not_annotated.get(key, set()):
                             continue
                         if self._should_output_as_string(annotation_):
-                            annotation_expr = cst.SimpleString(f'"{annotation_}"')
+                            annotation_expr = cst.SimpleString(
+                                f'"{annotation_}"'
+                            )
                         else:
-                            annotation_expr = cst.parse_expression(annotation_)
+                            parsed_expr = cst.parse_expression(annotation_)
+                            annotation_expr = parsed_expr
                         new_parameters.append(
-                            parameter.with_changes(annotation=cst.Annotation(annotation=annotation_expr))
+                            parameter.with_changes(
+                                annotation=cst.Annotation(
+                                    annotation=annotation_expr
+                                )
+                            )
                         )
                         break
                 else:
@@ -79,23 +117,32 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             if "return" in self.not_annotated.get(key, set()):
                 updated_node = updated_node.with_changes(
-                    params=updated_node.params.with_changes(params=new_parameters),
+                    params=updated_node.params.with_changes(
+                        params=new_parameters
+                    ),
                     returns=cst.Annotation(annotation=return_type_expr),
                 )
             else:
                 updated_node = updated_node.with_changes(
-                    params=updated_node.params.with_changes(params=new_parameters),
+                    params=updated_node.params.with_changes(
+                        params=new_parameters
+                    ),
                 )
         return updated_node
 
     # ConstructImportTransformer logic
-    def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
+    def leave_Module(
+        self, original_node: cst.Module, updated_node: cst.Module
+    ) -> cst.Module:
         # Step 1: Collect `from __future__` imports and remove them
         new_body = []
         for stmt in updated_node.body:
             if isinstance(stmt, cst.SimpleStatementLine):
                 if any(
-                    isinstance(imp, cst.ImportFrom) and imp.module and isinstance(imp.module, cst.Name) and imp.module.value == "__future__"
+                    isinstance(imp, cst.ImportFrom)
+                    and imp.module
+                    and isinstance(imp.module, cst.Name)
+                    and imp.module.value == "__future__"
                     for imp in stmt.body
                 ):
                     # Collect future imports to lift later
@@ -112,13 +159,23 @@ class UnifiedTransformer(cst.CSTTransformer):
             for imp in self.imports:
                 # Make sure not to include imports specific to righttyper
                 if "righttyper" not in imp.function_fname:
-                    new_imports.extend(generate_import_nodes(imp.import_details))
+                    new_imports.extend(
+                        generate_import_nodes(imp.import_details)
+                    )
 
-            valid_imports = [imp for imp in new_imports if not isinstance(imp, cst.EmptyLine)]
+            valid_imports = [
+                imp
+                for imp in new_imports
+                if not isinstance(imp, cst.EmptyLine)
+            ]
 
             type_checking_imports = cst.If(
                 test=cst.Name("TYPE_CHECKING"),
-                body=cst.IndentedBlock(body=[cst.SimpleStatementLine([imp]) for imp in valid_imports]),
+                body=cst.IndentedBlock(
+                    body=[
+                        cst.SimpleStatementLine([imp]) for imp in valid_imports
+                    ]
+                ),
             )
 
             new_body = [type_checking_imports] + list(new_body)
@@ -140,7 +197,9 @@ class UnifiedTransformer(cst.CSTTransformer):
                             cst.ImportAlias(name=cst.Name(value="Optional")),
                             cst.ImportAlias(name=cst.Name(value="Set")),
                             cst.ImportAlias(name=cst.Name(value="Tuple")),
-                            cst.ImportAlias(name=cst.Name(value="TYPE_CHECKING")),
+                            cst.ImportAlias(
+                                name=cst.Name(value="TYPE_CHECKING")
+                            ),
                             cst.ImportAlias(name=cst.Name(value="Union")),
                         ],
                     )
@@ -153,17 +212,27 @@ class UnifiedTransformer(cst.CSTTransformer):
         # Step 2: Determine where to insert the `from __future__` imports
         insertion_index = 0
         for i, stmt in enumerate(new_body):
-            if isinstance(stmt, cst.EmptyLine) or isinstance(stmt, cst.SimpleStatementLine) and isinstance(stmt.body[0], cst.Expr) and isinstance(stmt.body[0].value, cst.SimpleString):
+            if (
+                isinstance(stmt, cst.EmptyLine)
+                or isinstance(stmt, cst.SimpleStatementLine)
+                and isinstance(stmt.body[0], cst.Expr)
+                and isinstance(stmt.body[0].value, cst.SimpleString)
+            ):
                 insertion_index += 1
             else:
                 break
 
         # Insert future imports at the top (after comments and whitespace)
-        new_body = new_body[:insertion_index] + self.future_imports + new_body[insertion_index:]
+        new_body = (
+            new_body[:insertion_index]
+            + self.future_imports
+            + new_body[insertion_index:]
+        )
 
         updated_node = updated_node.with_changes(body=new_body)
 
         return updated_node
+
 
 # TypeNameExtractor helper class remains unchanged
 class TypeNameExtractor(cst.CSTVisitor):

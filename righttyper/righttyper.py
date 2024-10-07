@@ -1,5 +1,6 @@
-import click
 import functools
+import importlib.metadata
+import importlib.util
 import inspect
 import logging
 import multiprocessing
@@ -8,15 +9,8 @@ import os
 import runpy
 import signal
 import sys
-import importlib.util
-import importlib.metadata
-
 from collections import defaultdict
-from types import (
-    CodeType,
-    FrameType,
-    FunctionType,
-)
+from types import CodeType, FrameType, FunctionType
 from typing import (
     Any,
     Dict,
@@ -28,9 +22,11 @@ from typing import (
     get_type_hints,
 )
 
-from righttyper.get_import_details import (
-    get_import_details,
-)
+import click
+
+# Disabled for now
+# from righttyper import replace_dicts
+from righttyper.get_import_details import get_import_details
 from righttyper.righttyper_process import (
     collect_data,
     output_stub_files,
@@ -69,20 +65,16 @@ from righttyper.righttyper_types import (
     TypenameFrequency,
     TypenameSet,
 )
-from righttyper.righttyper_utils import (
+from righttyper.righttyper_utils import (  # get_sampling_interval,; update_sampling_interval,; reset_sampling_interval,
     TOOL_ID,
     TOOL_NAME,
     debug_print,
     debug_print_set_level,
     make_type_signature,
-    #    get_sampling_interval,
-    #    update_sampling_interval,
-    #    reset_sampling_interval,
     skip_this_file,
     unannotated,
     union_typeset_str,
 )
-from righttyper import replace_dicts
 
 # Below is to mollify mypy.
 try:
@@ -126,11 +118,13 @@ arg_types: Dict[
 
 # For each function, the variables (and, potentially, 'return') that
 # have no type annotations
-not_annotated: Dict[FuncInfo, Set[str]] = defaultdict(set)
+not_annotated: Dict[FuncInfo, Set[ArgumentName]] = defaultdict(set)
 
 # Existing annotations (variable to type annotations, optionally
 # including 'return')
-existing_annotations: Dict[FuncInfo, Dict[str, str]] = defaultdict(dict)
+existing_annotations: Dict[FuncInfo, Dict[ArgumentName, str]] = defaultdict(
+    dict
+)
 
 # Track the file names and class names for classes
 # that will need import statements
@@ -325,9 +319,7 @@ def process_function_arguments(
     if varkw:
         args.append(varkw)
 
-    type_hints = get_function_type_hints(
-        caller_frame, code
-    )
+    type_hints = get_function_type_hints(caller_frame, code)
     if infer_shapes:
         update_arg_shapes(t, the_values)
 
@@ -421,7 +413,7 @@ def update_function_annotations(
             )
             not_annotated[t] = unannotated(obj, ignore_annotations)
             existing_annotations[t] = {
-                name: format_annotation(type_hints[name])
+                ArgumentName(name): format_annotation(type_hints[name])
                 for name in type_hints
             }
 
@@ -469,12 +461,13 @@ def update_argument_type(
             old_arginfo.type_name_set.add(next(iter(full_type_name_set)))
             # reset_sampling_interval()
 
+
 def in_instrumentation_code(frame: FrameType) -> bool:
     # We stop walking the stack after a given number of frames to
     # limit overhead. The instrumentation code should be fairly
     # shallow, so this heuristic should have no impact on accuracy
     # while improving performance.
-    f = frame
+    f: Optional[FrameType] = frame
     countdown = 10
     while f and countdown > 0:
         if f.f_code in instrumentation_functions_code:
@@ -501,6 +494,7 @@ def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
     global sample_count_instrumentation, sample_count_total
     global instrumentation_overhead
     sample_count_total += 1.0
+    assert frame is not None
     if in_instrumentation_code(frame):
         sample_count_instrumentation += 1.0
     instrumentation_overhead = (
@@ -782,17 +776,24 @@ def process_all_files(
             completed = 0
             progress.start()
             while completed < total:
-                ready_sentinels = multiprocessing.connection.wait(sentinels)  # Wait for any process sentinel to become ready
+                ready_sentinels = multiprocessing.connection.wait(
+                    sentinels
+                )  # Wait for any process sentinel to become ready
+
                 for sentinel in ready_sentinels:
-                    completed += 1
-                    progress.update(task1, advance=1)
-                    progress.refresh()
-                    # Remove the sentinel to avoid double counting
-                    sentinels.remove(sentinel)
+                    if (
+                        type(sentinel) is int
+                    ):  # should be true for all, mollifying mypy
+                        completed += 1
+                        progress.update(task1, advance=1)
+                        progress.refresh()
+                        # Remove the sentinel to avoid double counting
+                        sentinels.remove(sentinel)
             # Ensure all processes have finished
             for process in processes:
                 process.join()
             progress.update(task1, completed=total)
+
 
 def should_update_file(
     t: FuncInfo,
@@ -986,15 +987,15 @@ def main(
     if infer_shapes:
         # Check for required packages for shape inference
         found_package = defaultdict(bool)
-        packages = [ "numpy", "pandas", "torch" ]
+        packages = ["numpy", "pandas", "torch"]
         all_packages_found = True
         for package in packages:
-            found_package[package] = importlib.util.find_spec(package) is not None
+            found_package[package] = (
+                importlib.util.find_spec(package) is not None
+            )
             all_packages_found &= found_package[package]
         if not all_packages_found:
-            print(
-                "The following package(s) need to be installed:"
-            )
+            print("The following package(s) need to be installed:")
             for package in packages:
                 if not found_package[package]:
                     print(f" * {package}")
