@@ -106,46 +106,6 @@ def get_import_details(
     return tup
 
 
-def testme() -> None:
-    import numpy
-    import numpy as np
-    from rich.console import Console as ApplePie
-    from rich.console import Console as Banana
-
-    # Test the functions
-    assert get_import_details(numpy.ndarray) == ImportDetails(
-        "ndarray",
-        frozenset({}),
-        "numpy",
-        frozenset({"np"}),
-    )
-    assert get_import_details(np.ndarray) == ImportDetails(
-        "ndarray",
-        frozenset({}),
-        "numpy",
-        frozenset({"np"}),
-    )
-    assert get_import_details(Banana) == ImportDetails(
-        "Console",
-        frozenset({"ApplePie", "Banana"}),
-        "rich.console",
-        frozenset({}),
-    )
-    # print_possible_imports(get_import_details(Banana))
-    assert get_import_details(ApplePie) == ImportDetails(
-        "Console",
-        frozenset({"ApplePie", "Banana"}),
-        "rich.console",
-        frozenset({}),
-    )
-    assert get_import_details(lru_cache) == ImportDetails(
-        "lru_cache",
-        frozenset({}),
-        "functools",
-        frozenset({}),
-    )
-
-
 def print_possible_imports(
     details: ImportDetails,
 ) -> None:
@@ -275,7 +235,3 @@ def generate_import_nodes(
 # import_nodes = generate_import_nodes(details)
 # for node in import_nodes:
 #    print(cst.Module([]).code_for_node(node))
-
-
-if __name__ == "__main__":
-    testme()
