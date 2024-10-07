@@ -92,7 +92,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                     if parameter.name.value == arg:
                         if arg not in self.not_annotated.get(key, set()):
                             continue
-                        annotation_expr : cst.BaseExpression
+                        annotation_expr: cst.BaseExpression
                         if self._should_output_as_string(annotation_):
                             annotation_expr = cst.SimpleString(
                                 f'"{annotation_}"'
@@ -137,7 +137,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self, original_node: cst.Module, updated_node: cst.Module
     ) -> cst.Module:
         # Step 1: Collect `from __future__` imports and remove them
-        new_body : List[cst.BaseStatement] = []
+        new_body: List[cst.BaseStatement] = []
         stmt: cst.BaseStatement
         for stmt in updated_node.body:
             if isinstance(stmt, cst.SimpleStatementLine):
@@ -240,7 +240,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 # TypeNameExtractor helper class remains unchanged
 class TypeNameExtractor(cst.CSTVisitor):
     def __init__(self) -> None:
-        self.names : Set[str] = set()
+        self.names: Set[str] = set()
 
     def visit_Name(self, node: cst.Name) -> Optional[bool]:
         self.names.add(node.value)

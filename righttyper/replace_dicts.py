@@ -10,6 +10,7 @@ from functools import lru_cache
 from importlib.abc import Loader, MetaPathFinder
 from typing import Any, Dict, Set
 
+
 @lru_cache()
 def get_homebrew_cellar_path() -> str:
     """Returns the Homebrew Cellar path by running `brew --cellar`."""
@@ -197,7 +198,7 @@ class TransformingLoader(Loader):
 
 class TransformingFinder(MetaPathFinder):
     def __init__(self) -> None:
-        self._processed_modules : Set[str] = set()
+        self._processed_modules: Set[str] = set()
 
     def find_spec(self, fullname, path, target=None):
         if fullname in self._processed_modules:
@@ -230,7 +231,7 @@ def transform_and_run_script(script_path):
         tree = transformer.visit(tree)
         ast.fix_missing_locations(tree)
         code = compile(tree, filename=script_path, mode="exec")
-        namespace : Dict[str, Any] = {}
+        namespace: Dict[str, Any] = {}
         exec(code, namespace)
     else:
         # Fallback to default runpy if not in user path

@@ -781,8 +781,8 @@ def process_all_files(
                 )  # Wait for any process sentinel to become ready
 
                 for sentinel in ready_sentinels:
-                    if (
-                        type(sentinel) is int
+                    if isinstance(
+                        sentinel, int
                     ):  # should be true for all, mollifying mypy
                         completed += 1
                         progress.update(task1, advance=1)

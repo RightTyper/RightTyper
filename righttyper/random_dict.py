@@ -4,13 +4,14 @@ __version__ = "0.2.2"
 
 from typing import Any, Tuple
 
+
 class RandomDict(dict):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._update_internal_vectors()
 
-    def __new__(cls, *args, **kwargs) -> 'RandomDict':
+    def __new__(cls, *args, **kwargs) -> "RandomDict":
         instance = super().__new__(cls)
         instance._keys = dict()
         instance._random_vector = []
@@ -32,7 +33,7 @@ class RandomDict(dict):
             self[key] = default
         return self[key]
 
-    def copy(self) -> 'RandomDict':
+    def copy(self) -> "RandomDict":
         """Return a shallow copy of the RandomDict"""
         new_rd = RandomDict(super().copy())
         new_rd._keys = self._keys.copy()
@@ -40,7 +41,7 @@ class RandomDict(dict):
         return new_rd
 
     @classmethod
-    def fromkeys(cls, keys, value=None) -> 'RandomDict':
+    def fromkeys(cls, keys, value=None) -> "RandomDict":
         """Create a RandomDict from an iterable of keys, all mapped to the same value."""
         rd = cls()
         for key in keys:
@@ -101,7 +102,7 @@ def replace_dicts():
     # Replace dict with RandomDict
     import builtins
 
-    builtins.dict = RandomDict # type: ignore
+    builtins.dict = RandomDict  # type: ignore
 
     # Replace defaultdict with RandomDict
 
