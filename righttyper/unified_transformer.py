@@ -13,6 +13,39 @@ from righttyper.righttyper_types import (
 )
 
 
+_BUILTIN_TYPES : Set[Typename] = {
+    Typename(t) for t in [
+        "bool",
+        "bytes",
+        "complex",
+        "dict",
+        "float",
+        "frozenset",
+        "int",
+        "list",
+        "None",
+        "set",
+        "str",
+    ]
+}
+
+_TYPING_TYPES : Set[Typename] = {
+    Typename(t) for t in [
+        "Any",
+        "Callable",
+        "Dict",
+        "FrozenSet",
+        "Generator",
+        "List",
+        "Never",    # FIXME requires Python >= 3.11
+        "Optional",
+        "Set",
+        "Tuple",
+        "Union",
+    ]
+}
+
+
 class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
         self,
@@ -32,32 +65,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.filename = filename
         self.type_annotations = type_annotations
         self.not_annotated = not_annotated
-        self.allowed_types = allowed_types or [
-            Typename(t)
-            for t in [
-                "Any",
-                "bool",
-                "bytes",
-                "Callable",
-                "complex",
-                "Dict",
-                "dict",
-                "float",
-                "FrozenSet",
-                "frozenset",
-                "Generator",
-                "int",
-                "List",
-                "list",
-                "None",
-                "Optional",
-                "Set",
-                "set",
-                "str",
-                "Tuple",
-                "Union",
-            ]
-        ]
+        self.allowed_types : Set[Typename] = set(allowed_types) | _BUILTIN_TYPES | _TYPING_TYPES
 
         # Initialize ConstructImportTransformer data
         self.imports = imports
@@ -186,21 +194,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                     cst.ImportFrom(
                         module=cst.Name(value="typing"),
                         names=[
-                            cst.ImportAlias(name=cst.Name(value="Any")),
-                            cst.ImportAlias(name=cst.Name(value="Callable")),
-                            cst.ImportAlias(name=cst.Name(value="Dict")),
-                            cst.ImportAlias(name=cst.Name(value="FrozenSet")),
-                            cst.ImportAlias(name=cst.Name(value="Generator")),
-                            cst.ImportAlias(name=cst.Name(value="List")),
-                            cst.ImportAlias(name=cst.Name(value="Never")),
-                            cst.ImportAlias(name=cst.Name(value="Optional")),
-                            cst.ImportAlias(name=cst.Name(value="Set")),
-                            cst.ImportAlias(name=cst.Name(value="Tuple")),
-                            cst.ImportAlias(
-                                name=cst.Name(value="TYPE_CHECKING")
-                            ),
-                            cst.ImportAlias(name=cst.Name(value="Union")),
-                        ],
+                            cst.ImportAlias(name=cst.Name(value="TYPE_CHECKING"))
+                        ] + [
+                            cst.ImportAlias(name=cst.Name(value=t))
+                            for t in _TYPING_TYPES
+                        ]
                     )
                 ]
             )
