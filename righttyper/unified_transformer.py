@@ -70,11 +70,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     # Helper method from AnnotateFunctionTransformer
     def _should_output_as_string(self, annotation: str) -> bool:
-        parsed_expr = cst.parse_expression(annotation)
-        extractor = TypeNameExtractor()
-        parsed_expr.visit(extractor)
-        components = extractor.names
-        return not all(comp in self.allowed_types for comp in components)
+        return not all(t in self.allowed_types for t in types_in_annotation(annotation))
 
     # AnnotateFunctionTransformer logic
     def leave_FunctionDef(
@@ -237,22 +233,29 @@ class UnifiedTransformer(cst.CSTTransformer):
         return updated_node
 
 
-# TypeNameExtractor helper class remains unchanged
-class TypeNameExtractor(cst.CSTVisitor):
-    def __init__(self) -> None:
-        self.names: Set[str] = set()
+def types_in_annotation(annotation: str) -> Set[str]:
+    """Extracts all type names included in a type annotation."""
 
-    def visit_Name(self, node: cst.Name) -> Optional[bool]:
-        self.names.add(node.value)
-        return True
+    class TypeNameExtractor(cst.CSTVisitor):
+        def __init__(self) -> None:
+            self.names: Set[str] = set()
 
-    def visit_Attribute(self, node: cst.Attribute) -> Optional[bool]:
-        full_name = node.attr.value
-        current_node = node.value
-        while isinstance(current_node, cst.Attribute):
-            full_name = f"{current_node.attr.value}.{full_name}"
-            current_node = current_node.value
-        if isinstance(current_node, cst.Name):
-            full_name = f"{current_node.value}.{full_name}"
-        self.names.add(full_name)
-        return True
+        def visit_Name(self, node: cst.Name) -> Optional[bool]:
+            self.names.add(node.value)
+            return False 
+
+        def visit_Attribute(self, node: cst.Attribute) -> Optional[bool]:
+            full_name = node.attr.value
+            current_node = node.value
+            while isinstance(current_node, cst.Attribute):
+                full_name = f"{current_node.attr.value}.{full_name}"
+                current_node = current_node.value
+            if isinstance(current_node, cst.Name):
+                full_name = f"{current_node.value}.{full_name}"
+            self.names.add(full_name)
+            return False 
+
+    parsed_expr = cst.parse_expression(annotation)
+    extractor = TypeNameExtractor()
+    parsed_expr.visit(extractor)
+    return extractor.names

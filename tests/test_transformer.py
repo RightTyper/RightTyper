@@ -1,6 +1,6 @@
 import libcst as cst
 import textwrap
-from righttyper.unified_transformer import UnifiedTransformer
+from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation
 from righttyper.righttyper_types import *
 import typing as T
 
@@ -130,3 +130,10 @@ def test_transform_function_as_string():
         def foo(x: Integer, y: "WholeNumber") -> "FloatingPointNumber":
             return x/2
     """)
+
+
+def test_types_in_annotation():
+    assert {'int'} == types_in_annotation('int')
+    assert {'Tuple', 'int', 'float'} == types_in_annotation('Tuple[int, float]')
+    assert {'Dict', 'foo.bar', 'bar.baz'} == types_in_annotation('Dict[foo.bar, bar.baz]')
+    assert {'Union', 'int', 'float', 'Tuple', 'a.b.c'} == types_in_annotation('Union[int, float, Tuple[int, a.b.c]]')
