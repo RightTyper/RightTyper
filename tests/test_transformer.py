@@ -50,7 +50,7 @@ def get_if_type_checking(m: cst.Module) -> T.Optional[str]:
             self.found = None
 
         def visit_If(self, node: cst.If) -> bool:
-            if node.test.value == 'TYPE_CHECKING':
+            if isinstance(node.test, cst.Name) and node.test.value == 'TYPE_CHECKING':
                 self.found = node
                 return False # stop here
             return True
@@ -213,6 +213,153 @@ def test_transform_function_as_string():
             import X.Y
             import X.Z
     """)
+
+
+def test_transform_deletes_type_hint_comments_in_header():
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(x, y): # type: (int, int) -> Any
+            return (x+y)/2
+
+        def bar(x):   # type: (Any) -> None
+            pass
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('int')),
+                        (ArgumentName('y'), Typename('int'))
+                    ],
+                    Typename('float')
+                )
+            },
+            not_annotated = {
+                foo: {ArgumentName('x'), ArgumentName('y')}
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int, y: int):
+            return (x+y)/2
+    """)
+
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(x):   # type: (Any) -> None
+            pass
+    """)
+
+    assert get_if_type_checking(code) == None
+
+
+def test_transform_deletes_type_hint_comments_in_parameters():
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(
+            x,  # type: int
+            y   # type: float
+        ):
+            # type: (...) -> Any
+            return (x+y)/2
+
+        def bar(
+            x   # type: Any
+        ):
+            # type: (...) -> None
+            pass
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('int')),
+                        (ArgumentName('y'), Typename('int'))
+                    ],
+                    Typename('float')
+                )
+            },
+            not_annotated = {
+                foo: {ArgumentName('x'), ArgumentName('y')}
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(
+            x: int,
+            y: int
+        ):
+            # type: (...) -> Any
+            return (x+y)/2
+    """)
+
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(
+            x   # type: Any
+        ):
+            # type: (...) -> None
+            pass
+    """)
+
+    assert get_if_type_checking(code) == None
+
+
+def test_transform_deletes_type_hint_comments_for_retval():
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(
+            x,  # type: int
+            y   # type: float
+        ):
+            # type: (...) -> Any
+            return (x+y)/2
+
+        def bar(
+            x   # type: Any
+        ):
+            # type: (...) -> None
+            pass
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('int')),
+                        (ArgumentName('y'), Typename('int'))
+                    ],
+                    Typename('float')
+                )
+            },
+            not_annotated = {
+                foo: {ArgumentName('return')}
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(
+            x,  # type: int
+            y   # type: float
+        ) -> float:
+            return (x+y)/2
+    """)
+
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(
+            x   # type: Any
+        ):
+            # type: (...) -> None
+            pass
+    """)
+
+    assert get_if_type_checking(code) == None
 
 
 def test_types_in_annotation():
