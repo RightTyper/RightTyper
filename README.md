@@ -23,21 +23,6 @@ In addition to generating types, RightTyper has the following features:
 * It infers shape annotations for NumPy/JAX/PyTorch tensors, compatible with [`jaxtyping`](https://docs.kidger.site/jaxtyping/) and [`beartype`](https://github.com/beartype/beartype) or [`typeguard`](https://typeguard.readthedocs.io/en/latest/).
 
 
-## Installation
-
-To install the latest released version, use `pip` as shown below:
-
-```bash
-python3 -m pip install righttyper
-```
-
-To install the development (current) version of RightTyper from its repository,
-use `pip` as shown below:
-
-```bash
-python3 -m pip install git+https://github.com/RightTyper/righttyper
-```
-
 ## Usage
 
 To use RightTyper, simply run your script with `righttyper` instead of `python3`:
