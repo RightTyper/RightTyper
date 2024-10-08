@@ -1,7 +1,7 @@
 import libcst as cst
 import textwrap
 from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation
-from righttyper.righttyper_types import *
+from righttyper.righttyper_types import FuncInfo, Filename, FunctionName, Typename, ArgumentName
 import typing as T
 
 
@@ -17,7 +17,7 @@ def test_transformer_not_annotated_missing():
                 FuncInfo(Filename('foo.py'), FunctionName('foo')):
                 (
                     [
-                        ('x', 'int')
+                        (ArgumentName('x'), Typename('int'))
                     ],
                     Typename('float')
                 )
@@ -38,6 +38,7 @@ def get_function(m: cst.Module, name: str) -> T.Optional[str]:
             if node.name.value == name:
                 self.found = node
                 return False # stop here
+            return True
 
     v = V()
     m.visit(v)
@@ -63,20 +64,20 @@ def test_transform_function():
             type_annotations = {
                 foo: (
                     [
-                        ('x', 'int')
+                        (ArgumentName('x'), Typename('int'))
                     ],
                     Typename('float')
                 ),
                 baz: (
                     [
-                        ('z', 'int')
+                        (ArgumentName('z'), Typename('int'))
                     ],
                     Typename('wrong')
                 )
             },
             not_annotated = {
-                foo: {'x', 'return'},
-                baz: {'z'}
+                foo: {ArgumentName('x'), ArgumentName('return')},
+                baz: {ArgumentName('z')}
             },
             imports = set()
         )
@@ -112,17 +113,17 @@ def test_transform_function_as_string():
             type_annotations = {
                 foo: (
                     [
-                        ('x', 'Integer'),
-                        ('y', 'WholeNumber')
+                        (ArgumentName('x'), Typename('Integer')),
+                        (ArgumentName('y'), Typename('WholeNumber'))
                     ],
                     Typename('FloatingPointNumber')
                 )
             },
             not_annotated = {
-                foo: {'x', 'y', 'return'}
+                foo: {ArgumentName('x'), ArgumentName('y'), ArgumentName('return')}
             },
             imports = set(),
-            allowed_types = ['Integer']
+            allowed_types = [Typename('Integer')]
         )
 
     code = code.visit(t)
