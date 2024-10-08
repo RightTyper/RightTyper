@@ -13,6 +13,39 @@ from righttyper.righttyper_types import (
 )
 
 
+_BUILTIN_TYPES : Set[Typename] = {
+    Typename(t) for t in [
+        "bool",
+        "bytes",
+        "complex",
+        "dict",
+        "float",
+        "frozenset",
+        "int",
+        "list",
+        "None",
+        "set",
+        "str",
+    ]
+}
+
+_TYPING_TYPES : Set[Typename] = {
+    Typename(t) for t in [
+        "Any",
+        "Callable",
+        "Dict",
+        "FrozenSet",
+        "Generator",
+        "List",
+        "Never",    # FIXME requires Python >= 3.11
+        "Optional",
+        "Set",
+        "Tuple",
+        "Union",
+    ]
+}
+
+
 class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
         self,
@@ -32,32 +65,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.filename = filename
         self.type_annotations = type_annotations
         self.not_annotated = not_annotated
-        self.allowed_types = allowed_types or [
-            Typename(t)
-            for t in [
-                "Any",
-                "bool",
-                "bytes",
-                "Callable",
-                "complex",
-                "Dict",
-                "dict",
-                "float",
-                "FrozenSet",
-                "frozenset",
-                "Generator",
-                "int",
-                "List",
-                "list",
-                "None",
-                "Optional",
-                "Set",
-                "set",
-                "str",
-                "Tuple",
-                "Union",
-            ]
-        ]
+        self.allowed_types : Set[Typename] = set(allowed_types) | _BUILTIN_TYPES | _TYPING_TYPES
 
         # Initialize ConstructImportTransformer data
         self.imports = imports
@@ -70,11 +78,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     # Helper method from AnnotateFunctionTransformer
     def _should_output_as_string(self, annotation: str) -> bool:
-        parsed_expr = cst.parse_expression(annotation)
-        extractor = TypeNameExtractor()
-        parsed_expr.visit(extractor)
-        components = extractor.names
-        return not all(comp in self.allowed_types for comp in components)
+        return not all(t in self.allowed_types for t in types_in_annotation(annotation))
 
     # AnnotateFunctionTransformer logic
     def leave_FunctionDef(
@@ -190,21 +194,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                     cst.ImportFrom(
                         module=cst.Name(value="typing"),
                         names=[
-                            cst.ImportAlias(name=cst.Name(value="Any")),
-                            cst.ImportAlias(name=cst.Name(value="Callable")),
-                            cst.ImportAlias(name=cst.Name(value="Dict")),
-                            cst.ImportAlias(name=cst.Name(value="FrozenSet")),
-                            cst.ImportAlias(name=cst.Name(value="Generator")),
-                            cst.ImportAlias(name=cst.Name(value="List")),
-                            cst.ImportAlias(name=cst.Name(value="Never")),
-                            cst.ImportAlias(name=cst.Name(value="Optional")),
-                            cst.ImportAlias(name=cst.Name(value="Set")),
-                            cst.ImportAlias(name=cst.Name(value="Tuple")),
-                            cst.ImportAlias(
-                                name=cst.Name(value="TYPE_CHECKING")
-                            ),
-                            cst.ImportAlias(name=cst.Name(value="Union")),
-                        ],
+                            cst.ImportAlias(name=cst.Name(value="TYPE_CHECKING"))
+                        ] + [
+                            cst.ImportAlias(name=cst.Name(value=t))
+                            for t in _TYPING_TYPES
+                        ]
                     )
                 ]
             )
@@ -237,22 +231,29 @@ class UnifiedTransformer(cst.CSTTransformer):
         return updated_node
 
 
-# TypeNameExtractor helper class remains unchanged
-class TypeNameExtractor(cst.CSTVisitor):
-    def __init__(self) -> None:
-        self.names: Set[str] = set()
+def types_in_annotation(annotation: str) -> Set[str]:
+    """Extracts all type names included in a type annotation."""
 
-    def visit_Name(self, node: cst.Name) -> Optional[bool]:
-        self.names.add(node.value)
-        return True
+    class TypeNameExtractor(cst.CSTVisitor):
+        def __init__(self) -> None:
+            self.names: Set[str] = set()
 
-    def visit_Attribute(self, node: cst.Attribute) -> Optional[bool]:
-        full_name = node.attr.value
-        current_node = node.value
-        while isinstance(current_node, cst.Attribute):
-            full_name = f"{current_node.attr.value}.{full_name}"
-            current_node = current_node.value
-        if isinstance(current_node, cst.Name):
-            full_name = f"{current_node.value}.{full_name}"
-        self.names.add(full_name)
-        return True
+        def visit_Name(self, node: cst.Name) -> Optional[bool]:
+            self.names.add(node.value)
+            return False 
+
+        def visit_Attribute(self, node: cst.Attribute) -> Optional[bool]:
+            full_name = node.attr.value
+            current_node = node.value
+            while isinstance(current_node, cst.Attribute):
+                full_name = f"{current_node.attr.value}.{full_name}"
+                current_node = current_node.value
+            if isinstance(current_node, cst.Name):
+                full_name = f"{current_node.value}.{full_name}"
+            self.names.add(full_name)
+            return False 
+
+    parsed_expr = cst.parse_expression(annotation)
+    extractor = TypeNameExtractor()
+    parsed_expr.visit(extractor)
+    return extractor.names
