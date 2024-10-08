@@ -22,8 +22,7 @@ def test_transformer_not_annotated_missing():
                     Typename('float')
                 )
             },
-            not_annotated = dict(),
-            imports = set()
+            not_annotated = dict()
         )
 
     code.visit(t)
@@ -36,6 +35,22 @@ def get_function(m: cst.Module, name: str) -> T.Optional[str]:
 
         def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
             if node.name.value == name:
+                self.found = node
+                return False # stop here
+            return True
+
+    v = V()
+    m.visit(v)
+    return cst.Module([v.found]).code.lstrip('\n') if v.found else None
+
+
+def get_if_type_checking(m: cst.Module) -> T.Optional[str]:
+    class V(cst.CSTVisitor):
+        def __init__(self):
+            self.found = None
+
+        def visit_If(self, node: cst.If) -> bool:
+            if node.test.value == 'TYPE_CHECKING':
                 self.found = node
                 return False # stop here
             return True
@@ -78,8 +93,7 @@ def test_transform_function():
             not_annotated = {
                 foo: {ArgumentName('x'), ArgumentName('return')},
                 baz: {ArgumentName('z')}
-            },
-            imports = set()
+            }
         )
 
     code = code.visit(t)
@@ -98,7 +112,71 @@ def test_transform_function():
             return z/2
     """)
 
-    # XXX check import
+    assert get_if_type_checking(code) == None
+
+
+def test_transform_adds_typing_import_for_typing_name():
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(x):
+            return x/2 if x else 0.0
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('Optional[int]'))   # Optional comes from typing module
+                    ],
+                    Typename('float')
+                )
+            },
+            not_annotated = {
+                foo: {ArgumentName('x')},
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: Optional[int]):
+            return x/2 if x else 0.0
+    """)
+
+    assert "from typing import " in code.code
+
+    assert get_if_type_checking(code) == None
+
+
+def test_transform_adds_typing_import_for_typing_name_return():
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(x):
+            return x/2 if x else None
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [],
+                    Typename('Optional[float]') # Optional comes from typing module
+                )
+            },
+            not_annotated = {
+                foo: {ArgumentName('return')},
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x) -> Optional[float]:
+            return x/2 if x else None
+    """)
+
+    # also check only needed names are emitted
+    assert "from typing import TYPE_CHECKING, Optional\n" in code.code
+    assert get_if_type_checking(code) == None
 
 
 def test_transform_function_as_string():
@@ -113,23 +191,27 @@ def test_transform_function_as_string():
             type_annotations = {
                 foo: (
                     [
-                        (ArgumentName('x'), Typename('Integer')),
-                        (ArgumentName('y'), Typename('WholeNumber'))
+                        (ArgumentName('x'), Typename('int')),
+                        (ArgumentName('y'), Typename('Optional[X.Y.WholeNumber]'))
                     ],
-                    Typename('FloatingPointNumber')
+                    Typename('X.Z.FloatingPointNumber')
                 )
             },
             not_annotated = {
                 foo: {ArgumentName('x'), ArgumentName('y'), ArgumentName('return')}
-            },
-            imports = set(),
-            allowed_types = [Typename('Integer')]
+            }
         )
 
     code = code.visit(t)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: Integer, y: "WholeNumber") -> "FloatingPointNumber":
+        def foo(x: int, y: "Optional[X.Y.WholeNumber]") -> "X.Z.FloatingPointNumber":
             return x/2
+    """)
+
+    assert get_if_type_checking(code) == textwrap.dedent("""\
+        if TYPE_CHECKING:
+            import X.Y
+            import X.Z
     """)
 
 
