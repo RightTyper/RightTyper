@@ -122,13 +122,13 @@ class UnifiedTransformer(cst.CSTTransformer):
         # a class is known once its definition is done
         self.known_types.add(Typename(".".join(self.class_stack)))
         self.class_stack.pop()
-        return orig_node
+        return updated_node
 
     # AnnotateFunctionTransformer logic
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef:
-        name = original_node.name.value
+        name = ".".join([*self.class_stack, original_node.name.value])
         key = FuncInfo(Filename(self.filename), FunctionName(name))
 
         if key in self.type_annotations:

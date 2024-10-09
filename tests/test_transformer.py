@@ -426,6 +426,11 @@ def test_transform_locally_defined_types():
             return F((x+y)/2)
     """)
 
+    assert get_function(code, 'F.foo') == textwrap.dedent("""\
+        def foo(self, v: float) -> "F":
+            return F(v)
+    """)
+
     # F is now known, so no quotes are needed
     assert get_function(code, 'bar') == textwrap.dedent("""\
         def bar(x: int, y: int) -> F:
