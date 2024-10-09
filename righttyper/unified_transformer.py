@@ -36,6 +36,7 @@ _TYPING_TYPES : Set[Typename] = {
         "Dict",
         "FrozenSet",
         "Generator",
+        "Iterable",
         "List",
         "Never",    # FIXME requires Python >= 3.11
         "Optional",

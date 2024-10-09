@@ -3,7 +3,7 @@ import os
 import random
 import sys
 import typing
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from functools import cache
 from itertools import islice
 from types import CodeType, ModuleType
@@ -265,6 +265,8 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         # value = g
         # return f"Generator[{get_full_type(q)}, None, None]" # FIXME
         return "Generator[Any, None, None]"  # FIXME
+    elif isinstance(value, Iterable):
+        return f"Iterable[{get_full_type(next(iter(value)))}]"
     else:
         # If the value passed is not a dictionary, list, set, or tuple,
         # we return the type of the value as a string
