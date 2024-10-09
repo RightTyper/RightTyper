@@ -99,7 +99,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.filename = filename
         self.type_annotations = type_annotations
         self.not_annotated = not_annotated
-        self.known_types : Set[Typename] = set(allowed_types) | _BUILTIN_TYPES | _TYPING_TYPES
+        self.allowed_types = set(allowed_types)
 
 
     def _should_output_as_string(self, annotation: str) -> bool:
@@ -108,10 +108,21 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
+        self.known_types : Set[Typename] = self.allowed_types | _BUILTIN_TYPES | _TYPING_TYPES
         self.used_types : Set[Typename] = set()
+        self.class_stack : List[str] = []
         # TODO modify known_types based on existing imports, so that they're not unnecessarily imported
         return True
 
+    def visit_ClassDef(self, node: cst.ClassDef) -> bool:
+        self.class_stack.append(node.name.value)
+        return True
+
+    def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
+        # a class is known once its definition is done
+        self.known_types.add(Typename(".".join(self.class_stack)))
+        self.class_stack.pop()
+        return orig_node
 
     # AnnotateFunctionTransformer logic
     def leave_FunctionDef(
