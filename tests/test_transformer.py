@@ -32,9 +32,17 @@ def get_function(m: cst.Module, name: str) -> T.Optional[str]:
     class V(cst.CSTVisitor):
         def __init__(self):
             self.found = None
+            self.class_stack = []
+
+        def visit_ClassDef(self, node: cst.ClassDef):
+            self.class_stack.append(node.name.value)
+
+        def leave_ClassDef(self, node: cst.ClassDef):
+            self.class_stack.pop()
 
         def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
-            if node.name.value == name:
+            qual_name = ".".join([*self.class_stack, node.name.value])
+            if qual_name == name:
                 self.found = node
                 return False # stop here
             return True
@@ -357,6 +365,71 @@ def test_transform_deletes_type_hint_comments_for_retval():
         ):
             # type: (...) -> None
             pass
+    """)
+
+    assert get_if_type_checking(code) == None
+
+
+def test_transform_locally_defined_types():
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(x, y):
+            return F((x+y)/2)
+
+        class F:
+            def __init__(self, v):
+                self.v = v
+
+            def foo(self, v):
+                return F(v)
+
+        def bar(x, y):
+            return F((x+y)/2)
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    f_foo = FuncInfo(Filename('foo.py'), FunctionName('F.foo'))
+    bar = FuncInfo(Filename('foo.py'), FunctionName('bar'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('int')),
+                        (ArgumentName('y'), Typename('int'))
+                    ],
+                    Typename('F')
+                ),
+                f_foo: (
+                    [
+                        (ArgumentName('v'), Typename('float')),
+                    ],
+                    Typename('F')
+                ),
+                bar: (
+                    [
+                        (ArgumentName('x'), Typename('int')),
+                        (ArgumentName('y'), Typename('int'))
+                    ],
+                    Typename('F')
+                )
+            },
+            not_annotated = {
+                foo: {ArgumentName('x'), ArgumentName('y'), ArgumentName('return')},
+                f_foo: {ArgumentName('v'), ArgumentName('return')},
+                bar: {ArgumentName('x'), ArgumentName('y'), ArgumentName('return')}
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int, y: int) -> "F":
+            return F((x+y)/2)
+    """)
+
+    # F is now known, so no quotes are needed
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(x: int, y: int) -> F:
+            return F((x+y)/2)
     """)
 
     assert get_if_type_checking(code) == None
