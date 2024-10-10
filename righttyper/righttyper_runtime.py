@@ -170,10 +170,24 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
         elif obj.__name__ == "range_iterator":
             return "Iterator[int]"
         elif obj.__name__ in (
-            "list_iterator", "set_iterator",
+            "list_iterator", "list_reverseiterator", "set_iterator",
             "dict_keyiterator", "dict_valueiterator", "dict_itemiterator"
         ):
             return "Iterator[Any]"  # FIXME needs element type
+        elif obj.__name__ in (
+            "dict_keys", "dict_values"
+        ):
+            try:
+                el = next(iter(orig_value))
+                return f"Iterable[{get_type_name(el, depth+1)}]"
+            except StopIteration:
+                return "Iterable[Never]"
+        elif obj.__name__ == "dict_items":
+            try:
+                el = next(iter(orig_value))
+                return f"Iterable[Tuple[{get_type_name(el[0], depth+1)}, {get_type_name(el[1], depth+1)}]]"
+            except StopIteration:
+                return "Iterable[Tuple[Never, Never]]"
         else:
             return obj.__name__
 

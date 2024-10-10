@@ -23,6 +23,15 @@ def test_get_full_type():
 
     assert "Dict[str, str]" == get_full_type({'a': 'b'})
 
+    assert "Iterable[str]" == get_full_type({'a':0, 'b':1}.keys())
+    assert "Iterable[int]" == get_full_type({'a':0, 'b':1}.values())
+    assert "Iterable[Tuple[str, int]]" == get_full_type({'a':0, 'b':1}.items())
+
+    # FIXME is it useful to have 'Never' here? Or better simply 'Iterable' ?
+    assert "Iterable[Never]" == get_full_type(dict().keys())
+    assert "Iterable[Never]" == get_full_type(dict().values())
+    assert "Iterable[Tuple[Never, Never]]" == get_full_type(dict().items())
+
     #assert "List[int]" == get_full_type([0, 'a'])
 
     o = range(10)
@@ -37,11 +46,27 @@ def test_get_full_type():
     assert "Iterator[Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
+    o = reversed([0,1])
+    assert "Iterator[Any]" == get_full_type(o)
+    assert 1 == next(o), "changed state"
+
     o = iter({0, 1})
     assert "Iterator[Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = iter({0:0, 1:1})
+    assert "Iterator[Any]" == get_full_type(o)
+    assert 0 == next(o), "changed state"
+
+    o = iter({0:0, 1:1}.items())
+    assert "Iterator[Any]" == get_full_type(o)
+    assert (0, 0) == next(o), "changed state"
+
+    o = iter({0:0, 1:1}.values())
+    assert "Iterator[Any]" == get_full_type(o)
+    assert 0 == next(o), "changed state"
+
+    o = iter({0:0, 1:1}.keys())
     assert "Iterator[Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
@@ -65,3 +90,5 @@ def test_get_full_type():
 
     assert "AsyncGenerator[Any, None, None]" == get_full_type(async_range(10))
     assert "AsyncGenerator[Any, None, None]" == get_full_type(aiter(async_range(10)))
+
+
