@@ -7,7 +7,7 @@ from collections.abc import Generator, AsyncGenerator
 from functools import cache
 from itertools import islice
 from types import CodeType, ModuleType
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type, cast
 
 from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
@@ -178,13 +178,13 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
             "dict_keys", "dict_values"
         ):
             try:
-                el = next(iter(orig_value))
+                el = next(iter(cast(typing.Iterable, orig_value)))
                 return f"Iterable[{get_type_name(el, depth+1)}]"
             except StopIteration:
                 return "Iterable[Never]"
         elif obj.__name__ == "dict_items":
             try:
-                el = next(iter(orig_value))
+                el = next(iter(cast(typing.Iterable, orig_value)))
                 return f"Iterable[Tuple[{get_type_name(el[0], depth+1)}, {get_type_name(el[1], depth+1)}]]"
             except StopIteration:
                 return "Iterable[Tuple[Never, Never]]"

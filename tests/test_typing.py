@@ -1,5 +1,6 @@
 from righttyper.righttyper_runtime import get_full_type
 from collections.abc import Iterable
+from typing import Any
 
 
 class IterableClass(Iterable):
@@ -34,7 +35,7 @@ def test_get_full_type():
 
     #assert "List[int]" == get_full_type([0, 'a'])
 
-    o = range(10)
+    o : Any = range(10)
     assert "Iterable[int]" == get_full_type(o)
     assert 0 == next(iter(o)), "changed state"
 
@@ -86,7 +87,7 @@ def test_get_full_type():
 
     async def async_range(start):
         for i in range(start):
-            yield y
+            yield i
 
     assert "AsyncGenerator[Any, None, None]" == get_full_type(async_range(10))
     assert "AsyncGenerator[Any, None, None]" == get_full_type(aiter(async_range(10)))
