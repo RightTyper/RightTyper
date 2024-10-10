@@ -49,6 +49,10 @@ def test_get_full_type():
     assert "Iterator[Any]" == get_full_type(o)
     assert (0, 0) == next(o), "changed state"
 
+    o = iter({0:0, 1:1}.values())
+    assert "Iterator[Any]" == get_full_type(o)
+    assert 0 == next(o), "changed state"
+
     o = (i for i in range(10))
     assert "Generator[Any, None, None]" == get_full_type(o)
     assert 0 == next(o), "changed state"
