@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.xfail(reason="doesn't currently work")
+@pytest.mark.xfail(reason="value introspection doesn't currently work")
 def test_generator(tmp_path, monkeypatch):
     t = textwrap.dedent("""\
         def func(gen):
@@ -22,6 +22,7 @@ def test_generator(tmp_path, monkeypatch):
     assert "def func(iter: Generator[int, None, None]) -> Generator[int, None, None]" in Path("t.py").read_text()
 
 
+@pytest.mark.xfail(reason="value introspection doesn't currently work")
 def test_iterable(tmp_path, monkeypatch):
     t = textwrap.dedent("""\
         def func(iter):

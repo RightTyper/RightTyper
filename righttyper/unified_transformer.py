@@ -32,11 +32,15 @@ _BUILTIN_TYPES : Set[Typename] = {
 _TYPING_TYPES : Set[Typename] = {
     Typename(t) for t in [
         "Any",
+        "AsyncGenerator",
+        "AsyncIterable",
+        "AsyncIterator",
         "Callable",
         "Dict",
         "FrozenSet",
         "Generator",
         "Iterable",
+        "Iterator",
         "List",
         "Never",    # FIXME requires Python >= 3.11
         "Optional",

@@ -3,7 +3,7 @@ import os
 import random
 import sys
 import typing
-from collections.abc import Generator, Iterable
+from collections.abc import Generator, AsyncGenerator
 from functools import cache
 from itertools import islice
 from types import CodeType, ModuleType
@@ -165,6 +165,15 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
             return get_full_type(orig_value, depth + 1)
         elif obj.__name__ == "code":
             return "types.CodeType"
+        elif obj.__name__ == "range":
+            return "Iterable[int]"
+        elif obj.__name__ == "range_iterator":
+            return "Iterator[int]"
+        elif obj.__name__ in (
+            "list_iterator", "set_iterator",
+            "dict_keyiterator", "dict_itemiterator"
+        ):
+            return "Iterator[Any]"  # FIXME needs element type
         else:
             return obj.__name__
 
@@ -265,8 +274,8 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         # value = g
         # return f"Generator[{get_full_type(q)}, None, None]" # FIXME
         return "Generator[Any, None, None]"  # FIXME
-    elif isinstance(value, Iterable):
-        return f"Iterable[{get_full_type(next(iter(value)))}]"
+    elif isinstance(value, AsyncGenerator):
+        return "AsyncGenerator[Any, None, None]"  # FIXME needs argument types
     else:
         # If the value passed is not a dictionary, list, set, or tuple,
         # we return the type of the value as a string
