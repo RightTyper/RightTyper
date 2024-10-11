@@ -11,16 +11,33 @@ class IterableClass(Iterable):
 def test_get_full_type():
     assert "bool" == get_full_type(True)
     assert "bool" == get_full_type(False)
-
     assert "int" == get_full_type(10)
     assert "float" == get_full_type(0.0)
     assert "str" == get_full_type('foo')
 
+    assert "str" == get_full_type(bin(0))
+    assert "bool" == get_full_type(bool(0))
+
+    assert "bytearray" == get_full_type(bytearray(b'0000'))
+    assert "bytes" == get_full_type(bytes(b'0000'))
+    assert "complex" == get_full_type(complex(1, 1))
+    assert "List[str]" == get_full_type(dir())
+
     assert "List[str]" == get_full_type(['a', 'b'])
     assert "List[int]" == get_full_type([0, 1])
 
+    assert "List[int]" == get_full_type([0, 1][:1])
+    assert "int" == get_full_type([0, 1][0])
+
+    #assert "List[int]" == get_full_type([0, 'a'])
+
     assert "Set[str]" == get_full_type({'a', 'b'})
     assert "Set[int]" == get_full_type({0, 1})
+
+    # FIXME use Set instead?  specify element type?
+    assert "frozenset" == get_full_type(frozenset({'a', 'b'}))
+    assert "frozenset" == get_full_type(frozenset({0, 1}))
+    assert "frozenset" == get_full_type(frozenset())
 
     assert "Dict[str, str]" == get_full_type({'a': 'b'})
 
@@ -33,7 +50,7 @@ def test_get_full_type():
     assert "Iterable[Never]" == get_full_type(dict().values())
     assert "Iterable[Tuple[Never, Never]]" == get_full_type(dict().items())
 
-    #assert "List[int]" == get_full_type([0, 'a'])
+    assert "Set[str]" == get_full_type({'a', 'b'})
 
     o : Any = range(10)
     assert "Iterable[int]" == get_full_type(o)
@@ -47,9 +64,21 @@ def test_get_full_type():
     assert "Iterator[Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
+    o = enumerate([0,1])
+    assert "Iterator[Tuple[int, Any]]" == get_full_type(o)
+    assert (0, 0) == next(o), "changed state"
+
+    o = filter(lambda x:True, [0,1])
+    assert "Iterator[Any]" == get_full_type(o)
+    assert 0 == next(o), "changed state"
+
     o = reversed([0,1])
     assert "Iterator[Any]" == get_full_type(o)
     assert 1 == next(o), "changed state"
+
+    o = map(lambda x:x, [0,1])
+    assert "Iterator[Any]" == get_full_type(o)
+    assert 0 == next(o), "changed state"
 
     o = iter({0, 1})
     assert "Iterator[Any]" == get_full_type(o)
@@ -92,4 +121,4 @@ def test_get_full_type():
     assert "AsyncGenerator[Any, None, None]" == get_full_type(async_range(10))
     assert "AsyncGenerator[Any, None, None]" == get_full_type(aiter(async_range(10)))
 
-
+    # FIXME test 'slice', 'super', 'type', 'zip'

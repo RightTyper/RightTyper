@@ -169,9 +169,12 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
             return "Iterable[int]"
         elif obj.__name__ == "range_iterator":
             return "Iterator[int]"
+        elif obj.__name__ == "enumerate":
+            return "Iterator[Tuple[int, Any]]"
         elif obj.__name__ in (
             "list_iterator", "list_reverseiterator", "set_iterator",
-            "dict_keyiterator", "dict_valueiterator", "dict_itemiterator"
+            "dict_keyiterator", "dict_valueiterator", "dict_itemiterator",
+            "filter", "map"
         ):
             return "Iterator[Any]"  # FIXME needs element type
         elif obj.__name__ in (
