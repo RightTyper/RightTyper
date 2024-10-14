@@ -76,6 +76,10 @@ def test_get_full_type():
     assert "Iterator[Any]" == get_full_type(o)
     assert 1 == next(o), "changed state"
 
+    o = zip([0,1], ['a','b'])
+    assert "Iterator[Any]" == get_full_type(o)
+    assert (0,'a') == next(o), "changed state"
+
     o = map(lambda x:x, [0,1])
     assert "Iterator[Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
@@ -113,6 +117,10 @@ def test_get_full_type():
     assert 0 == next(o), "changed state"
 
     assert "IterableClass" == get_full_type(IterableClass())
+    assert "super" == get_full_type(super(IterableClass))
+
+    assert "slice" == get_full_type(slice(0, 5, 1))
+    assert "type" == get_full_type(type(str))
 
     async def async_range(start):
         for i in range(start):
@@ -120,5 +128,3 @@ def test_get_full_type():
 
     assert "AsyncGenerator[Any, None, None]" == get_full_type(async_range(10))
     assert "AsyncGenerator[Any, None, None]" == get_full_type(aiter(async_range(10)))
-
-    # FIXME test 'slice', 'super', 'type', 'zip'

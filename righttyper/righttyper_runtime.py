@@ -174,7 +174,7 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
         elif obj.__name__ in (
             "list_iterator", "list_reverseiterator", "set_iterator",
             "dict_keyiterator", "dict_valueiterator", "dict_itemiterator",
-            "filter", "map"
+            "filter", "map", "zip"
         ):
             return "Iterator[Any]"  # FIXME needs element type
         elif obj.__name__ in (

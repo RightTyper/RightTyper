@@ -25,7 +25,10 @@ _BUILTIN_TYPES : Set[Typename] = {
         "list",
         "None",
         "set",
+        "slice",
         "str",
+        "super",
+        "type",
     ]
 }
 
