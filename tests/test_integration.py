@@ -3,6 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 import pytest
+import importlib.util
 
 
 @pytest.mark.xfail(reason="value introspection doesn't currently work")
@@ -71,3 +72,26 @@ def test_builtins(tmp_path, monkeypatch):
 
     assert "import super" not in output
     assert "def func3(t: super) -> None" in output
+
+
+@pytest.mark.skipif(importlib.util.find_spec('ml_dtypes') is None, reason='missing module ml_dtypes')
+def test_numpy_dtype_name(tmp_path, monkeypatch):
+    t = textwrap.dedent("""\
+        import numpy as np
+        import ml_dtypes
+
+        def func(p):
+            return str(p)
+
+        bfloat16 = np.dtype(ml_dtypes.bfloat16)
+        func(np.array([0], bfloat16))
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    output = Path("t.py").read_text()
+
+    assert "import bfloat16" not in output
+    assert "def func(p: \"numpy.ndarray[Any, numpy.dtype[ml_dtypes.bfloat16]]\") -> str" in output
