@@ -145,11 +145,14 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
     try:  # workaround failure in Pelican
         if hasattr(orig_value, "dtype"):
             dtype = getattr(orig_value, "dtype")
-            # Use type(dtype).__module__ and type(dtype).__name__ to get the fully qualified name for the dtype
-            retval = f"{obj.__module__}.{obj.__name__}[Any, {type(dtype).__module__}.{type(dtype).__name__}]"
-            # Forcibly strip builtins, which are somehow getting in there
-            # retval = retval.replace("builtins.", "")
-            return retval
+            t_dtype = type(dtype)
+            if hasattr(dtype, "type") and '[' in t_dtype.__name__:
+                t_name = t_dtype.__name__.split('[')[0]
+                dtype_name = f"{t_dtype.__module__}.{t_name}[{dtype.type.__module__}.{dtype.type.__qualname__}]"
+            else:
+                dtype_name = f"{t_dtype.__module__}.{t_dtype.__name__}"
+
+            return f"{obj.__module__}.{obj.__name__}[Any, {dtype_name}]"
     except RuntimeError:
         pass
 
