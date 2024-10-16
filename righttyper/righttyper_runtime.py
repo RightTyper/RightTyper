@@ -3,11 +3,11 @@ import os
 import random
 import sys
 import typing
-from collections.abc import Generator
+from collections.abc import Generator, AsyncGenerator
 from functools import cache
 from itertools import islice
 from types import CodeType, ModuleType
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type, cast
 
 from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
@@ -145,11 +145,14 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
     try:  # workaround failure in Pelican
         if hasattr(orig_value, "dtype"):
             dtype = getattr(orig_value, "dtype")
-            # Use type(dtype).__module__ and type(dtype).__name__ to get the fully qualified name for the dtype
-            retval = f"{obj.__module__}.{obj.__name__}[Any, {type(dtype).__module__}.{type(dtype).__name__}]"
-            # Forcibly strip builtins, which are somehow getting in there
-            # retval = retval.replace("builtins.", "")
-            return retval
+            t_dtype = type(dtype)
+            if hasattr(dtype, "type") and '[' in t_dtype.__name__:
+                t_name = t_dtype.__name__.split('[')[0]
+                dtype_name = f"{t_dtype.__module__}.{t_name}[{dtype.type.__module__}.{dtype.type.__qualname__}]"
+            else:
+                dtype_name = f"{t_dtype.__module__}.{t_dtype.__name__}"
+
+            return f"{obj.__module__}.{obj.__name__}[Any, {dtype_name}]"
     except RuntimeError:
         pass
 
@@ -165,6 +168,32 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
             return get_full_type(orig_value, depth + 1)
         elif obj.__name__ == "code":
             return "types.CodeType"
+        elif obj.__name__ == "range":
+            return "Iterable[int]"
+        elif obj.__name__ == "range_iterator":
+            return "Iterator[int]"
+        elif obj.__name__ == "enumerate":
+            return "Iterator[Tuple[int, Any]]"
+        elif obj.__name__ in (
+            "list_iterator", "list_reverseiterator", "set_iterator",
+            "dict_keyiterator", "dict_valueiterator", "dict_itemiterator",
+            "filter", "map", "zip"
+        ):
+            return "Iterator[Any]"  # FIXME needs element type
+        elif obj.__name__ in (
+            "dict_keys", "dict_values"
+        ):
+            try:
+                el = next(iter(cast(typing.Iterable, orig_value)))
+                return f"Iterable[{get_type_name(el, depth+1)}]"
+            except StopIteration:
+                return "Iterable[Never]"
+        elif obj.__name__ == "dict_items":
+            try:
+                el = next(iter(cast(typing.Iterable, orig_value)))
+                return f"Iterable[Tuple[{get_type_name(el[0], depth+1)}, {get_type_name(el[1], depth+1)}]]"
+            except StopIteration:
+                return "Iterable[Tuple[Never, Never]]"
         else:
             return obj.__name__
 
@@ -265,6 +294,8 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         # value = g
         # return f"Generator[{get_full_type(q)}, None, None]" # FIXME
         return "Generator[Any, None, None]"  # FIXME
+    elif isinstance(value, AsyncGenerator):
+        return "AsyncGenerator[Any, None, None]"  # FIXME needs argument types
     else:
         # If the value passed is not a dictionary, list, set, or tuple,
         # we return the type of the value as a string
