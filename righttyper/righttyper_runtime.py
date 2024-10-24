@@ -371,23 +371,24 @@ def update_argtypes(
         values: Any,
         arg_type_enum: ArgumentType,
     ) -> None:
-        types = TypenameSet(
-            {
-                TypenameFrequency(
-                    Typename(get_adjusted_full_type(val, class_name)),
-                    1,
-                )
-                for val in values
-            }
-        )
-        argtypes.append(
-            ArgInfo(
-                ArgumentName(argument_name),
-                arg_type,
-                types,
+        if not all(v is None for v in values):
+            types = TypenameSet(
+                {
+                    TypenameFrequency(
+                        Typename(get_adjusted_full_type(val, class_name)),
+                        1,
+                    )
+                    for val in values
+                }
             )
-        )
-        arg_types[index] = arg_type_enum
+            argtypes.append(
+                ArgInfo(
+                    ArgumentName(argument_name),
+                    arg_type,
+                    types,
+                )
+            )
+            arg_types[index] = arg_type_enum
 
     if arg == varargs:
         assert varargs

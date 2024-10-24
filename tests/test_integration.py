@@ -97,6 +97,23 @@ def test_numpy_dtype_name(tmp_path, monkeypatch):
     assert "def func(p: \"numpy.ndarray[Any, numpy.dtype[ml_dtypes.bfloat16]]\") -> str" in output
 
 
+def test_call_with_none_default(tmp_path, monkeypatch):
+    t = textwrap.dedent("""\
+        def func(n=None):
+            return n+1 if n is not None else 0
+
+        func()
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    output = Path("t.py").read_text()
+    
+    assert "def func(n=None) -> int" in output
+
+
 def test_default_arg(tmp_path, monkeypatch):
     t = textwrap.dedent("""\
         def func(n=None):
