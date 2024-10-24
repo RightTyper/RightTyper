@@ -95,3 +95,81 @@ def test_numpy_dtype_name(tmp_path, monkeypatch):
 
     assert "import bfloat16" not in output
     assert "def func(p: \"numpy.ndarray[Any, numpy.dtype[ml_dtypes.bfloat16]]\") -> str" in output
+
+
+def test_default_arg(tmp_path, monkeypatch):
+    t = textwrap.dedent("""\
+        def func(n=None):
+            return n+1 if n is not None else 0
+
+        def func2(n=5):
+            return n+1
+
+        func(1)
+        func2(1.0)
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    output = Path("t.py").read_text()
+    
+    assert "def func(n: Optional[int]=None) -> int" in output
+
+    # FIXME Union arguments may change order
+    assert "def func2(n: Union[float, int]=5) -> float" in output
+
+
+@pytest.mark.xfail(reason="inner functions/classes not yet supported")
+def test_inner_function(tmp_path, monkeypatch):
+    t = textwrap.dedent("""\
+        def f(x):
+            def g(y):
+                return y+1
+
+            return g(x)
+
+        class C:
+            def h(self, n):
+                return n+1
+
+        f(1)
+        C().h(1)
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    output = Path("t.py").read_text()
+    
+    assert "def g(y: int) -> int" in output
+    assert "def h(self, n: int) -> int" in output   # FIXME type for 'self'?
+
+
+@pytest.mark.xfail(reason="inner functions/classes not yet supported")
+def test_default_inner_function(tmp_path, monkeypatch):
+    t = textwrap.dedent("""\
+        def f(x):
+            def g(y=None):
+                return int(y)+1
+
+            return g(x)
+
+        class C:
+            def h(self, n=5):
+                return n+1
+
+        f(1)
+        C().h()
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    output = Path("t.py").read_text()
+    
+    assert "def g(y: Optional[int]=None) -> int" in output
+    assert "def h(self, n: int=5) -> int" in output   # FIXME type for 'self'?

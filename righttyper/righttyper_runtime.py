@@ -358,7 +358,7 @@ def update_argtypes(
         ArgumentType,
     ],
     index: Tuple[FuncInfo, ArgumentName],
-    the_values: Dict[str, Any],
+    arg_values: Any,
     class_name: Optional[str],
     arg: str,
     varargs: Optional[str],
@@ -394,7 +394,7 @@ def update_argtypes(
         add_arg_info(
             varargs,
             tuple,
-            the_values[arg],
+            arg_values[0],
             ArgumentType.vararg,
         )
     elif arg == varkw:
@@ -402,14 +402,14 @@ def update_argtypes(
         add_arg_info(
             varkw,
             dict,
-            the_values[arg].values(),
+            arg_values[0].values(),
             ArgumentType.kwarg,
         )
     else:
         add_arg_info(
             arg,
-            type(the_values[arg]),
-            [the_values[arg]],
+            type(arg_values[0]),
+            arg_values,
             ArgumentType.positional,
         )
 

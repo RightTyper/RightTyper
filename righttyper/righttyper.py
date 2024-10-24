@@ -313,11 +313,11 @@ def process_function_arguments(
     caller_frame = frame.f_back.f_back  # .f_back
     code = caller_frame.f_code
     class_name = get_class_name_from_stack()
-    args, varargs, varkw, the_values = inspect.getargvalues(caller_frame)
+    arg_names, varargs, varkw, the_values = inspect.getargvalues(caller_frame)
     if varargs:
-        args.append(varargs)
+        arg_names.append(varargs)
     if varkw:
-        args.append(varkw)
+        arg_names.append(varkw)
 
     type_hints = get_function_type_hints(caller_frame, code)
     if infer_shapes:
@@ -326,13 +326,20 @@ def process_function_arguments(
     update_function_annotations(
         t,
         caller_frame,
-        args,
+        arg_names,
         type_hints,
         ignore_annotations,
     )
 
+    # also "observe" any default values
+    function = caller_frame.f_globals.get(code.co_name)
+    defaults = {
+        param_name: [param.default] if param.default != inspect._empty else []
+        for param_name, param in (inspect.signature(function).parameters.items() if function else [])
+    }
+
     argtypes: List[ArgInfo] = []
-    for arg in args:
+    for arg in arg_names:
         if arg:
             index = (
                 FuncInfo(
@@ -345,7 +352,7 @@ def process_function_arguments(
                 argtypes,
                 arg_types,
                 index,
-                the_values,
+                [the_values[arg], *defaults.get(arg, [])],
                 class_name,
                 arg,
                 varargs,
