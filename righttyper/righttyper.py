@@ -333,6 +333,8 @@ def process_function_arguments(
 
     # also "observe" any default values
     function = caller_frame.f_globals.get(code.co_name)
+    if getattr(function, "__code__", None) != code:
+        function = None # got the wrong one
     defaults = {
         param_name: [param.default] if param.default != inspect._empty else []
         for param_name, param in (inspect.signature(function).parameters.items() if function else [])

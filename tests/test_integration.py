@@ -121,6 +121,28 @@ def test_default_arg(tmp_path, monkeypatch):
     assert "def func2(n: Union[float, int]=5) -> float" in output
 
 
+def test_function_lookup_for_defaults(tmp_path, monkeypatch):
+    # if it confuses time.time for C.time, an exception is raised, as inspect cannot
+    # introspect into time.time
+    t = textwrap.dedent("""\
+        from time import time
+
+        class C:
+            def time(self):
+                return 0
+
+        C().time()
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    # FIXME we lack class support
+#    output = Path("t.py").read_text()
+#    assert "def time(self) -> int" in output
+
+
 @pytest.mark.xfail(reason="inner functions/classes not yet supported")
 def test_inner_function(tmp_path, monkeypatch):
     t = textwrap.dedent("""\
