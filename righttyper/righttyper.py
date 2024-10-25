@@ -451,6 +451,7 @@ def update_function_annotations(
         name,
         obj,
     ) in find_functions(caller_frame, caller_frame.f_code):
+        # TODO stop at the first?
         existing_spec[t] = format_function_definition(
             name,
             args,
