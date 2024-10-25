@@ -123,6 +123,118 @@ def test_transform_function():
     assert get_if_type_checking(code) == None
 
 
+def test_transform_method():
+    code = cst.parse_module(textwrap.dedent("""\
+        class C:
+            def foo(self, x, y):
+                return (x+y)/2
+
+            @staticmethod
+            def bar(x):
+                return x/2
+
+            @classmethod
+            def baz(cls, z):
+                return z/2
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('C.foo'))
+    bar = FuncInfo(Filename('foo.py'), FunctionName('C.bar'))
+    baz = FuncInfo(Filename('foo.py'), FunctionName('C.baz'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('int'))
+                    ],
+                    Typename('float')
+                ),
+                bar: (
+                    [
+                        (ArgumentName('x'), Typename('int'))
+                    ],
+                    Typename('float')
+                ),
+                baz: (
+                    [
+                        (ArgumentName('z'), Typename('int'))
+                    ],
+                    Typename('float')
+                )
+            },
+            not_annotated = {
+                foo: {ArgumentName('x'), ArgumentName('return')},
+                bar: {ArgumentName('x'), ArgumentName('return')},
+                baz: {ArgumentName('z'), ArgumentName('return')},
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'C.foo') == textwrap.dedent("""\
+        def foo(self, x: int, y) -> float:
+            return (x+y)/2
+    """)
+
+    assert get_function(code, 'C.bar') == textwrap.dedent("""\
+        @staticmethod
+        def bar(x: int) -> float:
+            return x/2
+    """)
+
+    assert get_function(code, 'C.baz') == textwrap.dedent("""\
+        @classmethod
+        def baz(cls, z: int) -> float:
+            return z/2
+    """)
+
+    assert get_if_type_checking(code) == None
+
+
+def test_transform_local_function():
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(x, y):
+            def bar(z):
+                return z/2
+            return bar(x+y)
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    bar = FuncInfo(Filename('foo.py'), FunctionName('foo.<locals>.bar'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('int')),
+                        (ArgumentName('y'), Typename('float'))
+                    ],
+                    Typename('float')
+                ),
+                bar: (
+                    [
+                        (ArgumentName('z'), Typename('int'))
+                    ],
+                    Typename('float')
+                ),
+            },
+            not_annotated = {
+                foo: {ArgumentName('x'), ArgumentName('y'), ArgumentName('return')},
+                bar: {ArgumentName('z'), ArgumentName('return')}
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int, y: float) -> float:
+            def bar(z: int) -> float:
+                return z/2
+            return bar(x+y)
+    """)
+
+    assert get_if_type_checking(code) == None
+
+
 def test_transform_adds_typing_import_for_typing_name():
     code = cst.parse_module(textwrap.dedent("""\
         def foo(x):

@@ -118,25 +118,30 @@ class UnifiedTransformer(cst.CSTTransformer):
         # Initialize mutable members here, just in case transformer gets reused
         self.known_types : Set[Typename] = self.allowed_types | _BUILTIN_TYPES | _TYPING_TYPES
         self.used_types : Set[Typename] = set()
-        self.class_stack : List[str] = []
+        self.name_stack : List[str] = []
         # TODO modify known_types based on existing imports, so that they're not unnecessarily imported
         return True
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
-        self.class_stack.append(node.name.value)
+        self.name_stack.append(node.name.value)
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
         # a class is known once its definition is done
-        self.known_types.add(Typename(".".join(self.class_stack)))
-        self.class_stack.pop()
+        self.known_types.add(Typename(".".join(self.name_stack)))
+        self.name_stack.pop()
         return updated_node
 
-    # AnnotateFunctionTransformer logic
+    def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
+        self.name_stack.extend([node.name.value, "<locals>"])
+        return True
+
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef:
-        name = ".".join([*self.class_stack, original_node.name.value])
+        name = ".".join(self.name_stack[:-1])
+        self.name_stack.pop()
+        self.name_stack.pop()
         key = FuncInfo(Filename(self.filename), FunctionName(name))
 
         if key in self.type_annotations:
