@@ -160,7 +160,6 @@ def test_function_lookup_for_defaults(tmp_path, monkeypatch):
 #    assert "def time(self) -> int" in output
 
 
-@pytest.mark.xfail(reason="inner functions/classes not yet supported")
 def test_inner_function(tmp_path, monkeypatch):
     t = textwrap.dedent("""\
         def f(x):
@@ -169,12 +168,7 @@ def test_inner_function(tmp_path, monkeypatch):
 
             return g(x)
 
-        class C:
-            def h(self, n):
-                return n+1
-
         f(1)
-        C().h(1)
         """)
 
     monkeypatch.chdir(tmp_path)
@@ -184,10 +178,27 @@ def test_inner_function(tmp_path, monkeypatch):
     output = Path("t.py").read_text()
     
     assert "def g(y: int) -> int" in output
-    assert "def h(self, n: int) -> int" in output   # FIXME type for 'self'?
 
 
-@pytest.mark.xfail(reason="inner functions/classes not yet supported")
+def test_class_method(tmp_path, monkeypatch):
+    t = textwrap.dedent("""\
+        class C:
+            def f(self, n):
+                return n+1
+
+        C().f(1)
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    output = Path("t.py").read_text()
+    
+    assert "def f(self: Self, n: int) -> int" in output
+    assert "import Self" not in output
+
+
 def test_default_inner_function(tmp_path, monkeypatch):
     t = textwrap.dedent("""\
         def f(x):
@@ -196,12 +207,7 @@ def test_default_inner_function(tmp_path, monkeypatch):
 
             return g(x)
 
-        class C:
-            def h(self, n=5):
-                return n+1
-
         f(1)
-        C().h()
         """)
 
     monkeypatch.chdir(tmp_path)
@@ -211,4 +217,21 @@ def test_default_inner_function(tmp_path, monkeypatch):
     output = Path("t.py").read_text()
     
     assert "def g(y: Optional[int]=None) -> int" in output
-    assert "def h(self, n: int=5) -> int" in output   # FIXME type for 'self'?
+
+
+def test_default_class_method(tmp_path, monkeypatch):
+    t = textwrap.dedent("""\
+        class C:
+            def f(self, n=5):
+                return n+1
+
+        C().f()
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    output = Path("t.py").read_text()
+    
+    assert "def f(self: Self, n: int=5) -> int" in output

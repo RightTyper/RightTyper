@@ -2,6 +2,7 @@ import functools
 import importlib.metadata
 import importlib.util
 import inspect
+import itertools
 import logging
 import multiprocessing
 import multiprocessing.connection
@@ -19,6 +20,8 @@ from typing import (
     Set,
     TextIO,
     Tuple,
+    Iterator,
+    Callable,
     get_type_hints,
 )
 
@@ -332,9 +335,11 @@ def process_function_arguments(
     )
 
     # also "observe" any default values
-    function = caller_frame.f_globals.get(code.co_name)
-    if getattr(function, "__code__", None) != code:
-        function = None # got the wrong one
+    try:
+        _, function = next(find_functions(caller_frame, code))
+    except StopIteration:
+        function = None
+
     defaults = {
         param_name: [param.default] if param.default != inspect._empty else []
         for param_name, param in (inspect.signature(function).parameters.items() if function else [])
@@ -382,6 +387,42 @@ def process_function_arguments(
     update_visited_funcs_arguments(t, argtypes)
 
 
+def find_functions(
+    caller_frame: Any,
+    code: CodeType
+) -> Iterator[Callable]:
+    """
+    Attempts to map back from a code object to the functions that use it.
+    """
+
+    def check_function(name: str, obj: Callable) -> Iterator[Callable]:
+        limit = 25
+        while hasattr(obj, "__wrapped__"):
+            obj = obj.__wrapped__
+            if not (limit := limit - 1):
+                break
+
+        if obj.__code__ is code:
+            yield (name, obj)
+
+    def find_in_class(class_obj: object) -> Iterator[Callable]:
+        for name, obj in class_obj.__dict__.items():
+            if inspect.isfunction(obj):
+                yield from check_function(name, obj)
+            elif inspect.isclass(obj):
+                yield from find_in_class(obj)
+
+    dicts = caller_frame.f_globals.items()
+    if caller_frame.f_back:
+        dicts = itertools.chain(caller_frame.f_back.f_locals.items(), dicts)
+
+    for name, obj in dicts:
+        if inspect.isfunction(obj):
+            yield from check_function(name, obj)
+        elif inspect.isclass(obj):
+            yield from find_in_class(obj)
+
+
 @functools.cache
 def get_function_type_hints(
     caller_frame: Any,
@@ -390,14 +431,11 @@ def get_function_type_hints(
     for (
         name,
         obj,
-    ) in caller_frame.f_globals.items():
-        if hasattr(obj, "__wrapped__"):
-            obj = obj.__wrapped__
-        if inspect.isfunction(obj) and obj.__code__ is code:
-            try:
-                return get_type_hints(obj)
-            except Exception:
-                return {}
+    ) in find_functions(caller_frame, code):
+        try:
+            return get_type_hints(obj)
+        except Exception:
+            return {}
     return {}
 
 
@@ -408,23 +446,21 @@ def update_function_annotations(
     type_hints: Dict[str, str],
     ignore_annotations: bool,
 ) -> None:
+
     for (
         name,
         obj,
-    ) in caller_frame.f_globals.items():
-        if hasattr(obj, "__wrapped__"):
-            obj = obj.__wrapped__
-        if inspect.isfunction(obj) and obj.__code__ is caller_frame.f_code:
-            existing_spec[t] = format_function_definition(
-                name,
-                args,
-                (type_hints if not ignore_annotations else {}),
-            )
-            not_annotated[t] = unannotated(obj, ignore_annotations)
-            existing_annotations[t] = {
-                ArgumentName(name): format_annotation(type_hints[name])
-                for name in type_hints
-            }
+    ) in find_functions(caller_frame, caller_frame.f_code):
+        existing_spec[t] = format_function_definition(
+            name,
+            args,
+            (type_hints if not ignore_annotations else {}),
+        )
+        not_annotated[t] = unannotated(obj, ignore_annotations)
+        existing_annotations[t] = {
+            ArgumentName(name): format_annotation(type_hints[name])
+            for name in type_hints
+        }
 
 
 def add_new_import(filename: str, value: Any) -> None:

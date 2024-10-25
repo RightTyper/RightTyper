@@ -48,6 +48,7 @@ _TYPING_TYPES : Set[Typename] = {
         "Never",    # FIXME requires Python >= 3.11
         "Optional",
         "Set",
+        "Self",
         "Tuple",
         "Union",
     ]
