@@ -186,7 +186,15 @@ def test_class_method(tmp_path, monkeypatch):
             def f(self, n):
                 return n+1
 
+        def g(x):
+            class gC:
+                def h(self, x):
+                    return x/2
+
+            return gC().h(x)
+
         C().f(1)
+        g(1)
         """)
 
     monkeypatch.chdir(tmp_path)
@@ -197,6 +205,63 @@ def test_class_method(tmp_path, monkeypatch):
     
     assert "def f(self: Self, n: int) -> int" in output
     assert "import Self" not in output
+
+    assert "def h(self: Self, x: int) -> float" in output
+
+
+def test_class_method_imported(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    Path("m.py").write_text(textwrap.dedent("""\
+        class C:
+            def f(self, n):
+                return n+1
+
+        def g(x):
+            class gC:
+                def h(self, x):
+                    return x/2
+
+            return gC().h(x)
+        """
+    ))
+
+    Path("t.py").write_text(textwrap.dedent("""\
+        import m
+        m.C().f(1)
+        m.g(1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    output = Path("m.py").read_text()
+    
+    assert "import Self" not in output
+
+    assert "def f(self: Self, n: int) -> int" in output
+    assert "import C" not in output
+
+    assert "def g(x: int) -> float" in output
+    assert "def h(self: Self, x: int) -> float" in output
+    assert "import gC" not in output
+
+
+def test_return_private_class(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f():
+            class fC:
+                pass
+            return fC()
+
+        f()
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    output = Path("t.py").read_text()
+    
+    assert "import fC" not in output
+    assert "def f():" in output # FIXME how can we determine the return type?
 
 
 def test_default_inner_function(tmp_path, monkeypatch):
@@ -225,7 +290,15 @@ def test_default_class_method(tmp_path, monkeypatch):
             def f(self, n=5):
                 return n+1
 
+        def g():
+            class gC:
+                def h(self, x=1):
+                    return x/2
+
+            return gC().h()
+
         C().f()
+        g()
         """)
 
     monkeypatch.chdir(tmp_path)
@@ -235,3 +308,4 @@ def test_default_class_method(tmp_path, monkeypatch):
     output = Path("t.py").read_text()
     
     assert "def f(self: Self, n: int=5) -> int" in output
+    assert "def h(self: Self, x: int=1) -> float" in output
