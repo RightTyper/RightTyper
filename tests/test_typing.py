@@ -113,7 +113,7 @@ def test_get_full_type():
     assert 0 == next(o), "changed state"
 
     o = (i for i in range(10))
-    assert "Generator[Any, None, None]" == get_full_type(o)
+    assert "Generator[Any, Any, Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     assert "IterableClass" == get_full_type(IterableClass())
@@ -127,8 +127,8 @@ def test_get_full_type():
         for i in range(start):
             yield i
 
-    assert "AsyncGenerator[Any, None, None]" == get_full_type(async_range(10))
-    assert "AsyncGenerator[Any, None, None]" == get_full_type(aiter(async_range(10)))
+    assert "AsyncGenerator[Any, Any]" == get_full_type(async_range(10))
+    assert "AsyncGenerator[Any, Any]" == get_full_type(aiter(async_range(10)))
 
 
 class Foo:
