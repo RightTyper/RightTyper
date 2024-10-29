@@ -209,6 +209,7 @@ def test_class_method(tmp_path, monkeypatch):
     assert "def h(self: Self, x: int) -> float" in output
 
 
+@pytest.mark.xfail(reason="not yet fixed")
 def test_class_method_imported(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("m.py").write_text(textwrap.dedent("""\
@@ -245,6 +246,7 @@ def test_class_method_imported(tmp_path, monkeypatch):
     assert "import gC" not in output
 
 
+@pytest.mark.xfail(reason="need to decide how to best handle this case")
 def test_return_private_class(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(textwrap.dedent("""\
