@@ -111,6 +111,14 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.allowed_types = set(allowed_types)
 
 
+    def _is_valid(self, annotation: str) -> bool:
+        # local names such as foo.<locals>.Bar yield this exception
+        try:
+            cst.parse_expression(annotation)
+            return True
+        except cst.ParserSyntaxError:
+            return False
+
     def _should_output_as_string(self, annotation: str) -> bool:
         return any(t not in self.known_types for t in types_in_annotation(annotation))
 
@@ -152,7 +160,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             for parameter in updated_node.params.params:
                 for arg, annotation_ in args:
                     if parameter.name.value == arg:
-                        if arg not in self.not_annotated.get(key, set()):
+                        if arg not in self.not_annotated.get(key, set()) or not self._is_valid(annotation_):
                             continue
 
                         # TODO recognize (and use) import aliases, transforming annotation
@@ -202,7 +210,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 )
             )
 
-            if "return" in self.not_annotated.get(key, set()):
+            if "return" in self.not_annotated.get(key, set()) and self._is_valid(return_type):
                 return_type_expr: cst.BaseExpression
                 if self._should_output_as_string(return_type):
                     return_type_expr = cst.SimpleString(f'"{return_type}"')

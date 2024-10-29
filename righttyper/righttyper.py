@@ -711,6 +711,7 @@ def post_process(
     insert_imports: bool = False,
     generate_stubs: bool = False,
     srcdir: str = "",
+    use_multiprocessing: bool = True
 ) -> None:
     global namespace
     output_type_signatures_to_file(namespace)
@@ -735,6 +736,7 @@ def post_process(
             overwrite,
             insert_imports,
             srcdir,
+            use_multiprocessing
         )
 
 
@@ -748,8 +750,8 @@ def process_all_files(
     overwrite: bool,
     insert_imports: bool,
     srcdir: str,
+    use_multiprocessing: bool
 ) -> None:
-    use_multiprocessing = True  # False
 
     processes: List[multiprocessing.Process] = []
     all_files = list(set(t.file_name for t in visited_funcs))
@@ -1007,6 +1009,12 @@ SCRIPT = ScriptParamType()
     default=target_overhead,
     help="Target overhead, as a percentage (e.g., 5).",
 )
+@click.option(
+    "--use-multiprocessing/--no-use-multiprocessing",
+    default=True,
+    hidden=True,
+    help="Whether to use multiprocessing.",
+)
 def main(
     script: str,
     all_files: bool,
@@ -1025,6 +1033,7 @@ def main(
     infer_shapes: bool,
     srcdir: str,
     target_overhead: float,
+    use_multiprocessing: bool
 ) -> None:
     """
     RightTyper efficiently generates types for your function
@@ -1106,4 +1115,5 @@ def main(
         insert_imports=True,
         generate_stubs=generate_stubs,
         srcdir=srcdir,
+        use_multiprocessing=use_multiprocessing
     )

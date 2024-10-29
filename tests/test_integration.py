@@ -18,7 +18,8 @@ def test_generator(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     
     assert "def func(iter: Generator[int, None, None]) -> Generator[int, None, None]" in Path("t.py").read_text()
 
@@ -35,7 +36,8 @@ def test_iterable(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     
     assert "def func(iter: Iterable[int]) -> Iterable[Tuple[int, int]]" in Path("t.py").read_text()
 
@@ -61,7 +63,8 @@ def test_builtins(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
     assert "import slice" not in output
@@ -90,7 +93,8 @@ def test_numpy_dtype_name(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
 
     assert "import bfloat16" not in output
@@ -108,7 +112,8 @@ def test_call_with_none_default(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
     assert "def func(n=None) -> int" in output
@@ -129,7 +134,8 @@ def test_default_arg(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
     assert "def func(n: Optional[int]=None) -> int" in output
@@ -154,7 +160,8 @@ def test_function_lookup_for_defaults(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     # FIXME we lack class support
 #    output = Path("t.py").read_text()
 #    assert "def time(self) -> int" in output
@@ -174,7 +181,8 @@ def test_inner_function(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
     assert "def g(y: int) -> int" in output
@@ -200,7 +208,8 @@ def test_class_method(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
     assert "def f(self: Self, n: int) -> int" in output
@@ -232,7 +241,8 @@ def test_class_method_imported(tmp_path, monkeypatch):
         """
     ))
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("m.py").read_text()
     
     assert "import Self" not in output
@@ -245,7 +255,6 @@ def test_class_method_imported(tmp_path, monkeypatch):
     assert "import gC" not in output
 
 
-@pytest.mark.xfail(reason="need to decide how to best handle this case")
 def test_return_private_class(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(textwrap.dedent("""\
@@ -254,15 +263,21 @@ def test_return_private_class(tmp_path, monkeypatch):
                 pass
             return fC()
 
-        f()
+        def g(x):
+            pass
+
+        g(f())
         """
     ))
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
+    # that local class name is "f.<locals>.fC"; this yields a CST ParserSyntaxError
     assert "import fC" not in output
-    assert "def f():" in output # FIXME how can we determine the return type?
+    assert "def f():" in output # FIXME what is a good way to express the return type?
+    assert "def g(x) -> None:" in output # FIXME what is a good way to express the type?
 
 
 def test_default_inner_function(tmp_path, monkeypatch):
@@ -279,7 +294,8 @@ def test_default_inner_function(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
     assert "def g(y: Optional[int]=None) -> int" in output
@@ -305,7 +321,8 @@ def test_default_class_method(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
     assert "def f(self: Self, n: int=5) -> int" in output
