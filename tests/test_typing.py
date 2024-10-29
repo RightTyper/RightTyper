@@ -1,4 +1,4 @@
-from righttyper.righttyper_runtime import get_full_type
+from righttyper.righttyper_runtime import get_full_type, get_adjusted_full_type
 from collections.abc import Iterable
 from typing import Any
 
@@ -129,3 +129,17 @@ def test_get_full_type():
 
     assert "AsyncGenerator[Any, None, None]" == get_full_type(async_range(10))
     assert "AsyncGenerator[Any, None, None]" == get_full_type(aiter(async_range(10)))
+
+
+class Foo:
+    pass
+
+def test_adjusted_full_type():
+    # these types used to be special cased... ensure they still work
+    assert "None" == get_adjusted_full_type(None)
+    assert "bool" == get_adjusted_full_type(True)
+    assert "float" == get_adjusted_full_type(.0)
+    assert "int" == get_adjusted_full_type(0)
+
+    assert "Self" == get_adjusted_full_type(Foo(), f"{Foo.__module__}.{Foo.__name__}")
+    assert f"{Foo.__module__}.{Foo.__name__}" == get_adjusted_full_type(Foo(), f"{Foo.__module__}.Bar")

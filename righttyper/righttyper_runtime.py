@@ -303,19 +303,14 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         return retval
 
 
-def get_adjusted_full_type(value: Any, class_name: Optional[str]) -> str:
+def get_adjusted_full_type(value: Any, class_name: Optional[str]=None) -> str:
     # Determine the type name of the return value
-    if value is None:
-        typename = "None"
-    elif type(value) in (bool, float, int):
-        typename = type(value).__name__
-    else:
-        typename = get_full_type(value)
-        # print(f"typename = {typename}")
-        # print(f"class name = {class_name}")
-        if typename == class_name:
-            typename = "Self"
-        # print(f"typename now = {typename}")
+    typename = get_full_type(value)
+    # print(f"typename = {typename}")
+    # print(f"class name = {class_name}")
+    if typename == class_name:
+        typename = "Self"
+    # print(f"typename now = {typename}")
     return typename
 
 
