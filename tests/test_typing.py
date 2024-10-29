@@ -141,5 +141,13 @@ def test_adjusted_full_type():
     assert "float" == get_adjusted_full_type(.0)
     assert "int" == get_adjusted_full_type(0)
 
-    assert "Self" == get_adjusted_full_type(Foo(), f"{Foo.__module__}.{Foo.__name__}")
-    assert f"{Foo.__module__}.{Foo.__name__}" == get_adjusted_full_type(Foo(), f"{Foo.__module__}.Bar")
+    # get_adjusted_full_type's main function is to translate to 'Self'
+
+    class Bar:
+        pass
+
+    assert "Self" == get_adjusted_full_type(Foo(), f"{Foo.__module__}.{Foo.__qualname__}")
+    assert f"{Foo.__module__}.{Foo.__qualname__}" == get_adjusted_full_type(Foo(), f"{Foo.__module__}.Baz")
+
+    assert "Self" == get_adjusted_full_type(Bar(), f"{Bar.__module__}.{Bar.__qualname__}")
+    assert f"{Bar.__module__}.{Bar.__qualname__}" == get_adjusted_full_type(Bar(), f"{Bar.__module__}.Baz")

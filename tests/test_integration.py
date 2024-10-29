@@ -209,7 +209,6 @@ def test_class_method(tmp_path, monkeypatch):
     assert "def h(self: Self, x: int) -> float" in output
 
 
-@pytest.mark.xfail(reason="not yet fixed")
 def test_class_method_imported(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("m.py").write_text(textwrap.dedent("""\

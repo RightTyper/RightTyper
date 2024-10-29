@@ -73,9 +73,10 @@ def get_class_name_from_stack(
             # Check if 'self' is in the local variables of the frame
             if "self" in current_frame.f_locals:
                 instance = current_frame.f_locals["self"]
-                return str(
-                    instance.__class__.__name__
-                )  # Return class name of the instance
+                if instance.__class__.__module__ != '__main__':
+                    return f"{instance.__class__.__module__}.{instance.__class__.__qualname__}"
+                else:
+                    return f"{instance.__class__.__qualname__}"
             # Move one level up in the stack
             current_frame = current_frame.f_back
             depth += 1
@@ -225,9 +226,9 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
 
     # Handle all other types with fully qualified names
     if obj.__module__ and obj.__module__ != "__main__":
-        return f"{obj.__module__}.{obj.__name__}"
+        return f"{obj.__module__}.{obj.__qualname__}"
 
-    return obj.__name__
+    return obj.__qualname__
 
 
 def get_full_type(value: Any, depth: int = 0) -> str:
