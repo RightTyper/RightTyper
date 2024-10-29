@@ -390,12 +390,12 @@ def process_function_arguments(
 def find_functions(
     caller_frame: Any,
     code: CodeType
-) -> Iterator[Callable]:
+) -> Iterator[Tuple[str, Callable]]:
     """
     Attempts to map back from a code object to the functions that use it.
     """
 
-    def check_function(name: str, obj: Callable) -> Iterator[Callable]:
+    def check_function(name: str, obj: Callable) -> Iterator[Tuple[str, Callable]]:
         limit = 25
         while hasattr(obj, "__wrapped__"):
             obj = obj.__wrapped__
@@ -405,7 +405,7 @@ def find_functions(
         if obj.__code__ is code:
             yield (name, obj)
 
-    def find_in_class(class_obj: object) -> Iterator[Callable]:
+    def find_in_class(class_obj: object) -> Iterator[Tuple[str, Callable]]:
         for name, obj in class_obj.__dict__.items():
             if inspect.isfunction(obj):
                 yield from check_function(name, obj)
