@@ -294,9 +294,9 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         # (q, g) = peek(value)
         # value = g
         # return f"Generator[{get_full_type(q)}, None, None]" # FIXME
-        return "Generator[Any, None, None]"  # FIXME
+        return "Generator[Any, Any, Any]"  # FIXME
     elif isinstance(value, AsyncGenerator):
-        return "AsyncGenerator[Any, None, None]"  # FIXME needs argument types
+        return "AsyncGenerator[Any, Any]"  # FIXME needs argument types
     else:
         # If the value passed is not a dictionary, list, set, or tuple,
         # we return the type of the value as a string

@@ -286,9 +286,13 @@ def exit_function_worker(
     typename = get_adjusted_full_type(return_value, class_name)
     if event_type == sys.monitoring.events.PY_YIELD:
         # Yield: call it a generator
-        # FIXME: We should be returning more precise Generators if we discover a return value.
-        # See https://docs.python.org/3.10/library/typing.html#typing.Generator
-        typename = f"Generator[{typename}, Any, Any]"
+        if type(return_value).__name__ == "async_generator_wrapped_value":
+            # FIXME: how to obtain wrapped value? how to get send value?
+            typename = f"AsyncGenerator[Any, Any]"
+        else:
+            # FIXME: We should be returning more precise Generators if we discover a return value.
+            # See https://docs.python.org/3.10/library/typing.html#typing.Generator
+            typename = f"Generator[{typename}, Any, Any]"
         yielded_funcs.add(t)
 
     # Check if the return value type is already in the set

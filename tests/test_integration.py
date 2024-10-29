@@ -7,24 +7,6 @@ import importlib.util
 
 
 @pytest.mark.xfail(reason="value introspection doesn't currently work")
-def test_generator(tmp_path, monkeypatch):
-    t = textwrap.dedent("""\
-        def func(gen):
-            return ((0, el) for el in gen)
-
-        print(list(func(i for i in range(10))))
-        """)
-
-    monkeypatch.chdir(tmp_path)
-    Path("t.py").write_text(t)
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', 't.py'], check=True)
-    
-    assert "def func(iter: Generator[int, None, None]) -> Generator[int, None, None]" in Path("t.py").read_text()
-
-
-@pytest.mark.xfail(reason="value introspection doesn't currently work")
 def test_iterable(tmp_path, monkeypatch):
     t = textwrap.dedent("""\
         def func(iter):
@@ -327,3 +309,61 @@ def test_default_class_method(tmp_path, monkeypatch):
     
     assert "def f(self: Self, n: int=5) -> int" in output
     assert "def h(self: Self, x: int=1) -> float" in output
+
+
+def test_generator(tmp_path, monkeypatch):
+    t = textwrap.dedent("""\
+        def gen():
+            yield 10
+
+        def main():
+            for _ in gen():
+                pass
+
+        def g(f):
+            pass
+
+        main()
+        g(gen())
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    
+    # FIXME should be Generator[int] or Iterator[int]
+    assert "def gen() -> Generator[int, Any, Any]:" in output
+    assert "def g(f: Generator[Any, Any, Any]) -> None" in output
+
+
+def test_async_generator(tmp_path, monkeypatch):
+    t = textwrap.dedent("""\
+        import asyncio
+
+        async def gen():
+            yield 10
+
+        async def main():
+            async for _ in gen():
+                pass
+
+        def g(f):
+            pass
+
+        asyncio.run(main())
+        g(gen())
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    
+    # FIXME should be AsyncGenerator[int] or AsyncIterator[int]
+    assert "def gen() -> AsyncGenerator[Any, Any]:" in output
+    assert "def g(f: AsyncGenerator[Any, Any]) -> None" in output
