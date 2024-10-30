@@ -1,5 +1,6 @@
 from righttyper.righttyper_runtime import get_full_type, get_adjusted_full_type
 from collections.abc import Iterable
+from collections import namedtuple
 from typing import Any
 import pytest
 import importlib
@@ -118,6 +119,9 @@ def test_get_full_type():
     assert "Generator[Any, Any, Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
+    Point = namedtuple('Point', ['x', 'y'])
+    assert "Point" == get_full_type(Point(1,1))
+
     assert "IterableClass" == get_full_type(IterableClass())
     assert "super" == get_full_type(super(IterableClass))
 
@@ -138,6 +142,15 @@ def test_get_full_type_dtype():
     import numpy as np
 
     assert "numpy.ndarray[Any, numpy.dtypes.Float64DType]" == get_full_type(np.array([], np.float64))
+
+
+class NamedTupleClass:
+    P = namedtuple('P', [])
+
+@pytest.mark.xfail(reason='Not sure how to fix')
+def test_get_full_type_namedtuple_in_class():
+    # namedtuple's __qualname__ also doesn't contain the enclosing class name...
+    assert "NamedTupleClass.P" == get_full_type(NamedTupleClass.P())
 
 
 class Foo:
