@@ -110,11 +110,6 @@ def get_mypy_type_fn(func: Any) -> str:
 
 
 def get_type_name(obj: object, depth: int = 0) -> str:
-    retval = get_type_name_helper(obj, depth)
-    return retval
-
-
-def get_type_name_helper(obj: object, depth: int = 0) -> str:
     orig_value = obj
 
     # Handle module types
