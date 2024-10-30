@@ -168,8 +168,7 @@ def test_adjusted_full_type():
     class Bar:
         pass
 
-    assert "Self" == get_adjusted_full_type(Foo(), f"{Foo.__module__}.{Foo.__qualname__}")
-    assert f"{Foo.__module__}.{Foo.__qualname__}" == get_adjusted_full_type(Foo(), f"{Foo.__module__}.Baz")
+    assert "Self" == get_adjusted_full_type(Foo(), Foo)
+    assert f"Foo" == get_adjusted_full_type(Foo())
 
-    assert "Self" == get_adjusted_full_type(Bar(), f"{Bar.__module__}.{Bar.__qualname__}")
-    assert f"{Bar.__module__}.{Bar.__qualname__}" == get_adjusted_full_type(Bar(), f"{Bar.__module__}.Baz")
+    assert f"test_typing.test_adjusted_full_type.<locals>.Bar" == get_adjusted_full_type(Bar())

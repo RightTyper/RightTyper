@@ -239,6 +239,81 @@ def test_class_method_imported(tmp_path, monkeypatch):
     assert "import gC" not in output
 
 
+def test_class_name_imported(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    Path("m.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+
+        def f(x):
+            pass
+
+        def g():
+            f(C())
+        """
+    ))
+
+    Path("t.py").write_text(textwrap.dedent("""\
+        import m
+        m.g()
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("m.py").read_text()
+    
+    assert "def f(x: C) -> None" in output
+    assert "import C" not in output
+
+
+def test_class_name_in_test(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+
+        def f(x):
+            pass
+
+        def test_foo():
+            f(C())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 'pytest', '-s', 'tests'], check=True)
+    output = (tmp_path / "tests" / "test_foo.py").read_text()
+    
+    assert "def f(x: C) -> None" in output
+    assert "import test_foo" not in output
+
+
+@pytest.mark.xfail(reason="Doesn't work yet")
+def test_local_class_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "t.py").write_text(textwrap.dedent("""\
+        def f():
+            class C:
+                pass
+
+            def g(x):
+                return 0
+
+            return g(C())
+
+        f()
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = (tmp_path / "t.py").read_text()
+    
+    assert "def g(x: C) -> int" in output
+
+
 def test_return_private_class(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(textwrap.dedent("""\

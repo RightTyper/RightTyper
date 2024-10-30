@@ -6,7 +6,7 @@ import typing
 from collections.abc import Generator, AsyncGenerator
 from functools import cache
 from itertools import islice
-from types import CodeType, ModuleType
+from types import CodeType, ModuleType, FrameType
 from typing import Any, Dict, List, Optional, Tuple, Type, cast
 
 from righttyper.random_dict import RandomDict
@@ -61,9 +61,9 @@ def should_skip_function(
     return False
 
 
-def get_class_name_from_stack(
+def get_class_type_from_stack(
     max_depth: int = 5,
-) -> Optional[str]:
+) -> Optional[Type]:
     # Initialize the current frame
     current_frame = inspect.currentframe()
     try:
@@ -73,10 +73,7 @@ def get_class_name_from_stack(
             # Check if 'self' is in the local variables of the frame
             if "self" in current_frame.f_locals:
                 instance = current_frame.f_locals["self"]
-                if instance.__class__.__module__ != '__main__':
-                    return f"{instance.__class__.__module__}.{instance.__class__.__qualname__}"
-                else:
-                    return f"{instance.__class__.__qualname__}"
+                return instance.__class__
             # Move one level up in the stack
             current_frame = current_frame.f_back
             depth += 1
@@ -107,6 +104,21 @@ def get_mypy_type_fn(func: Any) -> str:
 
     # Construct the Callable type string
     return f"Callable[[{arg_types_str}], {return_type_str}]"
+
+
+def find_caller_frame() -> Optional[FrameType]:
+    """Attempts to find the stack frame which from which we were called. A bit brittle!"""
+    from pathlib import Path
+
+    pkg_path = Path(find_caller_frame.__code__.co_filename).parent
+
+    frame: FrameType|None = sys._getframe(1)
+
+    while (frame is not None and frame.f_code is not None and
+           pkg_path in Path(frame.f_code.co_filename).parents):
+        frame = frame.f_back
+
+    return frame
 
 
 def get_type_name(obj: object, depth: int = 0) -> str:
@@ -181,25 +193,21 @@ def get_type_name(obj: object, depth: int = 0) -> str:
 
     # Look for a local alias for the type
     # 
-    # FIXME this is broken:
-    #   - it needs to find the original caller frame, not just go back 2 frames
-    #   - f_globals isn't the only source, but also f_locals, the class, etc.
-    #   - inner classes (e.g., Foo.Bar) won't be found (__name__ == 'Bar')
-    current_namespace = sys._getframe(depth + 2).f_globals
-    if (
-        obj.__name__ in current_namespace
-        and current_namespace[obj.__name__] is obj
-    ):
-        return obj.__name__
+    # FIXME this only checks for globally known names, and does match inner classes (e.g., Foo.Bar).
+    # FIXME that name may be locally bound to something different, hiding the global
+    if caller_frame := find_caller_frame():
+        current_namespace = caller_frame.f_globals
+        if current_namespace.get(obj.__name__) is obj:
+            return obj.__name__
 
-    # Check if the type is accessible from a module in the current namespace
-    for name, mod in current_namespace.items():
-        if (
-            inspect.ismodule(mod)
-            and hasattr(mod, obj.__name__)
-            and getattr(mod, obj.__name__) is obj
-        ):
-            return f"{name}.{obj.__name__}"
+        # Check if the type is accessible from a module in the current namespace
+        for name, mod in current_namespace.items():
+            if (
+                inspect.ismodule(mod)
+                and hasattr(mod, obj.__name__)
+                and getattr(mod, obj.__name__) is obj
+            ):
+                return f"{name}.{obj.__name__}"
 
     # Handle generic types (like List, Dict, etc.)
     origin = typing.get_origin(obj)
@@ -290,15 +298,12 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         return retval
 
 
-def get_adjusted_full_type(value: Any, class_name: Optional[str]=None) -> str:
-    # Determine the type name of the return value
-    typename = get_full_type(value)
-    # print(f"typename = {typename}")
-    # print(f"class name = {class_name}")
-    if typename == class_name:
-        typename = "Self"
-    # print(f"typename now = {typename}")
-    return typename
+def get_adjusted_full_type(value: Any, class_type: Optional[Type]=None) -> str:
+    #print(f"{type(value)=} {class_type=}")
+    if type(value) == class_type:
+        return "Self"
+
+    return get_full_type(value)
 
 
 def isinstance_namedtuple(obj: object) -> bool:
@@ -341,7 +346,7 @@ def update_argtypes(
     ],
     index: Tuple[FuncInfo, ArgumentName],
     arg_values: Any,
-    class_name: Optional[str],
+    class_type: Optional[Type],
     arg: str,
     varargs: Optional[str],
     varkw: Optional[str],
@@ -357,7 +362,7 @@ def update_argtypes(
             types = TypenameSet(
                 {
                     TypenameFrequency(
-                        Typename(get_adjusted_full_type(val, class_name)),
+                        Typename(get_adjusted_full_type(val, class_type)),
                         1,
                     )
                     for val in values

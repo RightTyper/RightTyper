@@ -40,7 +40,7 @@ from righttyper.righttyper_runtime import (
     format_annotation,
     format_function_definition,
     get_adjusted_full_type,
-    get_class_name_from_stack,
+    get_class_type_from_stack,
     get_class_source_file,
     requires_import,
     should_skip_function,
@@ -275,7 +275,7 @@ def exit_function_worker(
         return sys.monitoring.DISABLE
 
     # Check if this is a method. If so, we need to replace anything using the class name with Self.
-    class_name = get_class_name_from_stack()
+    class_type = get_class_type_from_stack()
 
     # Initialize if the function is first visited
     if t not in visited_funcs_retval:
@@ -284,7 +284,7 @@ def exit_function_worker(
 
     if infer_shapes:
         update_retval_shapes(t, return_value)
-    typename = get_adjusted_full_type(return_value, class_name)
+    typename = get_adjusted_full_type(return_value, class_type)
     if event_type == sys.monitoring.events.PY_YIELD:
         # Yield: call it a generator
         if type(return_value).__name__ == "async_generator_wrapped_value":
@@ -320,7 +320,7 @@ def process_function_arguments(
     # adjusted if the call chain increases in length.
     caller_frame = frame.f_back.f_back  # .f_back
     code = caller_frame.f_code
-    class_name = get_class_name_from_stack()
+    class_type = get_class_type_from_stack()
     arg_names, varargs, varkw, the_values = inspect.getargvalues(caller_frame)
     if varargs:
         arg_names.append(varargs)
@@ -365,7 +365,7 @@ def process_function_arguments(
                 arg_types,
                 index,
                 [the_values[arg], *defaults.get(arg, [])],
-                class_name,
+                class_type,
                 arg,
                 varargs,
                 varkw,
