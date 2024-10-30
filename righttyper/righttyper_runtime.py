@@ -101,20 +101,6 @@ def get_mypy_type_fn(func: Any) -> str:
     if return_type is inspect.Signature.empty:
         return_type = Any
 
-    # Helper function to format the type names correctly
-    def format_type(t: Any) -> Any:
-        if hasattr(t, "__module__") and hasattr(t, "__qualname__"):
-            return f"{t.__module__}.{t.__qualname__}"
-        if hasattr(t, "__qualname__"):
-            return t.__qualname__
-        if hasattr(t, "__name__"):
-            return t.__name__
-        if hasattr(t, "_name"):  # Handling cases like Union
-            return t._name
-        if hasattr(t, "__origin__"):  # For generics
-            return format_type(t.__origin__)
-        return str(t)
-
     # Format the result
     arg_types_str = ", ".join([get_type_name(arg) for arg in arg_types])
     return_type_str = get_type_name(return_type)
@@ -134,7 +120,7 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
     # Handle module types
     if inspect.ismodule(obj):
         if getattr(obj, "__name__", None):
-            return obj.__name__
+            return obj.__name__     # already fully qualified
         else:
             return str(type(obj))
 
@@ -198,7 +184,12 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
         else:
             return obj.__name__
 
-    # Check if the type is accessible from the current global namespace
+    # Look for a local alias for the type
+    # 
+    # FIXME this is broken:
+    #   - it needs to find the original caller frame, not just go back 2 frames
+    #   - f_globals isn't the only source, but also f_locals, the class, etc.
+    #   - inner classes (e.g., Foo.Bar) won't be found (__name__ == 'Bar')
     current_namespace = sys._getframe(depth + 2).f_globals
     if (
         obj.__name__ in current_namespace
