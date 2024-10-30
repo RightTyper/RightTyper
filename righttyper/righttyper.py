@@ -21,6 +21,7 @@ from typing import (
     TextIO,
     Tuple,
     Iterator,
+    Iterable,
     Callable,
     get_type_hints,
 )
@@ -392,7 +393,7 @@ def process_function_arguments(
 
 
 def find_functions(
-    caller_frame: Any,
+    caller_frame: FrameType,
     code: CodeType
 ) -> Iterator[Tuple[str, Callable]]:
     """
@@ -416,7 +417,7 @@ def find_functions(
             elif inspect.isclass(obj):
                 yield from find_in_class(obj)
 
-    dicts = caller_frame.f_globals.items()
+    dicts: Iterable[Tuple[str, Any]] = caller_frame.f_globals.items()
     if caller_frame.f_back:
         dicts = itertools.chain(caller_frame.f_back.f_locals.items(), dicts)
 
