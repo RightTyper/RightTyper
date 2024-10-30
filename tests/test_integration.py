@@ -59,7 +59,9 @@ def test_builtins(tmp_path, monkeypatch):
     assert "def func3(t: super) -> None" in output
 
 
-@pytest.mark.skipif(importlib.util.find_spec('ml_dtypes') is None, reason='missing module ml_dtypes')
+@pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
+                     importlib.util.find_spec('numpy') is None),
+                    reason='missing modules')
 def test_numpy_dtype_name(tmp_path, monkeypatch):
     t = textwrap.dedent("""\
         import numpy as np

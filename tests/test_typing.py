@@ -1,6 +1,8 @@
 from righttyper.righttyper_runtime import get_full_type, get_adjusted_full_type
 from collections.abc import Iterable
 from typing import Any
+import pytest
+import importlib
 
 
 class IterableClass(Iterable):
@@ -129,6 +131,13 @@ def test_get_full_type():
 
     assert "AsyncGenerator[Any, Any]" == get_full_type(async_range(10))
     assert "AsyncGenerator[Any, Any]" == get_full_type(aiter(async_range(10)))
+
+
+@pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
+def test_get_full_type_dtype():
+    import numpy as np
+
+    assert "numpy.ndarray[Any, numpy.dtypes.Float64DType]" == get_full_type(np.array([], np.float64))
 
 
 class Foo:
