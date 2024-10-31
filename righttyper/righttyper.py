@@ -2,6 +2,7 @@ import functools
 import importlib.metadata
 import importlib.util
 import inspect
+import itertools
 import logging
 import multiprocessing
 import multiprocessing.connection
@@ -19,6 +20,9 @@ from typing import (
     Set,
     TextIO,
     Tuple,
+    Iterator,
+    Iterable,
+    Callable,
     get_type_hints,
 )
 
@@ -36,7 +40,7 @@ from righttyper.righttyper_runtime import (
     format_annotation,
     format_function_definition,
     get_adjusted_full_type,
-    get_class_name_from_stack,
+    get_class_type_from_stack,
     get_class_source_file,
     requires_import,
     should_skip_function,
@@ -271,7 +275,7 @@ def exit_function_worker(
         return sys.monitoring.DISABLE
 
     # Check if this is a method. If so, we need to replace anything using the class name with Self.
-    class_name = get_class_name_from_stack()
+    class_type = get_class_type_from_stack()
 
     # Initialize if the function is first visited
     if t not in visited_funcs_retval:
@@ -280,12 +284,16 @@ def exit_function_worker(
 
     if infer_shapes:
         update_retval_shapes(t, return_value)
-    typename = get_adjusted_full_type(return_value, class_name)
+    typename = get_adjusted_full_type(return_value, class_type)
     if event_type == sys.monitoring.events.PY_YIELD:
         # Yield: call it a generator
-        # FIXME: We should be returning more precise Generators if we discover a return value.
-        # See https://docs.python.org/3.10/library/typing.html#typing.Generator
-        typename = f"Generator[{typename}, Any, Any]"
+        if type(return_value).__name__ == "async_generator_wrapped_value":
+            # FIXME: how to obtain wrapped value? how to get send value?
+            typename = f"AsyncGenerator[Any, Any]"
+        else:
+            # FIXME: We should be returning more precise Generators if we discover a return value.
+            # See https://docs.python.org/3.10/library/typing.html#typing.Generator
+            typename = f"Generator[{typename}, Any, Any]"
         yielded_funcs.add(t)
 
     # Check if the return value type is already in the set
@@ -312,12 +320,12 @@ def process_function_arguments(
     # adjusted if the call chain increases in length.
     caller_frame = frame.f_back.f_back  # .f_back
     code = caller_frame.f_code
-    class_name = get_class_name_from_stack()
-    args, varargs, varkw, the_values = inspect.getargvalues(caller_frame)
+    class_type = get_class_type_from_stack()
+    arg_names, varargs, varkw, the_values = inspect.getargvalues(caller_frame)
     if varargs:
-        args.append(varargs)
+        arg_names.append(varargs)
     if varkw:
-        args.append(varkw)
+        arg_names.append(varkw)
 
     type_hints = get_function_type_hints(caller_frame, code)
     if infer_shapes:
@@ -326,13 +334,24 @@ def process_function_arguments(
     update_function_annotations(
         t,
         caller_frame,
-        args,
+        arg_names,
         type_hints,
         ignore_annotations,
     )
 
+    # also "observe" any default values
+    try:
+        _, function = next(find_functions(caller_frame, code))
+    except StopIteration:
+        function = None
+
+    defaults = {
+        param_name: [param.default] if param.default != inspect._empty else []
+        for param_name, param in (inspect.signature(function).parameters.items() if function else [])
+    }
+
     argtypes: List[ArgInfo] = []
-    for arg in args:
+    for arg in arg_names:
         if arg:
             index = (
                 FuncInfo(
@@ -345,8 +364,8 @@ def process_function_arguments(
                 argtypes,
                 arg_types,
                 index,
-                the_values,
-                class_name,
+                [the_values[arg], *defaults.get(arg, [])],
+                class_type,
                 arg,
                 varargs,
                 varkw,
@@ -373,6 +392,42 @@ def process_function_arguments(
     update_visited_funcs_arguments(t, argtypes)
 
 
+def find_functions(
+    caller_frame: FrameType,
+    code: CodeType
+) -> Iterator[Tuple[str, Callable]]:
+    """
+    Attempts to map back from a code object to the functions that use it.
+    """
+
+    def check_function(name: str, obj: Callable) -> Iterator[Tuple[str, Callable]]:
+        limit = 25
+        while hasattr(obj, "__wrapped__"):
+            obj = obj.__wrapped__
+            if not (limit := limit - 1):
+                break
+
+        if obj.__code__ is code:
+            yield (name, obj)
+
+    def find_in_class(class_obj: object) -> Iterator[Tuple[str, Callable]]:
+        for name, obj in class_obj.__dict__.items():
+            if inspect.isfunction(obj):
+                yield from check_function(name, obj)
+            elif inspect.isclass(obj):
+                yield from find_in_class(obj)
+
+    dicts: Iterable[Tuple[str, Any]] = caller_frame.f_globals.items()
+    if caller_frame.f_back:
+        dicts = itertools.chain(caller_frame.f_back.f_locals.items(), dicts)
+
+    for name, obj in dicts:
+        if inspect.isfunction(obj):
+            yield from check_function(name, obj)
+        elif inspect.isclass(obj):
+            yield from find_in_class(obj)
+
+
 @functools.cache
 def get_function_type_hints(
     caller_frame: Any,
@@ -381,14 +436,11 @@ def get_function_type_hints(
     for (
         name,
         obj,
-    ) in caller_frame.f_globals.items():
-        if hasattr(obj, "__wrapped__"):
-            obj = obj.__wrapped__
-        if inspect.isfunction(obj) and obj.__code__ is code:
-            try:
-                return get_type_hints(obj)
-            except Exception:
-                return {}
+    ) in find_functions(caller_frame, code):
+        try:
+            return get_type_hints(obj)
+        except Exception:
+            return {}
     return {}
 
 
@@ -399,23 +451,22 @@ def update_function_annotations(
     type_hints: Dict[str, str],
     ignore_annotations: bool,
 ) -> None:
+
     for (
         name,
         obj,
-    ) in caller_frame.f_globals.items():
-        if hasattr(obj, "__wrapped__"):
-            obj = obj.__wrapped__
-        if inspect.isfunction(obj) and obj.__code__ is caller_frame.f_code:
-            existing_spec[t] = format_function_definition(
-                name,
-                args,
-                (type_hints if not ignore_annotations else {}),
-            )
-            not_annotated[t] = unannotated(obj, ignore_annotations)
-            existing_annotations[t] = {
-                ArgumentName(name): format_annotation(type_hints[name])
-                for name in type_hints
-            }
+    ) in find_functions(caller_frame, caller_frame.f_code):
+        # TODO stop at the first?
+        existing_spec[t] = format_function_definition(
+            name,
+            args,
+            (type_hints if not ignore_annotations else {}),
+        )
+        not_annotated[t] = unannotated(obj, ignore_annotations)
+        existing_annotations[t] = {
+            ArgumentName(name): format_annotation(type_hints[name])
+            for name in type_hints
+        }
 
 
 def add_new_import(filename: str, value: Any) -> None:
@@ -665,6 +716,7 @@ def post_process(
     insert_imports: bool = False,
     generate_stubs: bool = False,
     srcdir: str = "",
+    use_multiprocessing: bool = True
 ) -> None:
     global namespace
     output_type_signatures_to_file(namespace)
@@ -689,6 +741,7 @@ def post_process(
             overwrite,
             insert_imports,
             srcdir,
+            use_multiprocessing
         )
 
 
@@ -702,8 +755,8 @@ def process_all_files(
     overwrite: bool,
     insert_imports: bool,
     srcdir: str,
+    use_multiprocessing: bool
 ) -> None:
-    use_multiprocessing = True  # False
 
     processes: List[multiprocessing.Process] = []
     all_files = list(set(t.file_name for t in visited_funcs))
@@ -961,6 +1014,12 @@ SCRIPT = ScriptParamType()
     default=target_overhead,
     help="Target overhead, as a percentage (e.g., 5).",
 )
+@click.option(
+    "--use-multiprocessing/--no-use-multiprocessing",
+    default=True,
+    hidden=True,
+    help="Whether to use multiprocessing.",
+)
 def main(
     script: str,
     all_files: bool,
@@ -979,6 +1038,7 @@ def main(
     infer_shapes: bool,
     srcdir: str,
     target_overhead: float,
+    use_multiprocessing: bool
 ) -> None:
     """
     RightTyper efficiently generates types for your function
@@ -1060,4 +1120,5 @@ def main(
         insert_imports=True,
         generate_stubs=generate_stubs,
         srcdir=srcdir,
+        use_multiprocessing=use_multiprocessing
     )

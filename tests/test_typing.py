@@ -1,6 +1,9 @@
-from righttyper.righttyper_runtime import get_full_type
+from righttyper.righttyper_runtime import get_full_type, get_adjusted_full_type
 from collections.abc import Iterable
+from collections import namedtuple
 from typing import Any
+import pytest
+import importlib
 
 
 class IterableClass(Iterable):
@@ -113,8 +116,11 @@ def test_get_full_type():
     assert 0 == next(o), "changed state"
 
     o = (i for i in range(10))
-    assert "Generator[Any, None, None]" == get_full_type(o)
+    assert "Generator[Any, Any, Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
+
+    Point = namedtuple('Point', ['x', 'y'])
+    assert "Point" == get_full_type(Point(1,1))
 
     assert "IterableClass" == get_full_type(IterableClass())
     assert "super" == get_full_type(super(IterableClass))
@@ -127,5 +133,42 @@ def test_get_full_type():
         for i in range(start):
             yield i
 
-    assert "AsyncGenerator[Any, None, None]" == get_full_type(async_range(10))
-    assert "AsyncGenerator[Any, None, None]" == get_full_type(aiter(async_range(10)))
+    assert "AsyncGenerator[Any, Any]" == get_full_type(async_range(10))
+    assert "AsyncGenerator[Any, Any]" == get_full_type(aiter(async_range(10)))
+
+
+@pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
+def test_get_full_type_dtype():
+    import numpy as np
+
+    assert "numpy.ndarray[Any, numpy.dtypes.Float64DType]" == get_full_type(np.array([], np.float64))
+
+
+class NamedTupleClass:
+    P = namedtuple('P', [])
+
+@pytest.mark.xfail(reason='Not sure how to fix')
+def test_get_full_type_namedtuple_in_class():
+    # namedtuple's __qualname__ also doesn't contain the enclosing class name...
+    assert "NamedTupleClass.P" == get_full_type(NamedTupleClass.P())
+
+
+class Foo:
+    pass
+
+def test_adjusted_full_type():
+    # these types used to be special cased... ensure they still work
+    assert "None" == get_adjusted_full_type(None)
+    assert "bool" == get_adjusted_full_type(True)
+    assert "float" == get_adjusted_full_type(.0)
+    assert "int" == get_adjusted_full_type(0)
+
+    # get_adjusted_full_type's main function is to translate to 'Self'
+
+    class Bar:
+        pass
+
+    assert "Self" == get_adjusted_full_type(Foo(), Foo)
+    assert f"Foo" == get_adjusted_full_type(Foo())
+
+    assert f"test_typing.test_adjusted_full_type.<locals>.Bar" == get_adjusted_full_type(Bar())

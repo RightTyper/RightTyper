@@ -48,6 +48,7 @@ _TYPING_TYPES : Set[Typename] = {
         "Never",    # FIXME requires Python >= 3.11
         "Optional",
         "Set",
+        "Self",
         "Tuple",
         "Union",
     ]
@@ -110,6 +111,14 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.allowed_types = set(allowed_types)
 
 
+    def _is_valid(self, annotation: str) -> bool:
+        # local names such as foo.<locals>.Bar yield this exception
+        try:
+            cst.parse_expression(annotation)
+            return True
+        except cst.ParserSyntaxError:
+            return False
+
     def _should_output_as_string(self, annotation: str) -> bool:
         return any(t not in self.known_types for t in types_in_annotation(annotation))
 
@@ -118,25 +127,30 @@ class UnifiedTransformer(cst.CSTTransformer):
         # Initialize mutable members here, just in case transformer gets reused
         self.known_types : Set[Typename] = self.allowed_types | _BUILTIN_TYPES | _TYPING_TYPES
         self.used_types : Set[Typename] = set()
-        self.class_stack : List[str] = []
+        self.name_stack : List[str] = []
         # TODO modify known_types based on existing imports, so that they're not unnecessarily imported
         return True
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
-        self.class_stack.append(node.name.value)
+        self.name_stack.append(node.name.value)
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
         # a class is known once its definition is done
-        self.known_types.add(Typename(".".join(self.class_stack)))
-        self.class_stack.pop()
+        self.known_types.add(Typename(".".join(self.name_stack)))
+        self.name_stack.pop()
         return updated_node
 
-    # AnnotateFunctionTransformer logic
+    def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
+        self.name_stack.extend([node.name.value, "<locals>"])
+        return True
+
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef:
-        name = ".".join([*self.class_stack, original_node.name.value])
+        name = ".".join(self.name_stack[:-1])
+        self.name_stack.pop()
+        self.name_stack.pop()
         key = FuncInfo(Filename(self.filename), FunctionName(name))
 
         if key in self.type_annotations:
@@ -146,7 +160,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             for parameter in updated_node.params.params:
                 for arg, annotation_ in args:
                     if parameter.name.value == arg:
-                        if arg not in self.not_annotated.get(key, set()):
+                        if arg not in self.not_annotated.get(key, set()) or not self._is_valid(annotation_):
                             continue
 
                         # TODO recognize (and use) import aliases, transforming annotation
@@ -196,7 +210,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 )
             )
 
-            if "return" in self.not_annotated.get(key, set()):
+            if "return" in self.not_annotated.get(key, set()) and self._is_valid(return_type):
                 return_type_expr: cst.BaseExpression
                 if self._should_output_as_string(return_type):
                     return_type_expr = cst.SimpleString(f'"{return_type}"')

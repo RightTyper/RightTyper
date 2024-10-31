@@ -277,14 +277,14 @@ def output_stub_files(
             logger.warning(f"ValueError: {imp.class_fname=} {root_path=}")
             continue
         module_path, _ = os.path.splitext(normalized_path)
-        if module_path.startswith(".."):  # SOMETHING HAS GONE OF THE TRACKS
+        if module_path.startswith(".."):  # SOMETHING HAS GONE OFF THE TRACKS
             module_path = os.path.abspath(module_path)
         module_path = module_path.replace(os.sep, ".")
         if module_path.endswith(".__init__"):
             module_path = module_path[:-9]  # remove '.__init__'
         assert not module_path.startswith(
             ".."
-        )  # SOMETHING HAS GONE OF THE TRACKS
+        )  # SOMETHING HAS GONE OFF THE TRACKS
 
         imports_map[(imp.function_fname, imp.class_name)] = module_path
 

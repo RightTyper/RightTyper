@@ -6,7 +6,7 @@ import typing
 from collections.abc import Generator, AsyncGenerator
 from functools import cache
 from itertools import islice
-from types import CodeType, ModuleType
+from types import CodeType, ModuleType, FrameType
 from typing import Any, Dict, List, Optional, Tuple, Type, cast
 
 from righttyper.random_dict import RandomDict
@@ -61,9 +61,9 @@ def should_skip_function(
     return False
 
 
-def get_class_name_from_stack(
+def get_class_type_from_stack(
     max_depth: int = 5,
-) -> Optional[str]:
+) -> Optional[Type]:
     # Initialize the current frame
     current_frame = inspect.currentframe()
     try:
@@ -73,9 +73,7 @@ def get_class_name_from_stack(
             # Check if 'self' is in the local variables of the frame
             if "self" in current_frame.f_locals:
                 instance = current_frame.f_locals["self"]
-                return str(
-                    instance.__class__.__name__
-                )  # Return class name of the instance
+                return instance.__class__
             # Move one level up in the stack
             current_frame = current_frame.f_back
             depth += 1
@@ -100,20 +98,6 @@ def get_mypy_type_fn(func: Any) -> str:
     if return_type is inspect.Signature.empty:
         return_type = Any
 
-    # Helper function to format the type names correctly
-    def format_type(t: Any) -> Any:
-        if hasattr(t, "__module__") and hasattr(t, "__qualname__"):
-            return f"{t.__module__}.{t.__qualname__}"
-        if hasattr(t, "__qualname__"):
-            return t.__qualname__
-        if hasattr(t, "__name__"):
-            return t.__name__
-        if hasattr(t, "_name"):  # Handling cases like Union
-            return t._name
-        if hasattr(t, "__origin__"):  # For generics
-            return format_type(t.__origin__)
-        return str(t)
-
     # Format the result
     arg_types_str = ", ".join([get_type_name(arg) for arg in arg_types])
     return_type_str = get_type_name(return_type)
@@ -122,18 +106,28 @@ def get_mypy_type_fn(func: Any) -> str:
     return f"Callable[[{arg_types_str}], {return_type_str}]"
 
 
+def find_caller_frame() -> Optional[FrameType]:
+    """Attempts to find the stack frame which from which we were called. A bit brittle!"""
+    from pathlib import Path
+
+    pkg_path = Path(find_caller_frame.__code__.co_filename).parent
+
+    frame: FrameType|None = sys._getframe(1)
+
+    while (frame is not None and frame.f_code is not None and
+           pkg_path in Path(frame.f_code.co_filename).parents):
+        frame = frame.f_back
+
+    return frame
+
+
 def get_type_name(obj: object, depth: int = 0) -> str:
-    retval = get_type_name_helper(obj, depth)
-    return retval
-
-
-def get_type_name_helper(obj: object, depth: int = 0) -> str:
     orig_value = obj
 
     # Handle module types
     if inspect.ismodule(obj):
         if getattr(obj, "__name__", None):
-            return obj.__name__
+            return obj.__name__     # already fully qualified
         else:
             return str(type(obj))
 
@@ -197,22 +191,23 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
         else:
             return obj.__name__
 
-    # Check if the type is accessible from the current global namespace
-    current_namespace = sys._getframe(depth + 2).f_globals
-    if (
-        obj.__name__ in current_namespace
-        and current_namespace[obj.__name__] is obj
-    ):
-        return obj.__name__
+    # Look for a local alias for the type
+    # 
+    # FIXME this only checks for globally known names, and does match inner classes (e.g., Foo.Bar).
+    # FIXME that name may be locally bound to something different, hiding the global
+    if caller_frame := find_caller_frame():
+        current_namespace = caller_frame.f_globals
+        if current_namespace.get(obj.__name__) is obj:
+            return obj.__name__
 
-    # Check if the type is accessible from a module in the current namespace
-    for name, mod in current_namespace.items():
-        if (
-            inspect.ismodule(mod)
-            and hasattr(mod, obj.__name__)
-            and getattr(mod, obj.__name__) is obj
-        ):
-            return f"{name}.{obj.__name__}"
+        # Check if the type is accessible from a module in the current namespace
+        for name, mod in current_namespace.items():
+            if (
+                inspect.ismodule(mod)
+                and hasattr(mod, obj.__name__)
+                and getattr(mod, obj.__name__) is obj
+            ):
+                return f"{name}.{obj.__name__}"
 
     # Handle generic types (like List, Dict, etc.)
     origin = typing.get_origin(obj)
@@ -225,9 +220,9 @@ def get_type_name_helper(obj: object, depth: int = 0) -> str:
 
     # Handle all other types with fully qualified names
     if obj.__module__ and obj.__module__ != "__main__":
-        return f"{obj.__module__}.{obj.__name__}"
+        return f"{obj.__module__}.{obj.__qualname__}"
 
-    return obj.__name__
+    return obj.__qualname__
 
 
 def get_full_type(value: Any, depth: int = 0) -> str:
@@ -293,9 +288,9 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         # (q, g) = peek(value)
         # value = g
         # return f"Generator[{get_full_type(q)}, None, None]" # FIXME
-        return "Generator[Any, None, None]"  # FIXME
+        return "Generator[Any, Any, Any]"  # FIXME
     elif isinstance(value, AsyncGenerator):
-        return "AsyncGenerator[Any, None, None]"  # FIXME needs argument types
+        return "AsyncGenerator[Any, Any]"  # FIXME needs argument types
     else:
         # If the value passed is not a dictionary, list, set, or tuple,
         # we return the type of the value as a string
@@ -303,20 +298,12 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         return retval
 
 
-def get_adjusted_full_type(value: Any, class_name: Optional[str]) -> str:
-    # Determine the type name of the return value
-    if value is None:
-        typename = "None"
-    elif type(value) in (bool, float, int):
-        typename = type(value).__name__
-    else:
-        typename = get_full_type(value)
-        # print(f"typename = {typename}")
-        # print(f"class name = {class_name}")
-        if typename == class_name:
-            typename = "Self"
-        # print(f"typename now = {typename}")
-    return typename
+def get_adjusted_full_type(value: Any, class_type: Optional[Type]=None) -> str:
+    #print(f"{type(value)=} {class_type=}")
+    if type(value) == class_type:
+        return "Self"
+
+    return get_full_type(value)
 
 
 def isinstance_namedtuple(obj: object) -> bool:
@@ -358,8 +345,8 @@ def update_argtypes(
         ArgumentType,
     ],
     index: Tuple[FuncInfo, ArgumentName],
-    the_values: Dict[str, Any],
-    class_name: Optional[str],
+    arg_values: Any,
+    class_type: Optional[Type],
     arg: str,
     varargs: Optional[str],
     varkw: Optional[str],
@@ -371,30 +358,31 @@ def update_argtypes(
         values: Any,
         arg_type_enum: ArgumentType,
     ) -> None:
-        types = TypenameSet(
-            {
-                TypenameFrequency(
-                    Typename(get_adjusted_full_type(val, class_name)),
-                    1,
-                )
-                for val in values
-            }
-        )
-        argtypes.append(
-            ArgInfo(
-                ArgumentName(argument_name),
-                arg_type,
-                types,
+        if not all(v is None for v in values):
+            types = TypenameSet(
+                {
+                    TypenameFrequency(
+                        Typename(get_adjusted_full_type(val, class_type)),
+                        1,
+                    )
+                    for val in values
+                }
             )
-        )
-        arg_types[index] = arg_type_enum
+            argtypes.append(
+                ArgInfo(
+                    ArgumentName(argument_name),
+                    arg_type,
+                    types,
+                )
+            )
+            arg_types[index] = arg_type_enum
 
     if arg == varargs:
         assert varargs
         add_arg_info(
             varargs,
             tuple,
-            the_values[arg],
+            arg_values[0],
             ArgumentType.vararg,
         )
     elif arg == varkw:
@@ -402,14 +390,14 @@ def update_argtypes(
         add_arg_info(
             varkw,
             dict,
-            the_values[arg].values(),
+            arg_values[0].values(),
             ArgumentType.kwarg,
         )
     else:
         add_arg_info(
             arg,
-            type(the_values[arg]),
-            [the_values[arg]],
+            type(arg_values[0]),
+            arg_values,
             ArgumentType.positional,
         )
 
