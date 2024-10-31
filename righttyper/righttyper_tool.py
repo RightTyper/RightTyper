@@ -50,14 +50,12 @@ def reset_monitoring() -> None:
     """Clear all monitoring of events."""
     for event in _EVENTS:
         sys.monitoring.register_callback(TOOL_ID, event, None)
-    for id in range(3, 5):
-        try:
-            sys.monitoring.set_events(
-                id,
-                sys.monitoring.events.NO_EVENTS,
-            )
-        except ValueError:
-            pass
+
+    try:
+        sys.monitoring.set_events(TOOL_ID, sys.monitoring.events.NO_EVENTS)
+    except ValueError:
+        pass
+
     signal.signal(signal.SIGALRM, signal.SIG_IGN)
     signal.setitimer(signal.ITIMER_REAL, 0)
 
