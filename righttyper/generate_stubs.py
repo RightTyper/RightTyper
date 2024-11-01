@@ -51,7 +51,6 @@ class PyiTransformer(cst.CSTTransformer):
                   isinstance(stmt.body[0], (cst.Import, cst.ImportFrom))):
                 result.append(stmt)
             elif (isinstance(stmt, cst.SimpleStatementLine) and isinstance(stmt.body[0], cst.Assign)):
-                print(stmt)
                 if '__all__' in (target.target.value for target in stmt.body[0].targets):
                     result.append(stmt)
                     continue
