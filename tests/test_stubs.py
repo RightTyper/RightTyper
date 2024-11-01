@@ -11,7 +11,7 @@ def generate_stub(orig_code: str) -> str:
     return m.code
 
 
-def test_generate_stubs(tmp_path, monkeypatch):
+def test_stubs(tmp_path, monkeypatch):
     code = textwrap.dedent("""\
         import sys
 
@@ -52,7 +52,7 @@ def test_generate_stubs(tmp_path, monkeypatch):
         def f(x: int) -> int: ...
         """)
 
-def test_generate_stubs_no_any(tmp_path, monkeypatch):
+def test_stubs_no_any(tmp_path, monkeypatch):
     code = textwrap.dedent("""\
         import sys
 
@@ -71,7 +71,7 @@ def test_generate_stubs_no_any(tmp_path, monkeypatch):
         """)
 
 
-def test_generate_stubs_empty_class(tmp_path, monkeypatch):
+def test_stubs_empty_class(tmp_path, monkeypatch):
     code = textwrap.dedent("""\
         class Foo:
             '''Maybe one day we'll write more'''
@@ -89,7 +89,7 @@ def test_generate_stubs_empty_class(tmp_path, monkeypatch):
         """)
 
 
-def test_generate_stubs_conditional(tmp_path, monkeypatch):
+def test_stubs_conditional(tmp_path, monkeypatch):
     code = textwrap.dedent("""\
         from typing import TYPE_CHECKING
         if TYPE_CHECKING:
@@ -107,4 +107,37 @@ def test_generate_stubs_conditional(tmp_path, monkeypatch):
         if TYPE_CHECKING:
             import ast
         def f(x: "ast.AST") -> int: ...
+        """)
+
+
+def test_stubs_all_variable(tmp_path, monkeypatch):
+    # __all__ is included in many typeshed "pyi"s.
+    code = textwrap.dedent("""\
+        __all__ = [
+            "foo",
+            "Bar"
+        ]
+
+        def foo() -> int:
+            return 42
+
+        class Bar(object):
+            def __init__(self, x):
+                pass
+
+        def baz() -> float:
+            pass
+        """
+    )
+
+    output = generate_stub(code)
+    assert output == textwrap.dedent("""\
+        __all__ = [
+            "foo",
+            "Bar"
+        ]
+        def foo() -> int: ...
+        class Bar(object):
+            def __init__(self, x): ...
+        def baz() -> float: ...
         """)

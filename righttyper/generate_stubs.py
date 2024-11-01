@@ -3,9 +3,6 @@ import libcst as cst
 
 
 class PyiTransformer(cst.CSTTransformer):
-    # FIXME look for __all__ and, if defined, only export those names.
-    # FIXME absent that, omit names starting with _ ?
-
     def __init__(self: Self) -> None:
         self._needs_any = False
 
@@ -54,6 +51,11 @@ class PyiTransformer(cst.CSTTransformer):
                   isinstance(stmt.body[0], (cst.Import, cst.ImportFrom))):
                 result.append(stmt)
             elif (isinstance(stmt, cst.SimpleStatementLine) and isinstance(stmt.body[0], cst.Assign)):
+                print(stmt)
+                if '__all__' in (target.target.value for target in stmt.body[0].targets):
+                    result.append(stmt)
+                    continue
+
                 for target in stmt.body[0].targets:
                     type_ann = self.value2type(stmt.body[0].value)
 
