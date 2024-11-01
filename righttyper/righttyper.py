@@ -720,27 +720,29 @@ def post_process(
 ) -> None:
     global namespace
     output_type_signatures_to_file(namespace)
-    if generate_stubs:
-        output_stub_files(
-            namespace,
-            srcdir,
-            imports,
-            visited_funcs,
-            script_dir,
-            include_all,
-            include_files_regex,
-            visited_funcs_arguments,
-            visited_funcs_retval,
-            not_annotated,
-            arg_types,
-            existing_annotations,
-        )
-    if output_files:
+#    if generate_stubs:
+#        output_stub_files(
+#            namespace,
+#            srcdir,
+#            imports,
+#            visited_funcs,
+#            script_dir,
+#            include_all,
+#            include_files_regex,
+#            visited_funcs_arguments,
+#            visited_funcs_retval,
+#            not_annotated,
+#            arg_types,
+#            existing_annotations,
+#        )
+    if output_files or generate_stubs:
         process_all_files(
             ignore_annotations,
             overwrite,
             insert_imports,
             srcdir,
+            generate_stubs,
+            output_files,
             use_multiprocessing
         )
 
@@ -755,6 +757,8 @@ def process_all_files(
     overwrite: bool,
     insert_imports: bool,
     srcdir: str,
+    generate_stubs: bool,
+    output_files: bool,
     use_multiprocessing: bool
 ) -> None:
 
@@ -805,6 +809,8 @@ def process_all_files(
                 import_param = set()
             args = (
                 fname,
+                output_files,
+                generate_stubs,
                 type_annotations,
                 import_param,
                 overwrite,

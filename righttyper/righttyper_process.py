@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Set, Tuple
 
 import libcst as cst
 
-from righttyper.generate_stubs import generate_stub
+from righttyper.generate_stubs import generate_stub, PyiTransformer
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
@@ -88,6 +88,8 @@ def correct_indentation_issues(file_contents: str) -> str:
 
 def process_file(
     filename: Filename,
+    output_files: bool,
+    generate_stubs: bool,
     type_annotations: Dict[
         FuncInfo,
         Tuple[
@@ -110,7 +112,7 @@ def process_file(
         return
 
     # Make a backup
-    if overwrite:
+    if output_files and overwrite:
         with open(filename + ".bak", "w") as file:
             file.write(source)
 
@@ -158,11 +160,22 @@ def process_file(
         print(f"Failed to transform {filename}.")
         return
 
-    with open(
-        filename + ("" if overwrite else ".typed"),
-        "w",
-    ) as file:
-        file.write(transformed.code)
+    if output_files:
+        with open(
+            filename + ("" if overwrite else ".typed"),
+            "w",
+        ) as file:
+            file.write(transformed.code)
+
+    if generate_stubs:
+        stub_file = pathlib.Path(filename).with_suffix(".pyi")
+
+        stubs = transformed.visit(PyiTransformer())
+
+        if stub_file.exists():
+            stub_file.with_suffix(stub_file.suffix + ".bak").write_text(stub_file.read_text())
+
+        stub_file.write_text(stubs.code)
 
 
 # Convert the collected data into the expected format for type_annotations

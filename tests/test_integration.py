@@ -5,9 +5,14 @@ from pathlib import Path
 import pytest
 import importlib.util
 
+@pytest.fixture
+def tmp_cwd(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    yield tmp_path
+
 
 @pytest.mark.xfail(reason="value introspection doesn't currently work")
-def test_iterable(tmp_path, monkeypatch):
+def test_iterable(tmp_cwd):
     t = textwrap.dedent("""\
         def func(iter):
             return enumerate(iter)
@@ -15,7 +20,6 @@ def test_iterable(tmp_path, monkeypatch):
         print(list(func(range(10))))
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -24,7 +28,7 @@ def test_iterable(tmp_path, monkeypatch):
     assert "def func(iter: Iterable[int]) -> Iterable[Tuple[int, int]]" in Path("t.py").read_text()
 
 
-def test_builtins(tmp_path, monkeypatch):
+def test_builtins(tmp_cwd):
     t = textwrap.dedent("""\
         def func(s):
             return range(s.start, s.stop)
@@ -42,7 +46,6 @@ def test_builtins(tmp_path, monkeypatch):
         func3(super(str))
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -62,7 +65,7 @@ def test_builtins(tmp_path, monkeypatch):
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-def test_numpy_dtype_name(tmp_path, monkeypatch):
+def test_numpy_dtype_name(tmp_cwd):
     t = textwrap.dedent("""\
         import numpy as np
         import ml_dtypes
@@ -74,7 +77,6 @@ def test_numpy_dtype_name(tmp_path, monkeypatch):
         func(np.array([0], bfloat16))
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -85,7 +87,7 @@ def test_numpy_dtype_name(tmp_path, monkeypatch):
     assert "def func(p: \"numpy.ndarray[Any, numpy.dtype[ml_dtypes.bfloat16]]\") -> str" in output
 
 
-def test_call_with_none_default(tmp_path, monkeypatch):
+def test_call_with_none_default(tmp_cwd):
     t = textwrap.dedent("""\
         def func(n=None):
             return n+1 if n is not None else 0
@@ -93,7 +95,6 @@ def test_call_with_none_default(tmp_path, monkeypatch):
         func()
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -103,7 +104,7 @@ def test_call_with_none_default(tmp_path, monkeypatch):
     assert "def func(n=None) -> int" in output
 
 
-def test_default_arg(tmp_path, monkeypatch):
+def test_default_arg(tmp_cwd):
     t = textwrap.dedent("""\
         def func(n=None):
             return n+1 if n is not None else 0
@@ -115,7 +116,6 @@ def test_default_arg(tmp_path, monkeypatch):
         func2(1.0)
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -128,7 +128,7 @@ def test_default_arg(tmp_path, monkeypatch):
     assert "def func2(n: Union[float, int]=5) -> float" in output
 
 
-def test_function_lookup_for_defaults(tmp_path, monkeypatch):
+def test_function_lookup_for_defaults(tmp_cwd):
     # if it confuses time.time for C.time, an exception is raised, as inspect cannot
     # introspect into time.time
     t = textwrap.dedent("""\
@@ -141,7 +141,6 @@ def test_function_lookup_for_defaults(tmp_path, monkeypatch):
         C().time()
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -151,7 +150,7 @@ def test_function_lookup_for_defaults(tmp_path, monkeypatch):
 #    assert "def time(self) -> int" in output
 
 
-def test_inner_function(tmp_path, monkeypatch):
+def test_inner_function(tmp_cwd):
     t = textwrap.dedent("""\
         def f(x):
             def g(y):
@@ -162,7 +161,6 @@ def test_inner_function(tmp_path, monkeypatch):
         f(1)
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -172,7 +170,7 @@ def test_inner_function(tmp_path, monkeypatch):
     assert "def g(y: int) -> int" in output
 
 
-def test_class_method(tmp_path, monkeypatch):
+def test_class_method(tmp_cwd):
     t = textwrap.dedent("""\
         class C:
             def f(self, n):
@@ -189,7 +187,6 @@ def test_class_method(tmp_path, monkeypatch):
         g(1)
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -202,8 +199,7 @@ def test_class_method(tmp_path, monkeypatch):
     assert "def h(self: Self, x: int) -> float" in output
 
 
-def test_class_method_imported(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+def test_class_method_imported(tmp_cwd):
     Path("m.py").write_text(textwrap.dedent("""\
         class C:
             def f(self, n):
@@ -239,8 +235,7 @@ def test_class_method_imported(tmp_path, monkeypatch):
     assert "import gC" not in output
 
 
-def test_class_name_imported(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+def test_class_name_imported(tmp_cwd):
     Path("m.py").write_text(textwrap.dedent("""\
         class C:
             pass
@@ -267,10 +262,9 @@ def test_class_name_imported(tmp_path, monkeypatch):
     assert "import C" not in output
 
 
-def test_class_name_in_test(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
+def test_class_name_in_test(tmp_cwd):
+    (tmp_cwd / "tests").mkdir()
+    (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
         class C:
             pass
 
@@ -284,16 +278,15 @@ def test_class_name_in_test(tmp_path, monkeypatch):
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', '-m', 'pytest', '-s', 'tests'], check=True)
-    output = (tmp_path / "tests" / "test_foo.py").read_text()
+    output = (tmp_cwd / "tests" / "test_foo.py").read_text()
     
     assert "def f(x: C) -> None" in output
     assert "import test_foo" not in output
 
 
 @pytest.mark.xfail(reason="Doesn't work yet")
-def test_local_class_name(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "t.py").write_text(textwrap.dedent("""\
+def test_local_class_name(tmp_cwd):
+    (tmp_cwd / "t.py").write_text(textwrap.dedent("""\
         def f():
             class C:
                 pass
@@ -309,13 +302,12 @@ def test_local_class_name(tmp_path, monkeypatch):
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
-    output = (tmp_path / "t.py").read_text()
+    output = (tmp_cwd / "t.py").read_text()
     
     assert "def g(x: C) -> int" in output
 
 
-def test_return_private_class(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+def test_return_private_class(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def f():
             class fC:
@@ -339,7 +331,7 @@ def test_return_private_class(tmp_path, monkeypatch):
     assert "def g(x) -> None:" in output # FIXME what is a good way to express the type?
 
 
-def test_default_inner_function(tmp_path, monkeypatch):
+def test_default_inner_function(tmp_cwd):
     t = textwrap.dedent("""\
         def f(x):
             def g(y=None):
@@ -350,7 +342,6 @@ def test_default_inner_function(tmp_path, monkeypatch):
         f(1)
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -360,7 +351,7 @@ def test_default_inner_function(tmp_path, monkeypatch):
     assert "def g(y: Optional[int]=None) -> int" in output
 
 
-def test_default_class_method(tmp_path, monkeypatch):
+def test_default_class_method(tmp_cwd):
     t = textwrap.dedent("""\
         class C:
             def f(self, n=5):
@@ -377,7 +368,6 @@ def test_default_class_method(tmp_path, monkeypatch):
         g()
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -388,7 +378,7 @@ def test_default_class_method(tmp_path, monkeypatch):
     assert "def h(self: Self, x: int=1) -> float" in output
 
 
-def test_generator(tmp_path, monkeypatch):
+def test_generator(tmp_cwd):
     t = textwrap.dedent("""\
         def gen():
             yield 10
@@ -404,7 +394,6 @@ def test_generator(tmp_path, monkeypatch):
         g(gen())
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -416,7 +405,7 @@ def test_generator(tmp_path, monkeypatch):
     assert "def g(f: Generator[Any, Any, Any]) -> None" in output
 
 
-def test_async_generator(tmp_path, monkeypatch):
+def test_async_generator(tmp_cwd):
     t = textwrap.dedent("""\
         import asyncio
 
@@ -434,7 +423,6 @@ def test_async_generator(tmp_path, monkeypatch):
         g(gen())
         """)
 
-    monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -444,3 +432,49 @@ def test_async_generator(tmp_path, monkeypatch):
     # FIXME should be AsyncGenerator[int] or AsyncIterator[int]
     assert "def gen() -> AsyncGenerator[Any, Any]:" in output
     assert "def g(f: AsyncGenerator[Any, Any]) -> None" in output
+
+
+def test_generate_stubs(tmp_cwd):
+    Path("m.py").write_text(textwrap.dedent("""\
+        import sys
+
+        CONST = 42
+        CALC = 1+1
+
+        class C:
+            PI = 314
+
+            def __init__(self, x):  # initializes me
+                self.x = x
+
+            def f(self):
+                return self.x
+
+        def f(x):
+            return C(x).f()
+        """
+    ))
+
+    Path("t.py").write_text(textwrap.dedent("""\
+        import m
+        m.f(1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--generate-stubs',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("m.pyi").read_text()
+    # FIXME this assertion is brittle
+    assert output == textwrap.dedent("""\
+        from typing import TYPE_CHECKING, Self
+        import sys
+        from typing import Any
+        CONST: int
+        CALC: Any
+        class C:
+            PI: int
+            def __init__(self: Self, x: int) -> None: ...
+            def f(self: Self) -> int: ...
+        def f(x: int) -> int: ...
+        """)
