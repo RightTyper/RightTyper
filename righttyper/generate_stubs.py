@@ -96,6 +96,9 @@ def generate_variable_stub(node: ast.Assign, stub_file: TextIO) -> None:
 
 
 class PyiTransformer(cst.CSTTransformer):
+    # FIXME look for __all__ and, if defined, only export those names.
+    # FIXME absent that, omit names starting with _ ?
+
     def __init__(self: Self) -> None:
         self._needs_any = False
 
