@@ -51,7 +51,12 @@ class PyiTransformer(cst.CSTTransformer):
                   isinstance(stmt.body[0], (cst.Import, cst.ImportFrom))):
                 result.append(stmt)
             elif (isinstance(stmt, cst.SimpleStatementLine) and isinstance(stmt.body[0], cst.Assign)):
-                if '__all__' in (target.target.value for target in stmt.body[0].targets):
+                if not all(isinstance(target.target, cst.Name) for target in stmt.body[0].targets):
+                    # can't handle tuples... do we need to?
+                    continue
+
+                if any (isinstance(target.target, cst.Name) and target.target.value == '__all__'
+                        for target in stmt.body[0].targets):
                     result.append(stmt)
                     continue
 

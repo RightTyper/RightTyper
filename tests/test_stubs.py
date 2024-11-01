@@ -71,6 +71,18 @@ def test_stubs_no_any(tmp_path, monkeypatch):
         """)
 
 
+def test_stubs_assign_tuple(tmp_path, monkeypatch):
+    code = textwrap.dedent("""\
+        X, Y, Z = 'a', 10, .0
+        """
+    )
+
+    output = generate_stub(code)
+    assert output == textwrap.dedent("""\
+
+        """)
+
+
 def test_stubs_empty_class(tmp_path, monkeypatch):
     code = textwrap.dedent("""\
         class Foo:
