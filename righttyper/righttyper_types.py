@@ -50,23 +50,3 @@ class ArgInfo:
     arg_name: ArgumentName
     value_type: Type[Any]
     type_name_set: TypenameSet
-
-
-@dataclass(eq=True, frozen=True)
-class ImportDetails:
-    object_name: str
-    object_aliases: FrozenSet[str]
-    import_module_name: str
-    module_aliases: FrozenSet[str]
-
-
-@dataclass(eq=True, frozen=True)
-class ImportInfo:
-    # 1. filename where the function lives
-    function_fname: Filename
-    # 2. filename where the class lives
-    class_fname: Filename
-    # 3. the name of the class
-    class_name: str
-    # 4. details for possible imports (see get_import_details).
-    import_details: ImportDetails

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Set, Tuple
 
 import libcst as cst
 
-from righttyper.generate_stubs import generate_stub, PyiTransformer
+from righttyper.generate_stubs import PyiTransformer
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
@@ -14,7 +14,6 @@ from righttyper.righttyper_types import (
     Filename,
     FuncInfo,
     FunctionName,
-    ImportInfo,
     Typename,
     TypenameSet,
 )
@@ -97,14 +96,12 @@ def process_file(
             Typename,
         ],
     ],
-    imports: Set[ImportInfo],
     overwrite: bool,
     not_annotated: Dict[FuncInfo, Set[ArgumentName]],
     ignore_annotations: bool = False,
     srcdir: str = "",
 ) -> None:
     debug_print(f"process_file: {filename}")
-    # print(f"process {filename}: {imports}")
     try:
         with open(filename, "r") as file:
             source = file.read()
@@ -143,13 +140,8 @@ def process_file(
             print(f"Failed to parse source for {filename}.")
             return
 
-    # If there are needed imports for class defs, process these
-    needed_imports = set(
-        imp for imp in imports if imp.function_fname == filename
-    )
-
     transformer = UnifiedTransformer(
-        filename, type_annotations, not_annotated, [], needed_imports
+        filename, type_annotations, not_annotated
     )
 
     try:
@@ -226,137 +218,3 @@ def collect_data(
         )
         # print(f"{type_annotations[t]} {t}")
     return type_annotations
-
-
-def output_stub_files(
-    namespace: Dict[str, Any],
-    root_path: str,
-    imports: Set[ImportInfo],
-    visited_funcs: Set[FuncInfo],
-    script_dir: str,
-    include_all: bool,
-    include_files_regex: str,
-    visited_funcs_arguments: Dict[FuncInfo, List[ArgInfo]],
-    visited_funcs_retval: Dict[FuncInfo, TypenameSet],
-    not_annotated: Dict[FuncInfo, Set[ArgumentName]],
-    arg_types: Dict[
-        Tuple[FuncInfo, ArgumentName],
-        ArgumentType,
-    ],
-    existing_annotations: Dict[FuncInfo, Dict[ArgumentName, str]],
-) -> None:
-    # Print all type signatures
-    output_str: Dict[str, str] = defaultdict(str)  # map file name to str
-    already_imported: Set[Tuple[str, str]] = set()
-    skip_functions: Dict[str, List[FunctionName]] = defaultdict(list)
-
-    import site
-    import sysconfig
-
-    # Paths to the main and user libraries, with an os separator added
-    # Used to generate import statements later.
-    purelib = sysconfig.get_paths()["purelib"]
-    platstdlib = sysconfig.get_paths()["platstdlib"]
-    userlib = site.getusersitepackages()
-
-    # Precompute imports mapping
-    imports_map = {}
-    for imp in imports:
-        if (
-            imp.class_fname.startswith(purelib)
-            or imp.class_fname.startswith(userlib)
-            or imp.class_fname.startswith(platstdlib)
-        ):
-            if imp.class_fname.startswith(
-                purelib
-            ) or imp.class_fname.startswith(userlib):
-                class_src_file = os.path.dirname(imp.class_fname)
-                class_src_file = class_src_file.removeprefix(purelib + os.sep)
-                class_src_file = class_src_file.removeprefix(userlib + os.sep)
-            else:
-                class_src_file = imp.class_fname.removeprefix(platstdlib)
-                class_src_file = os.path.basename(class_src_file)
-                class_src_file, _ = os.path.splitext(class_src_file)
-
-            class_src_file = class_src_file.replace(os.sep, ".")
-            imports_map[(imp.function_fname, imp.class_name)] = class_src_file
-            continue
-        if imp.class_fname == "":
-            # Note: not sure why this is happening.
-            continue
-        try:
-            normalized_path = os.path.relpath(imp.class_fname, start=root_path)
-        except ValueError:
-            logger.warning(f"ValueError: {imp.class_fname=} {root_path=}")
-            continue
-        module_path, _ = os.path.splitext(normalized_path)
-        if module_path.startswith(".."):  # SOMETHING HAS GONE OFF THE TRACKS
-            module_path = os.path.abspath(module_path)
-        module_path = module_path.replace(os.sep, ".")
-        if module_path.endswith(".__init__"):
-            module_path = module_path[:-9]  # remove '.__init__'
-        assert not module_path.startswith(
-            ".."
-        )  # SOMETHING HAS GONE OFF THE TRACKS
-
-        imports_map[(imp.function_fname, imp.class_name)] = module_path
-
-    for t in visited_funcs:
-        if skip_this_file(
-            t.file_name,
-            script_dir,
-            include_all,
-            include_files_regex,
-        ):
-            continue
-        try:
-            stub_fname = str(pathlib.Path(t.file_name).with_suffix(".pyi"))
-
-            # Add relevant imports
-            for (
-                function_file_path,
-                class_name,
-            ), module_path in imports_map.items():
-                if (
-                    stub_fname,
-                    class_name,
-                ) not in already_imported:
-                    if not class_name.startswith("_"):
-                        # We refuse to try to import names starting with underscores, at least for now.
-                        output_str[
-                            stub_fname
-                        ] += f"from {module_path} import {class_name}\n"
-                    already_imported.add((stub_fname, class_name))
-
-            s = make_type_signature(
-                file_name=t.file_name,
-                func_name=t.func_name,
-                args=visited_funcs_arguments[t],
-                retval=visited_funcs_retval[t],
-                namespace=namespace,
-                not_annotated=not_annotated,
-                arg_types=arg_types,
-                existing_annotations=existing_annotations,
-            )
-            skip_functions[stub_fname].append(t.func_name)
-            output_str[stub_fname] += f"{s} ...\n"
-
-        except KeyError:
-            # Something weird happened
-            logger.warning(f"KeyError: {t=}")
-
-    for (
-        stub_fname,
-        stub_content,
-    ) in output_str.items():
-        with open(stub_fname, "w") as f:
-            f.write(stub_content)
-
-        input_file = str(pathlib.Path(stub_fname).with_suffix(".py"))
-        output_file = stub_fname
-        exclude_functions = skip_functions[stub_fname]
-        generate_stub(
-            input_file,
-            output_file,
-            exclude_functions,
-        )

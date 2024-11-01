@@ -8,7 +8,6 @@ from righttyper.righttyper_types import (
     Filename,
     FuncInfo,
     FunctionName,
-    ImportInfo,
     Typename,
 )
 
@@ -100,15 +99,12 @@ class UnifiedTransformer(cst.CSTTransformer):
                 Typename,
             ],
         ],
-        not_annotated: Dict[FuncInfo, Set[ArgumentName]],
-        allowed_types: List[Typename] = [], # TODO delete?
-        imports: Set[ImportInfo] = set(), # TODO delete
+        not_annotated: Dict[FuncInfo, Set[ArgumentName]]
     ) -> None:
         # Initialize AnnotateFunctionTransformer data
         self.filename = filename
         self.type_annotations = type_annotations
         self.not_annotated = not_annotated
-        self.allowed_types = set(allowed_types)
 
 
     def _is_valid(self, annotation: str) -> bool:
@@ -125,7 +121,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
-        self.known_types : Set[Typename] = self.allowed_types | _BUILTIN_TYPES | _TYPING_TYPES
+        self.known_types : Set[Typename] = _BUILTIN_TYPES | _TYPING_TYPES
         self.used_types : Set[Typename] = set()
         self.name_stack : List[str] = []
         # TODO modify known_types based on existing imports, so that they're not unnecessarily imported

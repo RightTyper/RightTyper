@@ -30,10 +30,8 @@ import click
 
 # Disabled for now
 # from righttyper import replace_dicts
-from righttyper.get_import_details import get_import_details
 from righttyper.righttyper_process import (
     collect_data,
-    output_stub_files,
     process_file,
 )
 from righttyper.righttyper_runtime import (
@@ -42,7 +40,6 @@ from righttyper.righttyper_runtime import (
     get_adjusted_full_type,
     get_class_type_from_stack,
     get_class_source_file,
-    requires_import,
     should_skip_function,
     update_argtypes,
 )
@@ -64,7 +61,6 @@ from righttyper.righttyper_types import (
     Filename,
     FuncInfo,
     FunctionName,
-    ImportInfo,
     Typename,
     TypenameFrequency,
     TypenameSet,
@@ -129,10 +125,6 @@ not_annotated: Dict[FuncInfo, Set[ArgumentName]] = defaultdict(set)
 existing_annotations: Dict[FuncInfo, Dict[ArgumentName, str]] = defaultdict(
     dict
 )
-
-# Track the file names and class names for classes
-# that will need import statements
-imports: Set[ImportInfo] = set()
 
 
 namespace: Dict[str, Any] = {}
@@ -371,23 +363,6 @@ def process_function_arguments(
                 varkw,
             )
 
-            if requires_import(the_values[arg]) and arg not in [
-                "self",
-                "cls",
-            ]:
-                # print(f"trying to add: {arg=} {the_values[arg]=}")
-                try:
-                    add_new_import(
-                        caller_frame.f_code.co_filename,
-                        the_values[arg],
-                    )
-                except TypeError:
-                    # Unexpected type error
-                    logger.exception(
-                        "process_function_arguments - TypeError:"
-                        f" {t=} {arg=} {the_values[arg]=}"
-                    )
-
     debug_print(f"processing {t=} {argtypes=}")
     update_visited_funcs_arguments(t, argtypes)
 
@@ -467,18 +442,6 @@ def update_function_annotations(
             ArgumentName(name): format_annotation(type_hints[name])
             for name in type_hints
         }
-
-
-def add_new_import(filename: str, value: Any) -> None:
-    class_src_file = get_class_source_file(value.__class__)
-    deets = get_import_details(value)
-    new_import = ImportInfo(
-        Filename(filename),
-        Filename(class_src_file),
-        value.__class__.__name__,
-        deets,
-    )
-    imports.add(new_import)
 
 
 def update_visited_funcs_arguments(
@@ -713,33 +676,16 @@ def post_process(
     overwrite: bool = True,
     output_files: bool = True,
     ignore_annotations: bool = False,
-    insert_imports: bool = False,
     generate_stubs: bool = False,
     srcdir: str = "",
     use_multiprocessing: bool = True
 ) -> None:
     global namespace
     output_type_signatures_to_file(namespace)
-#    if generate_stubs:
-#        output_stub_files(
-#            namespace,
-#            srcdir,
-#            imports,
-#            visited_funcs,
-#            script_dir,
-#            include_all,
-#            include_files_regex,
-#            visited_funcs_arguments,
-#            visited_funcs_retval,
-#            not_annotated,
-#            arg_types,
-#            existing_annotations,
-#        )
     if output_files or generate_stubs:
         process_all_files(
             ignore_annotations,
             overwrite,
-            insert_imports,
             srcdir,
             generate_stubs,
             output_files,
@@ -755,7 +701,6 @@ def output_type_signatures_to_file(namespace: Dict[str, Any]) -> None:
 def process_all_files(
     ignore_annotations: bool,
     overwrite: bool,
-    insert_imports: bool,
     srcdir: str,
     generate_stubs: bool,
     output_files: bool,
@@ -804,15 +749,11 @@ def process_all_files(
                 visited_funcs_retval,
                 namespace,
             )
-            import_param = imports
-            if not insert_imports:
-                import_param = set()
             args = (
                 fname,
                 output_files,
                 generate_stubs,
                 type_annotations,
-                import_param,
                 overwrite,
                 not_annotated,
                 ignore_annotations,
@@ -1123,7 +1064,6 @@ def main(
         overwrite=overwrite,
         output_files=output_files,
         ignore_annotations=ignore_annotations,
-        insert_imports=True,
         generate_stubs=generate_stubs,
         srcdir=srcdir,
         use_multiprocessing=use_multiprocessing
