@@ -497,3 +497,22 @@ def test_coroutine_type(tmp_cwd):
 
     output = Path("t.py").read_text()
     assert "def foo() -> Coroutine[Any, Any, Any]:" in output
+
+
+def test_module_type(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        import sys
+
+        def foo(m):
+            pass
+
+        foo(sys.modules['__main__'])
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def foo(m: \"types.ModuleType\") -> None:" in output
+    assert "import types" in output

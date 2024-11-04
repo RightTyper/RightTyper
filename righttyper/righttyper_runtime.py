@@ -124,14 +124,9 @@ def find_caller_frame() -> Optional[FrameType]:
 def get_type_name(obj: object, depth: int = 0) -> str:
     orig_value = obj
 
-    # Handle module types
     if inspect.ismodule(obj):
-        if getattr(obj, "__name__", None):
-            return obj.__name__     # already fully qualified
-        else:
-            return str(type(obj))
+        return "types.ModuleType"
 
-    # Handle class instances by retrieving their type
     if not inspect.isclass(obj):
         obj = type(obj)
 
