@@ -3,7 +3,7 @@ import os
 import random
 import sys
 import typing
-from collections.abc import Generator, AsyncGenerator
+from collections.abc import Generator, AsyncGenerator, Coroutine, KeysView, ValuesView, ItemsView, Iterator
 from functools import cache
 from itertools import islice
 from types import CodeType, ModuleType, FrameType
@@ -23,16 +23,19 @@ from righttyper.righttyper_types import (
 from righttyper.righttyper_utils import skip_this_file
 
 
+def sample_from_iterable(value: typing.Iterable[T]) -> T:
+    """Samples from an iterable."""
+    MAX_ELEMENTS = 10   # to keep this O(1)
+    n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
+    return next(islice(value, n, n + 1))
+
+
 def get_random_element_from_dict(value: Dict[Any, Any]) -> Any:
     if isinstance(value, RandomDict):
         # If it's a RandomDict, use its built-in random_item method
         return value.random_item()
-    else:
-        # For a regular dict, use islice to select a random element
-        # We limit the range to the first few elements to keep this O(1).
-        MAX_ELEMENTS = 10
-        n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
-        return next(islice(value.items(), n, n + 1))
+
+    return sample_from_iterable(value.items())
 
 
 @cache
@@ -163,31 +166,9 @@ def get_type_name(obj: object, depth: int = 0) -> str:
             return "Iterator[int]"
         elif obj.__name__ == "enumerate":
             return "Iterator[Tuple[int, Any]]"
-        elif obj.__name__ in (
-            "list_iterator", "list_reverseiterator", "set_iterator",
-            "dict_keyiterator", "dict_valueiterator", "dict_itemiterator",
-            "filter", "map", "zip"
-        ):
-            return "Iterator[Any]"  # FIXME needs element type
-        elif obj.__name__ in (
-            "dict_keys", "dict_values"
-        ):
-            try:
-                # FIXME sample rather than use 1st
-                el = next(iter(cast(typing.Iterable, orig_value)))
-                return f"Iterable[{get_type_name(el, depth+1)}]"
-            except StopIteration:
-                return "Iterable[Never]"
-        elif obj.__name__ == "dict_items":
-            try:
-                # FIXME sample rather than use 1st
-                el = next(iter(cast(typing.Iterable, orig_value)))
-                return f"Iterable[Tuple[{get_type_name(el[0], depth+1)}, {get_type_name(el[1], depth+1)}]]"
-            except StopIteration:
-                return "Iterable[Tuple[Never, Never]]"
-        elif obj.__name__ == "coroutine":
-            # FIXME need yield / send / return type
-            return "Coroutine[Any, Any, Any]"
+        elif isinstance(orig_value, Iterator):
+            # FIXME needs element type -- but how to get it without changing the iterator?
+            return "Iterator[Any]"
         else:
             return obj.__name__
 
@@ -252,6 +233,24 @@ def get_full_type(value: Any, depth: int = 0) -> str:
             )
         else:
             return "Dict[Never, Never]"
+    elif isinstance(value, KeysView):
+        if value:
+            el = sample_from_iterable(cast(typing.Iterable, value))
+            return f"KeysView[{get_full_type(el, depth+1)}]"
+        else:
+            return "KeysView[Never]"
+    elif isinstance(value, ValuesView):
+        if value:
+            el = sample_from_iterable(cast(typing.Iterable, value))
+            return f"ValuesView[{get_full_type(el, depth+1)}]"
+        else:
+            return "ValuesView[Never]"
+    elif isinstance(value, ItemsView):
+        if value:
+            el = sample_from_iterable(cast(typing.Iterable, value))
+            return f"ItemsView[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
+        else:
+            return "ItemsView[Never, Never]"
     elif isinstance(value, list):
         # Checking if the value is a list
         if value:
@@ -290,6 +289,9 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         return "Generator[Any, Any, Any]"  # FIXME
     elif isinstance(value, AsyncGenerator):
         return "AsyncGenerator[Any, Any]"  # FIXME needs argument types
+    elif isinstance(value, Coroutine):
+        # FIXME need yield / send / return type
+        return "Coroutine[Any, Any, Any]"
     else:
         # If the value passed is not a dictionary, list, set, or tuple,
         # we return the type of the value as a string

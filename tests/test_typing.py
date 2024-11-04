@@ -44,14 +44,13 @@ def test_get_full_type():
 
     assert "Dict[str, str]" == get_full_type({'a': 'b'})
 
-    assert "Iterable[str]" == get_full_type({'a':0, 'b':1}.keys())
-    assert "Iterable[int]" == get_full_type({'a':0, 'b':1}.values())
-    assert "Iterable[Tuple[str, int]]" == get_full_type({'a':0, 'b':1}.items())
+    assert "KeysView[str]" == get_full_type({'a':0, 'b':1}.keys())
+    assert "ValuesView[int]" == get_full_type({'a':0, 'b':1}.values())
+    assert "ItemsView[str, int]" == get_full_type({'a':0, 'b':1}.items())
 
-    # FIXME is it useful to have 'Never' here? Or better simply 'Iterable' ?
-    assert "Iterable[Never]" == get_full_type(dict().keys())
-    assert "Iterable[Never]" == get_full_type(dict().values())
-    assert "Iterable[Tuple[Never, Never]]" == get_full_type(dict().items())
+    assert "KeysView[Never]" == get_full_type(dict().keys())
+    assert "ValuesView[Never]" == get_full_type(dict().values())
+    assert "ItemsView[Never, Never]" == get_full_type(dict().items())
 
     assert "Set[str]" == get_full_type({'a', 'b'})
 
