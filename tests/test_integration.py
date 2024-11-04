@@ -516,3 +516,24 @@ def test_module_type(tmp_cwd):
     output = Path("t.py").read_text()
     assert "def foo(m: \"types.ModuleType\") -> None:" in output
     assert "import types" in output
+
+
+@pytest.mark.xfail(reason="our function types are all annotation-based so far")
+def test_discovered_function_type(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x):
+            return x/2
+
+        def bar(f, x):
+            return f(x)
+
+        bar(foo, 1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def foo(x: int) -> float:" in output
+    assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
