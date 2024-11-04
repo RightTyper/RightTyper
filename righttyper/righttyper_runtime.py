@@ -178,22 +178,26 @@ def get_type_name(obj: object, depth: int = 0) -> str:
             "dict_keys", "dict_values"
         ):
             try:
+                # FIXME sample rather than use 1st
                 el = next(iter(cast(typing.Iterable, orig_value)))
                 return f"Iterable[{get_type_name(el, depth+1)}]"
             except StopIteration:
                 return "Iterable[Never]"
         elif obj.__name__ == "dict_items":
             try:
+                # FIXME sample rather than use 1st
                 el = next(iter(cast(typing.Iterable, orig_value)))
                 return f"Iterable[Tuple[{get_type_name(el[0], depth+1)}, {get_type_name(el[1], depth+1)}]]"
             except StopIteration:
                 return "Iterable[Tuple[Never, Never]]"
+        elif obj.__name__ == "coroutine":
+            # FIXME need yield / send / return type
+            return "Coroutine[Any, Any, Any]"
         else:
             return obj.__name__
 
     # Look for a local alias for the type
-    # 
-    # FIXME this only checks for globally known names, and does match inner classes (e.g., Foo.Bar).
+    # FIXME this only checks for globally known names, and doesn't match inner classes (e.g., Foo.Bar).
     # FIXME that name may be locally bound to something different, hiding the global
     if caller_frame := find_caller_frame():
         current_namespace = caller_frame.f_globals
@@ -294,8 +298,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
     else:
         # If the value passed is not a dictionary, list, set, or tuple,
         # we return the type of the value as a string
-        retval = get_type_name(value, depth + 1)
-        return retval
+        return get_type_name(value, depth + 1)
 
 
 def get_adjusted_full_type(value: Any, class_type: Optional[Type]=None) -> str:
@@ -327,15 +330,6 @@ def peek(
 
     # Return the peeked value and the new generator
     return peeked_value, wrapped_generator()
-
-
-def get_method_signature(method: Any) -> str:
-    # try:
-    #    type_hints = get_type_hints(method)
-    # except Exception:
-    #    type_hints = None
-    callable_signature = get_mypy_type_fn(method)
-    return callable_signature
 
 
 def update_argtypes(

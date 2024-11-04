@@ -478,3 +478,22 @@ def test_generate_stubs(tmp_cwd):
             def f(self: Self) -> int: ...
         def f(x: int) -> int: ...
         """)
+
+
+def test_coroutine_type(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo():
+            async def coro():
+                import asyncio
+                await asyncio.sleep(1)
+            return coro()
+
+        foo()
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def foo() -> Coroutine[Any, Any, Any]:" in output

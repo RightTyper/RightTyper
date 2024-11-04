@@ -38,6 +38,7 @@ _TYPING_TYPES : Set[Typename] = {
         "AsyncIterable",
         "AsyncIterator",
         "Callable",
+        "Coroutine",
         "Dict",
         "FrozenSet",
         "Generator",

@@ -137,6 +137,15 @@ def test_get_full_type():
     assert "AsyncGenerator[Any, Any]" == get_full_type(aiter(async_range(10)))
 
 
+@pytest.mark.filterwarnings("ignore:coroutine .* never awaited")
+def test_get_full_type_coro():
+    async def coro():
+        import asyncio
+        await asyncio.sleep(1)
+
+    assert "Coroutine[Any, Any, Any]" == get_full_type(coro())
+
+
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
 def test_get_full_type_dtype():
     import numpy as np
