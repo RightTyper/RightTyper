@@ -6,7 +6,7 @@ import typing
 from collections.abc import Generator, AsyncGenerator, Coroutine, KeysView, ValuesView, ItemsView, Iterator
 from functools import cache
 from itertools import islice
-from types import CodeType, ModuleType, FrameType, NoneType
+from types import CodeType, ModuleType, FrameType, NoneType, FunctionType, MethodType
 from typing import Any, Dict, List, Optional, Tuple, Type, cast
 
 from righttyper.random_dict import RandomDict
@@ -78,12 +78,13 @@ def get_class_type_from_stack(
     return None
 
 
-def get_mypy_type_fn(func: Any) -> str:
+def type_from_annotations(func: FunctionType | MethodType) -> str:
     # Get the signature of the function
     signature = inspect.signature(func)
+    #print(f"{func=} {signature=}")
 
     # Extract argument types, default to Any if no annotation provided
-    arg_types = [
+    arg_types: list[type|str] = [
         (param.annotation if param.annotation is not param.empty else Any)
         for name, param in signature.parameters.items()
     ]
@@ -93,9 +94,20 @@ def get_mypy_type_fn(func: Any) -> str:
     if return_type is inspect.Signature.empty:
         return_type = Any
 
+    def format_arg(arg: type|str) -> str:
+        if isinstance(arg, str):
+            # If types are quoted while using "from __future__ import annotations",
+            # strings may appear double quoted
+            if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in ["'",'"']:
+                arg = arg[1:-1]
+
+            return f'"{arg}"'
+
+        return get_type_name(arg)
+
     # Format the result
-    arg_types_str = ", ".join([get_type_name(arg) for arg in arg_types])
-    return_type_str = get_type_name(return_type)
+    arg_types_str = ", ".join([format_arg(arg) for arg in arg_types])
+    return_type_str = format_arg(return_type)
 
     # Construct the Callable type string
     return f"Callable[[{arg_types_str}], {return_type_str}]"
@@ -153,8 +165,6 @@ def get_type_name(obj: object, depth: int = 0) -> str:
     if obj.__module__ == "builtins":
         if obj is NoneType:
             return "None"
-        elif obj.__name__ == "function":
-            return get_mypy_type_fn(orig_value)
         elif obj.__name__ in {"list", "tuple"}:
             return get_full_type(orig_value, depth + 1)
         elif obj.__name__ == "range":
@@ -197,8 +207,8 @@ def get_type_name(obj: object, depth: int = 0) -> str:
         )
         return f"{type_name}[{type_params}]"
 
-    # Handle all other types with fully qualified names
-    if obj.__module__ and obj.__module__ != "__main__":
+    # We currently consider all "typing" types well known (and import them as needed)
+    if obj.__module__ and obj.__module__ not in ("__main__", "typing"):
         return f"{obj.__module__}.{obj.__qualname__}"
 
     return obj.__qualname__
@@ -269,8 +279,8 @@ def get_full_type(value: Any, depth: int = 0) -> str:
             else:
                 tuple_str = f"Tuple[{', '.join(get_full_type(elem, depth + 1) for elem in value)}]"
             return tuple_str
-    elif inspect.ismethod(value):
-        return get_mypy_type_fn(value)
+    elif isinstance(value, (FunctionType, MethodType)):
+        return type_from_annotations(value)
     elif isinstance(value, Generator):
         # FIXME DISABLED FOR NOW
         # (q, g) = peek(value)
@@ -283,8 +293,6 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         # FIXME need yield / send / return type
         return "Coroutine[Any, Any, Any]"
     else:
-        # If the value passed is not a dictionary, list, set, or tuple,
-        # we return the type of the value as a string
         return get_type_name(value, depth + 1)
 
 

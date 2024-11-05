@@ -518,6 +518,90 @@ def test_module_type(tmp_cwd):
     assert "import types" in output
 
 
+def test_function_type(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x: int) -> float:
+            return x/2
+
+        class C:
+            def foo2(self: "C", x: int) -> float:
+                return x*.5
+
+        def bar(f, g, x):
+            return f(x) + g(C(), x)
+
+        def baz(h, x):
+            return h(x)
+
+        bar(foo, C.foo2, 1)
+        baz(C().foo2, 1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def bar(f: Callable[[int], float], g: Callable[["C", int], float], x: int) -> float:' in output
+    assert 'def baz(h: Callable[[int], float], x: int) -> float:' in output # bound method
+
+
+def test_function_type_future_annotations(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        from __future__ import annotations
+
+        def foo(x: int) -> float:
+            return x/2
+
+        class C:
+            def foo2(self: "C", x: int) -> float:
+                return x*.5
+
+        def bar(f, g, x):
+            return f(x) + g(C(), x)
+
+        def baz(h, x):
+            return h(x)
+
+        bar(foo, C.foo2, 1)
+        baz(C().foo2, 1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def bar(f: Callable[["int"], "float"], g: Callable[["C", "int"], "float"], x: int) -> float:' in output
+    assert 'def baz(h: Callable[["int"], "float"], x: int) -> float:' in output # bound method
+
+
+def test_function_type_in_annotation(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        from types import FunctionType
+
+        def foo(x: int) -> float:
+            return x/2
+
+        def bar(g: FunctionType, x):
+            return g(x)
+
+        def baz(f, g, x):
+            return bar(g, x)
+
+        baz(bar, foo, 1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def bar(g: FunctionType, x: int) -> float:' in output
+    # FIXME the quotes around the type are because UnifiedTransformer doesn't realize it's already known
+    assert 'def baz(f: "Callable[[types.FunctionType, Any], Any]", g: Callable[[int], float], x: int) -> float:' in output
+
+
 @pytest.mark.xfail(reason="our function types are all annotation-based so far")
 def test_discovered_function_type(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
