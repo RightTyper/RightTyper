@@ -28,6 +28,7 @@ def test_get_full_type():
 
     assert "List[str]" == get_full_type(['a', 'b'])
     assert "List[int]" == get_full_type([0, 1])
+    assert "List[Tuple[int]]" == get_full_type([(0,), (1,)])
 
     assert "List[int]" == get_full_type([0, 1][:1])
     assert "int" == get_full_type([0, 1][0])
@@ -53,6 +54,7 @@ def test_get_full_type():
     assert "ItemsView[Never, Never]" == get_full_type(dict().items())
 
     assert "Set[str]" == get_full_type({'a', 'b'})
+    assert "Set[Never]" == get_full_type(set())
 
     o : Any = range(10)
     assert "Iterable[int]" == get_full_type(o)

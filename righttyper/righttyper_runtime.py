@@ -23,19 +23,11 @@ from righttyper.righttyper_types import (
 from righttyper.righttyper_utils import skip_this_file
 
 
-def sample_from_iterable(value: typing.Iterable[T]) -> T:
-    """Samples from an iterable."""
+def sample_from_collection(value: typing.Collection[T], depth = 0) -> T:
+    """Samples from a collection."""
     MAX_ELEMENTS = 10   # to keep this O(1)
     n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
     return next(islice(value, n, n + 1))
-
-
-def get_random_element_from_dict(value: Dict[Any, Any]) -> Any:
-    if isinstance(value, RandomDict):
-        # If it's a RandomDict, use its built-in random_item method
-        return value.random_item()
-
-    return sample_from_iterable(value.items())
 
 
 @cache
@@ -226,42 +218,40 @@ def get_full_type(value: Any, depth: int = 0) -> str:
     if isinstance(value, dict):
         # Checking if the value is a dictionary
         if value:
-            key, val = get_random_element_from_dict(value)
-            return (
-                f"Dict[{get_full_type(key, depth + 1)},"
-                f" {get_full_type(val, depth + 1)}]"
-            )
+            el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
+            return f"Dict[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
         else:
             return "Dict[Never, Never]"
     elif isinstance(value, KeysView):
         if value:
-            el = sample_from_iterable(cast(typing.Iterable, value))
+            el = sample_from_collection(value)
             return f"KeysView[{get_full_type(el, depth+1)}]"
         else:
             return "KeysView[Never]"
     elif isinstance(value, ValuesView):
         if value:
-            el = sample_from_iterable(cast(typing.Iterable, value))
+            el = sample_from_collection(value)
             return f"ValuesView[{get_full_type(el, depth+1)}]"
         else:
             return "ValuesView[Never]"
     elif isinstance(value, ItemsView):
         if value:
-            el = sample_from_iterable(cast(typing.Iterable, value))
+            el = sample_from_collection(value)
             return f"ItemsView[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
         else:
             return "ItemsView[Never, Never]"
     elif isinstance(value, list):
-        # Checking if the value is a list
         if value:
-            # If the list is non-empty
-            # we sample one of its elements randomly
-            n = random.randint(0, len(value) - 1)
-            elem = value[n]
-            # We return the type of the list as 'list[element_type]'
-            return f"List[{get_full_type(elem, depth + 1)}]"
+            el = sample_from_collection(value)
+            return f"List[{get_full_type(el, depth+1)}]"
         else:
             return "List[Never]"
+    elif isinstance(value, set):
+        if value:
+            el = sample_from_collection(value)
+            return f"Set[{get_full_type(el, depth+1)}]"
+        else:
+            return "Set[Never]"
     elif isinstance(value, tuple):
         if isinstance_namedtuple(value):
             return f"{value.__class__.__name__}"
@@ -274,13 +264,6 @@ def get_full_type(value: Any, depth: int = 0) -> str:
             return tuple_str
     elif inspect.ismethod(value):
         return get_mypy_type_fn(value)
-    elif isinstance(value, set):
-        if value:
-            n = random.randint(0, len(value) - 1)
-            elem = next(islice(value, n, n + 1))
-            return f"Set[{get_full_type(elem, depth + 1)}]"
-        else:
-            return "Set[Never]"
     elif isinstance(value, Generator):
         # FIXME DISABLED FOR NOW
         # (q, g) = peek(value)
