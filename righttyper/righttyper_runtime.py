@@ -6,7 +6,7 @@ import typing
 from collections.abc import Generator, AsyncGenerator, Coroutine, KeysView, ValuesView, ItemsView, Iterator
 from functools import cache
 from itertools import islice
-from types import CodeType, ModuleType, FrameType
+from types import CodeType, ModuleType, FrameType, NoneType
 from typing import Any, Dict, List, Optional, Tuple, Type, cast
 
 from righttyper.random_dict import RandomDict
@@ -116,11 +116,20 @@ def find_caller_frame() -> Optional[FrameType]:
     return frame
 
 
+@cache
+def from_types_import(t: type) -> str | None:
+    # TODO we could also simply reverse types.__dict__ ...
+    import types
+
+    for k in types.__all__:
+        if (v := types.__dict__.get(k)) and t is v:
+            return k
+
+    return None
+
+
 def get_type_name(obj: object, depth: int = 0) -> str:
     orig_value = obj
-
-    if inspect.ismodule(obj):
-        return "types.ModuleType"
 
     if not inspect.isclass(obj):
         obj = type(obj)
@@ -142,16 +151,12 @@ def get_type_name(obj: object, depth: int = 0) -> str:
 
     # Handle built-in types (like list, tuple, NoneType, etc.)
     if obj.__module__ == "builtins":
-        if obj.__name__ == "frame":
-            return "FrameType"
+        if obj is NoneType:
+            return "None"
         elif obj.__name__ == "function":
             return get_mypy_type_fn(orig_value)
-        elif obj.__name__ == "NoneType":
-            return "None"
         elif obj.__name__ in {"list", "tuple"}:
             return get_full_type(orig_value, depth + 1)
-        elif obj.__name__ == "code":
-            return "types.CodeType"
         elif obj.__name__ == "range":
             return "Iterable[int]"
         elif obj.__name__ == "range_iterator":
@@ -161,6 +166,8 @@ def get_type_name(obj: object, depth: int = 0) -> str:
         elif isinstance(orig_value, Iterator):
             # FIXME needs element type -- but how to get it without changing the iterator?
             return "Iterator[Any]"
+        elif (name := from_types_import(obj)):
+            return f"types.{name}"
         else:
             return obj.__name__
 
