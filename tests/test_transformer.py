@@ -590,6 +590,41 @@ def test_transform_locally_defined_types():
     assert get_if_type_checking(code) == None
 
 
+def test_imported_names_are_known():
+    code = cst.parse_module(textwrap.dedent("""\
+        from x.y import z as blargh
+        from x.z import blergh
+        from xyzzy import F
+
+        def foo(x):
+            return F(x)
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('blargh')),
+                    ],
+                    Typename('blergh')
+                ),
+            },
+            not_annotated = {
+                foo: {ArgumentName('x'), ArgumentName('return')},
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: blargh) -> blergh:
+            return F(x)
+    """)
+
+    assert get_if_type_checking(code) == None
+
+
 def test_types_in_annotation():
     assert {'int'} == types_in_annotation('int')
     assert {'Tuple', 'int', 'float'} == types_in_annotation('Tuple[int, float]')

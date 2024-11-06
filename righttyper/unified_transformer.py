@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional, Set, Tuple
-
+import types
 import libcst as cst
 import re
 
@@ -126,9 +126,16 @@ class UnifiedTransformer(cst.CSTTransformer):
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
         self.known_types : Set[Typename] = _BUILTIN_TYPES | _TYPING_TYPES
+        self.known_types.update({
+            name.asname.name.value if name.asname is not None else name.name.value
+            for stmt in (stmt for stmt in node.body if isinstance(stmt, cst.SimpleStatementLine))
+            for imp in (imp for imp in stmt.body if isinstance(imp, cst.ImportFrom))
+            for name in (name for name in imp.names if isinstance(name, cst.ImportAlias))
+            if isinstance(name.name, cst.Name) and isinstance(name.asname, (types.NoneType, cst.AsName))
+        })
+
         self.used_types : Set[Typename] = set()
         self.name_stack : List[str] = []
-        # TODO modify known_types based on existing imports, so that they're not unnecessarily imported
 
         self.has_future_annotations = any(
             imp.module.value == "__future__" and name.name.value == "annotations"
