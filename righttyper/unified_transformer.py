@@ -106,6 +106,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.filename = filename
         self.type_annotations = type_annotations
         self.not_annotated = not_annotated
+        self.has_future_annotations = False
 
 
     def _is_valid(self, annotation: str) -> bool:
@@ -117,8 +118,10 @@ class UnifiedTransformer(cst.CSTTransformer):
             return False
 
     def _should_output_as_string(self, annotation: str) -> bool:
-        return any(t not in self.known_types for t in types_in_annotation(annotation))
-
+        return (
+            not self.has_future_annotations
+            and any(t not in self.known_types for t in types_in_annotation(annotation))
+        )
 
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
@@ -126,6 +129,15 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_types : Set[Typename] = set()
         self.name_stack : List[str] = []
         # TODO modify known_types based on existing imports, so that they're not unnecessarily imported
+
+        self.has_future_annotations = any(
+            imp.module.value == "__future__" and name.name.value == "annotations"
+            for stmt in (stmt for stmt in node.body if isinstance(stmt, cst.SimpleStatementLine))
+            for imp in (imp for imp in stmt.body if isinstance(imp, cst.ImportFrom))
+            for name in (name for name in imp.names if isinstance(name, cst.ImportAlias))
+            if isinstance(imp.module, cst.Name) and isinstance(name.name, cst.Name)
+        )
+
         return True
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:

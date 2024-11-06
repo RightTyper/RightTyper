@@ -335,6 +335,44 @@ def test_transform_function_as_string():
     """)
 
 
+def test_transform_function_as_string_with_import_annotations():
+    code = cst.parse_module(textwrap.dedent("""\
+        from __future__ import annotations
+
+        def foo(x, y):
+            return x/2
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('int')),
+                        (ArgumentName('y'), Typename('Optional[X.Y.WholeNumber]'))
+                    ],
+                    Typename('X.Z.FloatingPointNumber')
+                )
+            },
+            not_annotated = {
+                foo: {ArgumentName('x'), ArgumentName('y'), ArgumentName('return')}
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int, y: Optional[X.Y.WholeNumber]) -> X.Z.FloatingPointNumber:
+            return x/2
+    """)
+
+    assert get_if_type_checking(code) == textwrap.dedent("""\
+        if TYPE_CHECKING:
+            import X.Y
+            import X.Z
+    """)
+
+
 def test_transform_deletes_type_hint_comments_in_header():
     code = cst.parse_module(textwrap.dedent("""\
         def foo(x, y): # type: (int, int) -> Any
