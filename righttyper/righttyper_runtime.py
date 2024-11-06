@@ -101,7 +101,7 @@ def type_from_annotations(func: FunctionType | MethodType) -> str:
             if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in ["'",'"']:
                 arg = arg[1:-1]
 
-            return f'"{arg}"'
+            return arg
 
         return get_type_name(arg)
 

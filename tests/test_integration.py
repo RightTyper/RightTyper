@@ -523,15 +523,15 @@ def test_function_type(tmp_cwd):
         def foo(x: int) -> float:
             return x/2
 
-        class C:
-            def foo2(self: "C", x: int) -> float:
-                return x*.5
-
         def bar(f, g, x):
             return f(x) + g(C(), x)
 
         def baz(h, x):
             return h(x)
+
+        class C:
+            def foo2(self: "C", x: int) -> float:
+                return x*.5
 
         bar(foo, C.foo2, 1)
         baz(C().foo2, 1)
@@ -542,7 +542,7 @@ def test_function_type(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
 
     output = Path("t.py").read_text()
-    assert 'def bar(f: Callable[[int], float], g: Callable[["C", int], float], x: int) -> float:' in output
+    assert 'def bar(f: Callable[[int], float], g: "Callable[[C, int], float]", x: int) -> float:' in output
     assert 'def baz(h: Callable[[int], float], x: int) -> float:' in output # bound method
 
 
@@ -553,15 +553,15 @@ def test_function_type_future_annotations(tmp_cwd):
         def foo(x: int) -> float:
             return x/2
 
-        class C:
-            def foo2(self: "C", x: int) -> float:
-                return x*.5
-
         def bar(f, g, x):
             return f(x) + g(C(), x)
 
         def baz(h, x):
             return h(x)
+
+        class C:
+            def foo2(self: "C", x: int) -> int:
+                return x//2
 
         bar(foo, C.foo2, 1)
         baz(C().foo2, 1)
@@ -572,8 +572,8 @@ def test_function_type_future_annotations(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
 
     output = Path("t.py").read_text()
-    assert 'def bar(f: Callable[["int"], "float"], g: Callable[["C", "int"], "float"], x: int) -> float:' in output
-    assert 'def baz(h: Callable[["int"], "float"], x: int) -> float:' in output # bound method
+    assert "def bar(f: Callable[[int], float], g: Callable[[C, int], int], x: int) -> float:" in output
+    assert 'def baz(h: Callable[[int], int], x: int) -> int:' in output # bound method
 
 
 def test_function_type_in_annotation(tmp_cwd):
