@@ -829,13 +829,13 @@ def test_nonglobal_assignments_are_unknown():
                     [
                         (ArgumentName('x'), Typename('a.T')),
                     ],
-                    None
+                    Typename('')
                 ),
                 bar: (
                     [
                         (ArgumentName('x'), Typename('m2.T')),
                     ],
-                    None
+                    Typename('')
                 ),
             },
             not_annotated = {

@@ -57,7 +57,7 @@ def test_get_full_type():
     assert "Set[Never]" == get_full_type(set())
 
     o : Any = range(10)
-    assert "Iterable[int]" == get_full_type(o)
+    assert "range" == get_full_type(o)
     assert 0 == next(iter(o)), "changed state"
 
     o = iter(range(10))
@@ -69,11 +69,11 @@ def test_get_full_type():
     assert 0 == next(o), "changed state"
 
     o = enumerate([0,1])
-    assert "Iterator[Tuple[int, Any]]" == get_full_type(o)
+    assert "enumerate" == get_full_type(o)
     assert (0, 0) == next(o), "changed state"
 
     o = filter(lambda x:True, [0,1])
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "filter" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = reversed([0,1])
@@ -81,11 +81,11 @@ def test_get_full_type():
     assert 1 == next(o), "changed state"
 
     o = zip([0,1], ['a','b'])
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "zip" == get_full_type(o)
     assert (0,'a') == next(o), "changed state"
 
     o = map(lambda x:x, [0,1])
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "map" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = iter({0, 1})

@@ -6,7 +6,7 @@ import typing
 from collections.abc import Generator, AsyncGenerator, Coroutine, KeysView, ValuesView, ItemsView, Iterator
 from functools import cache
 from itertools import islice
-from types import CodeType, ModuleType, FrameType, NoneType, FunctionType, MethodType
+from types import CodeType, FrameType, NoneType, FunctionType, MethodType, GenericAlias
 from typing import Any, Dict, List, Optional, Tuple, Type, cast
 
 from righttyper.random_dict import RandomDict
@@ -84,7 +84,7 @@ def type_from_annotations(func: FunctionType | MethodType) -> str:
     #print(f"{func=} {signature=}")
 
     # Extract argument types, default to Any if no annotation provided
-    arg_types: list[type|str] = [
+    arg_types = [
         (param.annotation if param.annotation is not param.empty else Any)
         for name, param in signature.parameters.items()
     ]
@@ -94,7 +94,7 @@ def type_from_annotations(func: FunctionType | MethodType) -> str:
     if return_type is inspect.Signature.empty:
         return_type = Any
 
-    def format_arg(arg: type|str) -> str:
+    def format_arg(arg) -> str:
         if isinstance(arg, str):
             # If types are quoted while using "from __future__ import annotations",
             # strings may appear double quoted
@@ -102,6 +102,9 @@ def type_from_annotations(func: FunctionType | MethodType) -> str:
                 arg = arg[1:-1]
 
             return arg
+
+        if isinstance(arg, GenericAlias):
+            return str(arg)
 
         return get_type_name(arg)
 
@@ -140,46 +143,50 @@ def from_types_import(t: type) -> str | None:
     return None
 
 
-def get_type_name(obj: object, depth: int = 0) -> str:
-    orig_value = obj
+@cache
+def in_builtins_import(t: type) -> bool:
+    import builtins
 
-    if not inspect.isclass(obj):
-        obj = type(obj)
+    if bt := builtins.__dict__.get(t.__name__):
+        return t == bt
 
-    # Handle numpy and other libraries using dtype
-    try:  # workaround failure in Pelican
-        if hasattr(orig_value, "dtype"):
-            dtype = getattr(orig_value, "dtype")
-            t_dtype = type(dtype)
-            if hasattr(dtype, "type") and '[' in t_dtype.__name__:
-                t_name = t_dtype.__name__.split('[')[0]
-                dtype_name = f"{t_dtype.__module__}.{t_name}[{dtype.type.__module__}.{dtype.type.__qualname__}]"
-            else:
-                dtype_name = f"{t_dtype.__module__}.{t_dtype.__name__}"
+    return False
 
-            return f"{obj.__module__}.{obj.__name__}[Any, {dtype_name}]"
-    except RuntimeError:
-        pass
 
-    # Handle built-in types (like list, tuple, NoneType, etc.)
+RANGE_ITER_TYPE = type(iter(range(1)))
+
+def get_type_name(obj: type, depth: int = 0) -> str:
+    """Returns a type's name as a string."""
+
+    if depth > 255:
+        # We have likely fallen into an infinite recursion.
+        # Fail gracefully to return "Never" while reporting the warning.
+        print(f"Warning: RightTyper failed to compute the type of {obj}.")
+        return "Never"
+
+    # Some builtin types are available from the "builtins" module,
+    # some from the "types" module, but others still, such as
+    # "list_iterator", aren't known by any particular name.
     if obj.__module__ == "builtins":
         if obj is NoneType:
             return "None"
-        elif obj.__name__ in {"list", "tuple"}:
-            return get_full_type(orig_value, depth + 1)
-        elif obj.__name__ == "range":
-            return "Iterable[int]"
-        elif obj.__name__ == "range_iterator":
-            return "Iterator[int]"
-        elif obj.__name__ == "enumerate":
-            return "Iterator[Tuple[int, Any]]"
-        elif isinstance(orig_value, Iterator):
-            # FIXME needs element type -- but how to get it without changing the iterator?
-            return "Iterator[Any]"
+        elif in_builtins_import(obj):
+            return obj.__name__ # these are "well known", so no module name needed
         elif (name := from_types_import(obj)):
             return f"types.{name}"
+        elif obj is RANGE_ITER_TYPE:
+            return "Iterator[int]"
+        # TODO match other ABC from collections.abc based on interface
+        elif issubclass(obj, Iterator):
+            return "Iterator[Any]"
         else:
-            return obj.__name__
+            # fall back to its name, just so we can tell where it came from.
+            return f"builtins.{obj.__name__}"
+
+    # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
+    if 'dtype[' in obj.__name__ and hasattr(obj, "type"):
+        t_name = obj.__qualname__.split('[')[0]
+        return f"{obj.__module__}.{t_name}[{get_type_name(obj.type, depth+1)}]"
 
     # Look for a local alias for the type
     # FIXME this only checks for globally known names, and doesn't match inner classes (e.g., Foo.Bar).
@@ -197,15 +204,6 @@ def get_type_name(obj: object, depth: int = 0) -> str:
                 and getattr(mod, obj.__name__) is obj
             ):
                 return f"{name}.{obj.__name__}"
-
-    # Handle generic types (like List, Dict, etc.)
-    origin = typing.get_origin(obj)
-    if origin:
-        type_name = f"{origin.__module__}.{origin.__name__}"
-        type_params = ", ".join(
-            get_full_type(arg, depth + 1) for arg in typing.get_args(obj)
-        )
-        return f"{type_name}[{type_params}]"
 
     # We currently consider all "typing" types well known (and import them as needed)
     if obj.__module__ and obj.__module__ not in ("__main__", "typing"):
@@ -232,6 +230,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         # Fail gracefully to return "Never" while reporting the warning.
         print(f"Warning: RightTyper failed to compute the type of {value}.")
         return "Never"
+
     if isinstance(value, dict):
         # Checking if the value is a dictionary
         if value:
@@ -277,7 +276,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
             if len(value) == 0:
                 tuple_str = "Tuple"
             else:
-                tuple_str = f"Tuple[{', '.join(get_full_type(elem, depth + 1) for elem in value)}]"
+                tuple_str = f"Tuple[{', '.join(get_full_type(elem, depth+1) for elem in value)}]"
             return tuple_str
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
@@ -292,8 +291,12 @@ def get_full_type(value: Any, depth: int = 0) -> str:
     elif isinstance(value, Coroutine):
         # FIXME need yield / send / return type
         return "Coroutine[Any, Any, Any]"
+    elif hasattr(value, "dtype"):
+        # Certain dtype types' __qualname__ doesn't include a fully qualified
+        # name of their inner type; look them up separately to work around that.
+        return f"{get_type_name(type(value), depth+1)}[Any, {get_type_name(type(value.dtype), depth+1)}]"
     else:
-        return get_type_name(value, depth + 1)
+        return get_type_name(type(value), depth+1)
 
 
 def get_adjusted_full_type(value: Any, class_type: Optional[Type]=None) -> str:

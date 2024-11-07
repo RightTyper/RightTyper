@@ -53,7 +53,7 @@ def test_builtins(tmp_cwd):
     output = Path("t.py").read_text()
     
     assert "import slice" not in output
-    assert "def func(s: slice) -> Iterable[int]" in output
+    assert "def func(s: slice) -> range" in output
 
     assert "import type" not in output
     assert "def func2(t: type) -> str" in output
@@ -62,19 +62,37 @@ def test_builtins(tmp_cwd):
     assert "def func3(t: super) -> None" in output
 
 
+def test_type_from_generic_alias_annotation(tmp_cwd):
+    t = textwrap.dedent("""\
+        def f() -> list[int]: ...   # list[int] is a GenericAlias
+
+        def g():
+            return f
+
+        g()
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def g() -> Callable[[], list[int]]:" in output
+
+
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-def test_numpy_dtype_name(tmp_cwd):
+def test_numpy_type_name(tmp_cwd):
     t = textwrap.dedent("""\
         import numpy as np
         import ml_dtypes
 
-        def func(p):
-            return str(p)
+        def f(t):
+            pass
 
-        bfloat16 = np.dtype(ml_dtypes.bfloat16)
-        func(np.array([0], bfloat16))
+        f(np.dtype(ml_dtypes.bfloat16))
         """)
 
     Path("t.py").write_text(t)
@@ -84,7 +102,60 @@ def test_numpy_dtype_name(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "import bfloat16" not in output
-    assert "def func(p: \"numpy.ndarray[Any, numpy.dtype[ml_dtypes.bfloat16]]\") -> str" in output
+    assert "def f(t: \"numpy.dtype[ml_dtypes.bfloat16]\") -> None" in output
+
+
+@pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
+                     importlib.util.find_spec('numpy') is None),
+                    reason='missing modules')
+def test_numpy_ndarray_dtype_name(tmp_cwd):
+    t = textwrap.dedent("""\
+        import numpy as np
+        import ml_dtypes
+
+        def f(p):
+            return str(p)
+
+        bfloat16 = np.dtype(ml_dtypes.bfloat16)
+        f(np.array([0], bfloat16))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "import bfloat16" not in output
+    assert "def f(p: \"np.ndarray[Any, numpy.dtype[ml_dtypes.bfloat16]]\") -> str" in output
+
+
+@pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
+                     importlib.util.find_spec('numpy') is None),
+                    reason='missing modules')
+def test_annotation_with_numpy_dtype_name(tmp_cwd):
+    t = textwrap.dedent("""\
+        from typing import Any
+        import numpy as np
+        from ml_dtypes import bfloat16 as bf16
+
+        def f() -> np.ndarray[Any, np.dtype[bf16]]: ...
+
+        def g():
+            return f
+
+        g()
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def g() -> \"Callable[[], numpy.ndarray[typing.Any, numpy.dtype[ml_dtypes.bfloat16]]]\":" in output
+    assert "import numpy" in output
+    assert "import ml_dtypes" in output
 
 
 def test_call_with_none_default(tmp_cwd):

@@ -1,3 +1,5 @@
+import typing
+import builtins
 from typing import Dict, List, Optional, Set, Tuple
 import collections.abc
 import types
@@ -14,45 +16,17 @@ from righttyper.righttyper_types import (
 
 
 _BUILTIN_TYPES : Set[Typename] = {
-    Typename(t) for t in [
-        "bool",
-        "bytes",
-        "complex",
-        "dict",
-        "float",
-        "frozenset",
-        "int",
-        "list",
+    Typename(t) for t in (
         "None",
-        "set",
-        "slice",
-        "str",
-        "super",
-        "type",
-    ]
+        *(name for name, value in builtins.__dict__.items()if isinstance(value, type))
+    )
 }
 
+# FIXME this prevents us from missing out on well-known "typing." types,
+# but is risky... change to receiving fully qualified names and simplifying
+# them in context.
 _TYPING_TYPES : Set[Typename] = {
-    Typename(t) for t in [
-        "Any",
-        "AsyncGenerator",
-        "AsyncIterable",
-        "AsyncIterator",
-        "Callable",
-        "Coroutine",
-        "Dict",
-        "FrozenSet",
-        "Generator",
-        "Iterable",
-        "Iterator",
-        "List",
-        "Never",    # FIXME requires Python >= 3.11
-        "Optional",
-        "Set",
-        "Self",
-        "Tuple",
-        "Union",
-    ]
+    Typename(t) for t in typing.__all__
 }
 
 # Regex for a type hint comment
@@ -445,10 +419,10 @@ def _global_imports(node: cst.Module) -> list[tuple[cst.ImportAlias, cst.Import|
     return imports
 
 
-def _global_assigns(node: cst.Module) -> list[str]:
+def _global_assigns(node: cst.Module) -> list[Typename]:
     """Extracts global imports in a module."""
 
-    assigns: list[str] = []
+    assigns: list[Typename] = []
 
     class Extractor(cst.CSTVisitor):
         def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
@@ -460,16 +434,16 @@ def _global_assigns(node: cst.Module) -> list[str]:
         def visit_Assign(self, node: cst.Assign) -> bool:
             for t in node.targets:
                 if isinstance(t.target, cst.Name):
-                    assigns.append(t.target.value)
+                    assigns.append(Typename(t.target.value))
                 elif isinstance(t.target, cst.Tuple):
                     for el in t.target.elements:
                         if isinstance(el.value, cst.Name):
-                            assigns.append(el.value.value)
+                            assigns.append(Typename(el.value.value))
             return False
 
         def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
             if isinstance(node.target, cst.Name):
-                assigns.append(node.target.value)
+                assigns.append(Typename(node.target.value))
             return False
 
     node.visit(Extractor())
