@@ -122,6 +122,28 @@ def test_stubs_conditional(tmp_path, monkeypatch):
         """)
 
 
+def test_stubs_try(tmp_path, monkeypatch):
+    code = textwrap.dedent("""\
+        try:
+            from foo import bar
+        except ImportError:
+            import foobar as bar
+
+        def f(x: bar) -> int:
+            return 42
+        """
+    )
+
+    output = generate_stub(code)
+    assert output == textwrap.dedent("""\
+        try:
+            from foo import bar
+        except ImportError:
+            import foobar as bar
+        def f(x: bar) -> int: ...
+        """)
+
+
 def test_stubs_all_variable(tmp_path, monkeypatch):
     # __all__ is included in many typeshed "pyi"s.
     code = textwrap.dedent("""\

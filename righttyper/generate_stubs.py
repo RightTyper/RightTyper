@@ -45,7 +45,7 @@ class PyiTransformer(cst.CSTTransformer):
     def handle_body(self: Self, body: Sequence[cst.CSTNode]) -> List[cst.CSTNode]:
         result: List[cst.CSTNode] = []
         for stmt in body:
-            if isinstance(stmt, (cst.FunctionDef, cst.ClassDef, cst.If)):
+            if isinstance(stmt, (cst.FunctionDef, cst.ClassDef, cst.If, cst.Try)):
                 result.append(stmt)
             elif (isinstance(stmt, cst.SimpleStatementLine) and
                   isinstance(stmt.body[0], (cst.Import, cst.ImportFrom))):
