@@ -28,4 +28,4 @@ def test_issue_22(tmp_path, monkeypatch):
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
     
-    assert "def extracted_function(A: List[int]) -> bool" in Path("t.py").read_text()
+    assert "def extracted_function(A: list[int]) -> bool" in Path("t.py").read_text()

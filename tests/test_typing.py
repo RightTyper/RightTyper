@@ -24,26 +24,26 @@ def test_get_full_type():
     assert "bytearray" == get_full_type(bytearray(b'0000'))
     assert "bytes" == get_full_type(bytes(b'0000'))
     assert "complex" == get_full_type(complex(1, 1))
-    assert "List[str]" == get_full_type(dir())
+    assert "list[str]" == get_full_type(dir())
 
-    assert "List[str]" == get_full_type(['a', 'b'])
-    assert "List[int]" == get_full_type([0, 1])
-    assert "List[Tuple[int]]" == get_full_type([(0,), (1,)])
+    assert "list[str]" == get_full_type(['a', 'b'])
+    assert "list[int]" == get_full_type([0, 1])
+    assert "list[tuple[int]]" == get_full_type([(0,), (1,)])
 
-    assert "List[int]" == get_full_type([0, 1][:1])
+    assert "list[int]" == get_full_type([0, 1][:1])
     assert "int" == get_full_type([0, 1][0])
 
     #assert "List[int]" == get_full_type([0, 'a'])
 
-    assert "Set[str]" == get_full_type({'a', 'b'})
-    assert "Set[int]" == get_full_type({0, 1})
+    assert "set[str]" == get_full_type({'a', 'b'})
+    assert "set[int]" == get_full_type({0, 1})
 
     # FIXME use Set instead?  specify element type?
     assert "frozenset" == get_full_type(frozenset({'a', 'b'}))
     assert "frozenset" == get_full_type(frozenset({0, 1}))
     assert "frozenset" == get_full_type(frozenset())
 
-    assert "Dict[str, str]" == get_full_type({'a': 'b'})
+    assert "dict[str, str]" == get_full_type({'a': 'b'})
 
     assert "KeysView[str]" == get_full_type({'a':0, 'b':1}.keys())
     assert "ValuesView[int]" == get_full_type({'a':0, 'b':1}.values())
@@ -53,8 +53,8 @@ def test_get_full_type():
     assert "ValuesView[Never]" == get_full_type(dict().values())
     assert "ItemsView[Never, Never]" == get_full_type(dict().items())
 
-    assert "Set[str]" == get_full_type({'a', 'b'})
-    assert "Set[Never]" == get_full_type(set())
+    assert "set[str]" == get_full_type({'a', 'b'})
+    assert "set[Never]" == get_full_type(set())
 
     o : Any = range(10)
     assert "range" == get_full_type(o)

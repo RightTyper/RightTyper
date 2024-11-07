@@ -212,15 +212,20 @@ def get_type_name(obj: type, depth: int = 0) -> str:
     return obj.__qualname__
 
 
+def _is_instance(obj: object, types: tuple[type]) -> type|None:
+    """Like isinstance(), but returns the type matched."""
+    for t in types:
+        if isinstance(obj, t):
+            return t
+
+    return None
+
+
 def get_full_type(value: Any, depth: int = 0) -> str:
     """
-    get_full_type takes a value as input and returns a string representing the type of the value.
+    get_full_type takes a value (an instance) as input and returns a string representing its type.
 
-    If the value is of type dictionary, it randomly selects a pair of key and value from the dictionary
-    and recursively determines their types.
-
-    If the value is a list or a set, it randomly selects an item and determines its type recursively.
-
+    If the value is a collection, it randomly selects an element (or key-value pair) and determines their types.
     If the value is a tuple, it determines the types of all elements in the tuple.
 
     For other types, it returns the name of the type.
@@ -232,65 +237,39 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         return "Never"
 
     if isinstance(value, dict):
-        # Checking if the value is a dictionary
         if value:
             el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
-            return f"Dict[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
+            return f"dict[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
         else:
-            return "Dict[Never, Never]"
-    elif isinstance(value, KeysView):
+            return "dict[Never, Never]"
+    elif (t := _is_instance(value, (KeysView, ValuesView, list, set))):
         if value:
             el = sample_from_collection(value)
-            return f"KeysView[{get_full_type(el, depth+1)}]"
+            return f"{t.__qualname__}[{get_full_type(el, depth+1)}]"
         else:
-            return "KeysView[Never]"
-    elif isinstance(value, ValuesView):
-        if value:
-            el = sample_from_collection(value)
-            return f"ValuesView[{get_full_type(el, depth+1)}]"
-        else:
-            return "ValuesView[Never]"
+            return f"{t.__qualname__}[Never]"
     elif isinstance(value, ItemsView):
         if value:
             el = sample_from_collection(value)
             return f"ItemsView[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
         else:
             return "ItemsView[Never, Never]"
-    elif isinstance(value, list):
-        if value:
-            el = sample_from_collection(value)
-            return f"List[{get_full_type(el, depth+1)}]"
-        else:
-            return "List[Never]"
-    elif isinstance(value, set):
-        if value:
-            el = sample_from_collection(value)
-            return f"Set[{get_full_type(el, depth+1)}]"
-        else:
-            return "Set[Never]"
     elif isinstance(value, tuple):
         if isinstance_namedtuple(value):
             return f"{value.__class__.__name__}"
         else:
-            # Here we are returning the types of all elements in the tuple
-            if len(value) == 0:
-                tuple_str = "Tuple"
+            if value:
+                return f"tuple[{', '.join(get_full_type(elem, depth+1) for elem in value)}]"
             else:
-                tuple_str = f"Tuple[{', '.join(get_full_type(elem, depth+1) for elem in value)}]"
-            return tuple_str
+                return "tuple"
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
     elif isinstance(value, Generator):
-        # FIXME DISABLED FOR NOW
-        # (q, g) = peek(value)
-        # value = g
-        # return f"Generator[{get_full_type(q)}, None, None]" # FIXME
-        return "Generator[Any, Any, Any]"  # FIXME
+        return "Generator[Any, Any, Any]"  # FIXME needs yield / send / return types
     elif isinstance(value, AsyncGenerator):
-        return "AsyncGenerator[Any, Any]"  # FIXME needs argument types
+        return "AsyncGenerator[Any, Any]"  # FIXME needs yield / send types
     elif isinstance(value, Coroutine):
-        # FIXME need yield / send / return type
-        return "Coroutine[Any, Any, Any]"
+        return "Coroutine[Any, Any, Any]"  # FIXME needs yield / send / return types
     elif hasattr(value, "dtype"):
         # Certain dtype types' __qualname__ doesn't include a fully qualified
         # name of their inner type; look them up separately to work around that.
@@ -313,21 +292,6 @@ def isinstance_namedtuple(obj: object) -> bool:
         and hasattr(obj, "_asdict")
         and hasattr(obj, "_fields")
     )
-
-
-def peek(
-    generator: Generator[T, Any, Any],
-) -> Tuple[T, Generator[T, Any, Any]]:
-    def wrapped_generator() -> Generator[T, Any, Any]:
-        # Yield the peeked value first, then yield from the original generator
-        yield peeked_value
-        yield from generator
-
-    # Get the next value from the original generator
-    peeked_value = next(generator)
-
-    # Return the peeked value and the new generator
-    return peeked_value, wrapped_generator()
 
 
 def update_argtypes(
