@@ -1,6 +1,6 @@
 import libcst as cst
 import textwrap
-from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation
+from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation, _namespace_of
 from righttyper.righttyper_types import FuncInfo, Filename, FunctionName, Typename, ArgumentName
 import typing as T
 
@@ -593,7 +593,8 @@ def test_transform_locally_defined_types():
 def test_imported_names_are_known():
     code = cst.parse_module(textwrap.dedent("""\
         from x.y import z as blargh
-        from x.z import blergh
+        if True:
+            from x.z import blergh
         from xyzzy import F
 
         def foo(x):
@@ -625,8 +626,254 @@ def test_imported_names_are_known():
     assert get_if_type_checking(code) == None
 
 
+def test_assigned_names_are_known():
+    code = cst.parse_module(textwrap.dedent("""\
+        from typing import Any
+        import foo
+        if True:
+            x = foo
+        else:
+            _, y = ..., foo.y
+            z: Any = foo
+
+        def foo(x):
+            pass
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('z')),
+                    ],
+                    Typename('y')
+                ),
+            },
+            not_annotated = {
+                foo: {ArgumentName('x'), ArgumentName('return')},
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: z) -> y:
+            pass
+    """)
+
+    assert get_if_type_checking(code) == None
+
+
+def test_global_imported_modules_are_known():
+    code = cst.parse_module(textwrap.dedent("""\
+        import a.b
+        import m as m2
+        from n import o as p
+
+        def foo(x, y):
+            pass
+
+        def bar(x):
+            pass
+
+        def baz(x):
+            pass
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    bar = FuncInfo(Filename('foo.py'), FunctionName('bar'))
+    baz = FuncInfo(Filename('foo.py'), FunctionName('baz'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('a.T')),
+                        (ArgumentName('y'), Typename('a.b.T')),
+                    ],
+                    Typename('a.c.T')
+                ),
+                bar: (
+                    [
+                        (ArgumentName('x'), Typename('m.T')),
+                    ],
+                    Typename('m2.T')
+                ),
+                baz: (
+                    [
+                        (ArgumentName('x'), Typename('n.T')),
+                    ],
+                    Typename('p.T')
+                ),
+            },
+            not_annotated = {
+                foo: {
+                    ArgumentName('x'), ArgumentName('y'), ArgumentName('return')
+                },
+                bar: {
+                    ArgumentName('x'), ArgumentName('return')
+                },
+                baz: {
+                    ArgumentName('x'), ArgumentName('return')
+                },
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: a.T, y: a.b.T) -> "a.c.T":
+            pass
+    """)
+
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(x: "m.T") -> m2.T:
+            pass
+    """)
+
+    assert get_function(code, 'baz') == textwrap.dedent("""\
+        def baz(x: "n.T") -> p.T:
+            pass
+    """)
+
+    assert get_if_type_checking(code) == textwrap.dedent("""\
+        if TYPE_CHECKING:
+            import a.c
+            import m
+            import n
+    """)
+
+
+def test_nonglobal_imported_modules_are_unknown():
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(x, y):
+            import a.b
+
+        class C:
+            import m as m2
+
+        def bar(x):
+            pass
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    bar = FuncInfo(Filename('foo.py'), FunctionName('bar'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('a.T')),
+                        (ArgumentName('y'), Typename('a.b.T')),
+                    ],
+                    Typename('a.c.T')
+                ),
+                bar: (
+                    [
+                        (ArgumentName('x'), Typename('m.T')),
+                    ],
+                    Typename('m2.T')
+                ),
+            },
+            not_annotated = {
+                foo: {
+                    ArgumentName('x'), ArgumentName('y'), ArgumentName('return')
+                },
+                bar: {
+                    ArgumentName('x'), ArgumentName('return')
+                },
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: "a.T", y: "a.b.T") -> "a.c.T":
+            import a.b
+    """)
+
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(x: "m.T") -> "m2.T":
+            pass
+    """)
+
+    assert get_if_type_checking(code) == textwrap.dedent("""\
+        if TYPE_CHECKING:
+            import a
+            import a.b
+            import a.c
+            import m
+            import m2
+    """)
+
+
+def test_nonglobal_assignments_are_unknown():
+    code = cst.parse_module(textwrap.dedent("""\
+        from typing import Any
+
+        def foo(x):
+            a = Any
+
+        class C:
+            m2 = Any
+
+        def bar(x):
+            pass
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    bar = FuncInfo(Filename('foo.py'), FunctionName('bar'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('a.T')),
+                    ],
+                    None
+                ),
+                bar: (
+                    [
+                        (ArgumentName('x'), Typename('m2.T')),
+                    ],
+                    None
+                ),
+            },
+            not_annotated = {
+                foo: {
+                    ArgumentName('x')
+                },
+                bar: {
+                    ArgumentName('x')
+                },
+            }
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: "a.T"):
+            a = Any
+    """)
+
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(x: "m2.T"):
+            pass
+    """)
+
+    assert get_if_type_checking(code) == textwrap.dedent("""\
+        if TYPE_CHECKING:
+            import a
+            import m2
+    """)
+
+
 def test_types_in_annotation():
     assert {'int'} == types_in_annotation('int')
     assert {'Tuple', 'int', 'float'} == types_in_annotation('Tuple[int, float]')
     assert {'Dict', 'foo.bar', 'bar.baz'} == types_in_annotation('Dict[foo.bar, bar.baz]')
     assert {'Union', 'int', 'float', 'Tuple', 'a.b.c'} == types_in_annotation('Union[int, float, Tuple[int, a.b.c]]')
+
+
+def test_namespace_of():
+    assert '' == _namespace_of('foo')
+    assert 'foo' == _namespace_of('foo.bar')
+    assert 'foo.bar' == _namespace_of('foo.bar.baz')

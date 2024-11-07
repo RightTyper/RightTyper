@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional, Set, Tuple
+import collections.abc
 import types
 import libcst as cst
 import re
@@ -66,8 +67,8 @@ _TYPE_HINT_COMMENT_FUNC = re.compile(
 )
 
 
-def _dotted_name(name: str) -> cst.Attribute | cst.Name:
-    """Creates CST nodes equivalent to a module name, dotted or not"""
+def _dotted_name_to_nodes(name: str) -> cst.Attribute | cst.Name:
+    """Creates Attribute/Name to build a module name, dotted or not."""
     parts = name.split(".")
     if len(parts) == 1:
         return cst.Name(parts[0])
@@ -76,6 +77,30 @@ def _dotted_name(name: str) -> cst.Attribute | cst.Name:
         base = cst.Attribute(value=base, attr=cst.Name(part))
     return base
 
+def _nodes_to_dotted_name(node: cst.CSTNode) -> str:
+    """Extracts a module name from CST Attribute/Name nodes."""
+    if isinstance(node, cst.Attribute):
+        return f"{_nodes_to_dotted_name(node.value)}.{_nodes_to_dotted_name(node.attr)}"
+
+    assert isinstance(node, cst.Name)
+    return node.value
+
+def _nodes_to_name(node: cst.CSTNode) -> str:
+    """Extracts the top-level name (e.g., 'foo' in 'foo.bar') from CST Attribute/Name nodes."""
+    while isinstance(node, cst.Attribute):
+        node = node.value
+
+    assert isinstance(node, cst.Name)
+    return node.value
+
+def _nodes_to_all_dotted_names(node: cst.CSTNode) -> list[str]:
+    """Extracts the list of all module and parent module names from CST Attribute/Name nodes."""
+    if isinstance(node, cst.Attribute):
+        names = _nodes_to_all_dotted_names(node.value)
+        return [*names, f"{names[-1]}.{node.attr.value}"]
+
+    assert isinstance(node, cst.Name)
+    return [node.value]
 
 def _get_str_attr(obj: object, path: str) -> Optional[str]:
     """Looks for a str-valued attribute along the given dot-separated attribute path."""
@@ -87,6 +112,10 @@ def _get_str_attr(obj: object, path: str) -> Optional[str]:
             break
 
     return obj if isinstance(obj, str) else None
+
+def _namespace_of(t: str) -> str:
+    """Returns the dotted name prefix of a name, as in "foo.bar" for "foo.bar.baz"."""
+    return '.'.join(t.split('.')[:-1])
 
 
 class UnifiedTransformer(cst.CSTTransformer):
@@ -118,31 +147,43 @@ class UnifiedTransformer(cst.CSTTransformer):
             return False
 
     def _should_output_as_string(self, annotation: str) -> bool:
+        #print(f"{types_in_annotation(annotation)=}")
         return (
             not self.has_future_annotations
-            and any(t not in self.known_types for t in types_in_annotation(annotation))
+            and any(
+                t not in self.known_names
+                and _namespace_of(t) not in self.known_names
+                and _namespace_of(t) not in self.imported_modules
+                for t in types_in_annotation(annotation)
+            )
         )
 
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
-        self.known_types : Set[Typename] = _BUILTIN_TYPES | _TYPING_TYPES
-        self.known_types.update({
-            name.asname.name.value if name.asname is not None else name.name.value
-            for stmt in (stmt for stmt in node.body if isinstance(stmt, cst.SimpleStatementLine))
-            for imp in (imp for imp in stmt.body if isinstance(imp, cst.ImportFrom))
-            for name in (name for name in imp.names if isinstance(name, cst.ImportAlias))
-            if isinstance(name.name, cst.Name) and isinstance(name.asname, (types.NoneType, cst.AsName))
-        })
+
+        global_imports = _global_imports(node)
+
+        self.known_names : Set[Typename] = _BUILTIN_TYPES | _TYPING_TYPES | {
+            Typename(_nodes_to_name(alias.asname.name if alias.asname is not None else alias.name))
+            for alias, imp in global_imports
+        }
+        self.known_names.update(set(_global_assigns(node)))
+        #print(f"{self.known_names=}")
+
+        self.imported_modules: set[str] = set().union(*(
+            set(_nodes_to_all_dotted_names(alias.name))
+            for alias, imp in global_imports if alias.asname is None
+        ))
+        #print(f"{self.imported_modules=}")
 
         self.used_types : Set[Typename] = set()
         self.name_stack : List[str] = []
 
         self.has_future_annotations = any(
-            imp.module.value == "__future__" and name.name.value == "annotations"
-            for stmt in (stmt for stmt in node.body if isinstance(stmt, cst.SimpleStatementLine))
-            for imp in (imp for imp in stmt.body if isinstance(imp, cst.ImportFrom))
-            for name in (name for name in imp.names if isinstance(name, cst.ImportAlias))
-            if isinstance(imp.module, cst.Name) and isinstance(name.name, cst.Name)
+            imp.module.value == "__future__" and alias.name.value == "annotations"
+            for alias, imp in global_imports
+            if isinstance(imp, cst.ImportFrom)
+            and isinstance(imp.module, cst.Name) and isinstance(alias.name, cst.Name)
         )
 
         return True
@@ -153,7 +194,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
         # a class is known once its definition is done
-        self.known_types.add(Typename(".".join(self.name_stack)))
+        self.known_names.add(Typename(".".join(self.name_stack)))
         self.name_stack.pop()
         return updated_node
 
@@ -283,19 +324,21 @@ class UnifiedTransformer(cst.CSTTransformer):
             updated_node = updated_node.with_changes(body=new_body)
 
         # Add additional type checking imports if needed
-        unknown_types = self.used_types - self.known_types
+        unknown_types = self.used_types - self.known_names
         if unknown_types:
             # TODO update any existing "if TYPE_CHECKING"
             unknown_modules = {
-                '.'.join(name.split('.')[:-1]) if '.' in name else name
+                _namespace_of(name) if '.' in name else name
                 for name in unknown_types
             }
+            unknown_modules -= self.known_names
+            unknown_modules -= self.imported_modules
             type_checking_imports = cst.If(
                 test=cst.Name("TYPE_CHECKING"),
                 body=cst.IndentedBlock(
                     body=[
                         cst.SimpleStatementLine([
-                            cst.Import([cst.ImportAlias(_dotted_name(m))])
+                            cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
                         ])
                         for m in sorted(unknown_modules)
                     ]
@@ -360,17 +403,74 @@ def types_in_annotation(annotation: str) -> Set[Typename]:
             return False 
 
         def visit_Attribute(self, node: cst.Attribute) -> Optional[bool]:
-            full_name = node.attr.value
-            current_node = node.value
-            while isinstance(current_node, cst.Attribute):
-                full_name = f"{current_node.attr.value}.{full_name}"
-                current_node = current_node.value
-            if isinstance(current_node, cst.Name):
-                full_name = f"{current_node.value}.{full_name}"
-            self.names.add(Typename(full_name))
+            self.names.add(Typename(_nodes_to_dotted_name(node)))
             return False 
 
     parsed_expr = cst.parse_expression(annotation)
     extractor = TypeNameExtractor()
     parsed_expr.visit(extractor)
     return extractor.names
+
+
+def _global_imports(node: cst.Module) -> list[tuple[cst.ImportAlias, cst.Import|cst.ImportFrom]]:
+    """Extracts global imports in a module."""
+
+    imports: list[tuple[cst.ImportAlias, cst.Import|cst.ImportFrom]] = []
+
+    class Extractor(cst.CSTVisitor):
+        def __init__(self) -> None:
+            self.names: Set[Typename] = set()
+
+        def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
+            return False
+
+        def visit_ClassDef(self, node: cst.ClassDef) -> bool:
+            return False
+
+        def visit_Import(self, node: cst.Import) -> bool:
+            # node.names could also be cst.ImportStar
+            if isinstance(node.names, collections.abc.Sequence):
+                for alias in node.names:
+                    imports.append((alias, node))
+            return False
+
+        def visit_ImportFrom(self, node: cst.ImportFrom) -> bool:
+            # node.names could also be cst.ImportStar
+            if isinstance(node.names, collections.abc.Sequence):
+                for alias in node.names:
+                    imports.append((alias, node))
+            return False
+
+    node.visit(Extractor())
+    return imports
+
+
+def _global_assigns(node: cst.Module) -> list[str]:
+    """Extracts global imports in a module."""
+
+    assigns: list[str] = []
+
+    class Extractor(cst.CSTVisitor):
+        def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
+            return False
+
+        def visit_ClassDef(self, node: cst.ClassDef) -> bool:
+            return False
+
+        def visit_Assign(self, node: cst.Assign) -> bool:
+            for t in node.targets:
+                if isinstance(t.target, cst.Name):
+                    assigns.append(t.target.value)
+                elif isinstance(t.target, cst.Tuple):
+                    for el in t.target.elements:
+                        if isinstance(el.value, cst.Name):
+                            assigns.append(el.value.value)
+            return False
+
+        def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
+            if isinstance(node.target, cst.Name):
+                assigns.append(node.target.value)
+            return False
+
+    node.visit(Extractor())
+    return assigns
