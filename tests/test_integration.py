@@ -550,6 +550,33 @@ def test_generate_stubs(tmp_cwd):
         """)
 
 
+@pytest.mark.xfail(reason="Doesn't work yet")
+def test_type_from_main(tmp_cwd):
+    Path("m.py").write_text(textwrap.dedent("""\
+        def f(x):
+            return str(x)
+        """
+    ))
+
+    Path("t.py").write_text(textwrap.dedent("""\
+        import m
+
+        class C:
+            def __str__(self):
+                return "hi!"
+
+        m.f(C())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("m.py").read_text()
+    assert "def foo(x: t.C) -> str:" in output
+
+    subprocess.run([sys.executable, '-m', 'mypy', 'm.py', 't.py'], check=True)
+
+
 def test_coroutine_type(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo():

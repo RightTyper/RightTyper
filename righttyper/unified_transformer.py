@@ -104,7 +104,6 @@ class UnifiedTransformer(cst.CSTTransformer):
         ],
         not_annotated: dict[FuncInfo, set[ArgumentName]]
     ) -> None:
-        # Initialize AnnotateFunctionTransformer data
         self.filename = filename
         self.type_annotations = type_annotations
         self.not_annotated = not_annotated
