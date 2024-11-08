@@ -24,39 +24,40 @@ def test_get_full_type():
     assert "bytearray" == get_full_type(bytearray(b'0000'))
     assert "bytes" == get_full_type(bytes(b'0000'))
     assert "complex" == get_full_type(complex(1, 1))
-    assert "List[str]" == get_full_type(dir())
+    assert "list[str]" == get_full_type(dir())
 
-    assert "List[str]" == get_full_type(['a', 'b'])
-    assert "List[int]" == get_full_type([0, 1])
+    assert "list[str]" == get_full_type(['a', 'b'])
+    assert "list[int]" == get_full_type([0, 1])
+    assert "list[tuple[int]]" == get_full_type([(0,), (1,)])
 
-    assert "List[int]" == get_full_type([0, 1][:1])
+    assert "list[int]" == get_full_type([0, 1][:1])
     assert "int" == get_full_type([0, 1][0])
 
     #assert "List[int]" == get_full_type([0, 'a'])
 
-    assert "Set[str]" == get_full_type({'a', 'b'})
-    assert "Set[int]" == get_full_type({0, 1})
+    assert "set[str]" == get_full_type({'a', 'b'})
+    assert "set[int]" == get_full_type({0, 1})
 
     # FIXME use Set instead?  specify element type?
     assert "frozenset" == get_full_type(frozenset({'a', 'b'}))
     assert "frozenset" == get_full_type(frozenset({0, 1}))
     assert "frozenset" == get_full_type(frozenset())
 
-    assert "Dict[str, str]" == get_full_type({'a': 'b'})
+    assert "dict[str, str]" == get_full_type({'a': 'b'})
 
-    assert "Iterable[str]" == get_full_type({'a':0, 'b':1}.keys())
-    assert "Iterable[int]" == get_full_type({'a':0, 'b':1}.values())
-    assert "Iterable[Tuple[str, int]]" == get_full_type({'a':0, 'b':1}.items())
+    assert "KeysView[str]" == get_full_type({'a':0, 'b':1}.keys())
+    assert "ValuesView[int]" == get_full_type({'a':0, 'b':1}.values())
+    assert "ItemsView[str, int]" == get_full_type({'a':0, 'b':1}.items())
 
-    # FIXME is it useful to have 'Never' here? Or better simply 'Iterable' ?
-    assert "Iterable[Never]" == get_full_type(dict().keys())
-    assert "Iterable[Never]" == get_full_type(dict().values())
-    assert "Iterable[Tuple[Never, Never]]" == get_full_type(dict().items())
+    assert "KeysView[Never]" == get_full_type(dict().keys())
+    assert "ValuesView[Never]" == get_full_type(dict().values())
+    assert "ItemsView[Never, Never]" == get_full_type(dict().items())
 
-    assert "Set[str]" == get_full_type({'a', 'b'})
+    assert "set[str]" == get_full_type({'a', 'b'})
+    assert "set[Never]" == get_full_type(set())
 
     o : Any = range(10)
-    assert "Iterable[int]" == get_full_type(o)
+    assert "range" == get_full_type(o)
     assert 0 == next(iter(o)), "changed state"
 
     o = iter(range(10))
@@ -68,11 +69,11 @@ def test_get_full_type():
     assert 0 == next(o), "changed state"
 
     o = enumerate([0,1])
-    assert "Iterator[Tuple[int, Any]]" == get_full_type(o)
+    assert "enumerate" == get_full_type(o)
     assert (0, 0) == next(o), "changed state"
 
     o = filter(lambda x:True, [0,1])
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "filter" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = reversed([0,1])
@@ -80,11 +81,11 @@ def test_get_full_type():
     assert 1 == next(o), "changed state"
 
     o = zip([0,1], ['a','b'])
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "zip" == get_full_type(o)
     assert (0,'a') == next(o), "changed state"
 
     o = map(lambda x:x, [0,1])
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "map" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = iter({0, 1})
@@ -135,6 +136,15 @@ def test_get_full_type():
 
     assert "AsyncGenerator[Any, Any]" == get_full_type(async_range(10))
     assert "AsyncGenerator[Any, Any]" == get_full_type(aiter(async_range(10)))
+
+
+@pytest.mark.filterwarnings("ignore:coroutine .* never awaited")
+def test_get_full_type_coro():
+    async def coro():
+        import asyncio
+        await asyncio.sleep(1)
+
+    assert "Coroutine[Any, Any, Any]" == get_full_type(coro())
 
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')

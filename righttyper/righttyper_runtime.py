@@ -3,11 +3,11 @@ import os
 import random
 import sys
 import typing
-from collections.abc import Generator, AsyncGenerator
+from collections.abc import Generator, AsyncGenerator, Coroutine, KeysView, ValuesView, ItemsView, Iterator
 from functools import cache
 from itertools import islice
-from types import CodeType, ModuleType, FrameType
-from typing import Any, Dict, List, Optional, Tuple, Type, cast
+from types import CodeType, FrameType, NoneType, FunctionType, MethodType, GenericAlias
+from typing import Any, cast
 
 from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
@@ -23,16 +23,11 @@ from righttyper.righttyper_types import (
 from righttyper.righttyper_utils import skip_this_file
 
 
-def get_random_element_from_dict(value: Dict[Any, Any]) -> Any:
-    if isinstance(value, RandomDict):
-        # If it's a RandomDict, use its built-in random_item method
-        return value.random_item()
-    else:
-        # For a regular dict, use islice to select a random element
-        # We limit the range to the first few elements to keep this O(1).
-        MAX_ELEMENTS = 10
-        n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
-        return next(islice(value.items(), n, n + 1))
+def sample_from_collection(value: typing.Collection[T], depth = 0) -> T:
+    """Samples from a collection."""
+    MAX_ELEMENTS = 10   # to keep this O(1)
+    n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
+    return next(islice(value, n, n + 1))
 
 
 @cache
@@ -63,7 +58,7 @@ def should_skip_function(
 
 def get_class_type_from_stack(
     max_depth: int = 5,
-) -> Optional[Type]:
+) -> type|None:
     # Initialize the current frame
     current_frame = inspect.currentframe()
     try:
@@ -83,9 +78,10 @@ def get_class_type_from_stack(
     return None
 
 
-def get_mypy_type_fn(func: Any) -> str:
+def type_from_annotations(func: FunctionType | MethodType) -> str:
     # Get the signature of the function
     signature = inspect.signature(func)
+    #print(f"{func=} {signature=}")
 
     # Extract argument types, default to Any if no annotation provided
     arg_types = [
@@ -98,15 +94,29 @@ def get_mypy_type_fn(func: Any) -> str:
     if return_type is inspect.Signature.empty:
         return_type = Any
 
+    def format_arg(arg) -> str:
+        if isinstance(arg, str):
+            # If types are quoted while using "from __future__ import annotations",
+            # strings may appear double quoted
+            if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in ["'",'"']:
+                arg = arg[1:-1]
+
+            return arg
+
+        if isinstance(arg, GenericAlias):
+            return str(arg)
+
+        return get_type_name(arg)
+
     # Format the result
-    arg_types_str = ", ".join([get_type_name(arg) for arg in arg_types])
-    return_type_str = get_type_name(return_type)
+    arg_types_str = ", ".join([format_arg(arg) for arg in arg_types])
+    return_type_str = format_arg(return_type)
 
     # Construct the Callable type string
     return f"Callable[[{arg_types_str}], {return_type_str}]"
 
 
-def find_caller_frame() -> Optional[FrameType]:
+def find_caller_frame() -> FrameType|None:
     """Attempts to find the stack frame which from which we were called. A bit brittle!"""
     from pathlib import Path
 
@@ -121,79 +131,65 @@ def find_caller_frame() -> Optional[FrameType]:
     return frame
 
 
-def get_type_name(obj: object, depth: int = 0) -> str:
-    orig_value = obj
+@cache
+def from_types_import(t: type) -> str | None:
+    # TODO we could also simply reverse types.__dict__ ...
+    import types
 
-    # Handle module types
-    if inspect.ismodule(obj):
-        if getattr(obj, "__name__", None):
-            return obj.__name__     # already fully qualified
-        else:
-            return str(type(obj))
+    for k in types.__all__:
+        if (v := types.__dict__.get(k)) and t is v:
+            return k
 
-    # Handle class instances by retrieving their type
-    if not inspect.isclass(obj):
-        obj = type(obj)
+    return None
 
-    # Handle numpy and other libraries using dtype
-    try:  # workaround failure in Pelican
-        if hasattr(orig_value, "dtype"):
-            dtype = getattr(orig_value, "dtype")
-            t_dtype = type(dtype)
-            if hasattr(dtype, "type") and '[' in t_dtype.__name__:
-                t_name = t_dtype.__name__.split('[')[0]
-                dtype_name = f"{t_dtype.__module__}.{t_name}[{dtype.type.__module__}.{dtype.type.__qualname__}]"
-            else:
-                dtype_name = f"{t_dtype.__module__}.{t_dtype.__name__}"
 
-            return f"{obj.__module__}.{obj.__name__}[Any, {dtype_name}]"
-    except RuntimeError:
-        pass
+@cache
+def in_builtins_import(t: type) -> bool:
+    import builtins
 
-    # Handle built-in types (like list, tuple, NoneType, etc.)
+    if bt := builtins.__dict__.get(t.__name__):
+        return t == bt
+
+    return False
+
+
+RANGE_ITER_TYPE = type(iter(range(1)))
+
+def get_type_name(obj: type, depth: int = 0) -> str:
+    """Returns a type's name as a string."""
+
+    if depth > 255:
+        # We have likely fallen into an infinite recursion.
+        # Fail gracefully to return "Never" while reporting the warning.
+        print(f"Warning: RightTyper failed to compute the type of {obj}.")
+        return "Never"
+
+    # Some builtin types are available from the "builtins" module,
+    # some from the "types" module, but others still, such as
+    # "list_iterator", aren't known by any particular name.
     if obj.__module__ == "builtins":
-        if obj.__name__ == "frame":
-            return "FrameType"
-        elif obj.__name__ == "function":
-            return get_mypy_type_fn(orig_value)
-        elif obj.__name__ == "NoneType":
+        if obj is NoneType:
             return "None"
-        elif obj.__name__ in {"list", "tuple"}:
-            return get_full_type(orig_value, depth + 1)
-        elif obj.__name__ == "code":
-            return "types.CodeType"
-        elif obj.__name__ == "range":
-            return "Iterable[int]"
-        elif obj.__name__ == "range_iterator":
+        elif in_builtins_import(obj):
+            return obj.__name__ # these are "well known", so no module name needed
+        elif (name := from_types_import(obj)):
+            return f"types.{name}"
+        elif obj is RANGE_ITER_TYPE:
             return "Iterator[int]"
-        elif obj.__name__ == "enumerate":
-            return "Iterator[Tuple[int, Any]]"
-        elif obj.__name__ in (
-            "list_iterator", "list_reverseiterator", "set_iterator",
-            "dict_keyiterator", "dict_valueiterator", "dict_itemiterator",
-            "filter", "map", "zip"
-        ):
-            return "Iterator[Any]"  # FIXME needs element type
-        elif obj.__name__ in (
-            "dict_keys", "dict_values"
-        ):
-            try:
-                el = next(iter(cast(typing.Iterable, orig_value)))
-                return f"Iterable[{get_type_name(el, depth+1)}]"
-            except StopIteration:
-                return "Iterable[Never]"
-        elif obj.__name__ == "dict_items":
-            try:
-                el = next(iter(cast(typing.Iterable, orig_value)))
-                return f"Iterable[Tuple[{get_type_name(el[0], depth+1)}, {get_type_name(el[1], depth+1)}]]"
-            except StopIteration:
-                return "Iterable[Tuple[Never, Never]]"
+        # TODO match other ABC from collections.abc based on interface
+        elif issubclass(obj, Iterator):
+            return "Iterator[Any]"
         else:
-            return obj.__name__
+            # fall back to its name, just so we can tell where it came from.
+            return f"builtins.{obj.__name__}"
+
+    # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
+    if 'dtype[' in obj.__name__ and hasattr(obj, "type"):
+        t_name = obj.__qualname__.split('[')[0]
+        return f"{obj.__module__}.{t_name}[{get_type_name(obj.type, depth+1)}]"
 
     # Look for a local alias for the type
-    # 
-    # FIXME this only checks for globally known names, and does match inner classes (e.g., Foo.Bar).
+    # FIXME this only checks for globally known names, and doesn't match inner classes (e.g., Foo.Bar).
     # FIXME that name may be locally bound to something different, hiding the global
     if caller_frame := find_caller_frame():
         current_namespace = caller_frame.f_globals
@@ -209,31 +205,27 @@ def get_type_name(obj: object, depth: int = 0) -> str:
             ):
                 return f"{name}.{obj.__name__}"
 
-    # Handle generic types (like List, Dict, etc.)
-    origin = typing.get_origin(obj)
-    if origin:
-        type_name = f"{origin.__module__}.{origin.__name__}"
-        type_params = ", ".join(
-            get_full_type(arg, depth + 1) for arg in typing.get_args(obj)
-        )
-        return f"{type_name}[{type_params}]"
-
-    # Handle all other types with fully qualified names
-    if obj.__module__ and obj.__module__ != "__main__":
+    # We currently consider all "typing" types well known (and import them as needed)
+    if obj.__module__ and obj.__module__ not in ("__main__", "typing"):
         return f"{obj.__module__}.{obj.__qualname__}"
 
     return obj.__qualname__
 
 
+def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
+    """Like isinstance(), but returns the type matched."""
+    for t in types:
+        if isinstance(obj, t):
+            return t
+
+    return None
+
+
 def get_full_type(value: Any, depth: int = 0) -> str:
     """
-    get_full_type takes a value as input and returns a string representing the type of the value.
+    get_full_type takes a value (an instance) as input and returns a string representing its type.
 
-    If the value is of type dictionary, it randomly selects a pair of key and value from the dictionary
-    and recursively determines their types.
-
-    If the value is a list or a set, it randomly selects an item and determines its type recursively.
-
+    If the value is a collection, it randomly selects an element (or key-value pair) and determines their types.
     If the value is a tuple, it determines the types of all elements in the tuple.
 
     For other types, it returns the name of the type.
@@ -243,62 +235,50 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         # Fail gracefully to return "Never" while reporting the warning.
         print(f"Warning: RightTyper failed to compute the type of {value}.")
         return "Never"
+
     if isinstance(value, dict):
-        # Checking if the value is a dictionary
         if value:
-            key, val = get_random_element_from_dict(value)
-            return (
-                f"Dict[{get_full_type(key, depth + 1)},"
-                f" {get_full_type(val, depth + 1)}]"
-            )
+            el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
+            return f"dict[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
         else:
-            return "Dict[Never, Never]"
-    elif isinstance(value, list):
-        # Checking if the value is a list
+            return "dict[Never, Never]"
+    elif (t := _is_instance(value, (KeysView, ValuesView, list, set))):
         if value:
-            # If the list is non-empty
-            # we sample one of its elements randomly
-            n = random.randint(0, len(value) - 1)
-            elem = value[n]
-            # We return the type of the list as 'list[element_type]'
-            return f"List[{get_full_type(elem, depth + 1)}]"
+            el = sample_from_collection(value)
+            return f"{t.__qualname__}[{get_full_type(el, depth+1)}]"
         else:
-            return "List[Never]"
+            return f"{t.__qualname__}[Never]"
+    elif isinstance(value, ItemsView):
+        if value:
+            el = sample_from_collection(value)
+            return f"ItemsView[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
+        else:
+            return "ItemsView[Never, Never]"
     elif isinstance(value, tuple):
         if isinstance_namedtuple(value):
             return f"{value.__class__.__name__}"
         else:
-            # Here we are returning the types of all elements in the tuple
-            if len(value) == 0:
-                tuple_str = "Tuple"
+            if value:
+                return f"tuple[{', '.join(get_full_type(elem, depth+1) for elem in value)}]"
             else:
-                tuple_str = f"Tuple[{', '.join(get_full_type(elem, depth + 1) for elem in value)}]"
-            return tuple_str
-    elif inspect.ismethod(value):
-        return get_mypy_type_fn(value)
-    elif isinstance(value, set):
-        if value:
-            n = random.randint(0, len(value) - 1)
-            elem = next(islice(value, n, n + 1))
-            return f"Set[{get_full_type(elem, depth + 1)}]"
-        else:
-            return "Set[Never]"
+                return "tuple"
+    elif isinstance(value, (FunctionType, MethodType)):
+        return type_from_annotations(value)
     elif isinstance(value, Generator):
-        # FIXME DISABLED FOR NOW
-        # (q, g) = peek(value)
-        # value = g
-        # return f"Generator[{get_full_type(q)}, None, None]" # FIXME
-        return "Generator[Any, Any, Any]"  # FIXME
+        return "Generator[Any, Any, Any]"  # FIXME needs yield / send / return types
     elif isinstance(value, AsyncGenerator):
-        return "AsyncGenerator[Any, Any]"  # FIXME needs argument types
+        return "AsyncGenerator[Any, Any]"  # FIXME needs yield / send types
+    elif isinstance(value, Coroutine):
+        return "Coroutine[Any, Any, Any]"  # FIXME needs yield / send / return types
+    elif hasattr(value, "dtype"):
+        # Certain dtype types' __qualname__ doesn't include a fully qualified
+        # name of their inner type; look them up separately to work around that.
+        return f"{get_type_name(type(value), depth+1)}[Any, {get_type_name(type(value.dtype), depth+1)}]"
     else:
-        # If the value passed is not a dictionary, list, set, or tuple,
-        # we return the type of the value as a string
-        retval = get_type_name(value, depth + 1)
-        return retval
+        return get_type_name(type(value), depth+1)
 
 
-def get_adjusted_full_type(value: Any, class_type: Optional[Type]=None) -> str:
+def get_adjusted_full_type(value: Any, class_type: type|None=None) -> str:
     #print(f"{type(value)=} {class_type=}")
     if type(value) == class_type:
         return "Self"
@@ -314,42 +294,18 @@ def isinstance_namedtuple(obj: object) -> bool:
     )
 
 
-def peek(
-    generator: Generator[T, Any, Any],
-) -> Tuple[T, Generator[T, Any, Any]]:
-    def wrapped_generator() -> Generator[T, Any, Any]:
-        # Yield the peeked value first, then yield from the original generator
-        yield peeked_value
-        yield from generator
-
-    # Get the next value from the original generator
-    peeked_value = next(generator)
-
-    # Return the peeked value and the new generator
-    return peeked_value, wrapped_generator()
-
-
-def get_method_signature(method: Any) -> str:
-    # try:
-    #    type_hints = get_type_hints(method)
-    # except Exception:
-    #    type_hints = None
-    callable_signature = get_mypy_type_fn(method)
-    return callable_signature
-
-
 def update_argtypes(
-    argtypes: List[ArgInfo],
-    arg_types: Dict[
-        Tuple[FuncInfo, ArgumentName],
+    argtypes: list[ArgInfo],
+    arg_types: dict[
+        tuple[FuncInfo, ArgumentName],
         ArgumentType,
     ],
-    index: Tuple[FuncInfo, ArgumentName],
+    index: tuple[FuncInfo, ArgumentName],
     arg_values: Any,
-    class_type: Optional[Type],
+    class_type: type|None,
     arg: str,
-    varargs: Optional[str],
-    varkw: Optional[str],
+    varargs: str|None,
+    varkw: str|None,
 ) -> None:
 
     def add_arg_info(
@@ -422,8 +378,8 @@ def format_annotation(annotation: Any) -> str:
 
 def format_function_definition(
     func_name: str,
-    arg_names: List[str],
-    type_hints: Dict[str, Any],
+    arg_names: list[str],
+    type_hints: dict[str, Any],
 ) -> str:
     """Format the function definition based on its name, argument names, and type hints."""
     params = []
@@ -443,7 +399,7 @@ def format_function_definition(
     return function_definition
 
 
-def get_class_source_file(cls: Type[Any]) -> str:
+def get_class_source_file(cls: type) -> str:
     module_name = cls.__module__
 
     # Check if the class is built-in
@@ -478,51 +434,3 @@ def get_class_source_file(cls: Type[Any]) -> str:
         pass
 
     return ""
-
-
-def old_requires_import(obj: object) -> bool:
-    # Get the class of the object
-    cls = obj.__class__
-
-    # Get the module where the class is defined
-    cls_module = cls.__module__
-
-    # Get the name of the current module
-    current_module = sys._getframe(1).f_globals["__name__"]
-
-    # If the class is defined in a different module, an import is needed
-    if cls_module != current_module:
-        return True
-    return False
-
-
-def requires_import(obj: object) -> bool:
-    # Get the class of the object
-    cls = type(obj)
-
-    # Get the module where the class is defined
-    cls_module = getattr(cls, "__module__", None)
-
-    # If obj is a module or function from an imported module, use its module directly
-    if isinstance(obj, ModuleType):
-        cls_module = obj.__name__
-    elif callable(obj):
-        cls_module = getattr(obj, "__module__", None)
-
-    # Handle cases where cls_module might be None
-    if cls_module is None:
-        return False
-
-    # Get the name of the current module
-    current_module = sys._getframe(4).f_globals.get("__name__", "")
-
-    # Debug prints to see what's happening
-    # print(f"Object: {obj}")
-    # print(f"Class: {cls}")
-    # print(f"Class module: {cls_module}")
-    # print(f"Current module: {current_module}")
-
-    # If the class is defined in a different module and not in builtins, an import is needed
-    if cls_module != current_module and cls_module != "builtins":
-        return True
-    return False

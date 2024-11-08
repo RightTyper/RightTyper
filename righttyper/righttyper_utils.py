@@ -2,7 +2,7 @@ import logging
 import os
 import re
 from functools import cache
-from typing import Any, Dict, Final, List, Optional, Set, Tuple
+from typing import Any, Final
 
 from righttyper.righttyper_types import (
     ArgInfo,
@@ -71,7 +71,7 @@ def adjusted_type_name(fname: str, typename: str) -> Typename:
 
 def unannotated(
     f: object, ignore_annotations: bool = False
-) -> Set[ArgumentName]:
+) -> set[ArgumentName]:
     """
     Returns a set of the unannotated arguments and, if
     unannotated, the return value (called "return"), for the
@@ -96,7 +96,7 @@ def unannotated(
 def union_typeset_str(
     file_name: str,
     typeset: TypenameSet,
-    namespace: Dict[str, Any] = globals(),
+    namespace: dict[str, Any] = globals(),
     threshold_frequency: float = 0.25,
 ) -> Typename:
     adjusted_typeset = typeset  # trim_and_test(typeset, threshold_frequency)
@@ -132,30 +132,18 @@ def union_typeset_str(
             )
             if len(typenames) == 1:
                 return typenames[0]
-            # Make a variant of typenames without Nones
-            not_none_typenames = sorted(
-                t.typename for t in adjusted_typeset if t.typename != "None"
-            )
-            # If None is one of the typenames, make the union an optional over the remaining types.
-            if len(not_none_typenames) < len(typenames):
-                if len(not_none_typenames) > 1:
-                    return Typename(
-                        "Optional["
-                        + "Union["
-                        + ", ".join(not_none_typenames)
-                        + "]"
-                        + "]"
-                    )
-                else:
-                    return Typename(
-                        "Optional[" + ", ".join(not_none_typenames) + "]"
-                    )
 
-            if len(typenames) > 1:
-                # Just Union everything.
-                return Typename("Union[" + ", ".join(typenames) + "]")
-            else:
-                return typenames[0]
+            if "None" in typenames:
+                # "None" at the end is considered to be more readable
+                return Typename(
+                    "|".join([t for t in typenames if t != "None"]
+                             + ["None"])
+                )
+
+            return Typename(
+                "|".join(typenames)
+            )
+
     if not retval:
         # Worst-case
         return Typename("Any")
@@ -163,9 +151,9 @@ def union_typeset_str(
 
 
 def find_most_specific_common_superclass_by_name(
-    type_names: List[str],
-    namespace: Dict[str, Any] = globals(),
-) -> Optional[Typename]:
+    type_names: list[str],
+    namespace: dict[str, Any] = globals(),
+) -> Typename|None:
     if not type_names:
         return None
 
@@ -192,15 +180,15 @@ def find_most_specific_common_superclass_by_name(
 def make_type_signature(
     file_name: str,
     func_name: str,
-    args: List[ArgInfo],
+    args: list[ArgInfo],
     retval: TypenameSet,
-    namespace: Dict[str, Any],
-    not_annotated: Dict[FuncInfo, Set[ArgumentName]],
-    arg_types: Dict[
-        Tuple[FuncInfo, ArgumentName],
+    namespace: dict[str, Any],
+    not_annotated: dict[FuncInfo, set[ArgumentName]],
+    arg_types: dict[
+        tuple[FuncInfo, ArgumentName],
         ArgumentType,
     ],
-    existing_annotations: Dict[FuncInfo, Dict[ArgumentName, str]],
+    existing_annotations: dict[FuncInfo, dict[ArgumentName, str]],
 ) -> str:
     # print(f"make_type_signature {file_name} {func_name} {args} {retval}")
     t = FuncInfo(

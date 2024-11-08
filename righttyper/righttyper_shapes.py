@@ -1,26 +1,26 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from righttyper.righttyper_types import FuncInfo
 
 # FIXME needs to be thread local
-current_shape: Dict[FuncInfo, List[Tuple[int, ...]]] = defaultdict(list)
+current_shape: dict[FuncInfo, list[tuple[int, ...]]] = defaultdict(list)
 
-captured_shapes: Dict[FuncInfo, Set[Tuple[int, ...]]] = defaultdict(set)
+captured_shapes: dict[FuncInfo, set[tuple[int, ...]]] = defaultdict(set)
 
 
 def transform_input(
-    inp: List[Any],
-) -> List[Tuple[Optional[str], ...]]:
+    inp: list[Any],
+) -> list[tuple[str|None, ...]]:
     tup = inp[0]  # We assume all inputs have the same tuple lengths
     numargs = len(tup)
-    all_vals: List[List[List[Optional[int]]]] = [
+    all_vals: list[list[list[int|None]]] = [
         [[] for j in range(len(tup[i]))] for i in range(numargs)
     ]
-    output_vals: List[List[Optional[str]]] = [
+    output_vals: list[list[str|None]] = [
         [None for j in range(len(tup[i]))] for i in range(numargs)
     ]
-    hash_count: Dict[int, int] = defaultdict(int)
+    hash_count: dict[int, int] = defaultdict(int)
     hashes = [[0 for j in range(len(tup[i]))] for i in range(numargs)]
     # First, identify all the values that every shape dimension could hold;
     # then hash them all.
@@ -60,9 +60,9 @@ def transform_input(
 
 
 def convert_to_jaxtyping(
-    argument_datatypes: List[str],
-    output_tuples: List[Tuple[Optional[str], ...]],
-) -> List[str]:
+    argument_datatypes: list[str],
+    output_tuples: list[tuple[str|None, ...]],
+) -> list[str]:
     result = []
     for index, arg_tuple in enumerate(output_tuples):
         args = list(arg_tuple)
@@ -80,12 +80,12 @@ def convert_to_jaxtyping(
     return result
 
 
-def update_arg_shapes(func: FuncInfo, the_values: Dict[str, Any]) -> None:
+def update_arg_shapes(func: FuncInfo, the_values: dict[str, Any]) -> None:
     import numpy as np
     import pandas as pd
     import torch
 
-    the_shapes: List[Any] = []
+    the_shapes: list[Any] = []
     for k in the_values:
         val = the_values[k]
         if isinstance(val, (pd.DataFrame, np.ndarray)):
@@ -117,7 +117,7 @@ def update_retval_shapes(func: FuncInfo, retval: Any) -> None:
     # print(f"Shape for {func} = {merged_shapes}")
 
 
-def print_annotation(func: FuncInfo) -> List[str]:
+def print_annotation(func: FuncInfo) -> list[str]:
     # No annotations if the shape was never captured
     if func not in captured_shapes:
         return []

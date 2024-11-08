@@ -14,12 +14,7 @@ from collections import defaultdict
 from types import CodeType, FrameType, FunctionType
 from typing import (
     Any,
-    Dict,
-    List,
-    Optional,
-    Set,
     TextIO,
-    Tuple,
     Iterator,
     Iterable,
     Callable,
@@ -30,10 +25,8 @@ import click
 
 # Disabled for now
 # from righttyper import replace_dicts
-from righttyper.get_import_details import get_import_details
 from righttyper.righttyper_process import (
     collect_data,
-    output_stub_files,
     process_file,
 )
 from righttyper.righttyper_runtime import (
@@ -42,7 +35,6 @@ from righttyper.righttyper_runtime import (
     get_adjusted_full_type,
     get_class_type_from_stack,
     get_class_source_file,
-    requires_import,
     should_skip_function,
     update_argtypes,
 )
@@ -64,7 +56,6 @@ from righttyper.righttyper_types import (
     Filename,
     FuncInfo,
     FunctionName,
-    ImportInfo,
     Typename,
     TypenameFrequency,
     TypenameSet,
@@ -96,46 +87,42 @@ sample_count_total = 0.0
 logger = logging.getLogger("righttyper")
 
 # All visited functions (file name and function name)
-visited_funcs: Set[FuncInfo] = set()
+visited_funcs: set[FuncInfo] = set()
 
 # Any function that yielded at least once (and so will be treated as a
 # Generator)
-yielded_funcs: Set[FuncInfo] = set()
+yielded_funcs: set[FuncInfo] = set()
 
 # The existing spec for each function (that is, function prototype)
-existing_spec: Dict[FuncInfo, str] = dict()
+existing_spec: dict[FuncInfo, str] = dict()
 
 # For each visited function, all the info about its arguments
-visited_funcs_arguments: Dict[FuncInfo, List[ArgInfo]] = defaultdict(list)
+visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = defaultdict(list)
 
 # For each visited function, all the info about its return value
-visited_funcs_retval: Dict[FuncInfo, TypenameSet] = defaultdict(
+visited_funcs_retval: dict[FuncInfo, TypenameSet] = defaultdict(
     lambda: TypenameSet(set())
 )
 
 # For each function and argument, what type the argument is (e.g.,
 # kwarg, vararg)
-arg_types: Dict[
-    Tuple[FuncInfo, ArgumentName],
+arg_types: dict[
+    tuple[FuncInfo, ArgumentName],
     ArgumentType,
 ] = dict()
 
 # For each function, the variables (and, potentially, 'return') that
 # have no type annotations
-not_annotated: Dict[FuncInfo, Set[ArgumentName]] = defaultdict(set)
+not_annotated: dict[FuncInfo, set[ArgumentName]] = defaultdict(set)
 
 # Existing annotations (variable to type annotations, optionally
 # including 'return')
-existing_annotations: Dict[FuncInfo, Dict[ArgumentName, str]] = defaultdict(
+existing_annotations: dict[FuncInfo, dict[ArgumentName, str]] = defaultdict(
     dict
 )
 
-# Track the file names and class names for classes
-# that will need import statements
-imports: Set[ImportInfo] = set()
 
-
-namespace: Dict[str, Any] = {}
+namespace: dict[str, Any] = {}
 script_dir = ""
 include_files_regex = ""
 include_all = False
@@ -350,7 +337,7 @@ def process_function_arguments(
         for param_name, param in (inspect.signature(function).parameters.items() if function else [])
     }
 
-    argtypes: List[ArgInfo] = []
+    argtypes: list[ArgInfo] = []
     for arg in arg_names:
         if arg:
             index = (
@@ -371,23 +358,6 @@ def process_function_arguments(
                 varkw,
             )
 
-            if requires_import(the_values[arg]) and arg not in [
-                "self",
-                "cls",
-            ]:
-                # print(f"trying to add: {arg=} {the_values[arg]=}")
-                try:
-                    add_new_import(
-                        caller_frame.f_code.co_filename,
-                        the_values[arg],
-                    )
-                except TypeError:
-                    # Unexpected type error
-                    logger.exception(
-                        "process_function_arguments - TypeError:"
-                        f" {t=} {arg=} {the_values[arg]=}"
-                    )
-
     debug_print(f"processing {t=} {argtypes=}")
     update_visited_funcs_arguments(t, argtypes)
 
@@ -395,12 +365,12 @@ def process_function_arguments(
 def find_functions(
     caller_frame: FrameType,
     code: CodeType
-) -> Iterator[Tuple[str, Callable]]:
+) -> Iterator[tuple[str, Callable]]:
     """
     Attempts to map back from a code object to the functions that use it.
     """
 
-    def check_function(name: str, obj: Callable) -> Iterator[Tuple[str, Callable]]:
+    def check_function(name: str, obj: Callable) -> Iterator[tuple[str, Callable]]:
         limit = 25
         while hasattr(obj, "__wrapped__"):
             obj = obj.__wrapped__
@@ -410,14 +380,14 @@ def find_functions(
         if obj.__code__ is code:
             yield (name, obj)
 
-    def find_in_class(class_obj: object) -> Iterator[Tuple[str, Callable]]:
+    def find_in_class(class_obj: object) -> Iterator[tuple[str, Callable]]:
         for name, obj in class_obj.__dict__.items():
             if inspect.isfunction(obj):
                 yield from check_function(name, obj)
             elif inspect.isclass(obj):
                 yield from find_in_class(obj)
 
-    dicts: Iterable[Tuple[str, Any]] = caller_frame.f_globals.items()
+    dicts: Iterable[tuple[str, Any]] = caller_frame.f_globals.items()
     if caller_frame.f_back:
         dicts = itertools.chain(caller_frame.f_back.f_locals.items(), dicts)
 
@@ -432,7 +402,7 @@ def find_functions(
 def get_function_type_hints(
     caller_frame: Any,
     code: CodeType,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     for (
         name,
         obj,
@@ -447,8 +417,8 @@ def get_function_type_hints(
 def update_function_annotations(
     t: FuncInfo,
     caller_frame: Any,
-    args: List[str],
-    type_hints: Dict[str, str],
+    args: list[str],
+    type_hints: dict[str, str],
     ignore_annotations: bool,
 ) -> None:
 
@@ -469,20 +439,8 @@ def update_function_annotations(
         }
 
 
-def add_new_import(filename: str, value: Any) -> None:
-    class_src_file = get_class_source_file(value.__class__)
-    deets = get_import_details(value)
-    new_import = ImportInfo(
-        Filename(filename),
-        Filename(class_src_file),
-        value.__class__.__name__,
-        deets,
-    )
-    imports.add(new_import)
-
-
 def update_visited_funcs_arguments(
-    t: FuncInfo, argtypes: List[ArgInfo]
+    t: FuncInfo, argtypes: list[ArgInfo]
 ) -> None:
     if t in visited_funcs_arguments:
         for i, arginfo in enumerate(argtypes):
@@ -518,7 +476,7 @@ def in_instrumentation_code(frame: FrameType) -> bool:
     # limit overhead. The instrumentation code should be fairly
     # shallow, so this heuristic should have no impact on accuracy
     # while improving performance.
-    f: Optional[FrameType] = frame
+    f: FrameType|None = frame
     countdown = 10
     while f and countdown > 0:
         if f.f_code in instrumentation_functions_code:
@@ -530,7 +488,7 @@ def in_instrumentation_code(frame: FrameType) -> bool:
     return False
 
 
-def restart_sampling(_signum: int, frame: Optional[FrameType]) -> None:
+def restart_sampling(_signum: int, frame: FrameType|None) -> None:
     """
     This function handles the task of clearing the seen functions.
     Called when a timer signal is received.
@@ -576,10 +534,10 @@ instrumentation_functions_code = set(
 
 def output_type_signatures(
     file: TextIO = sys.stdout,
-    namespace: Dict[str, Any] = globals(),
+    namespace: dict[str, Any] = globals(),
 ) -> None:
     # Print all type signatures
-    fname_printed: Dict[Filename, bool] = defaultdict(bool)
+    fname_printed: dict[Filename, bool] = defaultdict(bool)
     visited_funcs_by_fname = sorted(
         visited_funcs, key=lambda a: a.file_name + ":" + a.func_name
     )
@@ -689,8 +647,8 @@ def initialize_globals(
 def execute_script_or_module(
     script: str,
     module: bool,
-    tool_args: List[str],
-    script_args: List[str],
+    tool_args: list[str],
+    script_args: list[str],
 ) -> None:
     global namespace
     namespace = {}
@@ -713,39 +671,24 @@ def post_process(
     overwrite: bool = True,
     output_files: bool = True,
     ignore_annotations: bool = False,
-    insert_imports: bool = False,
     generate_stubs: bool = False,
     srcdir: str = "",
     use_multiprocessing: bool = True
 ) -> None:
     global namespace
     output_type_signatures_to_file(namespace)
-    if generate_stubs:
-        output_stub_files(
-            namespace,
-            srcdir,
-            imports,
-            visited_funcs,
-            script_dir,
-            include_all,
-            include_files_regex,
-            visited_funcs_arguments,
-            visited_funcs_retval,
-            not_annotated,
-            arg_types,
-            existing_annotations,
-        )
-    if output_files:
+    if output_files or generate_stubs:
         process_all_files(
             ignore_annotations,
             overwrite,
-            insert_imports,
             srcdir,
+            generate_stubs,
+            output_files,
             use_multiprocessing
         )
 
 
-def output_type_signatures_to_file(namespace: Dict[str, Any]) -> None:
+def output_type_signatures_to_file(namespace: dict[str, Any]) -> None:
     with open(f"{TOOL_NAME}.out", "w+") as f:
         output_type_signatures(f, namespace)
 
@@ -753,12 +696,13 @@ def output_type_signatures_to_file(namespace: Dict[str, Any]) -> None:
 def process_all_files(
     ignore_annotations: bool,
     overwrite: bool,
-    insert_imports: bool,
     srcdir: str,
+    generate_stubs: bool,
+    output_files: bool,
     use_multiprocessing: bool
 ) -> None:
 
-    processes: List[multiprocessing.Process] = []
+    processes: list[multiprocessing.Process] = []
     all_files = list(set(t.file_name for t in visited_funcs))
     prefix = os.path.commonprefix(list(all_files))
 
@@ -800,13 +744,11 @@ def process_all_files(
                 visited_funcs_retval,
                 namespace,
             )
-            import_param = imports
-            if not insert_imports:
-                import_param = set()
             args = (
                 fname,
+                output_files,
+                generate_stubs,
                 type_annotations,
-                import_param,
                 overwrite,
                 not_annotated,
                 ignore_annotations,
@@ -852,7 +794,7 @@ def should_update_file(
     t: FuncInfo,
     fname: str,
     prefix: str,
-    namespace: Dict[str, Any],
+    namespace: dict[str, Any],
 ) -> bool:
     try:
         s = make_type_signature(
@@ -898,8 +840,8 @@ class ScriptParamType(click.ParamType):
 
 
 def split_args_at_triple_dash(
-    args: List[str],
-) -> Tuple[List[str], List[str]]:
+    args: list[str],
+) -> tuple[list[str], list[str]]:
     tool_args = []
     script_args = []
     triple_dash_found = False
@@ -1026,7 +968,7 @@ def main(
     include_files: str,
     module: bool,
     triple_dash: bool,
-    args: List[str],
+    args: list[str],
     type_coverage_by_directory: str,
     type_coverage_by_file: str,
     type_coverage_summary: str,
@@ -1117,7 +1059,6 @@ def main(
         overwrite=overwrite,
         output_files=output_files,
         ignore_annotations=ignore_annotations,
-        insert_imports=True,
         generate_stubs=generate_stubs,
         srcdir=srcdir,
         use_multiprocessing=use_multiprocessing
