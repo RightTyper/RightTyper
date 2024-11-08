@@ -7,7 +7,7 @@ from collections.abc import Generator, AsyncGenerator, Coroutine, KeysView, Valu
 from functools import cache
 from itertools import islice
 from types import CodeType, FrameType, NoneType, FunctionType, MethodType, GenericAlias
-from typing import Any, Dict, List, Optional, Tuple, Type, cast
+from typing import Any, cast
 
 from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
@@ -58,7 +58,7 @@ def should_skip_function(
 
 def get_class_type_from_stack(
     max_depth: int = 5,
-) -> Optional[Type]:
+) -> type|None:
     # Initialize the current frame
     current_frame = inspect.currentframe()
     try:
@@ -116,7 +116,7 @@ def type_from_annotations(func: FunctionType | MethodType) -> str:
     return f"Callable[[{arg_types_str}], {return_type_str}]"
 
 
-def find_caller_frame() -> Optional[FrameType]:
+def find_caller_frame() -> FrameType|None:
     """Attempts to find the stack frame which from which we were called. A bit brittle!"""
     from pathlib import Path
 
@@ -212,7 +212,7 @@ def get_type_name(obj: type, depth: int = 0) -> str:
     return obj.__qualname__
 
 
-def _is_instance(obj: object, types: tuple[type]) -> type|None:
+def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
     """Like isinstance(), but returns the type matched."""
     for t in types:
         if isinstance(obj, t):
@@ -278,7 +278,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         return get_type_name(type(value), depth+1)
 
 
-def get_adjusted_full_type(value: Any, class_type: Optional[Type]=None) -> str:
+def get_adjusted_full_type(value: Any, class_type: type|None=None) -> str:
     #print(f"{type(value)=} {class_type=}")
     if type(value) == class_type:
         return "Self"
@@ -295,17 +295,17 @@ def isinstance_namedtuple(obj: object) -> bool:
 
 
 def update_argtypes(
-    argtypes: List[ArgInfo],
-    arg_types: Dict[
-        Tuple[FuncInfo, ArgumentName],
+    argtypes: list[ArgInfo],
+    arg_types: dict[
+        tuple[FuncInfo, ArgumentName],
         ArgumentType,
     ],
-    index: Tuple[FuncInfo, ArgumentName],
+    index: tuple[FuncInfo, ArgumentName],
     arg_values: Any,
-    class_type: Optional[Type],
+    class_type: type|None,
     arg: str,
-    varargs: Optional[str],
-    varkw: Optional[str],
+    varargs: str|None,
+    varkw: str|None,
 ) -> None:
 
     def add_arg_info(
@@ -378,8 +378,8 @@ def format_annotation(annotation: Any) -> str:
 
 def format_function_definition(
     func_name: str,
-    arg_names: List[str],
-    type_hints: Dict[str, Any],
+    arg_names: list[str],
+    type_hints: dict[str, Any],
 ) -> str:
     """Format the function definition based on its name, argument names, and type hints."""
     params = []
@@ -399,7 +399,7 @@ def format_function_definition(
     return function_definition
 
 
-def get_class_source_file(cls: Type[Any]) -> str:
+def get_class_source_file(cls: type) -> str:
     module_name = cls.__module__
 
     # Check if the class is built-in

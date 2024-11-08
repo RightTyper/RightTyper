@@ -1,6 +1,5 @@
 import typing
 import builtins
-from typing import Dict, List, Optional, Set, Tuple
 import collections.abc
 import types
 import libcst as cst
@@ -15,7 +14,7 @@ from righttyper.righttyper_types import (
 )
 
 
-_BUILTIN_TYPES : Set[Typename] = {
+_BUILTIN_TYPES : set[Typename] = {
     Typename(t) for t in (
         "None",
         *(name for name, value in builtins.__dict__.items()if isinstance(value, type))
@@ -25,7 +24,7 @@ _BUILTIN_TYPES : Set[Typename] = {
 # FIXME this prevents us from missing out on well-known "typing." types,
 # but is risky... change to receiving fully qualified names and simplifying
 # them in context.
-_TYPING_TYPES : Set[Typename] = {
+_TYPING_TYPES : set[Typename] = {
     Typename(t) for t in typing.__all__
 }
 
@@ -76,7 +75,7 @@ def _nodes_to_all_dotted_names(node: cst.CSTNode) -> list[str]:
     assert isinstance(node, cst.Name)
     return [node.value]
 
-def _get_str_attr(obj: object, path: str) -> Optional[str]:
+def _get_str_attr(obj: object, path: str) -> str|None:
     """Looks for a str-valued attribute along the given dot-separated attribute path."""
     for elem in path.split('.'):
         if obj and isinstance(obj, (list, tuple)):
@@ -96,14 +95,14 @@ class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
         self,
         filename: str,
-        type_annotations: Dict[
+        type_annotations: dict[
             FuncInfo,
-            Tuple[
-                List[Tuple[ArgumentName, Typename]],
+            tuple[
+                list[tuple[ArgumentName, Typename]],
                 Typename,
             ],
         ],
-        not_annotated: Dict[FuncInfo, Set[ArgumentName]]
+        not_annotated: dict[FuncInfo, set[ArgumentName]]
     ) -> None:
         # Initialize AnnotateFunctionTransformer data
         self.filename = filename
@@ -137,7 +136,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         global_imports = _global_imports(node)
 
-        self.known_names : Set[Typename] = _BUILTIN_TYPES | _TYPING_TYPES | {
+        self.known_names : set[Typename] = _BUILTIN_TYPES | _TYPING_TYPES | {
             Typename(_nodes_to_name(alias.asname.name if alias.asname is not None else alias.name))
             for alias, imp in global_imports
         }
@@ -150,8 +149,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         ))
         #print(f"{self.imported_modules=}")
 
-        self.used_types : Set[Typename] = set()
-        self.name_stack : List[str] = []
+        self.used_types : set[Typename] = set()
+        self.name_stack : list[str] = []
 
         self.has_future_annotations = any(
             imp.module.value == "__future__" and alias.name.value == "annotations"
@@ -277,8 +276,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         self, original_node: cst.Module, updated_node: cst.Module
     ) -> cst.Module:
         # Collect `from __future__` imports and remove them
-        future_imports: List[cst.BaseStatement] = []
-        new_body: List[cst.BaseStatement] = []
+        future_imports: list[cst.BaseStatement] = []
+        new_body: list[cst.BaseStatement] = []
         stmt: cst.BaseStatement
         for stmt in updated_node.body:
             if isinstance(stmt, cst.SimpleStatementLine):
@@ -365,18 +364,18 @@ class UnifiedTransformer(cst.CSTTransformer):
         return updated_node
 
 
-def types_in_annotation(annotation: str) -> Set[Typename]:
+def types_in_annotation(annotation: str) -> set[Typename]:
     """Extracts all type names included in a type annotation."""
 
     class TypeNameExtractor(cst.CSTVisitor):
         def __init__(self) -> None:
-            self.names: Set[Typename] = set()
+            self.names: set[Typename] = set()
 
-        def visit_Name(self, node: cst.Name) -> Optional[bool]:
+        def visit_Name(self, node: cst.Name) -> bool|None:
             self.names.add(Typename(node.value))
             return False 
 
-        def visit_Attribute(self, node: cst.Attribute) -> Optional[bool]:
+        def visit_Attribute(self, node: cst.Attribute) -> bool|None:
             self.names.add(Typename(_nodes_to_dotted_name(node)))
             return False 
 
@@ -393,7 +392,7 @@ def _global_imports(node: cst.Module) -> list[tuple[cst.ImportAlias, cst.Import|
 
     class Extractor(cst.CSTVisitor):
         def __init__(self) -> None:
-            self.names: Set[Typename] = set()
+            self.names: set[Typename] = set()
 
         def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
             return False

@@ -193,10 +193,9 @@ def test_default_arg(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
-    assert "def func(n: Optional[int]=None) -> int" in output
+    assert "def func(n: int|None=None) -> int" in output
 
-    # FIXME Union arguments may change order
-    assert "def func2(n: Union[float, int]=5) -> float" in output
+    assert "def func2(n: float|int=5) -> float" in output
 
 
 def test_function_lookup_for_defaults(tmp_cwd):
@@ -419,7 +418,7 @@ def test_default_inner_function(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
-    assert "def g(y: Optional[int]=None) -> int" in output
+    assert "def g(y: int|None=None) -> int" in output
 
 
 def test_default_class_method(tmp_cwd):

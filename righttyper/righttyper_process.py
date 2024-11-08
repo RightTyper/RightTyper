@@ -2,7 +2,7 @@ import logging
 import os
 import pathlib
 from collections import defaultdict
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any
 
 import libcst as cst
 
@@ -36,7 +36,7 @@ def correct_indentation_issues(file_contents: str) -> str:
         keepends=True
     )  # Preserve line endings
 
-    indent_stack: List[int] = []
+    indent_stack: list[int] = []
     corrected_lines = []
 
     for line_number, line in enumerate(original_lines, start=1):
@@ -89,15 +89,15 @@ def process_file(
     filename: Filename,
     output_files: bool,
     generate_stubs: bool,
-    type_annotations: Dict[
+    type_annotations: dict[
         FuncInfo,
-        Tuple[
-            List[Tuple[ArgumentName, Typename]],
+        tuple[
+            list[tuple[ArgumentName, Typename]],
             Typename,
         ],
     ],
     overwrite: bool,
-    not_annotated: Dict[FuncInfo, Set[ArgumentName]],
+    not_annotated: dict[FuncInfo, set[ArgumentName]],
     ignore_annotations: bool = False,
     srcdir: str = "",
 ) -> None:
@@ -173,21 +173,21 @@ def process_file(
 # Convert the collected data into the expected format for type_annotations
 def collect_data(
     file_name: str,
-    visited_funcs: Set[FuncInfo],
-    visited_funcs_arguments: Dict[FuncInfo, List[ArgInfo]],
-    visited_funcs_retval: Dict[FuncInfo, TypenameSet],
-    namespace: Dict[str, Any] = globals(),
-) -> Dict[
+    visited_funcs: set[FuncInfo],
+    visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]],
+    visited_funcs_retval: dict[FuncInfo, TypenameSet],
+    namespace: dict[str, Any] = globals(),
+) -> dict[
     FuncInfo,
-    Tuple[
-        List[Tuple[ArgumentName, Typename]],
+    tuple[
+        list[tuple[ArgumentName, Typename]],
         Typename,
     ],
 ]:
-    type_annotations: Dict[
+    type_annotations: dict[
         FuncInfo,
-        Tuple[
-            List[Tuple[ArgumentName, Typename]],
+        tuple[
+            list[tuple[ArgumentName, Typename]],
             Typename,
         ],
     ] = {}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, FrozenSet, NewType, Set, Type, TypeVar
+from typing import Any, NewType, TypeVar
 
 T = TypeVar("T")
 
@@ -42,11 +42,11 @@ class TypenameFrequency:
         return False
 
 
-TypenameSet = NewType("TypenameSet", Set[TypenameFrequency])
+TypenameSet = NewType("TypenameSet", set[TypenameFrequency])
 
 
 @dataclass
 class ArgInfo:
     arg_name: ArgumentName
-    value_type: Type[Any]
+    value_type: type
     type_name_set: TypenameSet
