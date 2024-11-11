@@ -3,6 +3,7 @@ import textwrap
 from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation, _namespace_of
 from righttyper.righttyper_types import FuncInfo, Filename, FunctionName, Typename, ArgumentName
 import typing as T
+import re
 
 
 def test_transformer_not_annotated_missing():
@@ -28,7 +29,7 @@ def test_transformer_not_annotated_missing():
     code.visit(t)
 
 
-def get_function(m: cst.Module, name: str) -> T.Optional[str]:
+def get_function(m: cst.Module, name: str) -> str|None:
     class V(cst.CSTVisitor):
         def __init__(self):
             self.found = None
@@ -52,7 +53,7 @@ def get_function(m: cst.Module, name: str) -> T.Optional[str]:
     return cst.Module([v.found]).code.lstrip('\n') if v.found else None
 
 
-def get_if_type_checking(m: cst.Module) -> T.Optional[str]:
+def get_if_type_checking(m: cst.Module) -> str|None:
     class V(cst.CSTVisitor):
         def __init__(self):
             self.found = None
@@ -237,8 +238,7 @@ def test_transform_local_function():
 
 def test_transform_adds_typing_import_for_typing_name():
     code = cst.parse_module(textwrap.dedent("""\
-        def foo(x):
-            return x/2 if x else 0.0
+        def foo(x): ...
     """))
 
     foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
@@ -247,55 +247,23 @@ def test_transform_adds_typing_import_for_typing_name():
             type_annotations = {
                 foo: (
                     [
-                        (ArgumentName('x'), Typename('Optional[int]'))   # Optional comes from typing module
+                        (ArgumentName('x'), Typename('Optional[int]'))   # that's typing.Optional
                     ],
-                    Typename('float')
+                    Typename('list[Never]') # and typing.Never
                 )
             },
             not_annotated = {
-                foo: {ArgumentName('x')},
+                foo: {ArgumentName('x'), ArgumentName('return')},
             }
         )
 
     code = code.visit(t)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: Optional[int]):
-            return x/2 if x else 0.0
+        def foo(x: Optional[int]) -> list[Never]: ...
     """)
 
-    assert "from typing import " in code.code
-
-    assert get_if_type_checking(code) == None
-
-
-def test_transform_adds_typing_import_for_typing_name_return():
-    code = cst.parse_module(textwrap.dedent("""\
-        def foo(x):
-            return x/2 if x else None
-    """))
-
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
-    t = UnifiedTransformer(
-            filename='foo.py',
-            type_annotations = {
-                foo: (
-                    [],
-                    Typename('Optional[float]') # Optional comes from typing module
-                )
-            },
-            not_annotated = {
-                foo: {ArgumentName('return')},
-            }
-        )
-
-    code = code.visit(t)
-    assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x) -> Optional[float]:
-            return x/2 if x else None
-    """)
-
-    # also check only needed names are emitted
-    assert "from typing import TYPE_CHECKING, Optional\n" in code.code
+    assert re.search(r"^ *from typing import .*\bOptional\b", code.code)
+    assert re.search(r"^ *from typing import .*\bNever\b", code.code)
     assert get_if_type_checking(code) == None
 
 
