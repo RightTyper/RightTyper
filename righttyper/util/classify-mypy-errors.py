@@ -22,6 +22,8 @@ CATEGORIES: Dict[str, str] = {
     "assignment": "Assignment: Incompatible types in assignment",
     "index": "Indexing: Indexing operation on an invalid type",
     "name-defined": "Name Error: Name is not defined or used before assignment",
+    "method-assign": "Method Assignment: Cannot assign to a method",
+    "overload-cannot-match": "Overload Cannot Match: function signature will never be matched",
     "operator": "Operator: Unsupported operation for the types involved",
     "return-value": "Return Value: Return type is incompatible with the declared type",
     "union-attr": "Union Attribute: Attribute access on a union type not available in all members",
@@ -108,7 +110,7 @@ def classify_errors(errors: List[Error]) -> Dict[str, List[Error]]:
             continue
         category = CATEGORIES.get(error["code"], "Unknown")
         if category == "Unknown":
-            print(error)
+            print(f"Unknown: {error}")
         classified_errors[category].append(error)
     return classified_errors
 

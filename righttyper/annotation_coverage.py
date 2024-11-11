@@ -2,7 +2,6 @@ import ast
 import io
 import os
 import warnings
-from typing import Dict, List, Tuple, Union
 
 import click
 
@@ -11,14 +10,14 @@ from righttyper.righttyper_utils import TOOL_NAME
 # Suppress SyntaxWarning during AST parsing
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 
-partially_annotated: List[Tuple[str, str, int]] = []
-not_annotated: List[Tuple[str, str, int]] = []
+partially_annotated: list[tuple[str, str, int]] = []
+not_annotated: list[tuple[str, str, int]] = []
 
 
 class FullyQualifiedNameCollector(ast.NodeVisitor):
     def __init__(self) -> None:
-        self.current_class: Union[str, None] = None
-        self.qualified_names: Dict[
+        self.current_class: str|None = None
+        self.qualified_names: dict[
             ast.FunctionDef | ast.AsyncFunctionDef,
             str,
         ] = {}
@@ -37,7 +36,7 @@ class FullyQualifiedNameCollector(ast.NodeVisitor):
 
     def _visit_function(
         self,
-        node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+        node: ast.FunctionDef|ast.AsyncFunctionDef,
     ) -> None:
         if self.current_class:
             qualified_name = f"{self.current_class}.{node.name}"
@@ -49,7 +48,7 @@ class FullyQualifiedNameCollector(ast.NodeVisitor):
 
 def generate_fully_qualified_names_dict(
     tree: ast.AST,
-) -> Dict[ast.FunctionDef | ast.AsyncFunctionDef, str]:
+) -> dict[ast.FunctionDef | ast.AsyncFunctionDef, str]:
     collector = FullyQualifiedNameCollector()
     collector.visit(tree)
     return collector.qualified_names
@@ -57,7 +56,7 @@ def generate_fully_qualified_names_dict(
 
 def parse_python_file(
     file_path: str,
-) -> List[int]:
+) -> list[int]:
     fully_annotated_count = 0
     partially_annotated_count = 0
     not_annotated_count = 0
@@ -125,20 +124,20 @@ def parse_python_file(
 
 
 def analyze_directory(
-    directory: str, cache: Dict[str, List[int]]
-) -> List[int]:
+    directory: str, cache: dict[str, list[int]]
+) -> list[int]:
     if directory in cache:
         return cache[directory]
 
-    directory_summary: List[int] = [
+    directory_summary: list[int] = [
         0,
         0,
         0,
     ]  # [fully annotated, partially annotated, not annotated]
 
     # Check if the directory argument is a single file
-    files: List[str] = []
-    dirs: List[str] = []
+    files: list[str] = []
+    dirs: list[str] = []
     root = ""
     if os.path.isfile(directory):
         files = [os.path.basename(directory)]
@@ -179,13 +178,13 @@ def analyze_directory(
 
 def analyze_all_directories(
     directory: str,
-) -> Dict[str, List[int]]:
-    cache: Dict[str, List[int]] = {}
+) -> dict[str, list[int]]:
+    cache: dict[str, list[int]] = {}
     analyze_directory(directory, cache)
     return cache
 
 
-def print_directory_summary(summary: Dict[str, List[int]]) -> None:
+def print_directory_summary(summary: dict[str, list[int]]) -> None:
     from rich.console import Console
     from rich.table import Table
 
@@ -246,7 +245,7 @@ def print_directory_summary(summary: Dict[str, List[int]]) -> None:
     print(f"Report saved in {TOOL_NAME}-coverage.html")
 
 
-def print_file_summary(summary: Dict[str, List[int]]) -> None:
+def print_file_summary(summary: dict[str, list[int]]) -> None:
     from rich.console import Console
     from rich.table import Table
 

@@ -1,7 +1,7 @@
 import signal
 import sys
 from types import CodeType, FrameType
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable
 
 from righttyper.righttyper_utils import TOOL_ID, TOOL_NAME
 
@@ -29,7 +29,7 @@ def register_monitoring_callbacks(
 
     sys.monitoring.set_events(TOOL_ID, event_set)
 
-    fns: Dict[Any, Callable[..., Any]] = {
+    fns: dict[Any, Callable[..., Any]] = {
         sys.monitoring.events.PY_START: (
             lambda x, y: enter_function(ignore_annotations, x)
         ),
@@ -50,20 +50,18 @@ def reset_monitoring() -> None:
     """Clear all monitoring of events."""
     for event in _EVENTS:
         sys.monitoring.register_callback(TOOL_ID, event, None)
-    for id in range(3, 5):
-        try:
-            sys.monitoring.set_events(
-                id,
-                sys.monitoring.events.NO_EVENTS,
-            )
-        except ValueError:
-            pass
+
+    try:
+        sys.monitoring.set_events(TOOL_ID, sys.monitoring.events.NO_EVENTS)
+    except ValueError:
+        pass
+
     signal.signal(signal.SIGALRM, signal.SIG_IGN)
     signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 def setup_timer(
-    func: Callable[[int, Optional[FrameType]], None],
+    func: Callable[[int, FrameType|None], None],
 ) -> None:
     signal.signal(signal.SIGALRM, func)
     signal.setitimer(
