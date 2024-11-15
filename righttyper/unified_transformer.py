@@ -15,19 +15,19 @@ from righttyper.righttyper_types import (
 )
 
 
-_BUILTIN_TYPES : set[str] = {
+_BUILTIN_TYPES : frozenset[str] = frozenset({
     t for t in (
         "None",
-        *(name for name, value in builtins.__dict__.items()if isinstance(value, type))
+        *(name for name, value in builtins.__dict__.items() if isinstance(value, type))
     )
-}
+})
 
 # FIXME this prevents us from missing out on well-known "typing." types,
 # but is risky... change to receiving fully qualified names and simplifying
 # them in context.
-_TYPING_TYPES : set[str] = {
+_TYPING_TYPES : frozenset[str] = frozenset({
     t for t in typing.__all__
-}
+})
 
 # Regex for a type hint comment
 _TYPE_HINT_COMMENT = re.compile(
@@ -86,10 +86,6 @@ def _get_str_attr(obj: object, path: str) -> str|None:
             break
 
     return obj if isinstance(obj, str) else None
-
-def _namespace_of(t: str) -> str:
-    """Returns the dotted name prefix of a name, as in "foo.bar" for "foo.bar.baz"."""
-    return '.'.join(t.split('.')[:-1])
 
 def _annotation_as_string(annotation: cst.BaseExpression) -> str:
     return cst.Module([cst.SimpleStatementLine([cst.Expr(annotation)])]).code.strip('\n')
@@ -195,7 +191,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         # Initialize mutable members here, just in case transformer gets reused
 
         # global names
-        self.known_names: set[str] = _BUILTIN_TYPES
+        self.known_names: set[str] = set(_BUILTIN_TYPES)
 
         # global aliases from 'from .. import ..' and 'import .. as ..'
         self.aliases: dict[str, str] = {
@@ -225,8 +221,15 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         return True
 
+
+    def visit_If(self, node: cst.If) -> bool:
+        if cstm.matches(node, cstm.If(test=cstm.Name("TYPE_CHECKING"))):
+            return False    # to ignore imports within TYPE_CHECKING
+
+        return True
+
+
     def visit_Import(self, node: cst.Import) -> bool:
-        # FIXME ignore imports within "if TYPE_CHECKING"
         if not self.name_stack: # for now, we only handle global imports
             # node.names could also be cst.ImportStar
             if isinstance(node.names, collections.abc.Sequence):
@@ -239,7 +242,6 @@ class UnifiedTransformer(cst.CSTTransformer):
         return False
 
     def visit_ImportFrom(self, node: cst.ImportFrom) -> bool:
-        # FIXME ignore imports within "if TYPE_CHECKING"
         if not self.name_stack: # for now, we only handle global imports
             # node.names could also be cst.ImportStar
             if isinstance(node.names, collections.abc.Sequence):
@@ -386,22 +388,19 @@ class UnifiedTransformer(cst.CSTTransformer):
         future_imports: list[cst.BaseStatement] = []
         new_body: list[cst.BaseStatement] = []
         stmt: cst.BaseStatement
+
+        from_future = cstm.SimpleStatementLine(
+            body=[cstm.ImportFrom(
+                module=cstm.Name("__future__")
+            )]
+        )
+
         for stmt in updated_node.body:
-            if isinstance(stmt, cst.SimpleStatementLine):
-                if any(
-                    isinstance(imp, cst.ImportFrom)
-                    and imp.module
-                    and isinstance(imp.module, cst.Name)
-                    and imp.module.value == "__future__"
-                    for imp in stmt.body
-                ):
-                    # Collect future imports to lift later
-                    future_imports.append(stmt)
-                else:
-                    new_body.append(stmt)
+            if cstm.matches(stmt, from_future):
+                # Collect future imports to lift later
+                future_imports.append(stmt)
             else:
                 new_body.append(stmt)
-            updated_node = updated_node.with_changes(body=new_body)
 
         missing_modules = {
             mod
@@ -414,65 +413,93 @@ class UnifiedTransformer(cst.CSTTransformer):
             if mod != ''
         }
 
+        def stmt_index(body: list[cst.BaseStatement], pattern: cstm.BaseMatcherNode) -> int|None:
+            for i, stmt in enumerate(body):
+                if cstm.matches(stmt, pattern):
+                    return i
+
+            return None
+
+        def find_beginning(body: list[cst.BaseStatement]) -> int:
+            for i, stmt in enumerate(body):
+                if not cstm.matches(stmt,
+                    cstm.OneOf(
+                        cstm.EmptyLine(),
+                        cstm.SimpleStatementLine(
+                            body=[cstm.Expr(cstm.SimpleString())]
+                        )
+                    )
+                ):
+                    break
+
+            return i
+
         # Add additional type checking imports if needed
         if missing_modules:
-            # TODO update any existing "if TYPE_CHECKING"
-            type_checking_imports = cst.If(
+            existing = stmt_index(new_body, cstm.If(
+                    test=cstm.Name('TYPE_CHECKING'),
+                    body=cstm.IndentedBlock()
+                )
+            )
+
+            existing_body = [*(typing.cast(cst.If, new_body[existing]).body.body if existing is not None else ())]
+
+            # TODO delete modules already imported
+
+            new_stmt: cst.BaseStatement = cst.If(
                 test=cst.Name("TYPE_CHECKING"),
                 body=cst.IndentedBlock(
-                    body=[
+                    body=existing_body + [
                         cst.SimpleStatementLine([
                             cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
                         ])
                         for m in sorted(missing_modules)
                     ]
-                ),
+                )
             )
+            
+            if existing is not None:
+                new_body[existing] = new_stmt
+            else:
+                new_body.insert(find_beginning(new_body), new_stmt)
 
-            new_body = [type_checking_imports] + list(new_body)
-            updated_node = updated_node.with_changes(body=new_body)
+            if 'TYPE_CHECKING' not in self.known_names:
+                self.unknown_types.add('TYPE_CHECKING')
 
         # Emit "from typing import ..."
-        if (typing_types := (self.unknown_types & _TYPING_TYPES)) or missing_modules:
-            # TODO update existing import statement, if any
-            typing_import = cst.SimpleStatementLine(
+        if (typing_types := (self.unknown_types & _TYPING_TYPES)):
+            existing = stmt_index(new_body, cstm.SimpleStatementLine(
+                    body=[cstm.ImportFrom(module=cstm.Name("typing"))]
+                )
+            )
+
+            if existing is not None:
+                for alias in cstm.findall(new_body[existing], cstm.ImportAlias()):
+                    typing_types.add(_nodes_to_dotted_name(typing.cast(cst.ImportAlias, alias).name))
+
+            new_stmt = cst.SimpleStatementLine(
                 body=[
                     cst.ImportFrom(
                         module=cst.Name(value="typing"),
-                        names=[
-                            cst.ImportAlias(name=cst.Name(value="TYPE_CHECKING"))
-                        ] + [
+                        names = [
                             cst.ImportAlias(name=_dotted_name_to_nodes(t))
-                            for t in typing_types
+                            # sort 'TYPE_CHECKING' first just because it seems neater that way
+                            for t in sorted(typing_types, key=lambda x: (x != 'TYPE_CHECKING', x))
                         ]
                     )
                 ]
             )
-            new_body = [typing_import] + list(updated_node.body)
-            updated_node = updated_node.with_changes(body=new_body)
 
-        # Determine where to insert the `from __future__` imports
-        insertion_index = 0
-        for i, stmt in enumerate(new_body):
-            if (
-                isinstance(stmt, cst.EmptyLine)
-                or isinstance(stmt, cst.SimpleStatementLine)
-                and isinstance(stmt.body[0], cst.Expr)
-                and isinstance(stmt.body[0].value, cst.SimpleString)
-            ):
-                insertion_index += 1
+            if existing is not None:
+                new_body[existing] = new_stmt
             else:
-                break
+                new_body.insert(find_beginning(new_body), new_stmt)
 
-        # Insert future imports at the top (after comments and whitespace)
-        new_body = (
-            new_body[:insertion_index]
-            + future_imports
-            + new_body[insertion_index:]
-        )
 
-        updated_node = updated_node.with_changes(body=new_body)
-        return updated_node
+        b = find_beginning(new_body)
+        new_body[b:b] = future_imports
+
+        return updated_node.with_changes(body=new_body)
 
 
 def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:

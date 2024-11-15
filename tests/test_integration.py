@@ -262,7 +262,7 @@ def test_class_method(tmp_cwd):
     output = Path("t.py").read_text()
     
     assert "def f(self: Self, n: int) -> int" in output
-    assert "import Self" not in output
+    assert "\nimport Self" not in output
 
     assert "def h(self: Self, x: int) -> float" in output
 
@@ -293,7 +293,7 @@ def test_class_method_imported(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("m.py").read_text()
     
-    assert "import Self" not in output
+    assert "\nimport Self" not in output
 
     assert "def f(self: Self, n: int) -> int" in output
     assert "import C" not in output
@@ -535,7 +535,7 @@ def test_generate_stubs(tmp_cwd):
     output = Path("m.pyi").read_text()
     # FIXME this assertion is brittle
     assert output == textwrap.dedent("""\
-        from typing import TYPE_CHECKING, Self
+        from typing import Self
         import sys
         from typing import Any
         CONST: int

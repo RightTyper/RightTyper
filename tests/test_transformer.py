@@ -1,8 +1,9 @@
 import libcst as cst
+import libcst.matchers as cstm
 import textwrap
-from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation, _namespace_of
+from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation
 from righttyper.righttyper_types import FuncInfo, Filename, FunctionName, Typename, ArgumentName
-import typing as T
+import typing
 import pytest
 import re
 
@@ -65,19 +66,8 @@ def get_function(m: cst.Module, name: str) -> str|None:
 
 
 def get_if_type_checking(m: cst.Module) -> str|None:
-    class V(cst.CSTVisitor):
-        def __init__(self):
-            self.found = None
-
-        def visit_If(self, node: cst.If) -> bool:
-            if isinstance(node.test, cst.Name) and node.test.value == 'TYPE_CHECKING':
-                self.found = node
-                return False # stop here
-            return True
-
-    v = V()
-    m.visit(v)
-    return cst.Module([v.found]).code.lstrip('\n') if v.found else None
+    stmts = typing.cast(list[cst.If], list(cstm.findall(m, cstm.If(test=cstm.Name("TYPE_CHECKING")))))
+    return cst.Module(stmts).code.lstrip('\n') if stmts else None
 
 
 def test_transform_function():
@@ -371,6 +361,9 @@ def test_transform_unknown_type_with_import_annotations():
             import x
             import x.y
     """)
+
+    code_str = str(code.code).strip()
+    assert code_str.startswith("from __future__ import annotations")
 
 
 def test_transform_deletes_type_hint_comments_in_header():
@@ -753,6 +746,125 @@ def test_imports_subdomain_if_needed():
     """)
 
 
+def test_existing_typing_imports():
+    code = cst.parse_module(textwrap.dedent("""\
+        from typing import TYPE_CHECKING
+        if TYPE_CHECKING:
+            import m
+            import ast
+
+        def foo(x): ...
+
+        def bar(x: "ast.For") -> "m.T": ...
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('ast.If')),
+                    ],
+                    Typename('typing.Any')
+                ),
+            },
+            not_annotated = {
+                foo: {
+                    ArgumentName('x'), ArgumentName('return')
+                },
+            },
+            module_name = 'foo',
+            module_names = [
+                'foo',
+                'ast',
+                'm',
+                'typing',
+            ]
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: "ast.If") -> Any: ...
+    """)
+
+    assert get_if_type_checking(code) == textwrap.dedent("""\
+        if TYPE_CHECKING:
+            import m
+            import ast
+            import ast
+    """)
+
+    code_str = str(code.code)
+    assert code_str.startswith(textwrap.dedent("""\
+        from typing import TYPE_CHECKING, Any
+        if TYPE_CHECKING:
+            import m
+    """))
+
+
+def test_inserts_imports_after_docstring_and_space():
+    code = cst.parse_module(textwrap.dedent("""\
+        '''blah blah blah
+        blah
+        '''
+
+
+        from __future__ import annotations
+
+        def foo(x): ...
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('ast.If')),
+                    ],
+                    Typename('typing.Any')
+                ),
+            },
+            not_annotated = {
+                foo: {
+                    ArgumentName('x'), ArgumentName('return')
+                },
+            },
+            module_name = 'foo',
+            module_names = [
+                'foo',
+                'ast',
+                'typing',
+            ]
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: ast.If) -> Any: ...
+    """)
+
+    print(code.code)
+
+    assert get_if_type_checking(code) == textwrap.dedent("""\
+        if TYPE_CHECKING:
+            import ast
+    """)
+
+    code_str = str(code.code)
+    assert code_str.startswith(textwrap.dedent("""\
+        '''blah blah blah
+        blah
+        '''
+
+
+        from __future__ import annotations
+        from typing import TYPE_CHECKING, Any
+        if TYPE_CHECKING:
+            import ast
+    """))
+
+
 def test_relative_import():
     code = cst.parse_module(textwrap.dedent("""\
         from .. import b
@@ -1078,9 +1190,3 @@ def test_types_in_annotation():
     assert {'Tuple', 'int', 'float'} == get_types('Tuple[int, float]')
     assert {'Dict', 'foo.bar', 'bar.baz'} == get_types('Dict[foo.bar, bar.baz]')
     assert {'Union', 'int', 'float', 'Tuple', 'a.b.c'} == get_types('Union[int, float, Tuple[int, a.b.c]]')
-
-
-def test_namespace_of():
-    assert '' == _namespace_of('foo')
-    assert 'foo' == _namespace_of('foo.bar')
-    assert 'foo.bar' == _namespace_of('foo.bar.baz')
