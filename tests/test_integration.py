@@ -102,7 +102,7 @@ def test_numpy_type_name(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "import bfloat16" not in output
-    assert "def f(t: \"numpy.dtype[ml_dtypes.bfloat16]\") -> None" in output
+    assert "def f(t: np.dtype[ml_dtypes.bfloat16]) -> None" in output
 
 
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
@@ -126,8 +126,8 @@ def test_numpy_ndarray_dtype_name(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert "import bfloat16" not in output
-    assert "def f(p: \"np.ndarray[Any, numpy.dtype[ml_dtypes.bfloat16]]\") -> str" in output
+    assert "import bfloat16\n" not in output
+    assert "def f(p: np.ndarray[Any, np.dtype[ml_dtypes.bfloat16]]) -> str" in output
 
 
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
@@ -153,9 +153,7 @@ def test_annotation_with_numpy_dtype_name(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert "def g() -> \"Callable[[], numpy.ndarray[typing.Any, numpy.dtype[ml_dtypes.bfloat16]]]\":" in output
-    assert "import numpy" in output
-    assert "import ml_dtypes" in output
+    assert "def g() -> Callable[[], np.ndarray[Any, np.dtype[bf16]]]:" in output
 
 
 def test_call_with_none_default(tmp_cwd):
@@ -550,7 +548,6 @@ def test_generate_stubs(tmp_cwd):
         """)
 
 
-@pytest.mark.xfail(reason="Doesn't work yet")
 def test_type_from_main(tmp_cwd):
     Path("m.py").write_text(textwrap.dedent("""\
         def f(x):
@@ -572,7 +569,7 @@ def test_type_from_main(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("m.py").read_text()
-    assert "def foo(x: t.C) -> str:" in output
+    assert "def f(x: \"t.C\") -> str:" in output
 
     subprocess.run([sys.executable, '-m', 'mypy', 'm.py', 't.py'], check=True)
 
@@ -695,8 +692,7 @@ def test_function_type_in_annotation(tmp_cwd):
 
     output = Path("t.py").read_text()
     assert 'def bar(g: FunctionType, x: int) -> float:' in output
-    # FIXME the quotes around the type are because UnifiedTransformer doesn't realize it's already known
-    assert 'def baz(f: "Callable[[types.FunctionType, Any], Any]", g: Callable[[int], float], x: int) -> float:' in output
+    assert 'def baz(f: Callable[[FunctionType, Any], Any], g: Callable[[int], float], x: int) -> float:' in output
 
 
 @pytest.mark.xfail(reason="our function types are all annotation-based so far")

@@ -45,27 +45,27 @@ def test_get_full_type():
 
     assert "dict[str, str]" == get_full_type({'a': 'b'})
 
-    assert "KeysView[str]" == get_full_type({'a':0, 'b':1}.keys())
-    assert "ValuesView[int]" == get_full_type({'a':0, 'b':1}.values())
-    assert "ItemsView[str, int]" == get_full_type({'a':0, 'b':1}.items())
+    assert "typing.KeysView[str]" == get_full_type({'a':0, 'b':1}.keys())
+    assert "typing.ValuesView[int]" == get_full_type({'a':0, 'b':1}.values())
+    assert "typing.ItemsView[str, int]" == get_full_type({'a':0, 'b':1}.items())
 
-    assert "KeysView[Never]" == get_full_type(dict().keys())
-    assert "ValuesView[Never]" == get_full_type(dict().values())
-    assert "ItemsView[Never, Never]" == get_full_type(dict().items())
+    assert "typing.KeysView[typing.Never]" == get_full_type(dict().keys())
+    assert "typing.ValuesView[typing.Never]" == get_full_type(dict().values())
+    assert "typing.ItemsView[typing.Never, typing.Never]" == get_full_type(dict().items())
 
     assert "set[str]" == get_full_type({'a', 'b'})
-    assert "set[Never]" == get_full_type(set())
+    assert "set[typing.Never]" == get_full_type(set())
 
     o : Any = range(10)
     assert "range" == get_full_type(o)
     assert 0 == next(iter(o)), "changed state"
 
     o = iter(range(10))
-    assert "Iterator[int]" == get_full_type(o)
+    assert "typing.Iterator[int]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = iter([0,1])
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "typing.Iterator[typing.Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = enumerate([0,1])
@@ -77,7 +77,7 @@ def test_get_full_type():
     assert 0 == next(o), "changed state"
 
     o = reversed([0,1])
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "typing.Iterator[typing.Any]" == get_full_type(o)
     assert 1 == next(o), "changed state"
 
     o = zip([0,1], ['a','b'])
@@ -89,41 +89,41 @@ def test_get_full_type():
     assert 0 == next(o), "changed state"
 
     o = iter({0, 1})
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "typing.Iterator[typing.Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = iter({0:0, 1:1})
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "typing.Iterator[typing.Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = iter({0:0, 1:1}.items())
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "typing.Iterator[typing.Any]" == get_full_type(o)
     assert (0, 0) == next(o), "changed state"
 
     o = iter({0:0, 1:1}.values())
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "typing.Iterator[typing.Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = iter({0:0, 1:1}.keys())
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "typing.Iterator[typing.Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = iter({0:0, 1:1}.items())
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "typing.Iterator[typing.Any]" == get_full_type(o)
     assert (0, 0) == next(o), "changed state"
 
     o = iter({0:0, 1:1}.values())
-    assert "Iterator[Any]" == get_full_type(o)
+    assert "typing.Iterator[typing.Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     o = (i for i in range(10))
-    assert "Generator[Any, Any, Any]" == get_full_type(o)
+    assert "typing.Generator[typing.Any, typing.Any, typing.Any]" == get_full_type(o)
     assert 0 == next(o), "changed state"
 
     Point = namedtuple('Point', ['x', 'y'])
-    assert "Point" == get_full_type(Point(1,1))
+    assert f"{__name__}.Point" == get_full_type(Point(1,1))
 
-    assert "IterableClass" == get_full_type(IterableClass())
+    assert f"{__name__}.IterableClass" == get_full_type(IterableClass())
     assert "super" == get_full_type(super(IterableClass))
 
     assert "slice" == get_full_type(slice(0, 5, 1))
@@ -134,8 +134,8 @@ def test_get_full_type():
         for i in range(start):
             yield i
 
-    assert "AsyncGenerator[Any, Any]" == get_full_type(async_range(10))
-    assert "AsyncGenerator[Any, Any]" == get_full_type(aiter(async_range(10)))
+    assert "typing.AsyncGenerator[typing.Any, typing.Any]" == get_full_type(async_range(10))
+    assert "typing.AsyncGenerator[typing.Any, typing.Any]" == get_full_type(aiter(async_range(10)))
 
 
 @pytest.mark.filterwarnings("ignore:coroutine .* never awaited")
@@ -144,14 +144,14 @@ def test_get_full_type_coro():
         import asyncio
         await asyncio.sleep(1)
 
-    assert "Coroutine[Any, Any, Any]" == get_full_type(coro())
+    assert "typing.Coroutine[typing.Any, typing.Any, typing.Any]" == get_full_type(coro())
 
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
 def test_get_full_type_dtype():
     import numpy as np
 
-    assert "numpy.ndarray[Any, numpy.dtypes.Float64DType]" == get_full_type(np.array([], np.float64))
+    assert "numpy.ndarray[typing.Any, numpy.dtypes.Float64DType]" == get_full_type(np.array([], np.float64))
 
 
 class NamedTupleClass:
@@ -178,7 +178,7 @@ def test_adjusted_full_type():
     class Bar:
         pass
 
-    assert "Self" == get_adjusted_full_type(Foo(), Foo)
-    assert f"Foo" == get_adjusted_full_type(Foo())
+    assert "typing.Self" == get_adjusted_full_type(Foo(), Foo)
+    assert f"{__name__}.Foo" == get_adjusted_full_type(Foo())
 
-    assert f"test_typing.test_adjusted_full_type.<locals>.Bar" == get_adjusted_full_type(Bar())
+    assert f"{__name__}.test_adjusted_full_type.<locals>.Bar" == get_adjusted_full_type(Bar())
