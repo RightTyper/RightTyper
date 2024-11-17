@@ -114,7 +114,7 @@ def type_from_annotations(func: FunctionType | MethodType) -> str:
     return_type_str = format_arg(return_type)
 
     # Construct the Callable type string
-    return f"Callable[[{arg_types_str}], {return_type_str}]"
+    return f"typing.Callable[[{arg_types_str}], {return_type_str}]"
 
 
 def find_caller_frame() -> FrameType|None:
