@@ -81,6 +81,25 @@ def test_type_from_generic_alias_annotation(tmp_cwd):
     assert "def g() -> Callable[[], list[int]]:" in output
 
 
+def test_type_from_annotation_none_return(tmp_cwd):
+    t = textwrap.dedent("""\
+        def f() -> None: ...
+
+        def g():
+            return f
+
+        g()
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def g() -> Callable[[], None]:" in output
+
+
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')

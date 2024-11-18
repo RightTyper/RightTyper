@@ -107,6 +107,9 @@ def type_from_annotations(func: FunctionType | MethodType) -> str:
         if isinstance(arg, GenericAlias):
             return str(arg)
 
+        if arg is None:
+            return "None"
+
         return get_type_name(arg)
 
     # Format the result
