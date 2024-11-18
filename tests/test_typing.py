@@ -160,7 +160,7 @@ class NamedTupleClass:
 @pytest.mark.xfail(reason='Not sure how to fix')
 def test_get_full_type_namedtuple_in_class():
     # namedtuple's __qualname__ also doesn't contain the enclosing class name...
-    assert "NamedTupleClass.P" == get_full_type(NamedTupleClass.P())
+    assert f"{__name__}.NamedTupleClass.P" == get_full_type(NamedTupleClass.P())
 
 
 class MyDict(dict):
