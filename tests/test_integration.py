@@ -714,3 +714,22 @@ def test_discovered_function_type(tmp_cwd):
     output = Path("t.py").read_text()
     assert "def foo(x: int) -> float:" in output
     assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
+
+
+def test_module_list_not_lost_with_multiprocessing(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(t):
+            pass
+
+        from xml.dom.minidom import Element as E
+        foo(E('foo'))
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(t: "xml.dom.minidom.Element") -> None:' in output
+
+    assert 'import xml.dom.minidom\n' in output

@@ -37,6 +37,7 @@ from righttyper.righttyper_runtime import (
     get_class_source_file,
     should_skip_function,
     update_argtypes,
+    get_main_module_fqn
 )
 from righttyper.righttyper_shapes import (
     print_annotation,
@@ -702,6 +703,8 @@ def process_all_files(
     use_multiprocessing: bool
 ) -> None:
 
+    module_names=[*sys.modules.keys(), get_main_module_fqn()]
+
     processes: list[multiprocessing.Process] = []
     all_files = list(set(t.file_name for t in visited_funcs))
     prefix = os.path.commonprefix(list(all_files))
@@ -751,6 +754,7 @@ def process_all_files(
                 type_annotations,
                 overwrite,
                 not_annotated,
+                module_names,
                 ignore_annotations,
                 srcdir,
             )

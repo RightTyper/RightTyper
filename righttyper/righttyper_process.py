@@ -3,7 +3,6 @@ import os
 import pathlib
 from collections import defaultdict
 from typing import Any
-import sys
 
 import libcst as cst
 
@@ -27,7 +26,7 @@ from righttyper.righttyper_utils import (
     union_typeset_str,
 )
 from righttyper.unified_transformer import UnifiedTransformer
-from righttyper.righttyper_runtime import source_to_module_fqn, get_main_module_fqn
+from righttyper.righttyper_runtime import source_to_module_fqn
 
 logger = logging.getLogger("righttyper")
 
@@ -100,6 +99,7 @@ def process_file(
     ],
     overwrite: bool,
     not_annotated: dict[FuncInfo, set[ArgumentName]],
+    module_names: list[str],
     ignore_annotations: bool = False,
     srcdir: str = "",
 ) -> None:
@@ -145,7 +145,7 @@ def process_file(
     transformer = UnifiedTransformer(
         filename, type_annotations, not_annotated,
         module_name=source_to_module_fqn(pathlib.Path(filename)),
-        module_names=[*sys.modules.keys(), get_main_module_fqn()]
+        module_names=module_names
     )
 
     try:
