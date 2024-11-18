@@ -10,6 +10,7 @@ from righttyper.righttyper_types import (
     ArgumentName,
     Filename,
     FuncInfo,
+    FuncAnnotation,
     FunctionName,
     Typename,
 )
@@ -95,13 +96,7 @@ class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
         self,
         filename: str,
-        type_annotations: dict[
-            FuncInfo,
-            tuple[
-                list[tuple[ArgumentName, Typename]],
-                Typename,
-            ],
-        ],
+        type_annotations: dict[FuncInfo, FuncAnnotation],
         not_annotated: dict[FuncInfo, set[ArgumentName]],
         module_name: str|None,
         module_names: list[str]
@@ -308,12 +303,10 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.name_stack.pop()
         key = FuncInfo(Filename(self.filename), FunctionName(name))
 
-        if key in self.type_annotations:
-            args, return_type = self.type_annotations[key]
-
+        if ann := self.type_annotations.get(key):
             new_parameters = []
             for parameter in updated_node.params.params:
-                for arg, annotation_ in args:
+                for arg, annotation_ in ann.args:
                     if parameter.name.value == arg:
                         if arg not in self.not_annotated.get(key, set()) or not self._is_valid(annotation_):
                             continue
@@ -361,8 +354,8 @@ class UnifiedTransformer(cst.CSTTransformer):
                 )
             )
 
-            if "return" in self.not_annotated.get(key, set()) and self._is_valid(return_type):
-                annotation_expr = cst.parse_expression(return_type)
+            if "return" in self.not_annotated.get(key, set()) and self._is_valid(ann.retval):
+                annotation_expr = cst.parse_expression(ann.retval)
                 annotation_expr = self._rename_types(annotation_expr)
                 unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
                 self.unknown_types |= unknown_types
@@ -473,7 +466,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                         cst.SimpleStatementLine([
                             cst.Import([cst.ImportAlias(
                                 name=_dotted_name_to_nodes(m),
-                                asname=cst.AsName(_dotted_name_to_nodes(a))
+                                asname=cst.AsName(cst.Name(a))
                             )])
                         ])
                         for m, a in sorted(self.if_checking_aliases.items())

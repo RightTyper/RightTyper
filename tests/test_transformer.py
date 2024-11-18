@@ -2,7 +2,7 @@ import libcst as cst
 import libcst.matchers as cstm
 import textwrap
 from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation
-from righttyper.righttyper_types import FuncInfo, Filename, FunctionName, Typename, ArgumentName
+from righttyper.righttyper_types import FuncInfo, Filename, FunctionName, Typename, ArgumentName, FuncAnnotation
 import typing
 import pytest
 import re
@@ -18,7 +18,7 @@ def test_transformer_not_annotated_missing():
             filename='foo.py',
             type_annotations = {
                 FuncInfo(Filename('foo.py'), FunctionName('foo')):
-                (
+                FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int'))
                     ],
@@ -76,7 +76,7 @@ def get_if_type_checking(m: cst.Module) -> str|None:
     return cst.Module(stmts).code.lstrip('\n') if stmts else None
 
 
-def _split(s: str) -> [str, str]:
+def _split(s: str) -> tuple[str, str]:
     parts = s.split('.')
     return parts[0], '.'.join(parts[1:])
 
@@ -98,13 +98,13 @@ def test_transform_function():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int'))
                     ],
                     Typename('float')
                 ),
-                baz: (
+                baz: FuncAnnotation(
                     [
                         (ArgumentName('z'), Typename('int'))
                     ],
@@ -159,19 +159,19 @@ def test_transform_method():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int'))
                     ],
                     Typename('float')
                 ),
-                bar: (
+                bar: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int'))
                     ],
                     Typename('float')
                 ),
-                baz: (
+                baz: FuncAnnotation(
                     [
                         (ArgumentName('z'), Typename('int'))
                     ],
@@ -221,14 +221,14 @@ def test_transform_local_function():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('float'))
                     ],
                     Typename('float')
                 ),
-                bar: (
+                bar: FuncAnnotation(
                     [
                         (ArgumentName('z'), Typename('int'))
                     ],
@@ -263,7 +263,7 @@ def test_transform_adds_typing_import_for_typing_names():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('typing.Optional[int]'))
                     ],
@@ -298,7 +298,7 @@ def test_transform_unknown_type_as_string():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('x.y.WholeNumber|None'))
@@ -342,7 +342,7 @@ def test_transform_unknown_type_with_import_annotations():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('x.y.WholeNumber|None'))
@@ -390,7 +390,7 @@ def test_transform_deletes_type_hint_comments_in_header():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('int'))
@@ -441,7 +441,7 @@ def test_transform_deletes_type_hint_comments_in_parameters():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('int'))
@@ -499,7 +499,7 @@ def test_transform_deletes_type_hint_comments_for_retval():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('int'))
@@ -558,20 +558,20 @@ def test_transform_locally_defined_types():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('int'))
                     ],
                     Typename('foo.F')
                 ),
-                f_foo: (
+                f_foo: FuncAnnotation(
                     [
                         (ArgumentName('v'), Typename('float')),
                     ],
                     Typename('foo.F')
                 ),
-                bar: (
+                bar: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('int'))
@@ -626,7 +626,7 @@ def test_uses_imported_aliases():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('x.y.z')),
                         (ArgumentName('y'), Typename('y.T')),
@@ -679,7 +679,7 @@ def test_uses_imported_domains():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('x.y.z')),
                     ],
@@ -723,7 +723,7 @@ def test_imports_subdomain_if_needed():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('x.y.z')),
                     ],
@@ -773,7 +773,7 @@ def test_existing_typing_imports():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('ast.If')),
                     ],
@@ -830,7 +830,7 @@ def test_inserts_imports_after_docstring_and_space():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('ast.If')),
                     ],
@@ -889,7 +889,7 @@ def test_relative_import():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('pkg.b.T')),
                         (ArgumentName('y'), Typename('pkg.a.c.T')),
@@ -944,25 +944,25 @@ def test_uses_local_imports():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foobar: (
+                foobar: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('m.n.T')),
                     ],
                     Typename('None')
                 ),
-                Cfoo: (
+                Cfoo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('n.o.T')),
                     ],
                     Typename('None')
                 ),
-                Dfoo: (
+                Dfoo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('n.o.T')),
                     ],
                     Typename('None')
                 ),
-                f : (
+                f : FuncAnnotation(
                     [
                         (ArgumentName('a'), Typename('m.n.T')),
                         (ArgumentName('b'), Typename('n.o.T')),
@@ -1031,14 +1031,14 @@ def test_nonglobal_imported_modules_are_ignored():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('a.T')),
                         (ArgumentName('y'), Typename('a.b.T')),
                     ],
                     Typename('a.c.T')
                 ),
-                bar: (
+                bar: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('m.T')),
                     ],
@@ -1102,13 +1102,13 @@ def test_nonglobal_assignments_are_ignored():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('a.T')),
                     ],
                     Typename('')
                 ),
-                bar: (
+                bar: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('m.T')),
                     ],
@@ -1161,7 +1161,7 @@ def test_if_type_checking_insertion():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('c.T')),
                     ],
@@ -1203,7 +1203,7 @@ def test_import_conflicts_with_import():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('a.T')),
                         (ArgumentName('y'), Typename('c.d.e.T')),
@@ -1261,7 +1261,7 @@ def test_import_conflicts_with_definitions():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('a.T')),
                         (ArgumentName('y'), Typename('c.d.e.T')),
@@ -1320,7 +1320,7 @@ def test_import_conflicts_with_assignments():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('a.T')),
                         (ArgumentName('y'), Typename('c.d.e.T')),
@@ -1377,7 +1377,7 @@ def test_import_conflicts_alias_for_module():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                foo: (
+                foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('a')), # module "a" meant here, not something in it
                     ],

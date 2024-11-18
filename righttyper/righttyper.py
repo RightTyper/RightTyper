@@ -56,6 +56,7 @@ from righttyper.righttyper_types import (
     ArgumentType,
     Filename,
     FuncInfo,
+    FuncAnnotation,
     FunctionName,
     Typename,
     TypenameFrequency,
