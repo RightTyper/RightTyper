@@ -19,8 +19,6 @@ from righttyper.righttyper_types import (
     TypenameSet,
 )
 from righttyper.righttyper_utils import (
-    adjusted_file_name,
-    adjusted_type_name,
     debug_print,
     make_type_signature,
     skip_this_file,
@@ -105,25 +103,11 @@ def process_file(
     except FileNotFoundError:
         return
 
-    # Make a backup
     if output_files and overwrite:
         with open(filename + ".bak", "w") as file:
             file.write(source)
 
-    # First, update all type annotations so they are relative to the
-    # source directory (--srcdir)
-    for fi in type_annotations:
-        adj_fname = adjusted_file_name(fi.file_name)
-        ann = type_annotations[fi]
-        type_annotations[fi] = FuncAnnotation(
-            [
-                (argname, adjusted_type_name(adj_fname, argtype))
-                for argname, argtype in ann.args
-            ],
-            adjusted_type_name(adj_fname, ann.retval)
-        )
 
-    # Now, rewrite all function definitions with annotations.
     try:
         cst_tree = cst.parse_module(source)
     except cst._exceptions.ParserSyntaxError:  # type: ignore
@@ -155,6 +139,7 @@ def process_file(
             "w",
         ) as file:
             file.write(transformed.code)
+
 
     if generate_stubs:
         stub_file = pathlib.Path(filename).with_suffix(".pyi")
