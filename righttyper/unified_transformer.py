@@ -153,12 +153,19 @@ class UnifiedTransformer(cst.CSTTransformer):
                     return _dotted_name_to_nodes(a)
 
                 module, rest = self.t._module_for(name)
+                if module:
+                    if module == self.t.module_name:
+                        return _dotted_name_to_nodes(rest)
 
-                if module == self.t.module_name:
-                    return _dotted_name_to_nodes(rest)
+                    if a := self.t.aliases.get(module):
+                        return _dotted_name_to_nodes(f"{a}.{rest}")
 
-                if a := self.t.aliases.get(module):
-                    return _dotted_name_to_nodes(f"{a}.{rest}")
+                    # does the package name conflict with existing imports?
+                    # FIXME also consider variable assignments
+                    if name.split('.')[0] in self.t.aliases.values():
+                        alias = "_rt_" + "_".join(module.split("."))
+                        self.t.if_checking_aliases[module] = alias
+                        return _dotted_name_to_nodes(f"{alias}.{rest}")
 
                 return node
 
@@ -198,6 +205,10 @@ class UnifiedTransformer(cst.CSTTransformer):
             f"typing.{t}": t
             for t in _TYPING_TYPES
         }
+
+        # "import ... as ..." within "if TYPE_CHECKING:".
+        # TODO read those in as well so as not to duplicate imports
+        self.if_checking_aliases: dict[str, str] = dict()
 
         # modules imported under their own names
         self.imported_modules: set[str] = set()
@@ -434,15 +445,17 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             return i
 
-        # Add additional type checking imports if needed
-        if missing_modules:
-            existing = stmt_index(new_body, cstm.If(
-                    test=cstm.Name('TYPE_CHECKING'),
-                    body=cstm.IndentedBlock()
-                )
+        if_type_checking_position = stmt_index(new_body, cstm.If(
+                test=cstm.Name('TYPE_CHECKING'),
+                body=cstm.IndentedBlock()
             )
+        )
 
-            existing_body = [*(typing.cast(cst.If, new_body[existing]).body.body if existing is not None else ())]
+        # Add additional type checking imports if needed
+        if missing_modules or self.if_checking_aliases:
+            existing_body = [*(typing.cast(cst.If, new_body[if_type_checking_position]).body.body
+                               if if_type_checking_position is not None
+                               else ())]
 
             # TODO delete modules already imported
 
@@ -454,14 +467,23 @@ class UnifiedTransformer(cst.CSTTransformer):
                             cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
                         ])
                         for m in sorted(missing_modules)
+                    ] + [
+                        cst.SimpleStatementLine([
+                            cst.Import([cst.ImportAlias(
+                                name=_dotted_name_to_nodes(m),
+                                asname=cst.AsName(_dotted_name_to_nodes(a))
+                            )])
+                        ])
+                        for m, a in sorted(self.if_checking_aliases.items())
                     ]
                 )
             )
-            
-            if existing is not None:
-                new_body[existing] = new_stmt
+
+            if if_type_checking_position is not None:
+                new_body[if_type_checking_position] = new_stmt
             else:
-                new_body.insert(find_beginning(new_body), new_stmt)
+                if_type_checking_position = find_beginning(new_body)
+                new_body.insert(if_type_checking_position, new_stmt)
 
             if 'TYPE_CHECKING' not in self.known_names:
                 self.unknown_types.add('TYPE_CHECKING')
@@ -490,10 +512,15 @@ class UnifiedTransformer(cst.CSTTransformer):
                 ]
             )
 
-            if existing is not None:
+            if (existing is not None
+                and (if_type_checking_position is None
+                     or existing < if_type_checking_position)
+            ):
                 new_body[existing] = new_stmt
-            else:
-                new_body.insert(find_beginning(new_body), new_stmt)
+            else: 
+                position = if_type_checking_position if if_type_checking_position is not None \
+                           else find_beginning(new_body)
+                new_body.insert(position, new_stmt)
 
 
         b = find_beginning(new_body)
