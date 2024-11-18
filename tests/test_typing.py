@@ -163,6 +163,25 @@ def test_get_full_type_namedtuple_in_class():
     assert "NamedTupleClass.P" == get_full_type(NamedTupleClass.P())
 
 
+class MyDict(dict):
+    def items(self):
+        for k, v in super().items():
+            yield k, v
+
+def test_get_full_type_dict_with_non_collection_items():
+    assert f"{__name__}.MyDict[str, int]" == get_full_type(MyDict({'a': 0}))
+
+
+class MyList(list):
+    pass
+class MySet(set):
+    pass
+
+def test_get_full_type_custom_collection():
+    assert f"{__name__}.MyList[int]" == get_full_type(MyList([0,1]))
+    assert f"{__name__}.MySet[int]" == get_full_type(MySet({0,1}))
+
+
 class Foo:
     pass
 

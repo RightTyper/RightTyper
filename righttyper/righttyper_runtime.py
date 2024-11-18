@@ -3,7 +3,7 @@ import os
 import random
 import sys
 import typing
-from collections.abc import Generator, AsyncGenerator, Coroutine, KeysView, ValuesView, ItemsView, Iterator
+from collections.abc import Generator, AsyncGenerator, Coroutine, KeysView, ValuesView, ItemsView, Iterator, Collection
 from functools import cache
 from itertools import islice
 from types import CodeType, FrameType, NoneType, FunctionType, MethodType, GenericAlias
@@ -24,11 +24,17 @@ from righttyper.righttyper_types import (
 from righttyper.righttyper_utils import skip_this_file
 
 
-def sample_from_collection(value: typing.Collection[T], depth = 0) -> T:
-    """Samples from a collection."""
+def sample_from_collection(value: typing.Collection[T]|typing.Generator, depth = 0) -> T:
+    """Samples from a collection, or from a generator whose state we don't mind changing."""
     MAX_ELEMENTS = 10   # to keep this O(1)
-    n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
-    return next(islice(value, n, n + 1))
+
+    if isinstance(value, Collection):
+        n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
+        return next(islice(value, n, n + 1))
+
+    n = random.randint(1, MAX_ELEMENTS)
+    return list(islice(value, n))[-1]
+
 
 
 @cache
@@ -244,18 +250,27 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         return "typing.Never"
 
     if isinstance(value, dict):
+        t = type(value)
+        module = "" if t.__module__ == "builtins" else f"{t.__module__}."
         if value:
             el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
-            return f"dict[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
+            return f"{module}{t.__qualname__}[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
         else:
-            return "dict[typing.Never, typing.Never]"
-    elif (t := _is_instance(value, (KeysView, ValuesView, list, set))):
-        module = "" if t.__module__ == "builtins" else f"typing."
+            return "{module}{t.__qualname__}[typing.Never, typing.Never]"
+    elif isinstance(value, (list, set)):
+        t = type(value)
+        module = "" if t.__module__ == "builtins" else f"{t.__module__}."
         if value:
             el = sample_from_collection(value)
             return f"{module}{t.__qualname__}[{get_full_type(el, depth+1)}]"
         else:
             return f"{module}{t.__qualname__}[typing.Never]"
+    elif (t := _is_instance(value, (KeysView, ValuesView))):
+        if value:
+            el = sample_from_collection(value)
+            return f"typing.{t.__qualname__}[{get_full_type(el, depth+1)}]"
+        else:
+            return f"typing.{t.__qualname__}[typing.Never]"
     elif isinstance(value, ItemsView):
         if value:
             el = sample_from_collection(value)
