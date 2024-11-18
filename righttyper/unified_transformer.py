@@ -97,13 +97,13 @@ class UnifiedTransformer(cst.CSTTransformer):
         self,
         filename: str,
         type_annotations: dict[FuncInfo, FuncAnnotation],
-        not_annotated: dict[FuncInfo, set[ArgumentName]],
+        override_annotations: bool,
         module_name: str|None,
         module_names: list[str]
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
-        self.not_annotated = not_annotated
+        self.override_annotations = override_annotations
         self.has_future_annotations = False
         self.module_name = module_name
         self.module_names = sorted(module_names, key=lambda name: -name.count('.'))
@@ -308,7 +308,10 @@ class UnifiedTransformer(cst.CSTTransformer):
             for parameter in updated_node.params.params:
                 for arg, annotation_ in ann.args:
                     if parameter.name.value == arg:
-                        if arg not in self.not_annotated.get(key, set()) or not self._is_valid(annotation_):
+                        if not (
+                            (parameter.annotation is None or self.override_annotations)
+                            and self._is_valid(annotation_)
+                        ):
                             continue
 
                         annotation_expr: cst.BaseExpression = cst.parse_expression(annotation_)
@@ -354,7 +357,10 @@ class UnifiedTransformer(cst.CSTTransformer):
                 )
             )
 
-            if "return" in self.not_annotated.get(key, set()) and self._is_valid(ann.retval):
+            if ((updated_node.returns is None or self.override_annotations)
+                and ann.retval is not None
+                and self._is_valid(ann.retval)
+            ):
                 annotation_expr = cst.parse_expression(ann.retval)
                 annotation_expr = self._rename_types(annotation_expr)
                 unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))

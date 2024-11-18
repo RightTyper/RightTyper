@@ -27,7 +27,7 @@ class FuncInfo:
 @dataclass(eq=True, frozen=True)
 class FuncAnnotation:
     args: list[tuple[ArgumentName, Typename]]
-    retval: Typename
+    retval: Typename|None
 
 
 Typename = NewType("Typename", str)

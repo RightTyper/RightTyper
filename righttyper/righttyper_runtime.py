@@ -249,6 +249,8 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         print(f"Warning: RightTyper failed to compute the type of {value}.")
         return "typing.Never"
 
+    t: type|None
+
     if isinstance(value, dict):
         t = type(value)
         module = "" if t.__module__ == "builtins" else f"{t.__module__}."
