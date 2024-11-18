@@ -53,22 +53,6 @@ def debug_print_set_level(level: bool) -> None:
     _DEBUG_PRINT = level
 
 
-@cache
-def adjusted_file_name(file_name: str, start: str = "") -> str:
-    return os.path.relpath(
-        os.path.splitext(file_name)[0],
-        start=start,
-    ).replace(os.sep, ".")
-
-
-def adjusted_type_name(fname: str, typename: str) -> Typename:
-    # Adjust the type based on the context of the file_name
-    new_typename = typename
-    if typename.startswith(fname + "."):
-        new_typename = typename[len(fname) + 1 :]
-    return Typename(new_typename)
-
-
 def unannotated(
     f: object, ignore_annotations: bool = False
 ) -> set[ArgumentName]:
@@ -101,53 +85,38 @@ def union_typeset_str(
 ) -> Typename:
     adjusted_typeset = typeset  # trim_and_test(typeset, threshold_frequency)
     retval = None
+
     if not typeset:
         # Never observed any return types. Since we always sample at least once,
         # this means we did not return any values.
-        retval = Typename("None")
-    elif len(typeset) == 1:
-        retval = adjusted_type_name(
-            adjusted_file_name(file_name),
-            list(typeset)[0].typename,
-        )
-    elif super := find_most_specific_common_superclass_by_name(
-        list(
-            adjusted_type_name(
-                adjusted_file_name(file_name),
-                t.typename,
-            )
-            for t in adjusted_typeset
-        ),
-        namespace,
+        return Typename("None")
+
+    if len(typeset) == 1:
+        return next(iter(typeset)).typename
+
+    if super := find_most_specific_common_superclass_by_name(
+        [t.typename for t in adjusted_typeset],
+        namespace
     ):
-        retval = super
-    else:
-        if adjusted_typeset:
-            typenames = sorted(
-                adjusted_type_name(
-                    adjusted_file_name(file_name),
-                    t.typename,
-                )
-                for t in adjusted_typeset
-            )
-            if len(typenames) == 1:
-                return typenames[0]
+        return super
 
-            if "None" in typenames:
-                # "None" at the end is considered to be more readable
-                return Typename(
-                    "|".join([t for t in typenames if t != "None"]
-                             + ["None"])
-                )
+    if adjusted_typeset:
+        typenames = sorted(t.typename for t in adjusted_typeset)
+        if len(typenames) == 1:
+            return typenames[0]
 
+        if "None" in typenames:
+            # "None" at the end is considered to be more readable
             return Typename(
-                "|".join(typenames)
+                "|".join([t for t in typenames if t != "None"]
+                         + ["None"])
             )
 
-    if not retval:
-        # Worst-case
-        return Typename("Any")
-    return retval
+        return Typename(
+            "|".join(typenames)
+        )
+
+    return Typename("Any") # worst case
 
 
 def find_most_specific_common_superclass_by_name(

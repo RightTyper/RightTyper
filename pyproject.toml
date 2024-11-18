@@ -36,6 +36,7 @@ name = "righttyper"
 version = "0.0.8"
 authors = [
   { name="Emery Berger", email="emerydb@amazon.com" },
+  { name="Juan Altmayer Pizzorno", email="jpizzorno@umass.edu" },
 ]
 dependencies = [ "libcst >= 1.2.0",
 		 "click >= 8.1.7",

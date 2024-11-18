@@ -8,6 +8,7 @@ from functools import cache
 from itertools import islice
 from types import CodeType, FrameType, NoneType, FunctionType, MethodType, GenericAlias
 from typing import Any, cast
+from pathlib import Path
 
 from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
@@ -113,7 +114,7 @@ def type_from_annotations(func: FunctionType | MethodType) -> str:
     return_type_str = format_arg(return_type)
 
     # Construct the Callable type string
-    return f"Callable[[{arg_types_str}], {return_type_str}]"
+    return f"typing.Callable[[{arg_types_str}], {return_type_str}]"
 
 
 def find_caller_frame() -> FrameType|None:
@@ -162,7 +163,7 @@ def get_type_name(obj: type, depth: int = 0) -> str:
         # We have likely fallen into an infinite recursion.
         # Fail gracefully to return "Never" while reporting the warning.
         print(f"Warning: RightTyper failed to compute the type of {obj}.")
-        return "Never"
+        return "typing.Never"
 
     # Some builtin types are available from the "builtins" module,
     # some from the "types" module, but others still, such as
@@ -175,10 +176,10 @@ def get_type_name(obj: type, depth: int = 0) -> str:
         elif (name := from_types_import(obj)):
             return f"types.{name}"
         elif obj is RANGE_ITER_TYPE:
-            return "Iterator[int]"
+            return "typing.Iterator[int]"
         # TODO match other ABC from collections.abc based on interface
         elif issubclass(obj, Iterator):
-            return "Iterator[Any]"
+            return "typing.Iterator[typing.Any]"
         else:
             # fall back to its name, just so we can tell where it came from.
             return f"builtins.{obj.__name__}"
@@ -188,28 +189,31 @@ def get_type_name(obj: type, depth: int = 0) -> str:
         t_name = obj.__qualname__.split('[')[0]
         return f"{obj.__module__}.{t_name}[{get_type_name(obj.type, depth+1)}]"
 
-    # Look for a local alias for the type
-    # FIXME this only checks for globally known names, and doesn't match inner classes (e.g., Foo.Bar).
-    # FIXME that name may be locally bound to something different, hiding the global
-    if caller_frame := find_caller_frame():
-        current_namespace = caller_frame.f_globals
-        if current_namespace.get(obj.__name__) is obj:
-            return obj.__name__
+    # Disabled for now: passing types using aliases at this point can lead to
+    # confusion, as there can be an alias that conflicts with a module's fully
+    # qualified name.  For example, "import x.y as ast" would conflict with "ast.If"
+    if False:
+        # Look for a local alias for the type
+        # FIXME this only checks for globally known names, and doesn't match inner classes (e.g., Foo.Bar).
+        # FIXME that name may be locally bound to something different, hiding the global
+        if caller_frame := find_caller_frame():
+            current_namespace = caller_frame.f_globals
+            if current_namespace.get(obj.__name__) is obj:
+                return obj.__name__
 
-        # Check if the type is accessible from a module in the current namespace
-        for name, mod in current_namespace.items():
-            if (
-                inspect.ismodule(mod)
-                and hasattr(mod, obj.__name__)
-                and getattr(mod, obj.__name__) is obj
-            ):
-                return f"{name}.{obj.__name__}"
+            # Check if the type is accessible from a module in the current namespace
+            for name, mod in current_namespace.items():
+                if (
+                    inspect.ismodule(mod)
+                    and hasattr(mod, obj.__name__)
+                    and getattr(mod, obj.__name__) is obj
+                ):
+                    return f"{name}.{obj.__name__}"
 
-    # We currently consider all "typing" types well known (and import them as needed)
-    if obj.__module__ and obj.__module__ not in ("__main__", "typing"):
-        return f"{obj.__module__}.{obj.__qualname__}"
+    if obj.__module__ == "__main__":
+        return f"{get_main_module_fqn()}.{obj.__qualname__}"
 
-    return obj.__qualname__
+    return f"{obj.__module__}.{obj.__qualname__}"
 
 
 def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
@@ -234,29 +238,30 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         # We have likely fallen into an infinite recursion.
         # Fail gracefully to return "Never" while reporting the warning.
         print(f"Warning: RightTyper failed to compute the type of {value}.")
-        return "Never"
+        return "typing.Never"
 
     if isinstance(value, dict):
         if value:
             el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
             return f"dict[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
         else:
-            return "dict[Never, Never]"
+            return "dict[typing.Never, typing.Never]"
     elif (t := _is_instance(value, (KeysView, ValuesView, list, set))):
+        module = "" if t.__module__ == "builtins" else f"typing."
         if value:
             el = sample_from_collection(value)
-            return f"{t.__qualname__}[{get_full_type(el, depth+1)}]"
+            return f"{module}{t.__qualname__}[{get_full_type(el, depth+1)}]"
         else:
-            return f"{t.__qualname__}[Never]"
+            return f"{module}{t.__qualname__}[typing.Never]"
     elif isinstance(value, ItemsView):
         if value:
             el = sample_from_collection(value)
-            return f"ItemsView[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
+            return f"typing.ItemsView[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
         else:
-            return "ItemsView[Never, Never]"
+            return "typing.ItemsView[typing.Never, typing.Never]"
     elif isinstance(value, tuple):
         if isinstance_namedtuple(value):
-            return f"{value.__class__.__name__}"
+            return f"{value.__class__.__module__}.{value.__class__.__qualname__}"
         else:
             if value:
                 return f"tuple[{', '.join(get_full_type(elem, depth+1) for elem in value)}]"
@@ -265,15 +270,15 @@ def get_full_type(value: Any, depth: int = 0) -> str:
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
     elif isinstance(value, Generator):
-        return "Generator[Any, Any, Any]"  # FIXME needs yield / send / return types
+        return "typing.Generator[typing.Any, typing.Any, typing.Any]"  # FIXME needs yield / send / return types
     elif isinstance(value, AsyncGenerator):
-        return "AsyncGenerator[Any, Any]"  # FIXME needs yield / send types
+        return "typing.AsyncGenerator[typing.Any, typing.Any]"  # FIXME needs yield / send types
     elif isinstance(value, Coroutine):
-        return "Coroutine[Any, Any, Any]"  # FIXME needs yield / send / return types
+        return "typing.Coroutine[typing.Any, typing.Any, typing.Any]"  # FIXME needs yield / send / return types
     elif hasattr(value, "dtype"):
         # Certain dtype types' __qualname__ doesn't include a fully qualified
         # name of their inner type; look them up separately to work around that.
-        return f"{get_type_name(type(value), depth+1)}[Any, {get_type_name(type(value.dtype), depth+1)}]"
+        return f"{get_type_name(type(value), depth+1)}[typing.Any, {get_type_name(type(value.dtype), depth+1)}]"
     else:
         return get_type_name(type(value), depth+1)
 
@@ -281,7 +286,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
 def get_adjusted_full_type(value: Any, class_type: type|None=None) -> str:
     #print(f"{type(value)=} {class_type=}")
     if type(value) == class_type:
-        return "Self"
+        return "typing.Self"
 
     return get_full_type(value)
 
@@ -434,3 +439,41 @@ def get_class_source_file(cls: type) -> str:
         pass
 
     return ""
+
+
+def _source_relative_to_pkg(file: Path) -> Path|None:
+    """Returns a Python source file's path relative to its package"""
+    if not file.is_absolute():
+        file = file.resolve()
+
+    parents = list(file.parents)
+
+    for d in sys.path:
+        path = Path(d)
+        if not path.is_absolute():
+            path = path.resolve()
+
+        for p in parents:
+            if p == path:
+                return file.relative_to(p)
+
+    return None
+
+
+def source_to_module_fqn(file: Path) -> str|None:
+    """Returns a source file's fully qualified package name, if possible."""
+    if not (path := _source_relative_to_pkg(file)):
+        return None
+
+    path = path.parent if path.name == '__init__.py' else path.parent / path.stem
+    return '.'.join(path.parts)
+
+
+@cache
+def get_main_module_fqn() -> str:
+    main = sys.modules['__main__']
+    if hasattr(main, "__file__") and main.__file__:
+        if fqn := source_to_module_fqn(Path(main.__file__)):
+            return fqn
+
+    return "__main__"

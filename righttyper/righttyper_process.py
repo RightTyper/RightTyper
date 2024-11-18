@@ -13,19 +13,19 @@ from righttyper.righttyper_types import (
     ArgumentType,
     Filename,
     FuncInfo,
+    FuncAnnotation,
     FunctionName,
     Typename,
     TypenameSet,
 )
 from righttyper.righttyper_utils import (
-    adjusted_file_name,
-    adjusted_type_name,
     debug_print,
     make_type_signature,
     skip_this_file,
     union_typeset_str,
 )
 from righttyper.unified_transformer import UnifiedTransformer
+from righttyper.righttyper_runtime import source_to_module_fqn
 
 logger = logging.getLogger("righttyper")
 
@@ -89,15 +89,10 @@ def process_file(
     filename: Filename,
     output_files: bool,
     generate_stubs: bool,
-    type_annotations: dict[
-        FuncInfo,
-        tuple[
-            list[tuple[ArgumentName, Typename]],
-            Typename,
-        ],
-    ],
+    type_annotations: dict[FuncInfo, FuncAnnotation],
     overwrite: bool,
     not_annotated: dict[FuncInfo, set[ArgumentName]],
+    module_names: list[str],
     ignore_annotations: bool = False,
     srcdir: str = "",
 ) -> None:
@@ -108,27 +103,11 @@ def process_file(
     except FileNotFoundError:
         return
 
-    # Make a backup
     if output_files and overwrite:
         with open(filename + ".bak", "w") as file:
             file.write(source)
 
-    # First, update all type annotations so they are relative to the
-    # source directory (--srcdir)
-    for fi in type_annotations:
-        adj_fname = adjusted_file_name(fi.file_name)
-        args, retval_type = type_annotations[fi]
-        new_arglist = []
-        for arg in args:
-            new_arg_type = adjusted_type_name(adj_fname, arg[1])
-            new_arglist.append((arg[0], new_arg_type))
-        new_retval_type = adjusted_type_name(adj_fname, retval_type)
-        type_annotations[fi] = (
-            new_arglist,
-            new_retval_type,
-        )
 
-    # Now, rewrite all function definitions with annotations.
     try:
         cst_tree = cst.parse_module(source)
     except cst._exceptions.ParserSyntaxError:  # type: ignore
@@ -141,15 +120,17 @@ def process_file(
             return
 
     transformer = UnifiedTransformer(
-        filename, type_annotations, not_annotated
+        filename, type_annotations, not_annotated,
+        module_name=source_to_module_fqn(pathlib.Path(filename)),
+        module_names=module_names
     )
 
     try:
         transformed = cst_tree.visit(transformer)
-    except TypeError:
+    except TypeError as e:
         # This happens when "Mock" is passed around.
         # Print a warning and bail.
-        print(f"Failed to transform {filename}.")
+        print(f"Failed to transform {filename}. ({e})")
         return
 
     if output_files:
@@ -158,6 +139,7 @@ def process_file(
             "w",
         ) as file:
             file.write(transformed.code)
+
 
     if generate_stubs:
         stub_file = pathlib.Path(filename).with_suffix(".pyi")
@@ -177,20 +159,8 @@ def collect_data(
     visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]],
     visited_funcs_retval: dict[FuncInfo, TypenameSet],
     namespace: dict[str, Any] = globals(),
-) -> dict[
-    FuncInfo,
-    tuple[
-        list[tuple[ArgumentName, Typename]],
-        Typename,
-    ],
-]:
-    type_annotations: dict[
-        FuncInfo,
-        tuple[
-            list[tuple[ArgumentName, Typename]],
-            Typename,
-        ],
-    ] = {}
+) -> dict[FuncInfo, FuncAnnotation]:
+    type_annotations: dict[FuncInfo, FuncAnnotation] = {}
     for t in visited_funcs:
         args = visited_funcs_arguments[t]
         arg_annotations = [
@@ -212,7 +182,7 @@ def collect_data(
             )
         else:
             retval = Typename("None")
-        type_annotations[t] = (
+        type_annotations[t] = FuncAnnotation(
             arg_annotations,
             retval,
         )

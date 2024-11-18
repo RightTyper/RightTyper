@@ -24,6 +24,11 @@ class FuncInfo:
     file_name: Filename
     func_name: FunctionName
 
+@dataclass(eq=True, frozen=True)
+class FuncAnnotation:
+    args: list[tuple[ArgumentName, Typename]]
+    retval: Typename
+
 
 Typename = NewType("Typename", str)
 

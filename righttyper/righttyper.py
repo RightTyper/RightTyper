@@ -37,6 +37,7 @@ from righttyper.righttyper_runtime import (
     get_class_source_file,
     should_skip_function,
     update_argtypes,
+    get_main_module_fqn
 )
 from righttyper.righttyper_shapes import (
     print_annotation,
@@ -55,6 +56,7 @@ from righttyper.righttyper_types import (
     ArgumentType,
     Filename,
     FuncInfo,
+    FuncAnnotation,
     FunctionName,
     Typename,
     TypenameFrequency,
@@ -232,7 +234,7 @@ def exit_function_worker(
       and then disables the monitoring if appropriate.
 
     Args:
-    code (CodeType): bytecode of the function.
+    code (CodeType): code object of the function.
     instruction_offset (int): position of the current instruction.
     return_value (Any): return value of the function.
     event_type (int): if this is a PY_RETURN (regular return) or a PY_YIELD (yield)
@@ -275,12 +277,12 @@ def exit_function_worker(
     if event_type == sys.monitoring.events.PY_YIELD:
         # Yield: call it a generator
         if type(return_value).__name__ == "async_generator_wrapped_value":
-            # FIXME: how to obtain wrapped value? how to get send value?
-            typename = f"AsyncGenerator[Any, Any]"
+            # FIXME: how to obtain wrapped value without await? how to get send value?
+            typename = f"typing.AsyncGenerator[typing.Any, typing.Any]"
         else:
             # FIXME: We should be returning more precise Generators if we discover a return value.
             # See https://docs.python.org/3.10/library/typing.html#typing.Generator
-            typename = f"Generator[{typename}, Any, Any]"
+            typename = f"typing.Generator[{typename}, typing.Any, typing.Any]"
         yielded_funcs.add(t)
 
     # Check if the return value type is already in the set
@@ -702,6 +704,8 @@ def process_all_files(
     use_multiprocessing: bool
 ) -> None:
 
+    module_names=[*sys.modules.keys(), get_main_module_fqn()]
+
     processes: list[multiprocessing.Process] = []
     all_files = list(set(t.file_name for t in visited_funcs))
     prefix = os.path.commonprefix(list(all_files))
@@ -751,6 +755,7 @@ def process_all_files(
                 type_annotations,
                 overwrite,
                 not_annotated,
+                module_names,
                 ignore_annotations,
                 srcdir,
             )
