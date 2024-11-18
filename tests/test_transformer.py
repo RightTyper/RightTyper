@@ -76,6 +76,11 @@ def get_if_type_checking(m: cst.Module) -> str|None:
     return cst.Module(stmts).code.lstrip('\n') if stmts else None
 
 
+def _split(s: str) -> [str, str]:
+    parts = s.split('.')
+    return parts[0], '.'.join(parts[1:])
+
+
 def test_transform_function():
     code = cst.parse_module(textwrap.dedent("""\
         def foo(x, y):
@@ -1009,51 +1014,7 @@ def test_uses_local_imports():
     """)
 
 
-@pytest.mark.skip(reason="no longer relevant as-is")
-def test_assigned_names_are_known():
-    code = cst.parse_module(textwrap.dedent("""\
-        from typing import Any
-        import foo
-        if True:
-            x = foo
-        else:
-            _, y = ..., foo.y
-            z: Any = foo
-
-        def foo(x):
-            pass
-    """))
-
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
-    t = UnifiedTransformer(
-            filename='foo.py',
-            type_annotations = {
-                foo: (
-                    [
-                        (ArgumentName('x'), Typename('z')),
-                    ],
-                    Typename('y')
-                ),
-            },
-            not_annotated = {
-                foo: {ArgumentName('x'), ArgumentName('return')},
-            },
-            module_name = 'foo',
-            module_names = [
-                'foo'
-            ]
-        )
-
-    code = code.visit(t)
-    assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: z) -> y:
-            pass
-    """)
-
-    assert get_if_type_checking(code) == None
-
-
-def test_nonglobal_imported_modules_are_unknown():
+def test_nonglobal_imported_modules_are_ignored():
     code = cst.parse_module(textwrap.dedent("""\
         def foo(x, y):
             import a.b
@@ -1122,7 +1083,7 @@ def test_nonglobal_imported_modules_are_unknown():
     """)
 
 
-def test_nonglobal_assignments_are_unknown():
+def test_nonglobal_assignments_are_ignored():
     code = cst.parse_module(textwrap.dedent("""\
         from typing import Any
 
@@ -1230,7 +1191,7 @@ def test_if_type_checking_insertion():
     """))
 
 
-def test_conflicting_import():
+def test_import_conflicts_with_import():
     code = cst.parse_module(textwrap.dedent("""\
         from a import b as a
         import b as c
@@ -1267,13 +1228,9 @@ def test_conflicting_import():
 
     code = code.visit(t)
 
-    def split(s: str) -> [str, str]:
-        parts = s.split('.')
-        return parts[0], '.'.join(parts[1:])
-
     m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\): ...', get_function(code, 'foo'))
-    m1, t1 = split(m.group(1))
-    m2, t2 = split(m.group(2))
+    m1, t1 = _split(m.group(1))
+    m2, t2 = _split(m.group(2))
 
     assert m1 != 'a'
     assert t1 == 'T'
@@ -1290,6 +1247,170 @@ def test_conflicting_import():
             import a as {m1}
             import c.d as {m2}
     """)
+
+
+def test_import_conflicts_with_definitions():
+    code = cst.parse_module(textwrap.dedent("""\
+        class a: ...
+        def c(): pass
+
+        def foo(x, y): ...
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('a.T')),
+                        (ArgumentName('y'), Typename('c.d.e.T')),
+                    ],
+                    Typename('None')
+                ),
+            },
+            not_annotated = {
+                foo: {
+                    ArgumentName('x'), ArgumentName('y')
+                },
+            },
+            module_name = 'foo',
+            module_names = [
+                'foo',
+                'a',
+                'b',
+                'c',
+                'c.d'
+            ]
+        )
+
+    code = code.visit(t)
+
+    m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\): ...', get_function(code, 'foo'))
+    m1, t1 = _split(m.group(1))
+    m2, t2 = _split(m.group(2))
+
+    assert m1 != 'a'
+    assert t1 == 'T'
+
+    assert m2 != 'b'
+    assert t2 == 'e.T'
+
+    m1, m2 = sorted((m1, m2))
+
+    print(code.code)
+
+    assert get_if_type_checking(code) == textwrap.dedent(f"""\
+        if TYPE_CHECKING:
+            import a as {m1}
+            import c.d as {m2}
+    """)
+
+
+def test_import_conflicts_with_assignments():
+    code = cst.parse_module(textwrap.dedent("""\
+        a, b = (10, 20)
+
+        def foo(x, y): ...
+
+        c: int = 10
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('a.T')),
+                        (ArgumentName('y'), Typename('c.d.e.T')),
+                    ],
+                    Typename('None')
+                ),
+            },
+            not_annotated = {
+                foo: {
+                    ArgumentName('x'), ArgumentName('y')
+                },
+            },
+            module_name = 'foo',
+            module_names = [
+                'foo',
+                'a',
+                'b',
+                'c',
+                'c.d'
+            ]
+        )
+
+    code = code.visit(t)
+
+    m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\): ...', get_function(code, 'foo'))
+    m1, t1 = _split(m.group(1))
+    m2, t2 = _split(m.group(2))
+
+    assert m1 != 'a'
+    assert t1 == 'T'
+
+    assert m2 != 'b'
+    assert t2 == 'e.T'
+
+    m1, m2 = sorted((m1, m2))
+
+    print(code.code)
+
+    assert get_if_type_checking(code) == textwrap.dedent(f"""\
+        if TYPE_CHECKING:
+            import a as {m1}
+            import c.d as {m2}
+    """)
+
+
+def test_import_conflicts_alias_for_module():
+    code = cst.parse_module(textwrap.dedent("""\
+        a, b = (10, 20)
+
+        def foo(x): ...
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: (
+                    [
+                        (ArgumentName('x'), Typename('a')), # module "a" meant here, not something in it
+                    ],
+                    Typename('None')
+                ),
+            },
+            not_annotated = {
+                foo: {
+                    ArgumentName('x')
+                },
+            },
+            module_name = 'foo',
+            module_names = [
+                'foo',
+                'a',
+            ]
+        )
+
+    code = code.visit(t)
+
+    m = assert_regex(r'def foo\(x: "(.*?)"\): ...', get_function(code, 'foo'))
+    m1, t1 = _split(m.group(1))
+
+    assert m1 != 'a'
+    assert t1 == ''
+
+    print(code.code)
+
+    assert get_if_type_checking(code) == textwrap.dedent(f"""\
+        if TYPE_CHECKING:
+            import a as {m1}
+    """)
+
 
 def test_types_in_annotation():
     def get_types(s):

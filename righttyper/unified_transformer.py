@@ -160,12 +160,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                     if a := self.t.aliases.get(module):
                         return _dotted_name_to_nodes(f"{a}.{rest}")
 
-                    # does the package name conflict with existing imports?
-                    # FIXME also consider variable assignments
-                    if name.split('.')[0] in self.t.aliases.values():
+                    # does the package name conflict with other definitions?
+                    if name.split('.')[0] in self.t.global_names:
                         alias = "_rt_" + "_".join(module.split("."))
                         self.t.if_checking_aliases[module] = alias
-                        return _dotted_name_to_nodes(f"{alias}.{rest}")
+                        return _dotted_name_to_nodes(alias + ("" if rest == "" else f".{rest}"))
 
                 return node
 
@@ -197,7 +196,10 @@ class UnifiedTransformer(cst.CSTTransformer):
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
 
-        # global names
+        # global names defined anywhere in the module
+        self.global_names: set[str] = _global_names(node)
+
+        # currently known global names
         self.known_names: set[str] = set(_BUILTIN_TYPES)
 
         # global aliases from 'from .. import ..' and 'import .. as ..'
@@ -549,32 +551,51 @@ def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:
     return extractor.names
 
 
-def _global_assigns(node: cst.Module) -> list[Typename]:
-    """Extracts global imports in a module."""
+def _global_names(node: cst.Module) -> set[str]:
+    """Extracts the global names in a module."""
 
-    assigns: list[Typename] = []
+    names: set[str] = set()
 
     class Extractor(cst.CSTVisitor):
         def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
+            names.add(node.name.value)
             return False
 
         def visit_ClassDef(self, node: cst.ClassDef) -> bool:
+            names.add(node.name.value)
             return False
 
         def visit_Assign(self, node: cst.Assign) -> bool:
             for t in node.targets:
                 if isinstance(t.target, cst.Name):
-                    assigns.append(Typename(t.target.value))
+                    names.add(t.target.value)
                 elif isinstance(t.target, cst.Tuple):
                     for el in t.target.elements:
                         if isinstance(el.value, cst.Name):
-                            assigns.append(Typename(el.value.value))
+                            names.add(el.value.value)
             return False
 
         def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
             if isinstance(node.target, cst.Name):
-                assigns.append(Typename(node.target.value))
+                names.add(node.target.value)
+            return False
+
+        def visit_Import(self, node: cst.Import) -> bool:
+            # node.names could also be cst.ImportStar
+            if isinstance(node.names, collections.abc.Sequence):
+                for alias in node.names:
+                    if alias.asname is not None:
+                        names.add(_nodes_to_top_level_name(alias.asname.name))
+            return False
+
+        def visit_ImportFrom(self, node: cst.ImportFrom) -> bool:
+            # node.names could also be cst.ImportStar
+            if isinstance(node.names, collections.abc.Sequence):
+                for alias in node.names:
+                    names.add(_nodes_to_top_level_name(
+                        alias.asname.name if alias.asname is not None else alias.name
+                    ))
             return False
 
     node.visit(Extractor())
-    return assigns
+    return names
