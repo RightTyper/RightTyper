@@ -8,33 +8,6 @@ import pytest
 import re
 
 
-def test_transformer_not_annotated_missing():
-    code = cst.parse_module(textwrap.dedent("""\
-        def foo(x):
-            return x/2
-    """))
-
-    t = UnifiedTransformer(
-            filename='foo.py',
-            type_annotations = {
-                FuncInfo(Filename('foo.py'), FunctionName('foo')):
-                FuncAnnotation(
-                    [
-                        (ArgumentName('x'), Typename('int'))
-                    ],
-                    Typename('float')
-                )
-            },
-            not_annotated = dict(),
-            module_name='foo',
-            module_names=[
-                'foo'
-            ]
-        )
-
-    code.visit(t)
-
-
 def get_function(m: cst.Module, name: str) -> str|None:
     class V(cst.CSTVisitor):
         def __init__(self):
@@ -108,13 +81,10 @@ def test_transform_function():
                     [
                         (ArgumentName('z'), Typename('int'))
                     ],
-                    Typename('wrong')
+                    None
                 )
             },
-            not_annotated = {
-                foo: {ArgumentName('x'), ArgumentName('return')},
-                baz: {ArgumentName('z')}
-            },
+            override_annotations=False,
             module_name='foo',
             module_names=['foo']
         )
@@ -178,11 +148,7 @@ def test_transform_method():
                     Typename('float')
                 )
             },
-            not_annotated = {
-                foo: {ArgumentName('x'), ArgumentName('return')},
-                bar: {ArgumentName('x'), ArgumentName('return')},
-                baz: {ArgumentName('z'), ArgumentName('return')},
-            },
+            override_annotations=False,
             module_name='foo',
             module_names=['foo']
         )
@@ -235,10 +201,7 @@ def test_transform_local_function():
                     Typename('float')
                 ),
             },
-            not_annotated = {
-                foo: {ArgumentName('x'), ArgumentName('y'), ArgumentName('return')},
-                bar: {ArgumentName('z'), ArgumentName('return')}
-            },
+            override_annotations=False,
             module_name='foo',
             module_names=['foo']
         )
@@ -252,6 +215,52 @@ def test_transform_local_function():
     """)
 
     assert get_if_type_checking(code) == None
+
+
+def test_override_annotations():
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(x: int) -> int:
+            return x/2
+
+        class C:
+            def bar(self, x: float) -> int:
+                return x/2
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    bar = FuncInfo(Filename('foo.py'), FunctionName('C.bar'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: FuncAnnotation(
+                    [
+                        (ArgumentName('x'), Typename('float'))
+                    ],
+                    Typename('float')
+                ),
+                bar: FuncAnnotation(
+                    [
+                        (ArgumentName('self'), Typename('typing.Self')),
+                        (ArgumentName('x'), Typename('int'))
+                    ],
+                    Typename('float')
+                ),
+            },
+            override_annotations=True,
+            module_name='foo',
+            module_names=['foo']
+        )
+
+    code = code.visit(t)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: float) -> float:
+            return x/2
+    """)
+
+    assert get_function(code, 'C.bar') == textwrap.dedent("""\
+        def bar(self: Self, x: int) -> float:
+            return x/2
+    """)
 
 
 def test_transform_adds_typing_import_for_typing_names():
@@ -270,9 +279,7 @@ def test_transform_adds_typing_import_for_typing_names():
                     Typename('list[typing.Never]')
                 )
             },
-            not_annotated = {
-                foo: {ArgumentName('x'), ArgumentName('return')},
-            },
+            override_annotations=False,
             module_name='foo',
             module_names=['foo']
         )
@@ -306,9 +313,7 @@ def test_transform_unknown_type_as_string():
                     Typename('x.z.FloatingPointNumber')
                 )
             },
-            not_annotated = {
-                foo: {ArgumentName('x'), ArgumentName('y'), ArgumentName('return')}
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 "foo",
@@ -350,9 +355,7 @@ def test_transform_unknown_type_with_import_annotations():
                     Typename('x.z.FloatingPointNumber')
                 )
             },
-            not_annotated = {
-                foo: {ArgumentName('x'), ArgumentName('y'), ArgumentName('return')}
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 "foo",
@@ -395,12 +398,10 @@ def test_transform_deletes_type_hint_comments_in_header():
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('int'))
                     ],
-                    Typename('float')
+                    None
                 )
             },
-            not_annotated = {
-                foo: {ArgumentName('x'), ArgumentName('y')}
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo'
@@ -446,12 +447,10 @@ def test_transform_deletes_type_hint_comments_in_parameters():
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('int'))
                     ],
-                    Typename('float')
+                    None
                 )
             },
-            not_annotated = {
-                foo: {ArgumentName('x'), ArgumentName('y')}
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo'
@@ -501,15 +500,11 @@ def test_transform_deletes_type_hint_comments_for_retval():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('int')),
-                        (ArgumentName('y'), Typename('int'))
                     ],
                     Typename('float')
                 )
             },
-            not_annotated = {
-                foo: {ArgumentName('return')}
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names=[
                 'foo'
@@ -579,11 +574,7 @@ def test_transform_locally_defined_types():
                     Typename('foo.F')
                 )
             },
-            not_annotated = {
-                foo: {ArgumentName('x'), ArgumentName('y'), ArgumentName('return')},
-                f_foo: {ArgumentName('v'), ArgumentName('return')},
-                bar: {ArgumentName('x'), ArgumentName('y'), ArgumentName('return')}
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names=[
                 'foo'
@@ -635,12 +626,7 @@ def test_uses_imported_aliases():
                     Typename('r.t.T')
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x'), ArgumentName('y'),
-                    ArgumentName('z'), ArgumentName('return')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -686,11 +672,7 @@ def test_uses_imported_domains():
                     Typename('r.t.T')
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x'), ArgumentName('return')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -730,11 +712,7 @@ def test_imports_subdomain_if_needed():
                     Typename('a.b')
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x'), ArgumentName('return')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -780,11 +758,7 @@ def test_existing_typing_imports():
                     Typename('typing.Any')
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x'), ArgumentName('return')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -837,11 +811,7 @@ def test_inserts_imports_after_docstring_and_space():
                     Typename('typing.Any')
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x'), ArgumentName('return')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -895,14 +865,10 @@ def test_relative_import():
                         (ArgumentName('y'), Typename('pkg.a.c.T')),
                         (ArgumentName('z'), Typename('pkg.a.c.X')),
                     ],
-                    Typename('None')
+                    None
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x'), ArgumentName('y'), ArgumentName('z')
-                },
-            },
+            override_annotations=False,
             module_name = 'pkg.a.a',
             module_names = [
                 'pkg.a',
@@ -970,20 +936,7 @@ def test_uses_local_imports():
                     Typename('None')
                 ),
             },
-            not_annotated = {
-                foobar: {
-                    ArgumentName('x'),
-                },
-                Cfoo: {
-                    ArgumentName('x'),
-                },
-                Dfoo: {
-                    ArgumentName('x'),
-                },
-                f : {
-                    ArgumentName('a'), ArgumentName('b')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -1045,14 +998,7 @@ def test_nonglobal_imported_modules_are_ignored():
                     Typename('m.T')
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x'), ArgumentName('y'), ArgumentName('return')
-                },
-                bar: {
-                    ArgumentName('x'), ArgumentName('return')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -1115,14 +1061,7 @@ def test_nonglobal_assignments_are_ignored():
                     Typename('')
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x')
-                },
-                bar: {
-                    ArgumentName('x')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -1168,11 +1107,7 @@ def test_if_type_checking_insertion():
                     Typename('None')
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -1208,14 +1143,10 @@ def test_import_conflicts_with_import():
                         (ArgumentName('x'), Typename('a.T')),
                         (ArgumentName('y'), Typename('c.d.e.T')),
                     ],
-                    Typename('None')
+                    None
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x'), ArgumentName('y')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -1266,14 +1197,10 @@ def test_import_conflicts_with_definitions():
                         (ArgumentName('x'), Typename('a.T')),
                         (ArgumentName('y'), Typename('c.d.e.T')),
                     ],
-                    Typename('None')
+                    None
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x'), ArgumentName('y')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -1325,14 +1252,10 @@ def test_import_conflicts_with_assignments():
                         (ArgumentName('x'), Typename('a.T')),
                         (ArgumentName('y'), Typename('c.d.e.T')),
                     ],
-                    Typename('None')
+                    None
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x'), ArgumentName('y')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',
@@ -1381,14 +1304,10 @@ def test_import_conflicts_alias_for_module():
                     [
                         (ArgumentName('x'), Typename('a')), # module "a" meant here, not something in it
                     ],
-                    Typename('None')
+                    None
                 ),
             },
-            not_annotated = {
-                foo: {
-                    ArgumentName('x')
-                },
-            },
+            override_annotations=False,
             module_name = 'foo',
             module_names = [
                 'foo',

@@ -113,10 +113,6 @@ arg_types: dict[
     ArgumentType,
 ] = dict()
 
-# For each function, the variables (and, potentially, 'return') that
-# have no type annotations
-not_annotated: dict[FuncInfo, set[ArgumentName]] = defaultdict(set)
-
 # Existing annotations (variable to type annotations, optionally
 # including 'return')
 existing_annotations: dict[FuncInfo, dict[ArgumentName, str]] = defaultdict(
@@ -434,7 +430,6 @@ def update_function_annotations(
             args,
             (type_hints if not ignore_annotations else {}),
         )
-        not_annotated[t] = unannotated(obj, ignore_annotations)
         existing_annotations[t] = {
             ArgumentName(name): format_annotation(type_hints[name])
             for name in type_hints
@@ -558,7 +553,6 @@ def output_type_signatures(
                 args=visited_funcs_arguments[t],
                 retval=visited_funcs_retval[t],
                 namespace=namespace,
-                not_annotated=not_annotated,
                 arg_types=arg_types,
                 existing_annotations=existing_annotations,
             )
@@ -754,7 +748,6 @@ def process_all_files(
                 generate_stubs,
                 type_annotations,
                 overwrite,
-                not_annotated,
                 module_names,
                 ignore_annotations,
                 srcdir,
@@ -808,7 +801,6 @@ def should_update_file(
             args=visited_funcs_arguments[t],
             retval=visited_funcs_retval[t],
             namespace=namespace,
-            not_annotated=not_annotated,
             arg_types=arg_types,
             existing_annotations=existing_annotations,
         )

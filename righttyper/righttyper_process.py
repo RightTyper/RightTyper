@@ -91,7 +91,6 @@ def process_file(
     generate_stubs: bool,
     type_annotations: dict[FuncInfo, FuncAnnotation],
     overwrite: bool,
-    not_annotated: dict[FuncInfo, set[ArgumentName]],
     module_names: list[str],
     ignore_annotations: bool = False,
     srcdir: str = "",
@@ -120,7 +119,7 @@ def process_file(
             return
 
     transformer = UnifiedTransformer(
-        filename, type_annotations, not_annotated,
+        filename, type_annotations, ignore_annotations,
         module_name=source_to_module_fqn(pathlib.Path(filename)),
         module_names=module_names
     )
