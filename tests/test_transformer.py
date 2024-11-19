@@ -656,7 +656,10 @@ def test_uses_imported_domains():
         if True:
             import x.y
 
-        def foo(x): ...
+        with something():
+            import a
+
+        def foo(x, y): ...
 
         import r    # imported after 'def foo', so can't be used in annotation
     """))
@@ -668,6 +671,7 @@ def test_uses_imported_domains():
                 foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('x.y.z')),
+                        (ArgumentName('y'), Typename('a.T')),
                     ],
                     Typename('r.t.T')
                 ),
@@ -676,6 +680,7 @@ def test_uses_imported_domains():
             module_name = 'foo',
             module_names = [
                 'foo',
+                'a',
                 'x',
                 'x.y',
                 'r'
@@ -684,7 +689,7 @@ def test_uses_imported_domains():
 
     code = code.visit(t)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: x.y.z) -> "r.t.T": ...
+        def foo(x: x.y.z, y: a.T) -> "r.t.T": ...
     """)
 
     assert get_if_type_checking(code) == textwrap.dedent("""\
@@ -1286,6 +1291,49 @@ def test_import_conflicts_with_assignments():
         if TYPE_CHECKING:
             import a as {m1}
             import c.d as {m2}
+    """)
+
+
+def test_import_conflicts_with_with():
+    code = cst.parse_module(textwrap.dedent("""\
+        with my_handler() as a:
+            pass
+
+        def foo(x): ...
+    """))
+
+    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: FuncAnnotation(
+                    [
+                        (ArgumentName('x'), Typename('a.T')),
+                    ],
+                    None
+                ),
+            },
+            override_annotations=False,
+            module_name = 'foo',
+            module_names = [
+                'foo',
+                'a',
+            ]
+        )
+
+    code = code.visit(t)
+
+    m = assert_regex(r'def foo\(x: "(.*?)"\): ...', get_function(code, 'foo'))
+    m1, t1 = _split(m.group(1))
+
+    assert m1 != 'a'
+    assert t1 == 'T'
+
+    print(code.code)
+
+    assert get_if_type_checking(code) == textwrap.dedent(f"""\
+        if TYPE_CHECKING:
+            import a as {m1}
     """)
 
 

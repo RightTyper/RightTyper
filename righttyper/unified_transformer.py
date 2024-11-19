@@ -579,6 +579,11 @@ def _global_names(node: cst.Module) -> set[str]:
                 names.add(node.target.value)
             return False
 
+        def visit_WithItem(self, node: cst.WithItem) -> bool:
+            if isinstance(node.asname, cst.AsName) and isinstance(node.asname.name, cst.Name):
+                names.add(node.asname.name.value)
+            return False
+
         def visit_Import(self, node: cst.Import) -> bool:
             # node.names could also be cst.ImportStar
             if isinstance(node.names, abc.Sequence):

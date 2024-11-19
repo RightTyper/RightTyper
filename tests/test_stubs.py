@@ -122,6 +122,26 @@ def test_stubs_conditional(tmp_path, monkeypatch):
         """)
 
 
+def test_stubs_context_handler(tmp_path, monkeypatch):
+    code = textwrap.dedent("""\
+        with something():
+            "this should go away"
+            import ast
+
+        def f(x: "ast.AST") -> int:
+            return 42
+        """
+    )
+
+    output = generate_stub(code)
+    assert output == textwrap.dedent("""\
+        with something():
+            import ast
+        def f(x: "ast.AST") -> int: ...
+        """)
+
+
+
 def test_stubs_try(tmp_path, monkeypatch):
     code = textwrap.dedent("""\
         try:
