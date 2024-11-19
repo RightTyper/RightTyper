@@ -194,7 +194,7 @@ def get_type_name(obj: type, depth: int = 0) -> str:
             return f"builtins.{obj.__name__}"
 
     # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
-    if 'dtype[' in obj.__name__ and hasattr(obj, "type"):
+    if obj.__module__ == 'numpy' and 'dtype[' in obj.__name__ and hasattr(obj, "type"):
         t_name = obj.__qualname__.split('[')[0]
         return f"{obj.__module__}.{t_name}[{get_type_name(obj.type, depth+1)}]"
 
@@ -295,12 +295,10 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         return "typing.AsyncGenerator[typing.Any, typing.Any]"  # FIXME needs yield / send types
     elif isinstance(value, Coroutine):
         return "typing.Coroutine[typing.Any, typing.Any, typing.Any]"  # FIXME needs yield / send / return types
-    elif hasattr(value, "dtype"):
-        # Certain dtype types' __qualname__ doesn't include a fully qualified
-        # name of their inner type; look them up separately to work around that.
-        return f"{get_type_name(type(value), depth+1)}[typing.Any, {get_type_name(type(value.dtype), depth+1)}]"
-    else:
-        return get_type_name(type(value), depth+1)
+    elif (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':
+        return f"{get_type_name(t, depth+1)}[typing.Any, {get_type_name(type(value.dtype), depth+1)}]"
+
+    return get_type_name(type(value), depth+1)
 
 
 def get_adjusted_full_type(value: Any, class_type: type|None=None) -> str:
