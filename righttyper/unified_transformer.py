@@ -1,6 +1,6 @@
 import typing
 import builtins
-import collections.abc
+import collections.abc as abc
 import types
 import libcst as cst
 import libcst.matchers as cstm
@@ -178,7 +178,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         return typing.cast(cst.BaseExpression, annotation.visit(Renamer(self)))
 
 
-    def _unknown_types(self, types: set[str]) -> typing.Iterator[str]:
+    def _unknown_types(self, types: set[str]) -> abc.Iterator[str]:
         """Yields types among those given that are unknown."""
         for t in types:
             if not (
@@ -240,7 +240,7 @@ class UnifiedTransformer(cst.CSTTransformer):
     def visit_Import(self, node: cst.Import) -> bool:
         if not self.name_stack: # for now, we only handle global imports
             # node.names could also be cst.ImportStar
-            if isinstance(node.names, collections.abc.Sequence):
+            if isinstance(node.names, abc.Sequence):
                 for alias in node.names:
                     if alias.asname is not None:
                         self.known_names.add(_nodes_to_top_level_name(alias.asname.name))
@@ -252,7 +252,7 @@ class UnifiedTransformer(cst.CSTTransformer):
     def visit_ImportFrom(self, node: cst.ImportFrom) -> bool:
         if not self.name_stack: # for now, we only handle global imports
             # node.names could also be cst.ImportStar
-            if isinstance(node.names, collections.abc.Sequence):
+            if isinstance(node.names, abc.Sequence):
                 for alias in node.names:
                     self.known_names.add(
                         _nodes_to_top_level_name(
@@ -581,7 +581,7 @@ def _global_names(node: cst.Module) -> set[str]:
 
         def visit_Import(self, node: cst.Import) -> bool:
             # node.names could also be cst.ImportStar
-            if isinstance(node.names, collections.abc.Sequence):
+            if isinstance(node.names, abc.Sequence):
                 for alias in node.names:
                     if alias.asname is not None:
                         names.add(_nodes_to_top_level_name(alias.asname.name))
@@ -589,7 +589,7 @@ def _global_names(node: cst.Module) -> set[str]:
 
         def visit_ImportFrom(self, node: cst.ImportFrom) -> bool:
             # node.names could also be cst.ImportStar
-            if isinstance(node.names, collections.abc.Sequence):
+            if isinstance(node.names, abc.Sequence):
                 for alias in node.names:
                     names.add(_nodes_to_top_level_name(
                         alias.asname.name if alias.asname is not None else alias.name

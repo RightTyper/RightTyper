@@ -1,7 +1,8 @@
 import signal
 import sys
 from types import CodeType, FrameType
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from righttyper.righttyper_utils import TOOL_ID, TOOL_NAME
 

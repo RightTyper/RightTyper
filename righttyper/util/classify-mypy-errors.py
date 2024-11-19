@@ -5,7 +5,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from typing import Dict, List, Tuple, TypedDict
+from typing import TypedDict
 
 
 class Error(TypedDict):
@@ -14,7 +14,7 @@ class Error(TypedDict):
 
 
 # Define the error categories
-CATEGORIES: Dict[str, str] = {
+CATEGORIES: dict[str, str] = {
     "attr-defined": "Attribute Access: Attempting to access an attribute that doesn't exist",
     "arg-type": "Argument Type: Function argument has an incompatible type",
     "call-arg": "Call Argument: Invalid arguments passed to a function or method",
@@ -103,8 +103,8 @@ CATEGORIES: Dict[str, str] = {
 }
 
 
-def classify_errors(errors: List[Error]) -> Dict[str, List[Error]]:
-    classified_errors: Dict[str, List[Error]] = defaultdict(list)
+def classify_errors(errors: list[Error]) -> dict[str, list[Error]]:
+    classified_errors: dict[str, list[Error]] = defaultdict(list)
     for error in errors:
         if error["severity"] != "error":
             continue
@@ -116,10 +116,10 @@ def classify_errors(errors: List[Error]) -> Dict[str, List[Error]]:
 
 
 def summarize_errors(
-    classified_errors: Dict[str, List[Error]]
-) -> Tuple[List[Tuple[str, str, int, str]], int]:
+    classified_errors: dict[str, list[Error]]
+) -> tuple[list[tuple[str, str, int, str]], int]:
     total_errors = sum(len(errors) for errors in classified_errors.values())
-    summary: List[Tuple[str, str, int, str]] = []
+    summary: list[tuple[str, str, int, str]] = []
 
     for category, errors in classified_errors.items():
         count = len(errors)
@@ -135,7 +135,7 @@ def summarize_errors(
 
 
 def display_summary(
-    summary: List[Tuple[str, str, int, str]], total_errors: int
+    summary: list[tuple[str, str, int, str]], total_errors: int
 ) -> None:
     console = Console()
     table = Table(title="Mypy Error Summary")
@@ -154,7 +154,7 @@ def display_summary(
 
 
 def display_summary_markdown(
-    summary: List[Tuple[str, str, int, str]], total_errors: int
+    summary: list[tuple[str, str, int, str]], total_errors: int
 ) -> None:
     # Generate markdown table
     markdown_table = "# Mypy Error Summary\n\n"
@@ -172,7 +172,7 @@ def display_summary_markdown(
 
 
 def display_summary_csv(
-    summary: List[Tuple[str, str, int, str]], total_errors: int
+    summary: list[tuple[str, str, int, str]], total_errors: int
 ) -> None:
     # Generate CSV-style output
     csv_table = "Category,Error Code,Count,Percentage\n"
@@ -194,7 +194,7 @@ def display_summary_csv(
 )
 def main(file: str, markdown: bool, csv: bool) -> None:
     # MyPy output is in jsonl format (JSON Lines); parse accordingly.
-    errors: List[Error] = []
+    errors: list[Error] = []
     with open(file) as f:
         for line in f:
             try:

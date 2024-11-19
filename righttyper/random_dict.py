@@ -2,7 +2,7 @@ import random
 
 __version__ = "0.2.2"
 
-from typing import Any, Tuple
+from typing import Any
 
 
 class RandomDict(dict):
@@ -92,7 +92,7 @@ class RandomDict(dict):
         """Return a random value from this dictionary in O(1) time"""
         return self[self.random_key()]
 
-    def random_item(self) -> Tuple[Any, Any]:
+    def random_item(self) -> tuple[Any, Any]:
         """Return a random key-value pair from this dictionary in O(1) time"""
         k = self.random_key()
         return k, self[k]

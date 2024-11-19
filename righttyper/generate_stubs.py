@@ -1,4 +1,5 @@
-from typing import Self, Sequence
+from typing import Self
+import collections.abc as abc
 import libcst as cst
 
 
@@ -42,7 +43,7 @@ class PyiTransformer(cst.CSTTransformer):
         self._needs_any = True
         return "Any"
 
-    def handle_body(self: Self, body: Sequence[cst.CSTNode]) -> list[cst.CSTNode]:
+    def handle_body(self: Self, body: abc.Sequence[cst.CSTNode]) -> list[cst.CSTNode]:
         result: list[cst.CSTNode] = []
         for stmt in body:
             if isinstance(stmt, (cst.FunctionDef, cst.ClassDef, cst.If, cst.Try)):
