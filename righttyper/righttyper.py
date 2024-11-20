@@ -10,14 +10,12 @@ import os
 import runpy
 import signal
 import sys
+import collections.abc as abc
 from collections import defaultdict
 from types import CodeType, FrameType, FunctionType
 from typing import (
     Any,
     TextIO,
-    Iterator,
-    Iterable,
-    Callable,
     get_type_hints,
 )
 
@@ -363,12 +361,12 @@ def process_function_arguments(
 def find_functions(
     caller_frame: FrameType,
     code: CodeType
-) -> Iterator[tuple[str, Callable]]:
+) -> abc.Iterator[tuple[str, abc.Callable]]:
     """
     Attempts to map back from a code object to the functions that use it.
     """
 
-    def check_function(name: str, obj: Callable) -> Iterator[tuple[str, Callable]]:
+    def check_function(name: str, obj: abc.Callable) -> abc.Iterator[tuple[str, abc.Callable]]:
         limit = 25
         while hasattr(obj, "__wrapped__"):
             obj = obj.__wrapped__
@@ -378,14 +376,14 @@ def find_functions(
         if obj.__code__ is code:
             yield (name, obj)
 
-    def find_in_class(class_obj: object) -> Iterator[tuple[str, Callable]]:
+    def find_in_class(class_obj: object) -> abc.Iterator[tuple[str, abc.Callable]]:
         for name, obj in class_obj.__dict__.items():
             if inspect.isfunction(obj):
                 yield from check_function(name, obj)
             elif inspect.isclass(obj):
                 yield from find_in_class(obj)
 
-    dicts: Iterable[tuple[str, Any]] = caller_frame.f_globals.items()
+    dicts: abc.Iterable[tuple[str, Any]] = caller_frame.f_globals.items()
     if caller_frame.f_back:
         dicts = itertools.chain(caller_frame.f_back.f_locals.items(), dicts)
 

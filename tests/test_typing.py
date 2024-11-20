@@ -154,6 +154,16 @@ def test_get_full_type_dtype():
     assert "numpy.ndarray[typing.Any, numpy.dtypes.Float64DType]" == get_full_type(np.array([], np.float64))
 
 
+class NonArrayWithDtype:
+    def __init__(self):
+        self.dtype = 10
+
+def test_non_array_with_dtype():
+    # RightTyper used to just check for the presence of a 'dtype' attribute, causing
+    # it to generate "mock.MagicMock[Any, mock.MagicMock]" annotations
+    assert f"{__name__}.NonArrayWithDtype" == get_full_type(NonArrayWithDtype())
+
+
 class NamedTupleClass:
     P = namedtuple('P', [])
 

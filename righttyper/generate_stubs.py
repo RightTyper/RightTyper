@@ -1,27 +1,11 @@
-from typing import Self, Sequence
+from typing import Self
+import collections.abc as abc
 import libcst as cst
 
 
 class PyiTransformer(cst.CSTTransformer):
     def __init__(self: Self) -> None:
         self._needs_any = False
-
-    def leave_FunctionDef(
-        self: Self,
-        original_node: cst.FunctionDef,
-        updated_node: cst.FunctionDef
-    ) -> cst.FunctionDef:
-        return updated_node.with_changes(
-            body=cst.SimpleStatementSuite([cst.Expr(cst.Ellipsis())]),
-            leading_lines=[]
-        )
-
-    def leave_Comment(    # type: ignore[override]
-        self: Self,
-        original_node: cst.Comment,
-        updated_node: cst.Comment
-        ) -> cst.RemovalSentinel:
-        return cst.RemoveFromParent()
 
     def value2type(self: Self, value: cst.CSTNode) -> str:
         # FIXME not exhaustive; this should come from RightTyper typing
@@ -42,10 +26,10 @@ class PyiTransformer(cst.CSTTransformer):
         self._needs_any = True
         return "Any"
 
-    def handle_body(self: Self, body: Sequence[cst.CSTNode]) -> list[cst.CSTNode]:
+    def handle_body(self: Self, body: abc.Sequence[cst.CSTNode]) -> list[cst.CSTNode]:
         result: list[cst.CSTNode] = []
         for stmt in body:
-            if isinstance(stmt, (cst.FunctionDef, cst.ClassDef, cst.If, cst.Try)):
+            if isinstance(stmt, (cst.FunctionDef, cst.ClassDef, cst.If, cst.Try, cst.With)):
                 result.append(stmt)
             elif (isinstance(stmt, cst.SimpleStatementLine) and
                   isinstance(stmt.body[0], (cst.Import, cst.ImportFrom))):
@@ -73,6 +57,23 @@ class PyiTransformer(cst.CSTTransformer):
 
         return result
 
+    def leave_FunctionDef(
+        self: Self,
+        original_node: cst.FunctionDef,
+        updated_node: cst.FunctionDef
+    ) -> cst.FunctionDef:
+        return updated_node.with_changes(
+            body=cst.SimpleStatementSuite([cst.Expr(cst.Ellipsis())]),
+            leading_lines=[]
+        )
+
+    def leave_Comment(    # type: ignore[override]
+        self: Self,
+        original_node: cst.Comment,
+        updated_node: cst.Comment
+        ) -> cst.RemovalSentinel:
+        return cst.RemoveFromParent()
+
     def leave_ClassDef(
         self: Self,
         original_node: cst.ClassDef,
@@ -93,8 +94,18 @@ class PyiTransformer(cst.CSTTransformer):
         return updated_node.with_changes(
             body=updated_node.body.with_changes(
                 body=self.handle_body(updated_node.body.body)
-            ),
-            leading_lines=[]
+            )
+        )
+
+    def leave_With(
+        self: Self,
+        original_node: cst.With,
+        updated_node: cst.With
+    ) -> cst.With:
+        return updated_node.with_changes(
+            body=updated_node.body.with_changes(
+                body=self.handle_body(updated_node.body.body)
+            )
         )
 
     def leave_Module(
