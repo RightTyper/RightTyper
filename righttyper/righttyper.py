@@ -325,13 +325,12 @@ def process_function_arguments(
     # also "observe" any default values
     try:
         _, function = next(find_functions(caller_frame, code))
+        defaults = {
+            param_name: [param.default] if param.default != inspect._empty else []
+            for param_name, param in inspect.signature(function).parameters.items()
+        }
     except StopIteration:
-        function = None
-
-    defaults = {
-        param_name: [param.default] if param.default != inspect._empty else []
-        for param_name, param in (inspect.signature(function).parameters.items() if function else [])
-    }
+        defaults = {}
 
     argtypes: list[ArgInfo] = []
     for arg in arg_names:
