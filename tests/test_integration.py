@@ -752,3 +752,51 @@ def test_module_list_not_lost_with_multiprocessing(tmp_cwd):
     assert 'def foo(t: "xml.dom.minidom.Element") -> None:' in output
 
     assert 'import xml.dom.minidom\n' in output
+
+
+def test_posonly_and_kwonly(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, /, *, y):
+            pass
+
+        foo(10, y=.1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: int, /, *, y: float) -> None:' in output
+
+
+def test_varargs(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, *args):
+            pass
+
+        foo(True, 10, 's', 0.5)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: bool, *args: float|int|str) -> None:' in output
+
+
+def test_kwargs(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, **kwargs):
+            pass
+
+        foo(True, a=10, b='s', c=0.5)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: bool, **kwargs: float|int|str) -> None:' in output
