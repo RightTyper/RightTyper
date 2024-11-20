@@ -162,6 +162,24 @@ def in_builtins_import(t: type) -> bool:
     return False
 
 
+@cache
+def lookup_type_module(t: type) -> str:
+    parts = t.__qualname__.split('.')
+
+    if (m := sys.modules.get(t.__module__)):
+        if parts[0] in m.__dict__:
+            return t.__module__
+
+    module_prefix = f"{t.__module__}."
+
+    for name, mod in sys.modules.items():
+        if name.startswith(module_prefix):
+            if parts[0] in mod.__dict__:
+                return name
+
+    return t.__module__ # we couldn't find it, just keep it as a last resort
+
+
 RANGE_ITER_TYPE = type(iter(range(1)))
 
 def get_type_name(obj: type, depth: int = 0) -> str:
@@ -218,10 +236,10 @@ def get_type_name(obj: type, depth: int = 0) -> str:
                 ):
                     return f"{name}.{obj.__name__}"
 
-    if obj.__module__ == "__main__":
+    if obj.__module__ == "__main__":    # TODO merge this into lookup_type_module
         return f"{get_main_module_fqn()}.{obj.__qualname__}"
 
-    return f"{obj.__module__}.{obj.__qualname__}"
+    return f"{lookup_type_module(obj)}.{obj.__qualname__}"
 
 
 def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
