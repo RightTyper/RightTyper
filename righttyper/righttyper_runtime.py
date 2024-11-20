@@ -2,12 +2,11 @@ import inspect
 import os
 import random
 import sys
-import typing
-from collections.abc import Generator, AsyncGenerator, Coroutine, KeysView, ValuesView, ItemsView, Iterator
+import collections.abc as abc
 from functools import cache
 from itertools import islice
 from types import CodeType, FrameType, NoneType, FunctionType, MethodType, GenericAlias
-from typing import Any, cast
+from typing import Any
 from pathlib import Path
 
 from righttyper.random_dict import RandomDict
@@ -24,11 +23,17 @@ from righttyper.righttyper_types import (
 from righttyper.righttyper_utils import skip_this_file
 
 
-def sample_from_collection(value: typing.Collection[T], depth = 0) -> T:
-    """Samples from a collection."""
+def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) -> T:
+    """Samples from a collection, or from an interator/generator whose state we don't mind changing."""
     MAX_ELEMENTS = 10   # to keep this O(1)
-    n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
-    return next(islice(value, n, n + 1))
+
+    if isinstance(value, abc.Collection):
+        n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
+        return next(islice(value, n, n + 1))
+
+    n = random.randint(1, MAX_ELEMENTS)
+    return list(islice(value, n))[-1]
+
 
 
 @cache
@@ -107,6 +112,9 @@ def type_from_annotations(func: FunctionType | MethodType) -> str:
         if isinstance(arg, GenericAlias):
             return str(arg)
 
+        if arg is None:
+            return "None"
+
         return get_type_name(arg)
 
     # Format the result
@@ -178,14 +186,14 @@ def get_type_name(obj: type, depth: int = 0) -> str:
         elif obj is RANGE_ITER_TYPE:
             return "typing.Iterator[int]"
         # TODO match other ABC from collections.abc based on interface
-        elif issubclass(obj, Iterator):
+        elif issubclass(obj, abc.Iterator):
             return "typing.Iterator[typing.Any]"
         else:
             # fall back to its name, just so we can tell where it came from.
             return f"builtins.{obj.__name__}"
 
     # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
-    if 'dtype[' in obj.__name__ and hasattr(obj, "type"):
+    if obj.__module__ == 'numpy' and 'dtype[' in obj.__name__ and hasattr(obj, "type"):
         t_name = obj.__qualname__.split('[')[0]
         return f"{obj.__module__}.{t_name}[{get_type_name(obj.type, depth+1)}]"
 
@@ -240,20 +248,31 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         print(f"Warning: RightTyper failed to compute the type of {value}.")
         return "typing.Never"
 
+    t: type|None
+
     if isinstance(value, dict):
+        t = type(value)
+        module = "" if t.__module__ == "builtins" else f"{t.__module__}."
         if value:
             el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
-            return f"dict[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
+            return f"{module}{t.__qualname__}[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
         else:
-            return "dict[typing.Never, typing.Never]"
-    elif (t := _is_instance(value, (KeysView, ValuesView, list, set))):
-        module = "" if t.__module__ == "builtins" else f"typing."
+            return "{module}{t.__qualname__}[typing.Never, typing.Never]"
+    elif isinstance(value, (list, set)):
+        t = type(value)
+        module = "" if t.__module__ == "builtins" else f"{t.__module__}."
         if value:
             el = sample_from_collection(value)
             return f"{module}{t.__qualname__}[{get_full_type(el, depth+1)}]"
         else:
             return f"{module}{t.__qualname__}[typing.Never]"
-    elif isinstance(value, ItemsView):
+    elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
+        if value:
+            el = sample_from_collection(value)
+            return f"typing.{t.__qualname__}[{get_full_type(el, depth+1)}]"
+        else:
+            return f"typing.{t.__qualname__}[typing.Never]"
+    elif isinstance(value, abc.ItemsView):
         if value:
             el = sample_from_collection(value)
             return f"typing.ItemsView[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
@@ -269,18 +288,16 @@ def get_full_type(value: Any, depth: int = 0) -> str:
                 return "tuple"
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
-    elif isinstance(value, Generator):
+    elif isinstance(value, abc.Generator):
         return "typing.Generator[typing.Any, typing.Any, typing.Any]"  # FIXME needs yield / send / return types
-    elif isinstance(value, AsyncGenerator):
+    elif isinstance(value, abc.AsyncGenerator):
         return "typing.AsyncGenerator[typing.Any, typing.Any]"  # FIXME needs yield / send types
-    elif isinstance(value, Coroutine):
+    elif isinstance(value, abc.Coroutine):
         return "typing.Coroutine[typing.Any, typing.Any, typing.Any]"  # FIXME needs yield / send / return types
-    elif hasattr(value, "dtype"):
-        # Certain dtype types' __qualname__ doesn't include a fully qualified
-        # name of their inner type; look them up separately to work around that.
-        return f"{get_type_name(type(value), depth+1)}[typing.Any, {get_type_name(type(value.dtype), depth+1)}]"
-    else:
-        return get_type_name(type(value), depth+1)
+    elif (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':
+        return f"{get_type_name(t, depth+1)}[typing.Any, {get_type_name(type(value.dtype), depth+1)}]"
+
+    return get_type_name(type(value), depth+1)
 
 
 def get_adjusted_full_type(value: Any, class_type: type|None=None) -> str:

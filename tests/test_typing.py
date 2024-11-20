@@ -154,13 +154,42 @@ def test_get_full_type_dtype():
     assert "numpy.ndarray[typing.Any, numpy.dtypes.Float64DType]" == get_full_type(np.array([], np.float64))
 
 
+class NonArrayWithDtype:
+    def __init__(self):
+        self.dtype = 10
+
+def test_non_array_with_dtype():
+    # RightTyper used to just check for the presence of a 'dtype' attribute, causing
+    # it to generate "mock.MagicMock[Any, mock.MagicMock]" annotations
+    assert f"{__name__}.NonArrayWithDtype" == get_full_type(NonArrayWithDtype())
+
+
 class NamedTupleClass:
     P = namedtuple('P', [])
 
 @pytest.mark.xfail(reason='Not sure how to fix')
 def test_get_full_type_namedtuple_in_class():
     # namedtuple's __qualname__ also doesn't contain the enclosing class name...
-    assert "NamedTupleClass.P" == get_full_type(NamedTupleClass.P())
+    assert f"{__name__}.NamedTupleClass.P" == get_full_type(NamedTupleClass.P())
+
+
+class MyDict(dict):
+    def items(self):
+        for k, v in super().items():
+            yield k, v
+
+def test_get_full_type_dict_with_non_collection_items():
+    assert f"{__name__}.MyDict[str, int]" == get_full_type(MyDict({'a': 0}))
+
+
+class MyList(list):
+    pass
+class MySet(set):
+    pass
+
+def test_get_full_type_custom_collection():
+    assert f"{__name__}.MyList[int]" == get_full_type(MyList([0,1]))
+    assert f"{__name__}.MySet[int]" == get_full_type(MySet({0,1}))
 
 
 class Foo:

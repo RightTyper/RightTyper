@@ -152,7 +152,6 @@ def make_type_signature(
     args: list[ArgInfo],
     retval: TypenameSet,
     namespace: dict[str, Any],
-    not_annotated: dict[FuncInfo, set[ArgumentName]],
     arg_types: dict[
         tuple[FuncInfo, ArgumentName],
         ArgumentType,
@@ -178,7 +177,7 @@ def make_type_signature(
         else:
             assert arg_type == ArgumentType.positional
             arg_prefix = ""
-        if argname not in existing_annotations[t]:  # not_annotated[t]:
+        if argname not in existing_annotations[t]:
             argtype_fullname_set = arginfo.type_name_set
             argtype_fullname = Typename(
                 union_typeset_str(
@@ -201,7 +200,6 @@ def make_type_signature(
     if "return" in existing_annotations[t]:
         retval_name = Typename(existing_annotations[t][ArgumentName("return")])
     else:
-        # if "return" in not_annotated[t]:
         retval_name = union_typeset_str(file_name, retval, namespace)
     s += f" -> {retval_name}:"
     return s
