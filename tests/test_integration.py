@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 import pytest
 import importlib.util
+import re
+
 
 @pytest.fixture
 def tmp_cwd(tmp_path, monkeypatch):
@@ -173,6 +175,41 @@ def test_annotation_with_numpy_dtype_name(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "def g() -> Callable[[], np.ndarray[Any, np.dtype[bf16]]]:" in output
+
+
+@pytest.mark.skipif(importlib.util.find_spec('numpy') is None,
+                    reason='missing module numpy')
+def test_internal_numpy_type(tmp_cwd):
+    t = textwrap.dedent("""\
+        import numpy as np
+        from numpy.core.overrides import array_function_dispatch
+
+        def sum_dispatcher(arg):
+            return (arg,)
+
+        @array_function_dispatch(sum_dispatcher)
+        def my_sum(arg):
+            return np.sum(arg)
+
+        class MyArray:
+            def __init__(self, data):
+                self.data = np.array(data)
+
+            def __array_function__(self, func, types, args, kwargs):
+                return func(self.data, *args[1:], **kwargs)
+
+        my_sum(MyArray([1, 2, 3, 4]))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert (m := re.search(r'__array_function__\(self[^,]*, (func[^,]*),', output))
+    assert m.group(1).startswith('func: "numpy.')
+    assert m.group(1).endswith('_ArrayFunctionDispatcher"')
 
 
 def test_call_with_none_default(tmp_cwd):

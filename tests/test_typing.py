@@ -1,4 +1,4 @@
-from righttyper.righttyper_runtime import get_type_name, get_full_type, get_adjusted_full_type
+from righttyper.righttyper_runtime import get_full_type, get_adjusted_full_type
 from collections.abc import Iterable
 from collections import namedtuple
 from typing import Any
@@ -152,15 +152,6 @@ def test_get_full_type_dtype():
     import numpy as np
 
     assert "numpy.ndarray[typing.Any, numpy.dtypes.Float64DType]" == get_full_type(np.array([], np.float64))
-
-
-@pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
-def test_get_type_name_not_qualified():
-    from numpy.core.overrides import _ArrayFunctionDispatcher as afd
-
-    assert afd.__module__ == "numpy"    # check that it still has an unqualified name
-
-    assert "numpy.core._multiarray_umath._ArrayFunctionDispatcher" == get_type_name(afd)
 
 
 class NonArrayWithDtype:

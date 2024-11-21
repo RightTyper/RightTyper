@@ -166,18 +166,27 @@ def in_builtins_import(t: type) -> bool:
 def lookup_type_module(t: type) -> str:
     parts = t.__qualname__.split('.')
 
+    def is_defined_in_module(namespace: dict, index: int=0) -> bool:
+        if index<len(parts) and (obj := namespace.get(parts[index])):
+            if obj is t:
+                return True
+
+            if isinstance(obj, dict):
+                return is_defined_in_module(obj, index+1)
+
+        return False
+
     if (m := sys.modules.get(t.__module__)):
-        if parts[0] in m.__dict__:
+        if is_defined_in_module(m.__dict__):
             return t.__module__
 
     module_prefix = f"{t.__module__}."
-
     for name, mod in sys.modules.items():
-        if name.startswith(module_prefix):
-            if parts[0] in mod.__dict__:
-                return name
+        if name.startswith(module_prefix) and is_defined_in_module(mod.__dict__):
+            return name
 
-    return t.__module__ # we couldn't find it, just keep it as a last resort
+    # it's not in the module, but keep it as a last resort, to facilitate diagnostics
+    return t.__module__
 
 
 RANGE_ITER_TYPE = type(iter(range(1)))
