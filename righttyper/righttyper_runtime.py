@@ -353,55 +353,47 @@ def update_argtypes(
     arg_values: Any,
     class_type: type|None,
     arg: str,
-    varargs: str|None,
-    varkw: str|None,
+    is_vararg: bool,
+    is_kwarg: bool
 ) -> None:
 
     def add_arg_info(
         argument_name: str,
-        arg_type: type,
         values: Any,
         arg_type_enum: ArgumentType,
     ) -> None:
-        if not all(v is None for v in values):
-            types = TypenameSet(
-                {
-                    TypenameFrequency(
-                        Typename(get_adjusted_full_type(val, class_type)),
-                        1,
-                    )
-                    for val in values
-                }
-            )
-            argtypes.append(
-                ArgInfo(
-                    ArgumentName(argument_name),
-                    arg_type,
-                    types,
+        types = TypenameSet(
+            {
+                TypenameFrequency(
+                    Typename(get_adjusted_full_type(val, class_type)),
+                    1,
                 )
+                for val in values
+            }
+        )
+        argtypes.append(
+            ArgInfo(
+                ArgumentName(argument_name),
+                types,
             )
-            arg_types[index] = arg_type_enum
+        )
+        arg_types[index] = arg_type_enum
 
-    if arg == varargs:
-        assert varargs
+    if is_vararg:
         add_arg_info(
-            varargs,
-            tuple,
+            arg,
             arg_values[0],
             ArgumentType.vararg,
         )
-    elif arg == varkw:
-        assert varkw
+    elif is_kwarg:
         add_arg_info(
-            varkw,
-            dict,
+            arg,
             arg_values[0].values(),
             ArgumentType.kwarg,
         )
     else:
         add_arg_info(
             arg,
-            type(arg_values[0]),
             arg_values,
             ArgumentType.positional,
         )
