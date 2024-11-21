@@ -295,6 +295,54 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.name_stack.extend([node.name.value, "<locals>"])
         return True
 
+    def _process_parameter(self, parameter: cst.Param, ann: FuncAnnotation) -> cst.Param:
+        """Processes a parameter, either returning an updated parameter or the original one."""
+        if (
+            not (parameter.annotation is None or self.override_annotations)
+            or (annotation := next(
+                (
+                    annotation for arg, annotation in ann.args
+                    if arg == parameter.name.value
+                ), None)
+            ) is None
+            or not self._is_valid(annotation)
+        ):
+            return parameter
+
+        annotation_expr: cst.BaseExpression = cst.parse_expression(annotation)
+        annotation_expr = self._rename_types(annotation_expr)
+        unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
+        self.unknown_types |= unknown_types
+
+        if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
+            annotation_expr = cst.SimpleString(f'"{_annotation_as_string(annotation_expr)}"')
+
+        new_par = parameter.with_changes(
+            annotation=cst.Annotation(annotation=annotation_expr)
+        )
+
+        # remove per-parameter type hint comment for non-last parameter
+        if ((comment := _get_str_attr(new_par, "comma.whitespace_after.first_line.comment.value"))
+            and _TYPE_HINT_COMMENT.match(comment)):
+            new_par = new_par.with_changes(
+                comma=new_par.comma.with_changes(   # type: ignore[union-attr]
+                    whitespace_after=new_par.comma.whitespace_after.with_changes( # type: ignore[union-attr]
+                        first_line=cst.TrailingWhitespace()
+                    )
+                )
+            )
+
+        # remove per-parameter type hint comment for last parameter
+        if ((comment := _get_str_attr(new_par, "whitespace_after_param.first_line.comment.value"))
+            and _TYPE_HINT_COMMENT.match(comment)):
+            new_par = new_par.with_changes(
+                whitespace_after_param=new_par.whitespace_after_param.with_changes(
+                    first_line=cst.TrailingWhitespace()
+                )
+            )
+
+        return new_par
+
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef:
@@ -304,58 +352,26 @@ class UnifiedTransformer(cst.CSTTransformer):
         key = FuncInfo(Filename(self.filename), FunctionName(name))
 
         if ann := self.type_annotations.get(key):
-            new_parameters = []
-            for parameter in updated_node.params.params:
-                for arg, annotation_ in ann.args:
-                    if parameter.name.value == arg:
-                        if not (
-                            (parameter.annotation is None or self.override_annotations)
-                            and self._is_valid(annotation_)
-                        ):
-                            continue
+            for attr_name in ['params', 'kwonly_params', 'posonly_params']:
+                if getattr(updated_node.params, attr_name):
+                    new_parameters = []
+                    for parameter in getattr(updated_node.params, attr_name):
+                        new_parameters.append(self._process_parameter(parameter, ann))
 
-                        annotation_expr: cst.BaseExpression = cst.parse_expression(annotation_)
-                        annotation_expr = self._rename_types(annotation_expr)
-                        unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
-                        self.unknown_types |= unknown_types
-
-                        if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-                            annotation_expr = cst.SimpleString(f'"{_annotation_as_string(annotation_expr)}"')
-
-                        new_par = parameter.with_changes(
-                            annotation=cst.Annotation(annotation=annotation_expr)
+                    updated_node = updated_node.with_changes(
+                        params=updated_node.params.with_changes(
+                            **{attr_name: new_parameters}
                         )
+                    )
 
-                        # remove per-parameter type hint comment for non-last parameter
-                        if ((comment := _get_str_attr(new_par, "comma.whitespace_after.first_line.comment.value"))
-                            and _TYPE_HINT_COMMENT.match(comment)):
-                            new_par = new_par.with_changes(
-                                comma=new_par.comma.with_changes(   # type: ignore[union-attr]
-                                    whitespace_after=new_par.comma.whitespace_after.with_changes( # type: ignore[union-attr]
-                                        first_line=cst.TrailingWhitespace()
-                                    )
-                                )
-                            )
-
-                        # remove per-parameter type hint comment for last parameter
-                        if ((comment := _get_str_attr(new_par, "whitespace_after_param.first_line.comment.value"))
-                            and _TYPE_HINT_COMMENT.match(comment)):
-                            new_par = new_par.with_changes(
-                                whitespace_after_param=new_par.whitespace_after_param.with_changes(
-                                    first_line=cst.TrailingWhitespace()
-                                )
-                            )
-
-                        new_parameters.append(new_par)
-                        break
-                else:
-                    new_parameters.append(parameter)
-
-            updated_node = updated_node.with_changes(
-                params=updated_node.params.with_changes(
-                    params=new_parameters
-                )
-            )
+            for attr_name in ['star_arg', 'star_kwarg']:
+                attr = getattr(updated_node.params, attr_name)
+                if isinstance(attr, cst.Param):
+                    updated_node = updated_node.with_changes(
+                        params=updated_node.params.with_changes(
+                            **{attr_name: self._process_parameter(attr, ann)}
+                        )
+                    )
 
             if ((updated_node.returns is None or self.override_annotations)
                 and ann.retval is not None
