@@ -622,33 +622,21 @@ def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
                 names.add(node.target.value)
             return True
 
-        def visit_WithItem(self, node: cst.WithItem) -> bool:
-            if isinstance(node.asname, cst.AsName) and isinstance(node.asname.name, cst.Name):
-                names.add(node.asname.name.value)
-            return False
-
-        def visit_Import(self, node: cst.Import) -> bool:
-            # node.names could also be cst.ImportStar
-            if isinstance(node.names, abc.Sequence):
-                for alias in node.names:
-                    if alias.asname is not None:
-                        names.add(_nodes_to_top_level_name(alias.asname.name))
-            return False
-
         def visit_ImportFrom(self, node: cst.ImportFrom) -> bool:
             # node.names could also be cst.ImportStar
             if isinstance(node.names, abc.Sequence):
                 for alias in node.names:
-                    names.add(_nodes_to_top_level_name(
-                        alias.asname.name if alias.asname is not None else alias.name
-                    ))
-            return False
+                    if not alias.asname:
+                        names.add(_nodes_to_top_level_name(alias.name))
+            return True
 
         def visit_NamedExpr(self, node: cst.NamedExpr) -> bool:
             names.add(_nodes_to_top_level_name(node.target))
             return True
 
-        # TODO add visit_AsName ?
+        def visit_AsName(self, node: cst.AsName) -> bool:
+            names.add(_nodes_to_top_level_name(node.name))
+            return True
 
     node.visit(Extractor())
     return names
