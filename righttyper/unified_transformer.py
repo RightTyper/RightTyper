@@ -141,8 +141,11 @@ class UnifiedTransformer(cst.CSTTransformer):
             def try_replace(self, node: cst.Name|cst.Attribute) -> cst.Name|cst.Attribute:
                 name = _nodes_to_dotted_name(node)
 
-                if name in _BUILTIN_TYPES:  # optimization
-                    return node
+                if name in _BUILTIN_TYPES:
+                    if name not in self.t.used_names[-1]:
+                        return node
+
+                    name = f"builtins.{name}" # somebody overrode a builtin name(!)
 
                 if a := self.t.aliases.get(name):
                     return _dotted_name_to_nodes(a)
@@ -156,10 +159,13 @@ class UnifiedTransformer(cst.CSTTransformer):
                         return _dotted_name_to_nodes(f"{a}.{rest}")
 
                     # does the package name conflict with other definitions?
-                    if name.split('.')[0] in self.t.global_names:
+                    if name.split('.')[0] in self.t.used_names[-1]:
                         alias = "_rt_" + "_".join(module.split("."))
                         self.t.if_checking_aliases[module] = alias
                         return _dotted_name_to_nodes(alias + ("" if rest == "" else f".{rest}"))
+
+                if module == 'builtins':
+                    return _dotted_name_to_nodes(name)
 
                 return node
 
@@ -191,8 +197,8 @@ class UnifiedTransformer(cst.CSTTransformer):
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
 
-        # global names defined anywhere in the module
-        self.global_names: set[str] = _global_names(node)
+        # names used somewhere in a module or class scope
+        self.used_names: list[set[str]] = [used_names(node)]
 
         # currently known global names
         self.known_names: set[str] = set(_BUILTIN_TYPES)
@@ -283,16 +289,19 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
         self.name_stack.append(node.name.value)
+        self.used_names.append(self.used_names[0] | used_names(node))  # globals + this class
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
         # a class is known once its definition is done
         self.known_names.add(".".join(self.name_stack))
         self.name_stack.pop()
+        self.used_names.pop()
         return updated_node
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
         self.name_stack.extend([node.name.value, "<locals>"])
+        self.used_names.append(self.used_names[0])  # just globals within method body
         return True
 
     def _process_parameter(self, parameter: cst.Param, ann: FuncAnnotation) -> cst.Param:
@@ -349,6 +358,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         name = ".".join(self.name_stack[:-1])
         self.name_stack.pop()
         self.name_stack.pop()
+        self.used_names.pop()
         key = FuncInfo(Filename(self.filename), FunctionName(name))
 
         if ann := self.type_annotations.get(key):
@@ -566,17 +576,28 @@ def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:
     return extractor.names
 
 
-def _global_names(node: cst.Module) -> set[str]:
-    """Extracts the global names in a module."""
+def used_names(node: cst.Module|cst.ClassDef) -> set[str]:
+    """Extracts the names in a module or class."""
 
     names: set[str] = set()
 
     class Extractor(cst.CSTVisitor):
-        def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
-            names.add(node.name.value)
-            return False
+        def __init__(self):
+            self.in_scope = False
+
+        def visit_Module(self, node: cst.Module) -> bool:
+            self.in_scope = True
+            return True
 
         def visit_ClassDef(self, node: cst.ClassDef) -> bool:
+            if self.in_scope:
+                names.add(node.name.value)
+                return False
+
+            self.in_scope = True
+            return True
+
+        def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
             names.add(node.name.value)
             return False
 
