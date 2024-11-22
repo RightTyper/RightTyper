@@ -37,11 +37,6 @@ from righttyper.righttyper_runtime import (
     update_argtypes,
     get_main_module_fqn
 )
-from righttyper.righttyper_shapes import (
-    print_annotation,
-    update_arg_shapes,
-    update_retval_shapes,
-)
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
     reset_monitoring,
@@ -265,8 +260,6 @@ def exit_function_worker(
         visited_funcs_retval[t] = TypenameSet(set())
     debug_print(f"exit processing, retval was {visited_funcs_retval[t]=}")
 
-    if infer_shapes:
-        update_retval_shapes(t, return_value)
     typename = get_adjusted_full_type(return_value, class_type, use_jaxtyping=infer_shapes)
     if event_type == sys.monitoring.events.PY_YIELD:
         # Yield: call it a generator
@@ -312,8 +305,6 @@ def process_function_arguments(
         arg_names.append(kwarg)
 
     type_hints = get_function_type_hints(caller_frame, code)
-    if infer_shapes:
-        update_arg_shapes(t, the_values)
 
     update_function_annotations(
         t,
@@ -579,49 +570,6 @@ def output_type_signatures(
                     (s + "\n").splitlines(True),
                 )
                 print("".join(diffs), file=file)
-            # First try at shapes
-            annotations = print_annotation(t)
-            try:
-                ret_annotation = annotations.pop()
-            except IndexError:
-                ret_annotation = None
-            if annotations and infer_shapes:
-                # Process all annotations
-                try:
-                    annotations = [
-                        visited_funcs_arguments[t][index].arg_name
-                        + ": "
-                        + annotation.format(
-                            union_typeset_str(
-                                t.file_name,
-                                visited_funcs_arguments[t][
-                                    index
-                                ].type_name_set,
-                                {},
-                            )
-                        )
-                        for index, annotation in enumerate(annotations)
-                    ]
-                    print("# Shape annotations", file=file)
-                    print("@beartype", file=file)
-                    if t in visited_funcs_retval:
-                        assert ret_annotation
-                        # Has a return value
-                        retval_type = union_typeset_str(
-                            t.file_name, visited_funcs_retval[t], {}
-                        )
-                        print(
-                            f"def {t.func_name}({', '.join(annotations)}) -> {ret_annotation.format(retval_type)}: ...\n",
-                            file=file,
-                        )
-                    else:
-                        print(
-                            f"def {t.func_name}({', '.join(annotations)}) -> None: ...\n",
-                            file=file,
-                        )
-                except IndexError:
-                    # FIXME this should not happen, to track down later
-                    logger.exception("IndexError in annotations")
 
         except KeyError:
             # Something weird happened
