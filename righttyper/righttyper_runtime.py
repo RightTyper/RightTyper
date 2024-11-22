@@ -372,7 +372,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
     if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):
         if (dtype := jx_dtype(value)) is not None:
             shape = " ".join(str(d) for d in value.shape)
-            return f'jaxtyping.{dtype}[jaxtyping.Array, "{shape}"]'
+            return f'jaxtyping.{dtype}[{get_type_name(type(value), depth+1)}, "{shape}"]'
 
     if (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':
         return f"{get_type_name(t, depth+1)}[typing.Any, {get_type_name(type(value.dtype), depth+1)}]"

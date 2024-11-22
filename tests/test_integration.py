@@ -231,8 +231,8 @@ def test_jaxtyping_annotation(tmp_cwd):
                     '--infer-shapes', '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert 'def f(x: "jaxtyping.Int64[jaxtyping.Array, \\"2 1\\"]") ' +\
-           '-> "jaxtyping.Int64[jaxtyping.Array, \\"2 1\\"]"' in output
+    assert 'def f(x: "jaxtyping.Int64[np.ndarray, \\"2 1\\"]") ' +\
+           '-> "jaxtyping.Int64[np.ndarray, \\"2 1\\"]"' in output
 
 
 def test_call_with_none_default(tmp_cwd):
