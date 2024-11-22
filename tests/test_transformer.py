@@ -1478,15 +1478,26 @@ def test_inner_function():
             def g(x):
                 def h(x):
                     pass
+
+            class D:
+                float = 0
+
+                def i(self):
+                    def j(x):
+                        pass
     """))
 
     g = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.g'))
     h = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.g.<locals>.h'))
+    i = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.D.i'))
+    j = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.D.i.<locals>.j'))
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
                 g: FuncAnnotation([], Typename('tuple[int, float]')),
                 h: FuncAnnotation([], Typename('tuple[int, float]')),
+                i: FuncAnnotation([], Typename('tuple[int, float]')),
+                j: FuncAnnotation([], Typename('tuple[int, float]')),
             },
             override_annotations=False,
             module_name = 'foo',
@@ -1501,6 +1512,12 @@ def test_inner_function():
     assert get_function(code, 'C.f.<locals>.g') == textwrap.dedent("""\
         def g(x) -> "builtins.tuple[builtins.int, float]":
             def h(x) -> "builtins.tuple[builtins.int, float]":
+                pass
+    """)
+
+    assert get_function(code, 'C.f.<locals>.D.i') == textwrap.dedent("""\
+        def i(self) -> "builtins.tuple[builtins.int, builtins.float]":
+            def j(x) -> "builtins.tuple[builtins.int, float]":
                 pass
     """)
 
@@ -1567,10 +1584,10 @@ def test_builtin_name_conflicts_even_module_name():
 def test_used_names():
     code = cst.parse_module(textwrap.dedent("""\
     a, b = 0, 0
-    c: int = 0
+    c: int = (d := 0)
 
     class C:
-        d = 0
+        e = 0
 
         class D:
             def f(self):
@@ -1584,10 +1601,10 @@ def test_used_names():
         pass
     """))
 
-    assert {'a', 'b', 'c', 'C', 'j'} == used_names(code)
+    assert {'a', 'b', 'c', 'd', 'C', 'j'} == used_names(code)
 
     C = typing.cast(cst.ClassDef, cstm.findall(code, cstm.ClassDef(name=cstm.Name('C')))[0])
-    assert {'d', 'D', 'g'} == used_names(C)
+    assert {'D', 'e', 'g'} == used_names(C)
 
     D = typing.cast(cst.ClassDef, cstm.findall(code, cstm.ClassDef(name=cstm.Name('D')))[0])
     assert {'f'} == used_names(D)

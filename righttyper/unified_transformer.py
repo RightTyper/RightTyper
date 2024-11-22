@@ -288,8 +288,9 @@ class UnifiedTransformer(cst.CSTTransformer):
         return False
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
+        name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.append(node.name.value)
-        self.used_names.append(self.used_names[0] | used_names(node))  # globals + this class
+        self.used_names.append(self.used_names[name_source] | used_names(node))
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
@@ -300,12 +301,9 @@ class UnifiedTransformer(cst.CSTTransformer):
         return updated_node
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
-        in_function = self.name_stack and self.name_stack[-1] == '<locals>'
+        name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.extend([node.name.value, "<locals>"])
-        if in_function:
-            self.used_names.append(self.used_names[-1] | used_names(node)) # enclosing function + this one
-        else:
-            self.used_names.append(self.used_names[0] | used_names(node))  # globals + this function
+        self.used_names.append(self.used_names[name_source] | used_names(node))
         return True
 
     def _process_parameter(self, parameter: cst.Param, ann: FuncAnnotation) -> cst.Param:
@@ -617,12 +615,12 @@ def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
                     for el in t.target.elements:
                         if isinstance(el.value, cst.Name):
                             names.add(el.value.value)
-            return False
+            return True
 
         def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
             if isinstance(node.target, cst.Name):
                 names.add(node.target.value)
-            return False
+            return True
 
         def visit_WithItem(self, node: cst.WithItem) -> bool:
             if isinstance(node.asname, cst.AsName) and isinstance(node.asname.name, cst.Name):
@@ -646,5 +644,20 @@ def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
                     ))
             return False
 
+        def visit_NamedExpr(self, node: cst.NamedExpr) -> bool:
+            names.add(_nodes_to_top_level_name(node.target))
+            return True
+
+        # TODO add visit_AsName ?
+
     node.visit(Extractor())
     return names
+
+
+def list_rindex(l: list, item: object) -> int:
+    """Returns either a negative index for the last occurrence of 'item' on the list,
+       or 0 if not found."""
+    try:
+        return -1 - l[::-1].index(item)
+    except ValueError:
+        return 0
