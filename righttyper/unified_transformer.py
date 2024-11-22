@@ -635,7 +635,12 @@ def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
             return True
 
         def visit_AsName(self, node: cst.AsName) -> bool:
-            names.add(_nodes_to_top_level_name(node.name))
+            if isinstance(node.name, (cst.Tuple, cst.List)):
+                for el in node.name.elements:
+                    names.add(_nodes_to_top_level_name(el.value))
+            else:
+                names.add(_nodes_to_top_level_name(node.name))
+
             return True
 
     node.visit(Extractor())

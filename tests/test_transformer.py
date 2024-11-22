@@ -1599,9 +1599,15 @@ def test_used_names():
 
     def j():
         pass
+
+    with handler as (k,):
+        pass
+
+    with handler as [l]:
+        pass
     """))
 
-    assert {'a', 'b', 'c', 'd', 'C', 'j'} == used_names(code)
+    assert {'a', 'b', 'c', 'd', 'C', 'j', 'k', 'l'} == used_names(code)
 
     C = typing.cast(cst.ClassDef, cstm.findall(code, cstm.ClassDef(name=cstm.Name('C')))[0])
     assert {'D', 'e', 'g'} == used_names(C)
