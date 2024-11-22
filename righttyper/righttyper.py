@@ -125,7 +125,7 @@ include_all = False
 infer_shapes = False  # tensor shape inference
 
 
-def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
+def enter_function(ignore_annotations: bool, infer_shapes: bool, code: CodeType) -> Any:
     """
     Process the function entry point, perform monitoring related operations,
     and manage the profiling of function execution.
@@ -153,7 +153,7 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
 
     frame = inspect.currentframe()
     if frame and frame.f_back and frame.f_back.f_back:
-        process_function_arguments(frame, t, ignore_annotations)
+        process_function_arguments(frame, t, ignore_annotations, infer_shapes)
 
     return sys.monitoring.DISABLE
 
@@ -267,7 +267,7 @@ def exit_function_worker(
 
     if infer_shapes:
         update_retval_shapes(t, return_value)
-    typename = get_adjusted_full_type(return_value, class_type)
+    typename = get_adjusted_full_type(return_value, class_type, use_jaxtyping=infer_shapes)
     if event_type == sys.monitoring.events.PY_YIELD:
         # Yield: call it a generator
         if type(return_value).__name__ == "async_generator_wrapped_value":
@@ -298,6 +298,7 @@ def process_function_arguments(
     frame: Any,
     t: FuncInfo,
     ignore_annotations: bool,
+    infer_shapes: bool
 ) -> None:
     # NOTE: this backtracking logic is brittle and must be
     # adjusted if the call chain increases in length.
@@ -351,7 +352,8 @@ def process_function_arguments(
                 class_type,
                 arg,
                 is_vararg = (arg == vararg),
-                is_kwarg = (arg == kwarg)
+                is_kwarg = (arg == kwarg),
+                use_jaxtyping = infer_shapes
             )
 
     debug_print(f"processing {t=} {argtypes=}")
@@ -1049,6 +1051,7 @@ def main(
         exit_function,
         yield_function,
         ignore_annotations,
+        infer_shapes
     )
     sys.monitoring.restart_events()
     setup_timer(restart_sampling)

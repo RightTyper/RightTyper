@@ -17,11 +17,12 @@ _EVENTS = frozenset(
 
 
 def register_monitoring_callbacks(
-    enter_function: Callable[[bool, CodeType], Any],
+    enter_function: Callable[[bool, bool, CodeType], Any],
     call_handler: Callable[[CodeType, int, object, object], Any],
     exit_function: Callable[[CodeType, int, Any], object],
     yield_function: Callable[[CodeType, int, Any], object],
     ignore_annotations: bool,
+    infer_shapes: bool,
 ) -> None:
     """Set up tracking for all enters, calls, exits, and yields."""
     event_set = 0
@@ -32,7 +33,7 @@ def register_monitoring_callbacks(
 
     fns: dict[Any, Callable[..., Any]] = {
         sys.monitoring.events.PY_START: (
-            lambda x, y: enter_function(ignore_annotations, x)
+            lambda x, y: enter_function(ignore_annotations, infer_shapes, x)
         ),
         sys.monitoring.events.CALL: call_handler,
         sys.monitoring.events.PY_RETURN: exit_function,

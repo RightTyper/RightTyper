@@ -211,3 +211,26 @@ def test_adjusted_full_type():
     assert f"{__name__}.Foo" == get_adjusted_full_type(Foo())
 
     assert f"{__name__}.test_adjusted_full_type.<locals>.Bar" == get_adjusted_full_type(Bar())
+
+
+@pytest.mark.skipif((importlib.util.find_spec('numpy') is None or
+                     importlib.util.find_spec('jaxtyping') is None),
+                    reason='missing modules')
+def test_get_full_type_numpy_jaxtyping():
+    import numpy as np
+
+    assert 'jaxtyping.Float64[jaxtyping.Array, "0"]' == get_full_type(np.array([], np.float64), use_jaxtyping=True)
+    assert 'jaxtyping.Float16[jaxtyping.Array, "1 1 1"]' == \
+            get_full_type(np.array([[[1]]], np.float16), use_jaxtyping=True)
+
+
+@pytest.mark.skipif((importlib.util.find_spec('torch') is None or
+                     importlib.util.find_spec('jaxtyping') is None),
+                    reason='missing modules')
+def test_get_full_type_torch_jaxtyping():
+    import torch
+
+    assert 'jaxtyping.Float64[jaxtyping.Array, "0"]' == \
+            get_full_type(torch.tensor([], dtype=torch.float64), use_jaxtyping=True)
+    assert 'jaxtyping.Int32[jaxtyping.Array, "2 1"]' == \
+            get_full_type(torch.tensor([[1],[2]], dtype=torch.int32), use_jaxtyping=True)

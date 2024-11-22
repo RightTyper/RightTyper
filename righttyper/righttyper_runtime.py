@@ -6,7 +6,7 @@ import collections.abc as abc
 from functools import cache
 from itertools import islice
 from types import CodeType, FrameType, NoneType, FunctionType, MethodType, GenericAlias
-from typing import Any
+from typing import Any, cast
 from pathlib import Path
 
 from righttyper.random_dict import RandomDict
@@ -34,6 +34,52 @@ def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) 
     n = random.randint(1, MAX_ELEMENTS)
     return list(islice(value, n))[-1]
 
+try:
+    import jaxtyping as jx
+
+    # FIXME can we avoid this list?
+    # this is sorted from more specific to more general
+    jx_dtype_type = jx._array_types._MetaAbstractDtype
+    JX_DTYPES: list[jx_dtype_type] = cast(list[jx_dtype_type], [
+        jx.UInt4,
+        jx.UInt8,
+        jx.UInt16,
+        jx.UInt32,
+        jx.UInt64,
+        jx.Int4,
+        jx.Int8,
+        jx.Int16,
+        jx.Int32,
+        jx.Int64,
+        jx.BFloat16,
+        jx.Float16,
+        jx.Float32,
+        jx.Float64,
+        jx.Complex64,
+        jx.Complex128,
+        jx.Bool,
+        jx.UInt,
+        jx.Int,
+        jx.Integer,
+        jx.Float,
+        jx.Complex,
+        jx.Inexact,
+        jx.Real,
+        jx.Num,
+        jx.Shaped,
+        jx.Key,
+    ])
+
+except ImportError:
+    JX_DTYPES = []
+
+
+def jx_dtype(value: Any) -> str|None:
+    t = type(value)
+    for dtype in JX_DTYPES:
+        if isinstance(value, dtype[t, "..."]):
+            return dtype.__qualname__
+    return None
 
 
 @cache
@@ -260,7 +306,7 @@ def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
     return None
 
 
-def get_full_type(value: Any, depth: int = 0) -> str:
+def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -> str:
     """
     get_full_type takes a value (an instance) as input and returns a string representing its type.
 
@@ -282,7 +328,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         module = "" if t.__module__ == "builtins" else f"{t.__module__}."
         if value:
             el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
-            return f"{module}{t.__qualname__}[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
+            return f"{module}{t.__qualname__}[{', '.join(get_full_type(fld, depth=depth+1) for fld in el)}]"
         else:
             return "{module}{t.__qualname__}[typing.Never, typing.Never]"
     elif isinstance(value, (list, set)):
@@ -290,19 +336,19 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         module = "" if t.__module__ == "builtins" else f"{t.__module__}."
         if value:
             el = sample_from_collection(value)
-            return f"{module}{t.__qualname__}[{get_full_type(el, depth+1)}]"
+            return f"{module}{t.__qualname__}[{get_full_type(el, depth=depth+1)}]"
         else:
             return f"{module}{t.__qualname__}[typing.Never]"
     elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
         if value:
             el = sample_from_collection(value)
-            return f"typing.{t.__qualname__}[{get_full_type(el, depth+1)}]"
+            return f"typing.{t.__qualname__}[{get_full_type(el, depth=depth+1)}]"
         else:
             return f"typing.{t.__qualname__}[typing.Never]"
     elif isinstance(value, abc.ItemsView):
         if value:
             el = sample_from_collection(value)
-            return f"typing.ItemsView[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
+            return f"typing.ItemsView[{get_full_type(el[0], depth=depth+1)}, {get_full_type(el[1], depth=depth+1)}]"
         else:
             return "typing.ItemsView[typing.Never, typing.Never]"
     elif isinstance(value, tuple):
@@ -310,7 +356,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
             return f"{value.__class__.__module__}.{value.__class__.__qualname__}"
         else:
             if value:
-                return f"tuple[{', '.join(get_full_type(elem, depth+1) for elem in value)}]"
+                return f"tuple[{', '.join(get_full_type(elem, depth=depth+1) for elem in value)}]"
             else:
                 return "tuple"
     elif isinstance(value, (FunctionType, MethodType)):
@@ -321,18 +367,25 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         return "typing.AsyncGenerator[typing.Any, typing.Any]"  # FIXME needs yield / send types
     elif isinstance(value, abc.Coroutine):
         return "typing.Coroutine[typing.Any, typing.Any, typing.Any]"  # FIXME needs yield / send / return types
-    elif (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':
+
+
+    if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):
+        if (dtype := jx_dtype(value)) is not None:
+            shape = " ".join(str(d) for d in value.shape)
+            return f'jaxtyping.{dtype}[jaxtyping.Array, "{shape}"]'
+
+    if (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':
         return f"{get_type_name(t, depth+1)}[typing.Any, {get_type_name(type(value.dtype), depth+1)}]"
 
     return get_type_name(type(value), depth+1)
 
 
-def get_adjusted_full_type(value: Any, class_type: type|None=None) -> str:
+def get_adjusted_full_type(value: Any, class_type: type|None=None, /, use_jaxtyping: bool = False) -> str:
     #print(f"{type(value)=} {class_type=}")
     if type(value) == class_type:
         return "typing.Self"
 
-    return get_full_type(value)
+    return get_full_type(value, use_jaxtyping=use_jaxtyping)
 
 
 def isinstance_namedtuple(obj: object) -> bool:
@@ -353,8 +406,10 @@ def update_argtypes(
     arg_values: Any,
     class_type: type|None,
     arg: str,
+    /,
     is_vararg: bool,
-    is_kwarg: bool
+    is_kwarg: bool,
+    use_jaxtyping: bool
 ) -> None:
 
     def add_arg_info(
@@ -365,7 +420,9 @@ def update_argtypes(
         types = TypenameSet(
             {
                 TypenameFrequency(
-                    Typename(get_adjusted_full_type(val, class_type)),
+                    Typename(get_adjusted_full_type(
+                        val, class_type, use_jaxtyping=use_jaxtyping
+                    )),
                     1,
                 )
                 for val in values
