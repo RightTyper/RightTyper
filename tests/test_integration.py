@@ -226,7 +226,7 @@ def test_call_with_none_default(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
-    assert "def func(n=None) -> int" in output
+    assert "def func(n: None=None) -> int" in output
 
 
 def test_default_arg(tmp_cwd):
@@ -837,3 +837,19 @@ def test_kwargs(tmp_cwd):
 
     output = Path("t.py").read_text()
     assert 'def foo(x: bool, **kwargs: float|int|str) -> None:' in output
+
+
+def test_none_arg(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x):
+            pass
+
+        foo(None)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: None) -> None:' in output

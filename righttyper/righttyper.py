@@ -304,11 +304,11 @@ def process_function_arguments(
     caller_frame = frame.f_back.f_back  # .f_back
     code = caller_frame.f_code
     class_type = get_class_type_from_stack()
-    arg_names, varargs, varkw, the_values = inspect.getargvalues(caller_frame)
-    if varargs:
-        arg_names.append(varargs)
-    if varkw:
-        arg_names.append(varkw)
+    arg_names, vararg, kwarg, the_values = inspect.getargvalues(caller_frame)
+    if vararg:
+        arg_names.append(vararg)
+    if kwarg:
+        arg_names.append(kwarg)
 
     type_hints = get_function_type_hints(caller_frame, code)
     if infer_shapes:
@@ -326,8 +326,9 @@ def process_function_arguments(
     try:
         _, function = next(find_functions(caller_frame, code))
         defaults = {
-            param_name: [param.default] if param.default != inspect._empty else []
+            param_name: [param.default]
             for param_name, param in inspect.signature(function).parameters.items()
+            if param.default != inspect._empty
         }
     except StopIteration:
         defaults = {}
@@ -349,8 +350,8 @@ def process_function_arguments(
                 [the_values[arg], *defaults.get(arg, [])],
                 class_type,
                 arg,
-                varargs,
-                varkw,
+                is_vararg = (arg == vararg),
+                is_kwarg = (arg == kwarg)
             )
 
     debug_print(f"processing {t=} {argtypes=}")
