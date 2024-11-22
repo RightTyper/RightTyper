@@ -300,8 +300,12 @@ class UnifiedTransformer(cst.CSTTransformer):
         return updated_node
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
+        in_function = self.name_stack and self.name_stack[-1] == '<locals>'
         self.name_stack.extend([node.name.value, "<locals>"])
-        self.used_names.append(self.used_names[0])  # just globals within method body
+        if in_function:
+            self.used_names.append(self.used_names[-1] | used_names(node)) # enclosing function + this one
+        else:
+            self.used_names.append(self.used_names[0] | used_names(node))  # globals + this function
         return True
 
     def _process_parameter(self, parameter: cst.Param, ann: FuncAnnotation) -> cst.Param:
@@ -576,7 +580,7 @@ def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:
     return extractor.names
 
 
-def used_names(node: cst.Module|cst.ClassDef) -> set[str]:
+def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
     """Extracts the names in a module or class."""
 
     names: set[str] = set()
@@ -598,8 +602,12 @@ def used_names(node: cst.Module|cst.ClassDef) -> set[str]:
             return True
 
         def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
-            names.add(node.name.value)
-            return False
+            if self.in_scope:
+                names.add(node.name.value)
+                return False
+
+            self.in_scope = True
+            return True
 
         def visit_Assign(self, node: cst.Assign) -> bool:
             for t in node.targets:

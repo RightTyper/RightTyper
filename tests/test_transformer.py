@@ -1467,6 +1467,49 @@ def test_class_names_dont_affect_body_of_methods():
     """)
 
 
+def test_inner_function():
+    code = cst.parse_module(textwrap.dedent("""\
+    tuple = 0
+
+    class C:
+        def f(self):
+            int = 0
+
+            def g(x):
+                def h(x):
+                    pass
+    """))
+
+    g = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.g'))
+    h = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.g.<locals>.h'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                g: FuncAnnotation([], Typename('tuple[int, float]')),
+                h: FuncAnnotation([], Typename('tuple[int, float]')),
+            },
+            override_annotations=False,
+            module_name = 'foo',
+            module_names = [
+                'foo',
+                'builtins',
+            ]
+        )
+
+    code = code.visit(t)
+
+    assert get_function(code, 'C.f.<locals>.g') == textwrap.dedent("""\
+        def g(x) -> "builtins.tuple[builtins.int, float]":
+            def h(x) -> "builtins.tuple[builtins.int, float]":
+                pass
+    """)
+
+    assert get_if_type_checking(code) == textwrap.dedent(f"""\
+        if TYPE_CHECKING:
+            import builtins
+    """)
+
+
 def test_builtin_name_conflicts_even_module_name():
     code = cst.parse_module(textwrap.dedent("""\
     builtins = 'even this!'
@@ -1534,13 +1577,14 @@ def test_used_names():
                 pass
 
         def g(self):
-            def h(self): pass
+            h = 0
+            def i(self): pass
 
-    def i():
+    def j():
         pass
     """))
 
-    assert {'a', 'b', 'c', 'C', 'i'} == used_names(code)
+    assert {'a', 'b', 'c', 'C', 'j'} == used_names(code)
 
     C = typing.cast(cst.ClassDef, cstm.findall(code, cstm.ClassDef(name=cstm.Name('C')))[0])
     assert {'d', 'D', 'g'} == used_names(C)
@@ -1548,6 +1592,14 @@ def test_used_names():
     D = typing.cast(cst.ClassDef, cstm.findall(code, cstm.ClassDef(name=cstm.Name('D')))[0])
     assert {'f'} == used_names(D)
 
+    f = typing.cast(cst.FunctionDef, cstm.findall(code, cstm.FunctionDef(name=cstm.Name('f')))[0])
+    assert set() == used_names(f)
+
+    g = typing.cast(cst.FunctionDef, cstm.findall(code, cstm.FunctionDef(name=cstm.Name('g')))[0])
+    assert {'h', 'i'} == used_names(g)
+
+    i = typing.cast(cst.FunctionDef, cstm.findall(code, cstm.FunctionDef(name=cstm.Name('i')))[0])
+    assert set() == used_names(i)
 
 
 def test_types_in_annotation():
