@@ -939,7 +939,7 @@ def main(
     if infer_shapes:
         # Check for required packages for shape inference
         found_package = defaultdict(bool)
-        packages = ["numpy", "pandas", "torch"]
+        packages = ["jaxtyping"]
         all_packages_found = True
         for package in packages:
             found_package[package] = (
