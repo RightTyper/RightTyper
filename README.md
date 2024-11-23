@@ -1,14 +1,13 @@
 # RightTyper
 
 RightTyper is a Python tool that generates types for your function
-arguments and return values. It is inspired by and produces much the
-same results as Instagram's [`monkeytype`](https://github.com/Instagram/MonkeyType).  At the same time,
-RightTyper's sampling-based approach ends up being more flexible and up to fifty
-times faster. RightTyper lets your code run at nearly full speed with
+arguments and return values. RightTyper lets your code run at nearly full speed with
 almost no memory overhead. As a result, you won't experience slow
 downs in your code or large memory consumption while using it,
 allowing you to integrate it with your standard tests and development
-process.
+process. By virtue of its design, and in a significant departure from previous approaches,
+RightTyper only captures the most commonly used types,
+letting a type checker like `mypy` detect possibly incorrect type mismatches in your code.
 
 You can run RightTyper with arbitrary Python programs and it will generate
 types for every function that gets executed. It works great in combination with [pytest](https://docs.pytest.org/):
