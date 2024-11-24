@@ -6,7 +6,7 @@ import collections.abc as abc
 from functools import cache
 from itertools import islice
 from types import CodeType, FrameType, NoneType, FunctionType, MethodType, GenericAlias
-from typing import Any, cast
+from typing import Any, cast, TypeAlias
 from pathlib import Path
 
 from righttyper.random_dict import RandomDict
@@ -34,47 +34,28 @@ def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) 
     n = random.randint(1, MAX_ELEMENTS)
     return list(islice(value, n))[-1]
 
-try:
-    import jaxtyping as jx
 
-    # FIXME can we avoid this list?
-    # this is sorted from more specific to more general
-    jx_dtype_type = jx._array_types._MetaAbstractDtype
-    JX_DTYPES: list[jx_dtype_type] = cast(list[jx_dtype_type], [
-        jx.UInt4,
-        jx.UInt8,
-        jx.UInt16,
-        jx.UInt32,
-        jx.UInt64,
-        jx.Int4,
-        jx.Int8,
-        jx.Int16,
-        jx.Int32,
-        jx.Int64,
-        jx.BFloat16,
-        jx.Float16,
-        jx.Float32,
-        jx.Float64,
-        jx.Complex64,
-        jx.Complex128,
-        jx.Bool,
-        jx.UInt,
-        jx.Int,
-        jx.Integer,
-        jx.Float,
-        jx.Complex,
-        jx.Inexact,
-        jx.Real,
-        jx.Num,
-        jx.Shaped,
-        jx.Key,
-    ])
-
-except ImportError:
-    JX_DTYPES = []
-
-
+JX_DTYPES = None
 def jx_dtype(value: Any) -> str|None:
+    global JX_DTYPES
+
+    if JX_DTYPES is None:
+        # we lazy load jaxtyping to avoid "PytestAssertRewriteWarning"s
+        try:
+            import jaxtyping as jx
+            jx_dtype_type: TypeAlias = jx._array_types._MetaAbstractDtype
+            JX_DTYPES = cast(list[jx_dtype_type], [
+                jx.UInt4, jx.UInt8, jx.UInt16, jx.UInt32, jx.UInt64,
+                jx.Int4, jx.Int8, jx.Int16, jx.Int32, jx.Int64,
+                jx.BFloat16, jx.Float16, jx.Float32, jx.Float64,
+                jx.Complex64, jx.Complex128,
+                jx.Bool, jx.UInt, jx.Int, jx.Integer,
+                jx.Float, jx.Complex, jx.Inexact, jx.Real,
+                jx.Num, jx.Shaped, jx.Key,
+            ])
+        except ImportError:
+            JX_DTYPES = []
+
     t = type(value)
     for dtype in JX_DTYPES:
         if isinstance(value, dtype[t, "..."]):
