@@ -61,14 +61,29 @@ def parse_python_file(
     partially_annotated_count = 0
     not_annotated_count = 0
 
+    import sys
+    
     with open(file_path, "r") as file:
         try:
             tree = ast.parse(file.read(), filename=file_path)
         except SyntaxError:
             tree = ast.parse("", filename=file_path)
+        except UnicodeDecodeError:
+            tree = ast.parse("", filename=file_path)
 
-    qualified_names = generate_fully_qualified_names_dict(tree)
+    # Dynamically adapt the recursion limit as needed
+    old_recursion_limit = sys.getrecursionlimit()
+    while True:
+        try:
+            qualified_names = generate_fully_qualified_names_dict(tree)
+            break
+        except RecursionError:
+            # Try again but increasing the previous limit twofold
+            sys.setrecursionlimit(sys.getrecursionlimit() * 2)
 
+    # Restore the original recursion limit.
+    sys.setrecursionlimit(old_recursion_limit)
+    
     # Function to check if a node has annotations
     def has_annotations(node: ast.arg) -> bool:
         return hasattr(node, "annotation") and node.annotation is not None
