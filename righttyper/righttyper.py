@@ -76,12 +76,17 @@ except Exception:
 
 @dataclass
 class Options:
-    script_dir = ""
-    include_files_regex = ""
-    include_all = False
+    script_dir: str = ""
+    include_files_regex: str = ""
+    include_all: bool = False
     target_overhead: float = 5.0
-    infer_shapes = False
+    infer_shapes: bool = False
     ignore_annotations: bool = False
+    overwrite: bool = False
+    output_files: bool = False
+    generate_stubs: bool = False
+    srcdir: str = ""
+    use_multiprocessing: bool = True
 
 options = Options()
 
@@ -597,23 +602,11 @@ def execute_script_or_module(
         namespace = runpy.run_path(script, run_name="__main__")
 
 
-def post_process(
-    overwrite: bool = True,
-    output_files: bool = True,
-    generate_stubs: bool = False,
-    srcdir: str = "",
-    use_multiprocessing: bool = True
-) -> None:
+def post_process() -> None:
     global namespace
     output_type_signatures_to_file(namespace)
-    if output_files or generate_stubs:
-        process_all_files(
-            overwrite,
-            srcdir,
-            generate_stubs,
-            output_files,
-            use_multiprocessing
-        )
+    if options.output_files or options.generate_stubs:
+        process_all_files()
 
 
 def output_type_signatures_to_file(namespace: dict[str, Any]) -> None:
@@ -621,13 +614,7 @@ def output_type_signatures_to_file(namespace: dict[str, Any]) -> None:
         output_type_signatures(f, namespace)
 
 
-def process_all_files(
-    overwrite: bool,
-    srcdir: str,
-    generate_stubs: bool,
-    output_files: bool,
-    use_multiprocessing: bool
-) -> None:
+def process_all_files() -> None:
 
     module_names=[*sys.modules.keys(), get_main_module_fqn()]
 
@@ -675,15 +662,15 @@ def process_all_files(
             )
             args = (
                 fname,
-                output_files,
-                generate_stubs,
+                options.output_files,
+                options.generate_stubs,
                 type_annotations,
-                overwrite,
+                options.overwrite,
                 module_names,
                 options.ignore_annotations,
-                srcdir,
+                options.srcdir,
             )
-            if use_multiprocessing:
+            if options.use_multiprocessing:
                 process = multiprocessing.Process(
                     target=process_file, args=args
                 )
@@ -694,7 +681,7 @@ def process_all_files(
                 progress.update(task1, advance=1)
                 progress.refresh()
 
-        if use_multiprocessing:
+        if options.use_multiprocessing:
             sentinels = [p.sentinel for p in processes]
             total = len(processes)
             completed = 0
@@ -968,6 +955,11 @@ def main(
     options.target_overhead = target_overhead
     options.infer_shapes = infer_shapes
     options.ignore_annotations = ignore_annotations
+    options.overwrite = overwrite
+    options.output_files = output_files
+    options.generate_stubs = generate_stubs
+    options.srcdir = srcdir
+    options.use_multiprocessing = use_multiprocessing
 
     tool_args, script_args = split_args_at_triple_dash(args)
     setup_tool_id()
@@ -982,10 +974,4 @@ def main(
     # replace_dicts.replace_dicts()
     execute_script_or_module(script, module, tool_args, script_args)
     reset_monitoring()
-    post_process(
-        overwrite=overwrite,
-        output_files=output_files,
-        generate_stubs=generate_stubs,
-        srcdir=srcdir,
-        use_multiprocessing=use_multiprocessing
-    )
+    post_process()
