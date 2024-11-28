@@ -64,6 +64,12 @@ def fooq(x: int, y: str) -> bool: ...
 ?                   +++++
 ```
 
+To add type hints directly to your code, use this command:
+
+```bash
+python3 -m righttyper --output-files --overwrite your_script.py [args...]
+```
+
 Below is the full list of options:
 
 ```
