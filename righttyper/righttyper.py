@@ -647,7 +647,7 @@ def execute_script_or_module(
     global namespace
     namespace = {}
     if module:
-        sys.argv = [script] + tool_args
+        sys.argv = [script] + tool_args + script_args
         try:
             namespace = runpy.run_module(
                 script,
@@ -657,7 +657,7 @@ def execute_script_or_module(
         except SystemExit:
             pass
     else:
-        sys.argv = [script] + script_args
+        sys.argv = [script] + tool_args + script_args
         namespace = runpy.run_path(script, run_name="__main__")
 
 
