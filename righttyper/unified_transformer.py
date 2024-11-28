@@ -141,8 +141,11 @@ class UnifiedTransformer(cst.CSTTransformer):
             def try_replace(self, node: cst.Name|cst.Attribute) -> cst.Name|cst.Attribute:
                 name = _nodes_to_dotted_name(node)
 
-                if name in _BUILTIN_TYPES:  # optimization
-                    return node
+                if name in _BUILTIN_TYPES:
+                    if name not in self.t.used_names[-1]:
+                        return node
+
+                    name = f"builtins.{name}" # somebody overrode a builtin name(!)
 
                 if a := self.t.aliases.get(name):
                     return _dotted_name_to_nodes(a)
@@ -156,10 +159,13 @@ class UnifiedTransformer(cst.CSTTransformer):
                         return _dotted_name_to_nodes(f"{a}.{rest}")
 
                     # does the package name conflict with other definitions?
-                    if name.split('.')[0] in self.t.global_names:
+                    if name.split('.')[0] in self.t.used_names[-1]:
                         alias = "_rt_" + "_".join(module.split("."))
                         self.t.if_checking_aliases[module] = alias
                         return _dotted_name_to_nodes(alias + ("" if rest == "" else f".{rest}"))
+
+                if module == 'builtins':
+                    return _dotted_name_to_nodes(name)
 
                 return node
 
@@ -191,8 +197,8 @@ class UnifiedTransformer(cst.CSTTransformer):
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
 
-        # global names defined anywhere in the module
-        self.global_names: set[str] = _global_names(node)
+        # names used somewhere in a module or class scope
+        self.used_names: list[set[str]] = [used_names(node)]
 
         # currently known global names
         self.known_names: set[str] = set(_BUILTIN_TYPES)
@@ -282,18 +288,71 @@ class UnifiedTransformer(cst.CSTTransformer):
         return False
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
+        name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.append(node.name.value)
+        self.used_names.append(self.used_names[name_source] | used_names(node))
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
         # a class is known once its definition is done
         self.known_names.add(".".join(self.name_stack))
         self.name_stack.pop()
+        self.used_names.pop()
         return updated_node
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
+        name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.extend([node.name.value, "<locals>"])
+        self.used_names.append(self.used_names[name_source] | used_names(node))
         return True
+
+    def _process_parameter(self, parameter: cst.Param, ann: FuncAnnotation) -> cst.Param:
+        """Processes a parameter, either returning an updated parameter or the original one."""
+        if (
+            not (parameter.annotation is None or self.override_annotations)
+            or (annotation := next(
+                (
+                    annotation for arg, annotation in ann.args
+                    if arg == parameter.name.value
+                ), None)
+            ) is None
+            or not self._is_valid(annotation)
+        ):
+            return parameter
+
+        annotation_expr: cst.BaseExpression = cst.parse_expression(annotation)
+        annotation_expr = self._rename_types(annotation_expr)
+        unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
+        self.unknown_types |= unknown_types
+
+        if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
+            annotation_expr = cst.SimpleString(f'"{_annotation_as_string(annotation_expr)}"')
+
+        new_par = parameter.with_changes(
+            annotation=cst.Annotation(annotation=annotation_expr)
+        )
+
+        # remove per-parameter type hint comment for non-last parameter
+        if ((comment := _get_str_attr(new_par, "comma.whitespace_after.first_line.comment.value"))
+            and _TYPE_HINT_COMMENT.match(comment)):
+            new_par = new_par.with_changes(
+                comma=new_par.comma.with_changes(   # type: ignore[union-attr]
+                    whitespace_after=new_par.comma.whitespace_after.with_changes( # type: ignore[union-attr]
+                        first_line=cst.TrailingWhitespace()
+                    )
+                )
+            )
+
+        # remove per-parameter type hint comment for last parameter
+        if ((comment := _get_str_attr(new_par, "whitespace_after_param.first_line.comment.value"))
+            and _TYPE_HINT_COMMENT.match(comment)):
+            new_par = new_par.with_changes(
+                whitespace_after_param=new_par.whitespace_after_param.with_changes(
+                    first_line=cst.TrailingWhitespace()
+                )
+            )
+
+        return new_par
 
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
@@ -301,61 +360,30 @@ class UnifiedTransformer(cst.CSTTransformer):
         name = ".".join(self.name_stack[:-1])
         self.name_stack.pop()
         self.name_stack.pop()
+        self.used_names.pop()
         key = FuncInfo(Filename(self.filename), FunctionName(name))
 
         if ann := self.type_annotations.get(key):
-            new_parameters = []
-            for parameter in updated_node.params.params:
-                for arg, annotation_ in ann.args:
-                    if parameter.name.value == arg:
-                        if not (
-                            (parameter.annotation is None or self.override_annotations)
-                            and self._is_valid(annotation_)
-                        ):
-                            continue
+            for attr_name in ['params', 'kwonly_params', 'posonly_params']:
+                if getattr(updated_node.params, attr_name):
+                    new_parameters = []
+                    for parameter in getattr(updated_node.params, attr_name):
+                        new_parameters.append(self._process_parameter(parameter, ann))
 
-                        annotation_expr: cst.BaseExpression = cst.parse_expression(annotation_)
-                        annotation_expr = self._rename_types(annotation_expr)
-                        unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
-                        self.unknown_types |= unknown_types
-
-                        if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-                            annotation_expr = cst.SimpleString(f'"{_annotation_as_string(annotation_expr)}"')
-
-                        new_par = parameter.with_changes(
-                            annotation=cst.Annotation(annotation=annotation_expr)
+                    updated_node = updated_node.with_changes(
+                        params=updated_node.params.with_changes(
+                            **{attr_name: new_parameters}
                         )
+                    )
 
-                        # remove per-parameter type hint comment for non-last parameter
-                        if ((comment := _get_str_attr(new_par, "comma.whitespace_after.first_line.comment.value"))
-                            and _TYPE_HINT_COMMENT.match(comment)):
-                            new_par = new_par.with_changes(
-                                comma=new_par.comma.with_changes(   # type: ignore[union-attr]
-                                    whitespace_after=new_par.comma.whitespace_after.with_changes( # type: ignore[union-attr]
-                                        first_line=cst.TrailingWhitespace()
-                                    )
-                                )
-                            )
-
-                        # remove per-parameter type hint comment for last parameter
-                        if ((comment := _get_str_attr(new_par, "whitespace_after_param.first_line.comment.value"))
-                            and _TYPE_HINT_COMMENT.match(comment)):
-                            new_par = new_par.with_changes(
-                                whitespace_after_param=new_par.whitespace_after_param.with_changes(
-                                    first_line=cst.TrailingWhitespace()
-                                )
-                            )
-
-                        new_parameters.append(new_par)
-                        break
-                else:
-                    new_parameters.append(parameter)
-
-            updated_node = updated_node.with_changes(
-                params=updated_node.params.with_changes(
-                    params=new_parameters
-                )
-            )
+            for attr_name in ['star_arg', 'star_kwarg']:
+                attr = getattr(updated_node.params, attr_name)
+                if isinstance(attr, cst.Param):
+                    updated_node = updated_node.with_changes(
+                        params=updated_node.params.with_changes(
+                            **{attr_name: self._process_parameter(attr, ann)}
+                        )
+                    )
 
             if ((updated_node.returns is None or self.override_annotations)
                 and ann.retval is not None
@@ -550,19 +578,34 @@ def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:
     return extractor.names
 
 
-def _global_names(node: cst.Module) -> set[str]:
-    """Extracts the global names in a module."""
+def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
+    """Extracts the names in a module or class."""
 
     names: set[str] = set()
 
     class Extractor(cst.CSTVisitor):
-        def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
-            names.add(node.name.value)
-            return False
+        def __init__(self):
+            self.in_scope = False
+
+        def visit_Module(self, node: cst.Module) -> bool:
+            self.in_scope = True
+            return True
 
         def visit_ClassDef(self, node: cst.ClassDef) -> bool:
-            names.add(node.name.value)
-            return False
+            if self.in_scope:
+                names.add(node.name.value)
+                return False
+
+            self.in_scope = True
+            return True
+
+        def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
+            if self.in_scope:
+                names.add(node.name.value)
+                return False
+
+            self.in_scope = True
+            return True
 
         def visit_Assign(self, node: cst.Assign) -> bool:
             for t in node.targets:
@@ -572,34 +615,42 @@ def _global_names(node: cst.Module) -> set[str]:
                     for el in t.target.elements:
                         if isinstance(el.value, cst.Name):
                             names.add(el.value.value)
-            return False
+            return True
 
         def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
             if isinstance(node.target, cst.Name):
                 names.add(node.target.value)
-            return False
-
-        def visit_WithItem(self, node: cst.WithItem) -> bool:
-            if isinstance(node.asname, cst.AsName) and isinstance(node.asname.name, cst.Name):
-                names.add(node.asname.name.value)
-            return False
-
-        def visit_Import(self, node: cst.Import) -> bool:
-            # node.names could also be cst.ImportStar
-            if isinstance(node.names, abc.Sequence):
-                for alias in node.names:
-                    if alias.asname is not None:
-                        names.add(_nodes_to_top_level_name(alias.asname.name))
-            return False
+            return True
 
         def visit_ImportFrom(self, node: cst.ImportFrom) -> bool:
             # node.names could also be cst.ImportStar
             if isinstance(node.names, abc.Sequence):
                 for alias in node.names:
-                    names.add(_nodes_to_top_level_name(
-                        alias.asname.name if alias.asname is not None else alias.name
-                    ))
-            return False
+                    if not alias.asname:
+                        names.add(_nodes_to_top_level_name(alias.name))
+            return True
+
+        def visit_NamedExpr(self, node: cst.NamedExpr) -> bool:
+            names.add(_nodes_to_top_level_name(node.target))
+            return True
+
+        def visit_AsName(self, node: cst.AsName) -> bool:
+            if isinstance(node.name, (cst.Tuple, cst.List)):
+                for el in node.name.elements:
+                    names.add(_nodes_to_top_level_name(el.value))
+            else:
+                names.add(_nodes_to_top_level_name(node.name))
+
+            return True
 
     node.visit(Extractor())
     return names
+
+
+def list_rindex(l: list, item: object) -> int:
+    """Returns either a negative index for the last occurrence of 'item' on the list,
+       or 0 if not found."""
+    try:
+        return -1 - l[::-1].index(item)
+    except ValueError:
+        return 0

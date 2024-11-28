@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 import pytest
 import importlib.util
+import re
+
 
 @pytest.fixture
 def tmp_cwd(tmp_path, monkeypatch):
@@ -175,6 +177,41 @@ def test_annotation_with_numpy_dtype_name(tmp_cwd):
     assert "def g() -> Callable[[], np.ndarray[Any, np.dtype[bf16]]]:" in output
 
 
+@pytest.mark.skipif(importlib.util.find_spec('numpy') is None,
+                    reason='missing module numpy')
+def test_internal_numpy_type(tmp_cwd):
+    t = textwrap.dedent("""\
+        import numpy as np
+        from numpy.core.overrides import array_function_dispatch
+
+        def sum_dispatcher(arg):
+            return (arg,)
+
+        @array_function_dispatch(sum_dispatcher)
+        def my_sum(arg):
+            return np.sum(arg)
+
+        class MyArray:
+            def __init__(self, data):
+                self.data = np.array(data)
+
+            def __array_function__(self, func, types, args, kwargs):
+                return func(self.data, *args[1:], **kwargs)
+
+        my_sum(MyArray([1, 2, 3, 4]))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert (m := re.search(r'__array_function__\(self[^,]*, (func[^,]*),', output))
+    assert m.group(1).startswith('func: "numpy.')
+    assert m.group(1).endswith('_ArrayFunctionDispatcher"')
+
+
 def test_call_with_none_default(tmp_cwd):
     t = textwrap.dedent("""\
         def func(n=None):
@@ -189,7 +226,7 @@ def test_call_with_none_default(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
-    assert "def func(n=None) -> int" in output
+    assert "def func(n: None=None) -> int" in output
 
 
 def test_default_arg(tmp_cwd):
@@ -752,3 +789,67 @@ def test_module_list_not_lost_with_multiprocessing(tmp_cwd):
     assert 'def foo(t: "xml.dom.minidom.Element") -> None:' in output
 
     assert 'import xml.dom.minidom\n' in output
+
+
+def test_posonly_and_kwonly(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, /, *, y):
+            pass
+
+        foo(10, y=.1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: int, /, *, y: float) -> None:' in output
+
+
+def test_varargs(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, *args):
+            pass
+
+        foo(True, 10, 's', 0.5)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: bool, *args: float|int|str) -> None:' in output
+
+
+def test_kwargs(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, **kwargs):
+            pass
+
+        foo(True, a=10, b='s', c=0.5)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: bool, **kwargs: float|int|str) -> None:' in output
+
+
+def test_none_arg(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x):
+            pass
+
+        foo(None)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: None) -> None:' in output

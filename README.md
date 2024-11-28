@@ -1,14 +1,13 @@
 # RightTyper
 
 RightTyper is a Python tool that generates types for your function
-arguments and return values. It is inspired by and produces much the
-same results as Instagram's [`monkeytype`](https://github.com/Instagram/MonkeyType).  At the same time,
-RightTyper's sampling-based approach ends up being more flexible and up to fifty
-times faster. RightTyper lets your code run at nearly full speed with
+arguments and return values. RightTyper lets your code run at nearly full speed with
 almost no memory overhead. As a result, you won't experience slow
 downs in your code or large memory consumption while using it,
 allowing you to integrate it with your standard tests and development
-process.
+process. By virtue of its design, and in a significant departure from previous approaches,
+RightTyper only captures the most commonly used types,
+letting a type checker like `mypy` detect possibly incorrect type mismatches in your code.
 
 You can run RightTyper with arbitrary Python programs and it will generate
 types for every function that gets executed. It works great in combination with [pytest](https://docs.pytest.org/):
@@ -25,10 +24,16 @@ In addition to generating types, RightTyper has the following features:
 
 ## Usage
 
-To use RightTyper, simply run your script with `righttyper` instead of `python3`:
+Install RightTyper from `pip` as usual:
 
 ```bash
-righttyper your_script.py [args...]
+python3 -m pip install righttyper
+```
+
+To use RightTyper, simply run your script with `python3 -m righttyper` instead of `python3`:
+
+```bash
+python3 -m righttyper your_script.py [args...]
 ```
 
 This will execute `your_script.py` with RightTyper's monitoring
@@ -57,6 +62,12 @@ def fooq(x: int, y: str) -> bool: ...
 - def fooq(x: int, y) -> bool:
 + def fooq(x: int, y: str) -> bool:
 ?                   +++++
+```
+
+To add type hints directly to your code, use this command:
+
+```bash
+python3 -m righttyper --output-files --overwrite your_script.py [args...]
 ```
 
 Below is the full list of options:
@@ -104,48 +115,3 @@ Options:
   --help                          Show this message and exit.
 ```
 
-## `righttyper`: high performance
-
-In the below example drawn from the pyperformance benchmark suite,
-`monkeytype` runs 40x slower than the original program or when
-running with `righttyper` (which runs under 3% slower).
-
-```bash
-% python3 bm_mdp          
-Time elapsed:  6.106977417017333
-% righttyper bm_mdp
-Time elapsed:  6.299191833997611
-% monkeytype run bm_mdp
-Time elapsed:  184.57902495900635
-# actual time elapsed was 275 seconds, spent post-processing
-```
-
-# `righttyper`: low memory consumption
-
-With `monkeytype`, this program also consumes 5GB of RAM; the original
-consumes just 21MB. That's an over **200x** increase in memory
-consumption. `monkeytype` also leaves behind a 3GB SQLite file.
-
-By contrast, `righttyper`'s memory consumption is just a small
-increment over the original program: it consumes about 24MB, just 15%
-more.
-
-_NOTE: this is an alpha release and should not be considered production ready._
-
-## Requirements
-
-- Python 3.12 or higher
-
-## How it works
-
-Monkeytype is slow for several reasons. First, it uses Python's `setprofile` functionality
-to track every single function call and return, gathers types for all
-arguments and the return value. It checks every element of every argument (an O(N) operation).
-Finally, it writes these into a SQLite database for later post-processing.
-
-By contrast, RightTyper dynamically applies and removes type checking. It also only randomly samples arguments, letting
-it track argument types with low overhead. RightTyper always checks the very first invocation and exit of every function.
-It then performs _adaptive sampling_: RightTyper tracks its overhead of operation.
-As long as instrumentation overhead remains below a target (configurable with `--target-overhead`, by default 5\%),
-it keeps tracking functions. When necessary to reduce overhead, it reduces its rate of function tracking. Whenever
-average overhead remains below the target, it continues function tracking.

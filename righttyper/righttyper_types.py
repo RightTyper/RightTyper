@@ -53,5 +53,4 @@ TypenameSet = NewType("TypenameSet", set[TypenameFrequency])
 @dataclass
 class ArgInfo:
     arg_name: ArgumentName
-    value_type: type
     type_name_set: TypenameSet

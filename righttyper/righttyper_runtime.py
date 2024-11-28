@@ -162,6 +162,33 @@ def in_builtins_import(t: type) -> bool:
     return False
 
 
+@cache
+def lookup_type_module(t: type) -> str:
+    parts = t.__qualname__.split('.')
+
+    def is_defined_in_module(namespace: dict, index: int=0) -> bool:
+        if index<len(parts) and (obj := namespace.get(parts[index])):
+            if obj is t:
+                return True
+
+            if isinstance(obj, dict):
+                return is_defined_in_module(obj, index+1)
+
+        return False
+
+    if (m := sys.modules.get(t.__module__)):
+        if is_defined_in_module(m.__dict__):
+            return t.__module__
+
+    module_prefix = f"{t.__module__}."
+    for name, mod in sys.modules.items():
+        if name.startswith(module_prefix) and is_defined_in_module(mod.__dict__):
+            return name
+
+    # it's not in the module, but keep it as a last resort, to facilitate diagnostics
+    return t.__module__
+
+
 RANGE_ITER_TYPE = type(iter(range(1)))
 
 def get_type_name(obj: type, depth: int = 0) -> str:
@@ -218,10 +245,10 @@ def get_type_name(obj: type, depth: int = 0) -> str:
                 ):
                     return f"{name}.{obj.__name__}"
 
-    if obj.__module__ == "__main__":
+    if obj.__module__ == "__main__":    # TODO merge this into lookup_type_module
         return f"{get_main_module_fqn()}.{obj.__qualname__}"
 
-    return f"{obj.__module__}.{obj.__qualname__}"
+    return f"{lookup_type_module(obj)}.{obj.__qualname__}"
 
 
 def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
@@ -326,55 +353,47 @@ def update_argtypes(
     arg_values: Any,
     class_type: type|None,
     arg: str,
-    varargs: str|None,
-    varkw: str|None,
+    is_vararg: bool,
+    is_kwarg: bool
 ) -> None:
 
     def add_arg_info(
         argument_name: str,
-        arg_type: type,
         values: Any,
         arg_type_enum: ArgumentType,
     ) -> None:
-        if not all(v is None for v in values):
-            types = TypenameSet(
-                {
-                    TypenameFrequency(
-                        Typename(get_adjusted_full_type(val, class_type)),
-                        1,
-                    )
-                    for val in values
-                }
-            )
-            argtypes.append(
-                ArgInfo(
-                    ArgumentName(argument_name),
-                    arg_type,
-                    types,
+        types = TypenameSet(
+            {
+                TypenameFrequency(
+                    Typename(get_adjusted_full_type(val, class_type)),
+                    1,
                 )
+                for val in values
+            }
+        )
+        argtypes.append(
+            ArgInfo(
+                ArgumentName(argument_name),
+                types,
             )
-            arg_types[index] = arg_type_enum
+        )
+        arg_types[index] = arg_type_enum
 
-    if arg == varargs:
-        assert varargs
+    if is_vararg:
         add_arg_info(
-            varargs,
-            tuple,
+            arg,
             arg_values[0],
             ArgumentType.vararg,
         )
-    elif arg == varkw:
-        assert varkw
+    elif is_kwarg:
         add_arg_info(
-            varkw,
-            dict,
+            arg,
             arg_values[0].values(),
             ArgumentType.kwarg,
         )
     else:
         add_arg_info(
             arg,
-            type(arg_values[0]),
             arg_values,
             ArgumentType.positional,
         )
