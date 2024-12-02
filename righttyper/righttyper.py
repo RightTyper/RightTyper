@@ -366,17 +366,22 @@ def find_functions(
     Attempts to map back from a code object to the functions that use it.
     """
 
+    visited_wrapped = set()
+    visited_classes = set()
+    
     def check_function(name: str, obj: abc.Callable) -> abc.Iterator[tuple[str, abc.Callable]]:
-        limit = 25
         while hasattr(obj, "__wrapped__"):
-            obj = obj.__wrapped__
-            if not (limit := limit - 1):
+            if obj in visited_wrapped:
                 break
-
-        if obj.__code__ is code:
+            visited_wrapped.add(obj)
+            obj = obj.__wrapped__
+        if hasattr(obj, "__code__") and obj.__code__ is code:
             yield (name, obj)
 
     def find_in_class(class_obj: object) -> abc.Iterator[tuple[str, abc.Callable]]:
+        if class_obj in visited_classes:
+            return
+        visited_classes.add(class_obj)
         for name, obj in class_obj.__dict__.items():
             if inspect.isfunction(obj):
                 yield from check_function(name, obj)
