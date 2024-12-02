@@ -24,6 +24,19 @@ In addition to generating types, RightTyper has the following features:
 * It infers shape annotations for NumPy/JAX/PyTorch tensors, compatible with [`jaxtyping`](https://docs.kidger.site/jaxtyping/) and [`beartype`](https://github.com/beartype/beartype) or [`typeguard`](https://typeguard.readthedocs.io/en/latest/).
 
 
+## Performance Comparison
+
+The graph below presents the overhead of using RightTyper versus two
+previous tools, MonkeyType and PyAnnotate, across a range of
+benchmarks. On average, RightTyper imposes only 30% overhead compared
+to running plain Python ("none"). On one popular package (black),
+RightTyper imposes only 20% overhead, while RightTyper slows down
+execution by over 37x. In extreme cases, MonkeyType runs over 3,000x
+slower than RightTyper.
+
+![Overhead](https://github.com/righttyper/righttyper/raw/master/docs/benchmark_comparison_execution_times.png)
+
+
 ## Usage
 
 Install RightTyper from `pip` as usual:
