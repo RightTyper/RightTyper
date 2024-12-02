@@ -72,6 +72,12 @@ To add type hints directly to your code, use this command:
 python3 -m righttyper --output-files --overwrite your_script.py [args...]
 ```
 
+To do the same with `pytest`:
+
+```bash
+python3 -m righttyper --output-files --overwrite -m pytest your_directory
+```
+
 Below is the full list of options:
 
 ```
