@@ -34,8 +34,7 @@ RightTyper imposes only 20% overhead, while RightTyper slows down
 execution by over 37x. In extreme cases, MonkeyType runs over 3,000x
 slower than RightTyper.
 
-![Overhead](https://github.com/righttyper/righttyper/raw/master/docs/benchmark_comparison_execution_times.png)
-
+![Overhead](https://github.com/RightTyper/RightTyper/blob/main/docs/benchmark_comparison_execution_times.png)
 
 ## Usage
 
