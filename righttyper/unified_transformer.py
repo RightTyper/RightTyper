@@ -91,6 +91,10 @@ def _get_str_attr(obj: object, path: str) -> str|None:
 def _annotation_as_string(annotation: cst.BaseExpression) -> str:
     return cst.Module([cst.SimpleStatementLine([cst.Expr(annotation)])]).code.strip('\n')
 
+def _quote(s: str) -> str:
+    s = s.replace('\\', '\\\\')
+    return '"' + s.replace('"', '\\"') + '"'
+
 
 class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
@@ -326,7 +330,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.unknown_types |= unknown_types
 
         if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-            annotation_expr = cst.SimpleString(f'"{_annotation_as_string(annotation_expr)}"')
+            annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
 
         new_par = parameter.with_changes(
             annotation=cst.Annotation(annotation=annotation_expr)
@@ -395,7 +399,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 self.unknown_types |= unknown_types
 
                 if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-                    annotation_expr = cst.SimpleString(f'"{_annotation_as_string(annotation_expr)}"')
+                    annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
 
                 updated_node = updated_node.with_changes(
                     returns=cst.Annotation(annotation=annotation_expr),

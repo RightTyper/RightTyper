@@ -308,7 +308,7 @@ def test_transform_unknown_type_as_string():
                 foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int')),
-                        (ArgumentName('y'), Typename('x.y.WholeNumber|None'))
+                        (ArgumentName('y'), Typename('x.y.Something["quoted"]|None'))
                     ],
                     Typename('x.z.FloatingPointNumber')
                 )
@@ -324,7 +324,7 @@ def test_transform_unknown_type_as_string():
 
     code = code.visit(t)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: int, y: "x.y.WholeNumber|None") -> "x.z.FloatingPointNumber":
+        def foo(x: int, y: "x.y.Something[\\"quoted\\"]|None") -> "x.z.FloatingPointNumber":
             return x/2
     """)
 

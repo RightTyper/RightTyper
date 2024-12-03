@@ -12,6 +12,7 @@ import signal
 import sys
 import collections.abc as abc
 from collections import defaultdict
+from dataclasses import dataclass
 from types import CodeType, FrameType, FunctionType
 from typing import (
     Any,
@@ -36,11 +37,6 @@ from righttyper.righttyper_runtime import (
     should_skip_function,
     update_argtypes,
     get_main_module_fqn
-)
-from righttyper.righttyper_shapes import (
-    print_annotation,
-    update_arg_shapes,
-    update_retval_shapes,
 )
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
@@ -78,7 +74,23 @@ except Exception:
     pass
 
 
-target_overhead: float = 5.0  # default
+@dataclass
+class Options:
+    script_dir: str = ""
+    include_files_regex: str = ""
+    include_all: bool = False
+    target_overhead: float = 5.0
+    infer_shapes: bool = False
+    ignore_annotations: bool = False
+    overwrite: bool = False
+    output_files: bool = False
+    generate_stubs: bool = False
+    srcdir: str = ""
+    use_multiprocessing: bool = True
+
+options = Options()
+
+
 instrumentation_overhead = 0.0
 alpha = 0.9
 sample_count_instrumentation = 0.0
@@ -119,29 +131,19 @@ existing_annotations: dict[FuncInfo, dict[ArgumentName, str]] = defaultdict(
 
 
 namespace: dict[str, Any] = {}
-script_dir = ""
-include_files_regex = ""
-include_all = False
-infer_shapes = False  # tensor shape inference
 
 
-def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
+
+def enter_function(code: CodeType, offset: int) -> Any:
     """
     Process the function entry point, perform monitoring related operations,
     and manage the profiling of function execution.
-
-    Args:
-        ignore_annotations: true if we ignore existing annotations
-        code : CodeType object
-
-    Returns:
-        str: Status of monitoring
     """
     if should_skip_function(
         code,
-        script_dir,
-        include_all,
-        include_files_regex,
+        options.script_dir,
+        options.include_all,
+        options.include_files_regex,
     ):
         return sys.monitoring.DISABLE
 
@@ -153,7 +155,7 @@ def enter_function(ignore_annotations: bool, code: CodeType) -> Any:
 
     frame = inspect.currentframe()
     if frame and frame.f_back and frame.f_back.f_back:
-        process_function_arguments(frame, t, ignore_annotations)
+        process_function_arguments(frame, t)
 
     return sys.monitoring.DISABLE
 
@@ -168,9 +170,9 @@ def call_handler(
     if isinstance(callable, FunctionType):
         if should_skip_function(
             code,
-            script_dir,
-            include_all,
-            include_files_regex,
+            options.script_dir,
+            options.include_all,
+            options.include_files_regex,
         ):
             return sys.monitoring.DISABLE
         try:
@@ -241,9 +243,9 @@ def exit_function_worker(
     filename = code.co_filename
     if should_skip_function(
         code,
-        script_dir,
-        include_all,
-        include_files_regex,
+        options.script_dir,
+        options.include_all,
+        options.include_files_regex,
     ):
         return sys.monitoring.DISABLE
 
@@ -265,9 +267,7 @@ def exit_function_worker(
         visited_funcs_retval[t] = TypenameSet(set())
     debug_print(f"exit processing, retval was {visited_funcs_retval[t]=}")
 
-    if infer_shapes:
-        update_retval_shapes(t, return_value)
-    typename = get_adjusted_full_type(return_value, class_type)
+    typename = get_adjusted_full_type(return_value, class_type, use_jaxtyping=options.infer_shapes)
     if event_type == sys.monitoring.events.PY_YIELD:
         # Yield: call it a generator
         if type(return_value).__name__ == "async_generator_wrapped_value":
@@ -297,11 +297,10 @@ def exit_function_worker(
 def process_function_arguments(
     frame: Any,
     t: FuncInfo,
-    ignore_annotations: bool,
 ) -> None:
     # NOTE: this backtracking logic is brittle and must be
-    # adjusted if the call chain increases in length.
-    caller_frame = frame.f_back.f_back  # .f_back
+    # adjusted if the call chain changes length.
+    caller_frame = frame.f_back #.f_back
     code = caller_frame.f_code
     class_type = get_class_type_from_stack()
     arg_names, vararg, kwarg, the_values = inspect.getargvalues(caller_frame)
@@ -311,15 +310,12 @@ def process_function_arguments(
         arg_names.append(kwarg)
 
     type_hints = get_function_type_hints(caller_frame, code)
-    if infer_shapes:
-        update_arg_shapes(t, the_values)
 
     update_function_annotations(
         t,
         caller_frame,
         arg_names,
         type_hints,
-        ignore_annotations,
     )
 
     # also "observe" any default values
@@ -351,7 +347,8 @@ def process_function_arguments(
                 class_type,
                 arg,
                 is_vararg = (arg == vararg),
-                is_kwarg = (arg == kwarg)
+                is_kwarg = (arg == kwarg),
+                use_jaxtyping = options.infer_shapes
             )
 
     debug_print(f"processing {t=} {argtypes=}")
@@ -420,7 +417,6 @@ def update_function_annotations(
     caller_frame: Any,
     args: list[str],
     type_hints: dict[str, str],
-    ignore_annotations: bool,
 ) -> None:
 
     for (
@@ -431,7 +427,7 @@ def update_function_annotations(
         existing_spec[t] = format_function_definition(
             name,
             args,
-            (type_hints if not ignore_annotations else {}),
+            (type_hints if not options.ignore_annotations else {}),
         )
         existing_annotations[t] = {
             ArgumentName(name): format_annotation(type_hints[name])
@@ -509,7 +505,7 @@ def restart_sampling(_signum: int, frame: FrameType|None) -> None:
     instrumentation_overhead = (
         sample_count_instrumentation / sample_count_total
     )
-    if instrumentation_overhead <= target_overhead / 100.0:
+    if instrumentation_overhead <= options.target_overhead / 100.0:
         # Instrumentation overhead remains low enough; restart instrumentation.
         # Restart the system monitoring events
         sys.monitoring.restart_events()
@@ -544,9 +540,9 @@ def output_type_signatures(
     for t in visited_funcs_by_fname:
         if skip_this_file(
             t.file_name,
-            script_dir,
-            include_all,
-            include_files_regex,
+            options.script_dir,
+            options.include_all,
+            options.include_files_regex,
         ):
             continue
         try:
@@ -577,70 +573,10 @@ def output_type_signatures(
                     (s + "\n").splitlines(True),
                 )
                 print("".join(diffs), file=file)
-            # First try at shapes
-            annotations = print_annotation(t)
-            try:
-                ret_annotation = annotations.pop()
-            except IndexError:
-                ret_annotation = None
-            if annotations and infer_shapes:
-                # Process all annotations
-                try:
-                    annotations = [
-                        visited_funcs_arguments[t][index].arg_name
-                        + ": "
-                        + annotation.format(
-                            union_typeset_str(
-                                t.file_name,
-                                visited_funcs_arguments[t][
-                                    index
-                                ].type_name_set,
-                                {},
-                            )
-                        )
-                        for index, annotation in enumerate(annotations)
-                    ]
-                    print("# Shape annotations", file=file)
-                    print("@beartype", file=file)
-                    if t in visited_funcs_retval:
-                        assert ret_annotation
-                        # Has a return value
-                        retval_type = union_typeset_str(
-                            t.file_name, visited_funcs_retval[t], {}
-                        )
-                        print(
-                            f"def {t.func_name}({', '.join(annotations)}) -> {ret_annotation.format(retval_type)}: ...\n",
-                            file=file,
-                        )
-                    else:
-                        print(
-                            f"def {t.func_name}({', '.join(annotations)}) -> None: ...\n",
-                            file=file,
-                        )
-                except IndexError:
-                    # FIXME this should not happen, to track down later
-                    logger.exception("IndexError in annotations")
 
         except KeyError:
             # Something weird happened
             logger.exception(f"KeyError: {t=}")
-
-
-def initialize_globals(
-    include_files: str,
-    _include_all: bool,
-    script: str,
-    verbose: bool,
-    _target_overhead: float,
-    shapes_: bool,
-) -> None:
-    debug_print_set_level(verbose)
-    global include_files_regex, include_all, script_dir, target_overhead, infer_shapes
-    include_files_regex = include_files
-    include_all = _include_all
-    script_dir = os.path.dirname(os.path.realpath(script))
-    target_overhead = _target_overhead
-    infer_shapes = shapes_
 
 
 def execute_script_or_module(
@@ -666,25 +602,11 @@ def execute_script_or_module(
         namespace = runpy.run_path(script, run_name="__main__")
 
 
-def post_process(
-    overwrite: bool = True,
-    output_files: bool = True,
-    ignore_annotations: bool = False,
-    generate_stubs: bool = False,
-    srcdir: str = "",
-    use_multiprocessing: bool = True
-) -> None:
+def post_process() -> None:
     global namespace
     output_type_signatures_to_file(namespace)
-    if output_files or generate_stubs:
-        process_all_files(
-            ignore_annotations,
-            overwrite,
-            srcdir,
-            generate_stubs,
-            output_files,
-            use_multiprocessing
-        )
+    if options.output_files or options.generate_stubs:
+        process_all_files()
 
 
 def output_type_signatures_to_file(namespace: dict[str, Any]) -> None:
@@ -692,14 +614,7 @@ def output_type_signatures_to_file(namespace: dict[str, Any]) -> None:
         output_type_signatures(f, namespace)
 
 
-def process_all_files(
-    ignore_annotations: bool,
-    overwrite: bool,
-    srcdir: str,
-    generate_stubs: bool,
-    output_files: bool,
-    use_multiprocessing: bool
-) -> None:
+def process_all_files() -> None:
 
     module_names=[*sys.modules.keys(), get_main_module_fqn()]
 
@@ -714,9 +629,9 @@ def process_all_files(
         if fname and should_update_file(t, fname, prefix, namespace):
             assert not skip_this_file(
                 fname,
-                script_dir,
-                include_all,
-                include_files_regex,
+                options.script_dir,
+                options.include_all,
+                options.include_files_regex,
             )
             fnames_set.add(fname)
 
@@ -747,15 +662,15 @@ def process_all_files(
             )
             args = (
                 fname,
-                output_files,
-                generate_stubs,
+                options.output_files,
+                options.generate_stubs,
                 type_annotations,
-                overwrite,
+                options.overwrite,
                 module_names,
-                ignore_annotations,
-                srcdir,
+                options.ignore_annotations,
+                options.srcdir,
             )
-            if use_multiprocessing:
+            if options.use_multiprocessing:
                 process = multiprocessing.Process(
                     target=process_file, args=args
                 )
@@ -766,7 +681,7 @@ def process_all_files(
                 progress.update(task1, advance=1)
                 progress.refresh()
 
-        if use_multiprocessing:
+        if options.use_multiprocessing:
             sentinels = [p.sentinel for p in processes]
             total = len(processes)
             completed = 0
@@ -953,7 +868,7 @@ SCRIPT = ScriptParamType()
 @click.option(
     "--target-overhead",
     type=float,
-    default=target_overhead,
+    default=options.target_overhead,
     help="Target overhead, as a percentage (e.g., 5).",
 )
 @click.option(
@@ -989,7 +904,7 @@ def main(
     if infer_shapes:
         # Check for required packages for shape inference
         found_package = defaultdict(bool)
-        packages = ["numpy", "pandas", "torch"]
+        packages = ["jaxtyping"]
         all_packages_found = True
         for package in packages:
             found_package[package] = (
@@ -1033,14 +948,19 @@ def main(
         annotation_coverage.print_file_summary(file_summary)
         return
 
-    initialize_globals(
-        include_files,
-        all_files,
-        script,
-        verbose,
-        target_overhead,
-        infer_shapes,
-    )
+    debug_print_set_level(verbose)
+    options.script_dir = os.path.dirname(os.path.realpath(script))
+    options.include_files_regex = include_files
+    options.include_all = all_files
+    options.target_overhead = target_overhead
+    options.infer_shapes = infer_shapes
+    options.ignore_annotations = ignore_annotations
+    options.overwrite = overwrite
+    options.output_files = output_files
+    options.generate_stubs = generate_stubs
+    options.srcdir = srcdir
+    options.use_multiprocessing = use_multiprocessing
+
     tool_args, script_args = split_args_at_triple_dash(args)
     setup_tool_id()
     register_monitoring_callbacks(
@@ -1048,18 +968,10 @@ def main(
         call_handler,
         exit_function,
         yield_function,
-        ignore_annotations,
     )
     sys.monitoring.restart_events()
     setup_timer(restart_sampling)
     # replace_dicts.replace_dicts()
     execute_script_or_module(script, module, tool_args, script_args)
     reset_monitoring()
-    post_process(
-        overwrite=overwrite,
-        output_files=output_files,
-        ignore_annotations=ignore_annotations,
-        generate_stubs=generate_stubs,
-        srcdir=srcdir,
-        use_multiprocessing=use_multiprocessing
-    )
+    post_process()

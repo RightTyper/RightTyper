@@ -212,6 +212,29 @@ def test_internal_numpy_type(tmp_cwd):
     assert m.group(1).endswith('_ArrayFunctionDispatcher"')
 
 
+@pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
+                     importlib.util.find_spec('numpy') is None),
+                    reason='missing modules')
+def test_jaxtyping_annotation(tmp_cwd):
+    t = textwrap.dedent("""\
+        import numpy as np
+
+        def f(x):
+            return x
+
+        f(np.array([[1],[1]], dtype=np.int64))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--infer-shapes', '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert 'def f(x: "jaxtyping.Int64[np.ndarray, \\"2 1\\"]") ' +\
+           '-> "jaxtyping.Int64[np.ndarray, \\"2 1\\"]"' in output
+
+
 def test_call_with_none_default(tmp_cwd):
     t = textwrap.dedent("""\
         def func(n=None):
