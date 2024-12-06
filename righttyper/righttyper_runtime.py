@@ -385,7 +385,7 @@ def update_argtypes(
     index: tuple[FuncInfo, ArgumentName],
     arg_values: Any,
     class_type: type|None,
-    arg: str,
+    argument_name: str,
     /,
     is_vararg: bool,
     is_kwarg: bool,
@@ -393,7 +393,6 @@ def update_argtypes(
 ) -> None:
 
     def add_arg_info(
-        argument_name: str,
         values: Any,
         arg_type_enum: ArgumentType,
     ) -> None:
@@ -411,19 +410,16 @@ def update_argtypes(
 
     if is_vararg:
         add_arg_info(
-            arg,
             arg_values[0],
             ArgumentType.vararg,
         )
     elif is_kwarg:
         add_arg_info(
-            arg,
             arg_values[0].values(),
             ArgumentType.kwarg,
         )
     else:
         add_arg_info(
-            arg,
             arg_values,
             ArgumentType.positional,
         )
