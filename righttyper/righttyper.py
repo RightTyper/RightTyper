@@ -12,12 +12,13 @@ import signal
 import sys
 import collections.abc as abc
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import CodeType, FrameType, FunctionType
 from typing import (
     Any,
     TextIO,
     get_type_hints,
+    Self
 )
 
 import click
@@ -96,73 +97,72 @@ sample_count_total = 0.0
 
 logger = logging.getLogger("righttyper")
 
-# All visited functions (file name and function name)
-visited_funcs: set[FuncInfo] = set()
 
-# Any function that yielded at least once (and so will be treated as a
-# Generator)
-yielded_funcs: set[FuncInfo] = set()
+@dataclass
+class Observations:
+    # All visited functions (file name and function name)
+    visited_funcs: set[FuncInfo] = field(default_factory=set)
 
-# The existing spec for each function (that is, function prototype)
-existing_spec: dict[FuncInfo, str] = dict()
+    # Any function that yielded at least once (and so will be treated as a
+    # Generator)
+    yielded_funcs: set[FuncInfo] = field(default_factory=set)
 
-# For each visited function, all the info about its arguments
-visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = defaultdict(list)
+    # The existing spec for each function (that is, function prototype)
+    existing_spec: dict[FuncInfo, str] = field(default_factory=dict)
 
-# For each visited function, all the info about its return value
-visited_funcs_retval: dict[FuncInfo, TypenameSet] = defaultdict(
-    lambda: TypenameSet(set())
-)
+    # For each visited function, all the info about its arguments
+    visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = field(default_factory=lambda: defaultdict(list))
 
-# For each function and argument, what type the argument is (e.g.,
-# kwarg, vararg)
-arg_types: dict[
-    tuple[FuncInfo, ArgumentName],
-    ArgumentType,
-] = dict()
+    # For each visited function, all the info about its return value
+    visited_funcs_retval: dict[FuncInfo, TypenameSet] = field(default_factory=lambda: defaultdict(TypenameSet))
 
-# Existing annotations (variable to type annotations, optionally
-# including 'return')
-existing_annotations: dict[FuncInfo, dict[ArgumentName, str]] = defaultdict(
-    dict
-)
+    # For each function and argument, what type the argument is (e.g.,
+    # kwarg, vararg)
+    arg_types: dict[
+        tuple[FuncInfo, ArgumentName],
+        ArgumentType,
+    ] = field(default_factory=dict)
 
+    # Existing annotations (variable to type annotations, optionally
+    # including 'return')
+    existing_annotations: dict[FuncInfo, dict[ArgumentName, str]] = field(default_factory=lambda: defaultdict(dict))
 
-namespace: dict[str, Any] = {}
+    namespace: dict[str, Any] = field(default_factory=dict)
 
 
-def collect_annotations() -> dict[FuncInfo, FuncAnnotation]:
-    """Collects function type annotations from the observed types."""
+    def collect_annotations(self: Self) -> dict[FuncInfo, FuncAnnotation]:
+        """Collects function type annotations from the observed types."""
 
-    # 'global' is unnecessary; this is just to warn that we're reading from them
-    global visited_funcs, visited_funcs_arguments, visited_funcs_retval, namespace
-
-    type_annotations: dict[FuncInfo, FuncAnnotation] = {}
-    for t in visited_funcs:
-        args = visited_funcs_arguments[t]
-        arg_annotations = [
-            (
-                ArgumentName(arginfo.arg_name),
-                union_typeset_str(
-                    arginfo.type_name_set,
-                    namespace,
-                ),
+        type_annotations: dict[FuncInfo, FuncAnnotation] = {}
+        for t in self.visited_funcs:
+            args = self.visited_funcs_arguments[t]
+            arg_annotations = [
+                (
+                    ArgumentName(arginfo.arg_name),
+                    union_typeset_str(
+                        arginfo.type_name_set,
+                        self.namespace,
+                    ),
+                )
+                for arginfo in args
+            ]
+            if t in self.visited_funcs_retval:
+                retval = union_typeset_str(
+                    self.visited_funcs_retval[t],
+                    self.namespace,
+                )
+            else:
+                retval = Typename("None")
+            type_annotations[t] = FuncAnnotation(
+                arg_annotations,
+                retval,
             )
-            for arginfo in args
-        ]
-        if t in visited_funcs_retval:
-            retval = union_typeset_str(
-                visited_funcs_retval[t],
-                namespace,
-            )
-        else:
-            retval = Typename("None")
-        type_annotations[t] = FuncAnnotation(
-            arg_annotations,
-            retval,
-        )
-        # print(f"{type_annotations[t]} {t}")
-    return type_annotations
+            # print(f"{type_annotations[t]} {t}")
+        return type_annotations
+
+obs = Observations()
+
+
 
 
 def enter_function(code: CodeType, offset: int) -> Any:
@@ -182,7 +182,7 @@ def enter_function(code: CodeType, offset: int) -> Any:
         Filename(code.co_filename),
         FunctionName(code.co_qualname),
     )
-    visited_funcs.add(t)
+    obs.visited_funcs.add(t)
 
     frame = inspect.currentframe()
     if frame and frame.f_back and frame.f_back.f_back:
@@ -286,17 +286,14 @@ def exit_function_worker(
     )
 
     # Special handling for functions that yielded.
-    if t in yielded_funcs:
+    if t in obs.yielded_funcs:
         # FIXME need to merge generator and return type for higher precision
         return sys.monitoring.DISABLE
 
     # Check if this is a method. If so, we need to replace anything using the class name with Self.
     class_type = get_class_type_from_stack()
 
-    # Initialize if the function is first visited
-    if t not in visited_funcs_retval:
-        visited_funcs_retval[t] = TypenameSet()
-    debug_print(f"exit processing, retval was {visited_funcs_retval[t]=}")
+    debug_print(f"exit processing, retval was {obs.visited_funcs_retval[t]=}")
 
     typename = get_adjusted_full_type(return_value, class_type, use_jaxtyping=options.infer_shapes)
     if event_type == sys.monitoring.events.PY_YIELD:
@@ -308,9 +305,9 @@ def exit_function_worker(
             # FIXME: We should be returning more precise Generators if we discover a return value.
             # See https://docs.python.org/3.10/library/typing.html#typing.Generator
             typename = f"typing.Generator[{typename}, typing.Any, typing.Any]"
-        yielded_funcs.add(t)
+        obs.yielded_funcs.add(t)
 
-    visited_funcs_retval[t].update([Typename(typename)])
+    obs.visited_funcs_retval[t].update([Typename(typename)])
     return sys.monitoring.DISABLE
 
 
@@ -361,7 +358,7 @@ def process_function_arguments(
             )
             update_argtypes(
                 argtypes,
-                arg_types,
+                obs.arg_types,
                 index,
                 [the_values[arg], *defaults.get(arg, [])],
                 class_type,
@@ -444,12 +441,12 @@ def update_function_annotations(
         obj,
     ) in find_functions(caller_frame, caller_frame.f_code):
         # TODO stop at the first?
-        existing_spec[t] = format_function_definition(
+        obs.existing_spec[t] = format_function_definition(
             name,
             args,
             (type_hints if not options.ignore_annotations else {}),
         )
-        existing_annotations[t] = {
+        obs.existing_annotations[t] = {
             ArgumentName(name): format_annotation(type_hints[name])
             for name in type_hints
         }
@@ -458,13 +455,13 @@ def update_function_annotations(
 def update_visited_funcs_arguments(
     t: FuncInfo, argtypes: list[ArgInfo]
 ) -> None:
-    if t in visited_funcs_arguments:
+    if t in obs.visited_funcs_arguments:
         for i, arginfo in enumerate(argtypes):
-            if i < len(visited_funcs_arguments[t]):
-                visited_funcs_arguments[t][i].type_name_set.update(arginfo.type_name_set)
+            if i < len(obs.visited_funcs_arguments[t]):
+                obs.visited_funcs_arguments[t][i].type_name_set.update(arginfo.type_name_set)
                 # reset_sampling_interval() if all new
     else:
-        visited_funcs_arguments[t] = argtypes
+        obs.visited_funcs_arguments[t] = argtypes
 
 
 def in_instrumentation_code(frame: FrameType) -> bool:
@@ -535,7 +532,7 @@ def output_type_signatures(
     # Print all type signatures
     fname_printed: dict[Filename, bool] = defaultdict(bool)
     visited_funcs_by_fname = sorted(
-        visited_funcs, key=lambda a: a.file_name + ":" + a.func_name
+        obs.visited_funcs, key=lambda a: a.file_name + ":" + a.func_name
     )
     for t in visited_funcs_by_fname:
         if skip_this_file(
@@ -549,13 +546,13 @@ def output_type_signatures(
             s = make_type_signature(
                 file_name=t.file_name,
                 func_name=t.func_name,
-                args=visited_funcs_arguments[t],
-                retval=visited_funcs_retval[t],
+                args=obs.visited_funcs_arguments[t],
+                retval=obs.visited_funcs_retval[t],
                 namespace=namespace,
-                arg_types=arg_types,
-                existing_annotations=existing_annotations,
+                arg_types=obs.arg_types,
+                existing_annotations=obs.existing_annotations,
             )
-            if t in existing_spec and s == existing_spec[t]:
+            if t in obs.existing_spec and s == obs.existing_spec[t]:
                 continue
             if not fname_printed[t.file_name]:
                 print(
@@ -565,11 +562,11 @@ def output_type_signatures(
                 fname_printed[t.file_name] = True
             print(f"{s} ...\n", file=file)
             # Print diffs
-            if t in existing_spec:
+            if t in obs.existing_spec:
                 import difflib
 
                 diffs = difflib.ndiff(
-                    (existing_spec[t] + "\n").splitlines(True),
+                    (obs.existing_spec[t] + "\n").splitlines(True),
                     (s + "\n").splitlines(True),
                 )
                 print("".join(diffs), file=file)
@@ -585,12 +582,11 @@ def execute_script_or_module(
     tool_args: list[str],
     script_args: list[str],
 ) -> None:
-    global namespace
-    namespace = {}
+    obs.namespace = {}
     if module:
         sys.argv = [script] + tool_args + script_args
         try:
-            namespace = runpy.run_module(
+            obs.namespace = runpy.run_module(
                 script,
                 run_name="__main__",
                 alter_sys=True,
@@ -599,12 +595,11 @@ def execute_script_or_module(
             pass
     else:
         sys.argv = [script] + tool_args + script_args
-        namespace = runpy.run_path(script, run_name="__main__")
+        obs.namespace = runpy.run_path(script, run_name="__main__")
 
 
 def post_process() -> None:
-    global namespace
-    output_type_signatures_to_file(namespace)
+    output_type_signatures_to_file(obs.namespace)
     if options.output_files or options.generate_stubs:
         process_all_files()
 
@@ -619,14 +614,14 @@ def process_all_files() -> None:
     module_names=[*sys.modules.keys(), get_main_module_fqn()]
 
     processes: list[multiprocessing.Process] = []
-    all_files = list(set(t.file_name for t in visited_funcs))
+    all_files = list(set(t.file_name for t in obs.visited_funcs))
     prefix = os.path.commonprefix(list(all_files))
 
     # Collect the file names to process
     fnames_set = set()
-    for t in visited_funcs:
+    for t in obs.visited_funcs:
         fname = t.file_name
-        if fname and should_update_file(t, fname, prefix, namespace):
+        if fname and should_update_file(t, fname, prefix, obs.namespace):
             assert not skip_this_file(
                 fname,
                 options.script_dir,
@@ -652,7 +647,7 @@ def process_all_files() -> None:
         auto_refresh=False,
     ) as progress:
         task1 = progress.add_task(description="", total=len(fnames))
-        type_annotations = collect_annotations()
+        type_annotations = obs.collect_annotations()
         for fname in fnames:
             args = (
                 fname,
@@ -710,15 +705,15 @@ def should_update_file(
         s = make_type_signature(
             file_name=t.file_name,
             func_name=t.func_name,
-            args=visited_funcs_arguments[t],
-            retval=visited_funcs_retval[t],
+            args=obs.visited_funcs_arguments[t],
+            retval=obs.visited_funcs_retval[t],
             namespace=namespace,
-            arg_types=arg_types,
-            existing_annotations=existing_annotations,
+            arg_types=obs.arg_types,
+            existing_annotations=obs.existing_annotations,
         )
     except KeyError:
         return False
-    return t not in existing_spec or s != existing_spec[t]
+    return t not in obs.existing_spec or s != obs.existing_spec[t]
 
 
 FORMAT = "[%(filename)s:%(lineno)s] %(message)s"
