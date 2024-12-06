@@ -585,6 +585,8 @@ def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:
 def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
     """Extracts the names in a module or class."""
 
+    # FIXME handle 'global' and 'nonlocal'
+
     names: set[str] = set()
 
     class Extractor(cst.CSTVisitor):
