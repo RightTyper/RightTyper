@@ -103,18 +103,17 @@ class Observations:
     # All visited functions (file name and function name)
     visited_funcs: set[FuncInfo] = field(default_factory=set)
 
-    # Any function that yielded at least once (and so will be treated as a
-    # Generator)
-    yielded_funcs: set[FuncInfo] = field(default_factory=set)
-
     # The existing spec for each function (that is, function prototype)
     existing_spec: dict[FuncInfo, str] = field(default_factory=dict)
 
     # For each visited function, all the info about its arguments
     visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = field(default_factory=lambda: defaultdict(list))
 
-    # For each visited function, all the info about its return value
+    # For each visited function, the values it returned
     visited_funcs_retval: dict[FuncInfo, TypenameSet] = field(default_factory=lambda: defaultdict(TypenameSet))
+
+    # For each visited function, the values it yielded
+    visited_funcs_yieldval: dict[FuncInfo, TypenameSet] = field(default_factory=lambda: defaultdict(TypenameSet))
 
     # For each function and argument, what type the argument is (e.g.,
     # kwarg, vararg)
@@ -146,23 +145,41 @@ class Observations:
                 )
                 for arginfo in args
             ]
-            if t in self.visited_funcs_retval:
+
+            if t in self.visited_funcs_yieldval:
+                is_async = False
+                y = union_typeset_str(self.visited_funcs_yieldval[t])
+                if y == "builtins.async_generator_wrapped_value":
+                    is_async = True
+                    y = Typename("typing.Any") # how to unwrap the value without waiting on it?
+
+                r = union_typeset_str(self.visited_funcs_retval.get(t, TypenameSet([Typename("None")])))
+
+                if is_async:
+                    # FIXME capture send type and switch to AsyncGenerator if any sent
+                    retval = f"typing.AsyncIterator[{y}]"
+                elif r == "None":
+                    # Note that we are unable to differentiate between an implicit "None"
+                    # return and an explicit "return None".
+                    retval = f"typing.Iterator[{y}]"
+                else:
+                    retval = f"typing.Generator[{y}, typing.Any, {r}]"
+
+            elif t in self.visited_funcs_retval:
                 retval = union_typeset_str(
                     self.visited_funcs_retval[t],
                     self.namespace,
                 )
             else:
-                retval = Typename("None")
+                retval = "None"
             type_annotations[t] = FuncAnnotation(
                 arg_annotations,
-                retval,
+                Typename(retval),
             )
             # print(f"{type_annotations[t]} {t}")
         return type_annotations
 
 obs = Observations()
-
-
 
 
 def enter_function(code: CodeType, offset: int) -> Any:
@@ -285,29 +302,18 @@ def exit_function_worker(
         FunctionName(func_name),
     )
 
-    # Special handling for functions that yielded.
-    if t in obs.yielded_funcs:
-        # FIXME need to merge generator and return type for higher precision
-        return sys.monitoring.DISABLE
-
-    # Check if this is a method. If so, we need to replace anything using the class name with Self.
-    class_type = get_class_type_from_stack()
-
     debug_print(f"exit processing, retval was {obs.visited_funcs_retval[t]=}")
 
-    typename = get_adjusted_full_type(return_value, class_type, use_jaxtyping=options.infer_shapes)
-    if event_type == sys.monitoring.events.PY_YIELD:
-        # Yield: call it a generator
-        if type(return_value).__name__ == "async_generator_wrapped_value":
-            # FIXME: how to obtain wrapped value without await? how to get send value?
-            typename = f"typing.AsyncGenerator[typing.Any, typing.Any]"
-        else:
-            # FIXME: We should be returning more precise Generators if we discover a return value.
-            # See https://docs.python.org/3.10/library/typing.html#typing.Generator
-            typename = f"typing.Generator[{typename}, typing.Any, typing.Any]"
-        obs.yielded_funcs.add(t)
+    class_type = get_class_type_from_stack()
+    typename = Typename(
+        get_adjusted_full_type(return_value, class_type, use_jaxtyping=options.infer_shapes)
+    )
 
-    obs.visited_funcs_retval[t].update([Typename(typename)])
+    if event_type == sys.monitoring.events.PY_YIELD:
+        obs.visited_funcs_yieldval[t].update([typename])
+    else:
+        obs.visited_funcs_retval[t].update([typename])
+
     return sys.monitoring.DISABLE
 
 
