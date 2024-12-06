@@ -53,7 +53,6 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     FunctionName,
     Typename,
-    TypenameFrequency,
     TypenameSet,
 )
 from righttyper.righttyper_utils import (  # get_sampling_interval,; update_sampling_interval,; reset_sampling_interval,
@@ -264,7 +263,7 @@ def exit_function_worker(
 
     # Initialize if the function is first visited
     if t not in visited_funcs_retval:
-        visited_funcs_retval[t] = TypenameSet(set())
+        visited_funcs_retval[t] = TypenameSet()
     debug_print(f"exit processing, retval was {visited_funcs_retval[t]=}")
 
     typename = get_adjusted_full_type(return_value, class_type, use_jaxtyping=options.infer_shapes)
@@ -279,18 +278,7 @@ def exit_function_worker(
             typename = f"typing.Generator[{typename}, typing.Any, typing.Any]"
         yielded_funcs.add(t)
 
-    # Check if the return value type is already in the set
-    found = False
-    for typename_frequency in visited_funcs_retval[t]:
-        if typename_frequency.typename == typename:
-            typename_frequency.counter += 1
-            found = True
-            break
-
-    # If the return value type is not in the set, add it
-    if not found:
-        visited_funcs_retval[t].add(TypenameFrequency(Typename(typename), 1))
-
+    visited_funcs_retval[t].update([Typename(typename)])
     return sys.monitoring.DISABLE
 
 
@@ -441,30 +429,10 @@ def update_visited_funcs_arguments(
     if t in visited_funcs_arguments:
         for i, arginfo in enumerate(argtypes):
             if i < len(visited_funcs_arguments[t]):
-                update_argument_type(
-                    visited_funcs_arguments[t][i],
-                    arginfo.type_name_set,
-                )
+                visited_funcs_arguments[t][i].type_name_set.update(arginfo.type_name_set)
+                # reset_sampling_interval() if all new
     else:
         visited_funcs_arguments[t] = argtypes
-
-
-def update_argument_type(
-    old_arginfo: ArgInfo,
-    full_type_name_set: TypenameSet,
-) -> None:
-    for full_type_name in full_type_name_set:
-        if any(
-            full_type_name.typename == old_type_name.typename
-            for old_type_name in old_arginfo.type_name_set
-        ):
-            for old_type_name in old_arginfo.type_name_set:
-                if full_type_name.typename == old_type_name.typename:
-                    old_type_name.counter += 1
-                    break
-        else:
-            old_arginfo.type_name_set.add(next(iter(full_type_name_set)))
-            # reset_sampling_interval()
 
 
 def in_instrumentation_code(frame: FrameType) -> bool:

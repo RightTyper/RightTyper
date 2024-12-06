@@ -17,7 +17,6 @@ from righttyper.righttyper_types import (
     FuncInfo,
     T,
     Typename,
-    TypenameFrequency,
     TypenameSet,
 )
 from righttyper.righttyper_utils import skip_this_file
@@ -398,17 +397,10 @@ def update_argtypes(
         values: Any,
         arg_type_enum: ArgumentType,
     ) -> None:
-        types = TypenameSet(
-            {
-                TypenameFrequency(
-                    Typename(get_adjusted_full_type(
-                        val, class_type, use_jaxtyping=use_jaxtyping
-                    )),
-                    1,
-                )
-                for val in values
-            }
-        )
+        types = TypenameSet([
+            Typename(get_adjusted_full_type(val, class_type, use_jaxtyping=use_jaxtyping))
+            for val in values
+        ])
         argtypes.append(
             ArgInfo(
                 ArgumentName(argument_name),

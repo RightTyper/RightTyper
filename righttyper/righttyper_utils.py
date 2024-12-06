@@ -92,16 +92,16 @@ def union_typeset_str(
         return Typename("None")
 
     if len(typeset) == 1:
-        return next(iter(typeset)).typename
+        return next(iter(typeset))
 
     if super := find_most_specific_common_superclass_by_name(
-        [t.typename for t in adjusted_typeset],
+        list(adjusted_typeset),
         namespace
     ):
         return super
 
     if adjusted_typeset:
-        typenames = sorted(t.typename for t in adjusted_typeset)
+        typenames = sorted(adjusted_typeset)
         if len(typenames) == 1:
             return typenames[0]
 
