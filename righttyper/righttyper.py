@@ -25,7 +25,6 @@ import click
 # Disabled for now
 # from righttyper import replace_dicts
 from righttyper.righttyper_process import (
-    collect_data,
     process_file,
 )
 from righttyper.righttyper_runtime import (
@@ -131,6 +130,39 @@ existing_annotations: dict[FuncInfo, dict[ArgumentName, str]] = defaultdict(
 
 namespace: dict[str, Any] = {}
 
+
+def collect_annotations() -> dict[FuncInfo, FuncAnnotation]:
+    """Collects function type annotations from the observed types."""
+
+    # 'global' is unnecessary; this is just to warn that we're reading from them
+    global visited_funcs, visited_funcs_arguments, visited_funcs_retval, namespace
+
+    type_annotations: dict[FuncInfo, FuncAnnotation] = {}
+    for t in visited_funcs:
+        args = visited_funcs_arguments[t]
+        arg_annotations = [
+            (
+                ArgumentName(arginfo.arg_name),
+                union_typeset_str(
+                    arginfo.type_name_set,
+                    namespace,
+                ),
+            )
+            for arginfo in args
+        ]
+        if t in visited_funcs_retval:
+            retval = union_typeset_str(
+                visited_funcs_retval[t],
+                namespace,
+            )
+        else:
+            retval = Typename("None")
+        type_annotations[t] = FuncAnnotation(
+            arg_annotations,
+            retval,
+        )
+        # print(f"{type_annotations[t]} {t}")
+    return type_annotations
 
 
 def enter_function(code: CodeType, offset: int) -> Any:
@@ -620,12 +652,7 @@ def process_all_files() -> None:
         auto_refresh=False,
     ) as progress:
         task1 = progress.add_task(description="", total=len(fnames))
-        type_annotations = collect_data(
-            visited_funcs,
-            visited_funcs_arguments,
-            visited_funcs_retval,
-            namespace,
-        )
+        type_annotations = collect_annotations()
         for fname in fnames:
             args = (
                 fname,
