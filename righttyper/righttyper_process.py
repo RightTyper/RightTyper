@@ -153,7 +153,6 @@ def process_file(
 
 # Convert the collected data into the expected format for type_annotations
 def collect_data(
-    file_name: str,
     visited_funcs: set[FuncInfo],
     visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]],
     visited_funcs_retval: dict[FuncInfo, TypenameSet],
@@ -166,7 +165,6 @@ def collect_data(
             (
                 ArgumentName(arginfo.arg_name),
                 union_typeset_str(
-                    file_name,
                     arginfo.type_name_set,
                     namespace,
                 ),
@@ -175,7 +173,6 @@ def collect_data(
         ]
         if t in visited_funcs_retval:
             retval = union_typeset_str(
-                file_name,
                 visited_funcs_retval[t],
                 namespace,
             )

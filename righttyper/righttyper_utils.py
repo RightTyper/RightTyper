@@ -78,7 +78,6 @@ def unannotated(
 
 
 def union_typeset_str(
-    file_name: str,
     typeset: TypenameSet,
     namespace: dict[str, Any] = globals(),
     threshold_frequency: float = 0.25,
@@ -181,7 +180,6 @@ def make_type_signature(
             argtype_fullname_set = arginfo.type_name_set
             argtype_fullname = Typename(
                 union_typeset_str(
-                    file_name,
                     argtype_fullname_set,
                     namespace,
                 )
@@ -200,7 +198,7 @@ def make_type_signature(
     if "return" in existing_annotations[t]:
         retval_name = Typename(existing_annotations[t][ArgumentName("return")])
     else:
-        retval_name = union_typeset_str(file_name, retval, namespace)
+        retval_name = union_typeset_str(retval, namespace)
     s += f" -> {retval_name}:"
     return s
 

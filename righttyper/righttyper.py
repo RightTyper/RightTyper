@@ -620,14 +620,13 @@ def process_all_files() -> None:
         auto_refresh=False,
     ) as progress:
         task1 = progress.add_task(description="", total=len(fnames))
+        type_annotations = collect_data(
+            visited_funcs,
+            visited_funcs_arguments,
+            visited_funcs_retval,
+            namespace,
+        )
         for fname in fnames:
-            type_annotations = collect_data(
-                fname,
-                visited_funcs,
-                visited_funcs_arguments,
-                visited_funcs_retval,
-                namespace,
-            )
             args = (
                 fname,
                 options.output_files,
