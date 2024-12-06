@@ -33,7 +33,6 @@ from righttyper.righttyper_runtime import (
     format_function_definition,
     get_adjusted_full_type,
     get_class_type_from_stack,
-    get_class_source_file,
     should_skip_function,
     update_argtypes,
     get_main_module_fqn

@@ -466,43 +466,6 @@ def format_function_definition(
     return function_definition
 
 
-def get_class_source_file(cls: type) -> str:
-    module_name = cls.__module__
-
-    # Check if the class is built-in
-    if module_name == "builtins":
-        return ""  # Built-in classes do not have source files
-
-    try:
-        # Try to get the module from sys.modules
-        module = sys.modules[module_name]
-        # Try to get the __file__ attribute
-        file_path = getattr(module, "__file__", None)
-        if file_path:
-            return str(file_path)
-        # If __file__ is not available, use inspect to get the source file
-        import inspect
-
-        file_path = inspect.getfile(cls)
-        return file_path
-    except (KeyError, TypeError, AttributeError):
-        pass
-
-    # Derive the file path from the module name
-    try:
-        # Assuming the module is part of the standard package structure
-        import os
-
-        module_parts = module_name.split(".")
-        file_path = os.path.join(*module_parts)
-        return file_path
-
-    except Exception:
-        pass
-
-    return ""
-
-
 def _source_relative_to_pkg(file: Path) -> Path|None:
     """Returns a Python source file's path relative to its package"""
     if not file.is_absolute():
