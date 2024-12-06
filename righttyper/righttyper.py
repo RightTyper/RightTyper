@@ -615,7 +615,6 @@ def output_type_signatures_to_file(namespace: dict[str, Any]) -> None:
 
 
 def process_all_files() -> None:
-
     module_names=[*sys.modules.keys(), get_main_module_fqn()]
 
     processes: list[multiprocessing.Process] = []
