@@ -310,7 +310,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
             el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
             return f"{module}{t.__qualname__}[{', '.join(get_full_type(fld, depth=depth+1) for fld in el)}]"
         else:
-            return "{module}{t.__qualname__}[typing.Never, typing.Never]"
+            return f"{module}{t.__qualname__}[typing.Never, typing.Never]"
     elif isinstance(value, (list, set)):
         t = type(value)
         module = "" if t.__module__ == "builtins" else f"{t.__module__}."
