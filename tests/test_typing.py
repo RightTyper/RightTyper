@@ -27,6 +27,7 @@ def test_get_full_type():
     assert "list[str]" == get_full_type(dir())
 
     assert "list[str]" == get_full_type(['a', 'b'])
+    assert "list[typing.Never]" == get_full_type([])
     assert "list[int]" == get_full_type([0, 1])
     assert "list[tuple[int]]" == get_full_type([(0,), (1,)])
 
@@ -44,6 +45,7 @@ def test_get_full_type():
     assert "frozenset" == get_full_type(frozenset())
 
     assert "dict[str, str]" == get_full_type({'a': 'b'})
+    assert "dict[typing.Never, typing.Never]" == get_full_type(dict())
 
     assert "typing.KeysView[str]" == get_full_type({'a':0, 'b':1}.keys())
     assert "typing.ValuesView[int]" == get_full_type({'a':0, 'b':1}.values())
