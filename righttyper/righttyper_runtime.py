@@ -17,7 +17,6 @@ from righttyper.righttyper_types import (
     FuncInfo,
     T,
     Typename,
-    TypenameFrequency,
     TypenameSet,
 )
 from righttyper.righttyper_utils import skip_this_file
@@ -311,7 +310,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
             el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
             return f"{module}{t.__qualname__}[{', '.join(get_full_type(fld, depth=depth+1) for fld in el)}]"
         else:
-            return "{module}{t.__qualname__}[typing.Never, typing.Never]"
+            return f"{module}{t.__qualname__}[typing.Never, typing.Never]"
     elif isinstance(value, (list, set)):
         t = type(value)
         module = "" if t.__module__ == "builtins" else f"{t.__module__}."
@@ -386,7 +385,7 @@ def update_argtypes(
     index: tuple[FuncInfo, ArgumentName],
     arg_values: Any,
     class_type: type|None,
-    arg: str,
+    argument_name: str,
     /,
     is_vararg: bool,
     is_kwarg: bool,
@@ -394,21 +393,13 @@ def update_argtypes(
 ) -> None:
 
     def add_arg_info(
-        argument_name: str,
         values: Any,
         arg_type_enum: ArgumentType,
     ) -> None:
-        types = TypenameSet(
-            {
-                TypenameFrequency(
-                    Typename(get_adjusted_full_type(
-                        val, class_type, use_jaxtyping=use_jaxtyping
-                    )),
-                    1,
-                )
-                for val in values
-            }
-        )
+        types = TypenameSet([
+            Typename(get_adjusted_full_type(val, class_type, use_jaxtyping=use_jaxtyping))
+            for val in values
+        ])
         argtypes.append(
             ArgInfo(
                 ArgumentName(argument_name),
@@ -419,19 +410,16 @@ def update_argtypes(
 
     if is_vararg:
         add_arg_info(
-            arg,
             arg_values[0],
             ArgumentType.vararg,
         )
     elif is_kwarg:
         add_arg_info(
-            arg,
             arg_values[0].values(),
             ArgumentType.kwarg,
         )
     else:
         add_arg_info(
-            arg,
             arg_values,
             ArgumentType.positional,
         )
@@ -476,43 +464,6 @@ def format_function_definition(
     params_str = ", ".join(params)
     function_definition = f"def {func_name}({params_str}){return_annotation}:"
     return function_definition
-
-
-def get_class_source_file(cls: type) -> str:
-    module_name = cls.__module__
-
-    # Check if the class is built-in
-    if module_name == "builtins":
-        return ""  # Built-in classes do not have source files
-
-    try:
-        # Try to get the module from sys.modules
-        module = sys.modules[module_name]
-        # Try to get the __file__ attribute
-        file_path = getattr(module, "__file__", None)
-        if file_path:
-            return str(file_path)
-        # If __file__ is not available, use inspect to get the source file
-        import inspect
-
-        file_path = inspect.getfile(cls)
-        return file_path
-    except (KeyError, TypeError, AttributeError):
-        pass
-
-    # Derive the file path from the module name
-    try:
-        # Assuming the module is part of the standard package structure
-        import os
-
-        module_parts = module_name.split(".")
-        file_path = os.path.join(*module_parts)
-        return file_path
-
-    except Exception:
-        pass
-
-    return ""
 
 
 def _source_relative_to_pkg(file: Path) -> Path|None:

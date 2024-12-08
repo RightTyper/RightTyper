@@ -111,6 +111,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.has_future_annotations = False
         self.module_name = module_name
         self.module_names = sorted(module_names, key=lambda name: -name.count('.'))
+        self.change_list: list[tuple[FunctionName, cst.FunctionDef, cst.FunctionDef]] = []
 
     def _module_for(self, name: str) -> tuple[str, str]:
         """Splits a dot name in its module and qualified name parts."""
@@ -422,6 +423,8 @@ class UnifiedTransformer(cst.CSTTransformer):
                     body=updated_node.body.with_changes(
                         header=cst.TrailingWhitespace()))
 
+            self.change_list.append((key.func_name, original_node, updated_node))
+
         return updated_node
 
     # ConstructImportTransformer logic
@@ -562,6 +565,13 @@ class UnifiedTransformer(cst.CSTTransformer):
         return updated_node.with_changes(body=new_body)
 
 
+    def get_signature_changes(self: typing.Self) -> list[tuple[FunctionName, str, str]]:
+        return [
+            (name, format_signature(old), format_signature(new))
+            for name, old, new in self.change_list
+        ]
+
+
 def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:
     """Extracts all type names included in a type annotation."""
 
@@ -584,6 +594,8 @@ def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:
 
 def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
     """Extracts the names in a module or class."""
+
+    # FIXME handle 'global' and 'nonlocal'
 
     names: set[str] = set()
 
@@ -658,3 +670,18 @@ def list_rindex(l: list, item: object) -> int:
         return -1 - l[::-1].index(item)
     except ValueError:
         return 0
+
+
+def format_signature(f: cst.FunctionDef) -> str:
+    """Formats the signature of a function."""
+
+    # TODO remove decorators as well?
+
+    class BodyRemover(cst.CSTTransformer):
+        def leave_FunctionDef(
+            self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
+        ) -> cst.FunctionDef:
+            return updated_node.with_changes(body=cst.IndentedBlock(body=[cst.EmptyLine()]))
+
+    bodyless = f.visit(BodyRemover())
+    return cst.Module([bodyless]).code.strip()

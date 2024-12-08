@@ -529,6 +529,7 @@ def test_generator(tmp_cwd):
     t = textwrap.dedent("""\
         def gen():
             yield 10
+            yield 1.2
 
         def main():
             for _ in gen():
@@ -547,8 +548,42 @@ def test_generator(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
-    # FIXME should be Generator[int] or Iterator[int]
-    assert "def gen() -> Generator[int, Any, Any]:" in output
+    assert "def gen() -> Iterator[float|int]:" in output
+
+    # FIXME this should be the same Iterator as above
+    assert "def g(f: Generator[Any, Any, Any]) -> None" in output
+
+
+def test_generator_return(tmp_cwd):
+    t = textwrap.dedent("""\
+        def gen():
+            yield 10
+            return "done"
+
+        def main():
+            g = gen()
+            next(g)
+            try:
+                next(g)
+            except StopIteration:
+                pass
+
+        def g(f):
+            pass
+
+        main()
+        g(gen())
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    
+    assert "def gen() -> Generator[int, Any, str]:" in output
+
+    # FIXME this should be the same Generator as above
     assert "def g(f: Generator[Any, Any, Any]) -> None" in output
 
 
@@ -577,7 +612,9 @@ def test_async_generator(tmp_cwd):
     output = Path("t.py").read_text()
     
     # FIXME should be AsyncGenerator[int] or AsyncIterator[int]
-    assert "def gen() -> AsyncGenerator[Any, Any]:" in output
+    assert "def gen() -> AsyncIterator[Any]:" in output
+
+    # FIXME this should be the same Iterator as above
     assert "def g(f: AsyncGenerator[Any, Any]) -> None" in output
 
 

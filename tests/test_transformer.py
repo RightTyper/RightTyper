@@ -107,6 +107,21 @@ def test_transform_function():
 
     assert get_if_type_checking(code) == None
 
+    sig_changes = sorted(t.get_signature_changes())
+    it = iter(sig_changes)
+
+    name, old, new = next(it)
+    assert name == 'baz'
+    assert old == 'def baz(z):'
+    assert new == 'def baz(z: int):'
+
+    name, old, new = next(it)
+    assert name == 'foo'
+    assert old == 'def foo(x, y):'
+    assert new == 'def foo(x: int, y) -> float:'
+
+    assert next(it, None) is None
+
 
 def test_transform_method():
     code = cst.parse_module(textwrap.dedent("""\
@@ -173,6 +188,25 @@ def test_transform_method():
 
     assert get_if_type_checking(code) == None
 
+    sig_changes = sorted(t.get_signature_changes())
+    it = iter(sig_changes)
+
+    name, old, new = next(it)
+    assert name == 'C.bar'
+    assert old == '@staticmethod\ndef bar(x):'
+    assert new == '@staticmethod\ndef bar(x: int) -> float:'
+
+    name, old, new = next(it)
+    assert name == 'C.baz'
+    assert old == '@classmethod\ndef baz(cls, z):'
+    assert new == '@classmethod\ndef baz(cls, z: int) -> float:'
+
+    name, old, new = next(it)
+    assert name == 'C.foo'
+    assert old == 'def foo(self, x, y):'
+    assert new == 'def foo(self, x: int, y) -> float:'
+
+    assert next(it, None) is None
 
 def test_transform_local_function():
     code = cst.parse_module(textwrap.dedent("""\
