@@ -658,7 +658,6 @@ def process_all_files() -> None:
                 options.overwrite,
                 module_names,
                 options.ignore_annotations,
-                options.srcdir,
             )
             if options.use_multiprocessing:
                 process = multiprocessing.Process(

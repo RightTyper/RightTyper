@@ -93,7 +93,6 @@ def process_file(
     overwrite: bool,
     module_names: list[str],
     ignore_annotations: bool = False,
-    srcdir: str = "",
 ) -> None:
     debug_print(f"process_file: {filename}")
     try:
