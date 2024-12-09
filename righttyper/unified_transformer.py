@@ -675,13 +675,25 @@ def list_rindex(l: list, item: object) -> int:
 def format_signature(f: cst.FunctionDef) -> str:
     """Formats the signature of a function."""
 
-    # TODO remove decorators as well?
-
     class BodyRemover(cst.CSTTransformer):
         def leave_FunctionDef(
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
         ) -> cst.FunctionDef:
-            return updated_node.with_changes(body=cst.IndentedBlock(body=[cst.EmptyLine()]))
+            return updated_node.with_changes(body=cst.IndentedBlock(body=[
+                cst.SimpleStatementLine(body=[])
+            ]))
 
-    bodyless = f.visit(BodyRemover())
-    return cst.Module([bodyless]).code.strip()
+        def leave_Decorator(
+            self, original_node: cst.Decorator, updated_node: cst.Decorator
+        ) -> cst.RemovalSentinel:
+            return cst.RemoveFromParent()
+
+    bodyless = typing.cast(cst.FunctionDef, f.visit(BodyRemover()))
+    sig = cst.Module([bodyless]).code.strip()
+
+    # It's easier to let libcst generate "pass" for an empty body and then remove it
+    # than to find a way to have it emit a bodyless function...
+    if sig.endswith("pass"):
+        sig = sig[:-4].strip()
+
+    return sig

@@ -193,13 +193,13 @@ def test_transform_method():
 
     name, old, new = next(it)
     assert name == 'C.bar'
-    assert old == '@staticmethod\ndef bar(x):'
-    assert new == '@staticmethod\ndef bar(x: int) -> float:'
+    assert old == 'def bar(x):'
+    assert new == 'def bar(x: int) -> float:'
 
     name, old, new = next(it)
     assert name == 'C.baz'
-    assert old == '@classmethod\ndef baz(cls, z):'
-    assert new == '@classmethod\ndef baz(cls, z: int) -> float:'
+    assert old == 'def baz(cls, z):'
+    assert new == 'def baz(cls, z: int) -> float:'
 
     name, old, new = next(it)
     assert name == 'C.foo'
