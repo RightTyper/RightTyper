@@ -604,14 +604,11 @@ def execute_script_or_module(
 
 
 def post_process() -> None:
-    output_type_signatures_to_file(obs.namespace)
+    with open(f"{TOOL_NAME}.out", "w+") as f:
+        output_type_signatures(f, obs.namespace)
+
     if options.output_files or options.generate_stubs:
         process_all_files()
-
-
-def output_type_signatures_to_file(namespace: dict[str, Any]) -> None:
-    with open(f"{TOOL_NAME}.out", "w+") as f:
-        output_type_signatures(f, namespace)
 
 
 def process_all_files() -> None:
