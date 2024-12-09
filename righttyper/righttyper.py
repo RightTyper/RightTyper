@@ -27,6 +27,8 @@ import click
 # from righttyper import replace_dicts
 from righttyper.righttyper_process import (
     process_file,
+    process_file_worker,
+    SignatureChanges
 )
 from righttyper.righttyper_runtime import (
     format_annotation,
@@ -603,41 +605,68 @@ def execute_script_or_module(
         obs.namespace = runpy.run_path(script, run_name="__main__")
 
 
+def output_signatures(
+    sig_changes: list[SignatureChanges],
+    file: TextIO = sys.stdout,
+) -> None:
+    import difflib
+
+    for filename, changes in sorted(sig_changes):
+        if not changes:
+            continue
+
+        print(
+            f"{filename}:\n{'=' * (len(filename) + 1)}\n",
+            file=file,
+        )
+
+        for funcname, old, new in sorted(changes):
+            print(f"{funcname}\n", file=file)
+
+            # show signature diff
+            diffs = difflib.ndiff(
+                (old + "\n").splitlines(True),
+                (new + "\n").splitlines(True),
+            )
+            print("".join(diffs), file=file)
+
+
 def post_process() -> None:
+#    with open(f"{TOOL_NAME}.out", "w+") as f:
+#        output_type_signatures(f, obs.namespace)
+
+    sig_changes = process_all_files()
+
     with open(f"{TOOL_NAME}.out", "w+") as f:
-        output_type_signatures(f, obs.namespace)
-
-    if options.output_files or options.generate_stubs:
-        process_all_files()
+        output_signatures(sig_changes, f)
 
 
-def process_all_files() -> None:
+def process_all_files() -> list[SignatureChanges]:
     module_names=[*sys.modules.keys(), get_main_module_fqn()]
 
-    processes: list[multiprocessing.Process] = []
-    all_files = list(set(t.file_name for t in obs.visited_funcs))
-    prefix = os.path.commonprefix(list(all_files))
+    fnames = list(set(
+        t.file_name
+        for t in obs.visited_funcs
+        if not skip_this_file(
+            t.file_name,
+            options.script_dir,
+            options.include_all,
+            options.include_files_regex,
+        )
+    ))
 
-    # Collect the file names to process
-    fnames_set = set()
-    for t in obs.visited_funcs:
-        fname = t.file_name
-        if fname and should_update_file(t, fname, prefix, obs.namespace):
-            assert not skip_this_file(
-                fname,
-                options.script_dir,
-                options.include_all,
-                options.include_files_regex,
-            )
-            fnames_set.add(fname)
+    if len(fnames) == 0:
+        return []
 
-    if len(fnames_set) == 0:
-        return
-
-    fnames = list(fnames_set)
     ### multiprocessing.set_start_method('fork')
     import rich.progress
     from rich.table import Column
+
+    if options.use_multiprocessing:
+        processes: list[multiprocessing.Process] = []
+        queue: multiprocessing.queues.Queue = multiprocessing.Queue()
+
+    sig_changes = []
 
     with rich.progress.Progress(  # rich.progress.TextColumn("[progress.description]{task.description}", table_column=Column(ratio=1)),
         rich.progress.BarColumn(table_column=Column(ratio=1)),
@@ -661,12 +690,12 @@ def process_all_files() -> None:
             )
             if options.use_multiprocessing:
                 process = multiprocessing.Process(
-                    target=process_file, args=args
+                    target=process_file_worker, args=(queue, *args)
                 )
                 processes.append(process)
                 process.start()
             else:
-                process_file(*args)
+                sig_changes.append(process_file(*args))
                 progress.update(task1, advance=1)
                 progress.refresh()
 
@@ -693,27 +722,13 @@ def process_all_files() -> None:
             for process in processes:
                 process.join()
             progress.update(task1, completed=total)
+            while not queue.empty():
+                result = queue.get()
+                if isinstance(result, Exception):
+                    raise result
+                sig_changes.append(result)
 
-
-def should_update_file(
-    t: FuncInfo,
-    fname: str,
-    prefix: str,
-    namespace: dict[str, Any],
-) -> bool:
-    try:
-        s = make_type_signature(
-            file_name=t.file_name,
-            func_name=t.func_name,
-            args=obs.visited_funcs_arguments[t],
-            retval=obs.visited_funcs_retval[t],
-            namespace=namespace,
-            arg_types=obs.arg_types,
-            existing_annotations=obs.existing_annotations,
-        )
-    except KeyError:
-        return False
-    return t not in obs.existing_spec or s != obs.existing_spec[t]
+    return sig_changes
 
 
 FORMAT = "[%(filename)s:%(lineno)s] %(message)s"
