@@ -160,6 +160,21 @@ class Observations:
             # print(f"{type_annotations[t]} {t}")
         return type_annotations
 
+
+    def update_visited_funcs_arguments(
+        self,
+        t: FuncInfo,
+        argtypes: list[ArgInfo]
+    ) -> None:
+        if t in self.visited_funcs_arguments:
+            for i, arginfo in enumerate(argtypes):
+                if i < len(self.visited_funcs_arguments[t]):
+                    self.visited_funcs_arguments[t][i].type_name_set.update(arginfo.type_name_set)
+                    # reset_sampling_interval() if all new
+        else:
+            self.visited_funcs_arguments[t] = argtypes
+
+
 obs = Observations()
 
 
@@ -337,7 +352,7 @@ def process_function_arguments(
             )
 
     debug_print(f"processing {t=} {argtypes=}")
-    update_visited_funcs_arguments(t, argtypes)
+    obs.update_visited_funcs_arguments(t, argtypes)
 
 
 def find_functions(
@@ -379,26 +394,6 @@ def find_functions(
             yield from check_function(name, obj)
         elif inspect.isclass(obj):
             yield from find_in_class(obj)
-
-
-@functools.cache
-def get_function_type_hints(
-    caller_frame: Any,
-    code: CodeType,
-) -> dict[str, str]:
-    return {}
-
-
-def update_visited_funcs_arguments(
-    t: FuncInfo, argtypes: list[ArgInfo]
-) -> None:
-    if t in obs.visited_funcs_arguments:
-        for i, arginfo in enumerate(argtypes):
-            if i < len(obs.visited_funcs_arguments[t]):
-                obs.visited_funcs_arguments[t][i].type_name_set.update(arginfo.type_name_set)
-                # reset_sampling_interval() if all new
-    else:
-        obs.visited_funcs_arguments[t] = argtypes
 
 
 def in_instrumentation_code(frame: FrameType) -> bool:
