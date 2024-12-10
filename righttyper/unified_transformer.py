@@ -103,7 +103,9 @@ class UnifiedTransformer(cst.CSTTransformer):
         type_annotations: dict[FuncInfo, FuncAnnotation],
         override_annotations: bool,
         module_name: str|None,
-        module_names: list[str]
+        module_names: list[str],
+        *,
+        use_self: bool = True
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
@@ -112,6 +114,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.module_name = module_name
         self.module_names = sorted(module_names, key=lambda name: -name.count('.'))
         self.change_list: list[tuple[FunctionName, cst.FunctionDef, cst.FunctionDef]] = []
+        self.use_self = use_self
 
     def _module_for(self, name: str) -> tuple[str, str]:
         """Splits a dot name in its module and qualified name parts."""
@@ -311,6 +314,13 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         return True
 
+    def _try_rename_to_self(self, annotation: Typename) -> Typename:
+        if self.use_self and self.module_name:
+            # TODO this doesn't handle composite names, such as "list[Self]"... do we care?
+            if annotation == '.'.join((self.module_name, *self.name_stack)):
+                return Typename("typing.Self")
+        return annotation
+
     def _process_parameter(self, parameter: cst.Param, ann: FuncAnnotation) -> cst.Param:
         """Processes a parameter, either returning an updated parameter or the original one."""
         if (
@@ -321,8 +331,12 @@ class UnifiedTransformer(cst.CSTTransformer):
                     if arg == parameter.name.value
                 ), None)
             ) is None
-            or not self._is_valid(annotation)
         ):
+            return parameter
+
+        annotation = self._try_rename_to_self(annotation)
+
+        if not self._is_valid(annotation):
             return parameter
 
         annotation_expr: cst.BaseExpression = cst.parse_expression(annotation)
@@ -392,29 +406,30 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             if ((updated_node.returns is None or self.override_annotations)
                 and ann.retval is not None
-                and self._is_valid(ann.retval)
             ):
-                annotation_expr = cst.parse_expression(ann.retval)
-                annotation_expr = self._rename_types(annotation_expr)
-                unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
-                self.unknown_types |= unknown_types
+                annotation = self._try_rename_to_self(ann.retval)
+                if self._is_valid(annotation):
+                    annotation_expr = cst.parse_expression(annotation)
+                    annotation_expr = self._rename_types(annotation_expr)
+                    unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
+                    self.unknown_types |= unknown_types
 
-                if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-                    annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
+                    if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
+                        annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
 
-                updated_node = updated_node.with_changes(
-                    returns=cst.Annotation(annotation=annotation_expr),
-                )
-
-                # remove "(...) -> retval"-style type hint comment
-                if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
-                    and _TYPE_HINT_COMMENT_FUNC.match(comment)):
                     updated_node = updated_node.with_changes(
-                        body=updated_node.body.with_changes(
-                            body=(updated_node.body.body[0].with_changes(leading_lines=[]),
-                                  *updated_node.body.body[1:])
-                        )
+                        returns=cst.Annotation(annotation=annotation_expr),
                     )
+
+                    # remove "(...) -> retval"-style type hint comment
+                    if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
+                        and _TYPE_HINT_COMMENT_FUNC.match(comment)):
+                        updated_node = updated_node.with_changes(
+                            body=updated_node.body.with_changes(
+                                body=(updated_node.body.body[0].with_changes(leading_lines=[]),
+                                      *updated_node.body.body[1:])
+                            )
+                        )
 
             # remove single-line type hint comment in the same line as the 'def'
             if ((comment := _get_str_attr(updated_node, "body.header.comment.value"))

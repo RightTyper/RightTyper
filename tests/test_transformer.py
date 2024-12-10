@@ -612,7 +612,8 @@ def test_transform_locally_defined_types():
             module_name = 'foo',
             module_names=[
                 'foo'
-            ]
+            ],
+            use_self = False
         )
 
     code = code.visit(t)

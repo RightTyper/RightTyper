@@ -915,22 +915,34 @@ def test_none_arg(tmp_cwd):
     assert 'def foo(x: None) -> None:' in output
 
 
-@pytest.mark.xfail(reason="RT only recognizes 'self'")
-def test_self_by_another_name(tmp_cwd):
+def test_self(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
+        def foo(self):
+            return self/2
+
         class C:
-            def __init__(self):
-                self.x = 10
+            def bar(self, x):
+                class D:
+                    def __init__(self):
+                        pass
 
-            def f(a):
-                return a.x
+                D()
+                return x/2
 
-        print(f"{C().f()=}")
-        """
-    ))
+            class E:
+                def baz(me):
+                    return me
+
+        foo(10)
+        C().bar(1)
+        C.E().baz()
+    """))
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
 
     output = Path("t.py").read_text()
-    assert 'def f(a: Self) -> int:' in output
+    assert 'def foo(self: int) -> float:' in output
+    assert 'def bar(self: Self, x: int) -> float:' in output
+    assert 'def __init__(self: Self) -> None:' in output
+    assert 'def baz(me: Self) -> Self:' in output

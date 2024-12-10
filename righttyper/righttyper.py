@@ -30,8 +30,7 @@ from righttyper.righttyper_process import (
     SignatureChanges
 )
 from righttyper.righttyper_runtime import (
-    get_adjusted_full_type,
-    get_class_type_from_stack,
+    get_full_type,
     should_skip_function,
     update_argtypes,
     get_main_module_fqn
@@ -184,8 +183,24 @@ def enter_function(code: CodeType, offset: int) -> Any:
     obs.visited_funcs.add(t)
 
     frame = inspect.currentframe()
-    if frame and frame.f_back and frame.f_back.f_back:
-        process_function_arguments(frame, t)
+    if frame and frame.f_back:
+        # NOTE: this backtracking logic is brittle and must be
+        # adjusted if the call chain changes length.
+        frame = frame.f_back
+        assert code == frame.f_code
+
+        try:
+            _, function = next(find_functions(frame, code))
+            defaults = {
+                param_name: [param.default]
+                for param_name, param in inspect.signature(function).parameters.items()
+                if param.default != inspect._empty
+            }
+        except StopIteration:
+            defaults = {}
+
+        process_function_arguments(t, inspect.getargvalues(frame), defaults)
+        del frame
 
     return sys.monitoring.DISABLE
 
@@ -286,9 +301,8 @@ def exit_function_worker(
 
     debug_print(f"exit processing, retval was {obs.visited_funcs_retval[t]=}")
 
-    class_type = get_class_type_from_stack()
     typename = Typename(
-        get_adjusted_full_type(return_value, class_type, use_jaxtyping=options.infer_shapes)
+        get_full_type(return_value, use_jaxtyping=options.infer_shapes)
     )
 
     if event_type == sys.monitoring.events.PY_YIELD:
@@ -300,53 +314,25 @@ def exit_function_worker(
 
 
 def process_function_arguments(
-    frame: Any,
     t: FuncInfo,
+    args: inspect.ArgInfo,
+    defaults: dict[str, Any]
 ) -> None:
-    # NOTE: this backtracking logic is brittle and must be
-    # adjusted if the call chain changes length.
-    caller_frame = frame.f_back #.f_back
-    code = caller_frame.f_code
-    class_type = get_class_type_from_stack()
-    arg_names, vararg, kwarg, the_values = inspect.getargvalues(caller_frame)
-    if vararg:
-        arg_names.append(vararg)
-    if kwarg:
-        arg_names.append(kwarg)
-
-    # FIXME deleting this causes failures in tqdm tests, probably
-    # somehow because the caller frame is no longer held in memory.
-    get_function_type_hints(caller_frame, code)
-
-    # also "observe" any default values
-    try:
-        _, function = next(find_functions(caller_frame, code))
-        defaults = {
-            param_name: [param.default]
-            for param_name, param in inspect.signature(function).parameters.items()
-            if param.default != inspect._empty
-        }
-    except StopIteration:
-        defaults = {}
+    if args.varargs:
+        args.args.append(args.varargs)
+    if args.keywords:
+        args.args.append(args.keywords)
 
     argtypes: list[ArgInfo] = []
-    for arg in arg_names:
+    for arg in args.args:
         if arg:
-            index = (
-                FuncInfo(
-                    Filename(caller_frame.f_code.co_filename),
-                    FunctionName(code.co_qualname),
-                ),
-                ArgumentName(arg),
-            )
             update_argtypes(
                 argtypes,
-                index,
-                [the_values[arg], *defaults.get(arg, [])],
-                class_type,
+                (t, ArgumentName(arg)),
+                [args.locals[arg], *defaults.get(arg, [])],
                 arg,
-                is_vararg = (arg == vararg),
-                is_kwarg = (arg == kwarg),
+                is_vararg = (arg == args.varargs),
+                is_kwarg = (arg == args.keywords),
                 use_jaxtyping = options.infer_shapes
             )
 

@@ -88,28 +88,6 @@ def should_skip_function(
     return False
 
 
-def get_class_type_from_stack(
-    max_depth: int = 5,
-) -> type|None:
-    # Initialize the current frame
-    current_frame = inspect.currentframe()
-    try:
-        # Move up in the stack frame by frame
-        depth = 0
-        while current_frame and depth < max_depth:
-            # Check if 'self' is in the local variables of the frame
-            if "self" in current_frame.f_locals:
-                instance = current_frame.f_locals["self"]
-                return instance.__class__
-            # Move one level up in the stack
-            current_frame = current_frame.f_back
-            depth += 1
-    finally:
-        # Delete reference to the current frame to avoid reference cycles
-        del current_frame
-    return None
-
-
 def type_from_annotations(func: FunctionType | MethodType) -> str:
     # Get the signature of the function
     signature = inspect.signature(func)
@@ -360,14 +338,6 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
     return get_type_name(type(value), depth+1)
 
 
-def get_adjusted_full_type(value: Any, class_type: type|None=None, /, use_jaxtyping: bool = False) -> str:
-    #print(f"{type(value)=} {class_type=}")
-    if type(value) == class_type:
-        return "typing.Self"
-
-    return get_full_type(value, use_jaxtyping=use_jaxtyping)
-
-
 def isinstance_namedtuple(obj: object) -> bool:
     return (
         isinstance(obj, tuple)
@@ -380,7 +350,6 @@ def update_argtypes(
     argtypes: list[ArgInfo],
     index: tuple[FuncInfo, ArgumentName],
     arg_values: Any,
-    class_type: type|None,
     argument_name: str,
     /,
     is_vararg: bool,
@@ -392,7 +361,7 @@ def update_argtypes(
         values: Any,
     ) -> None:
         types = TypenameSet([
-            Typename(get_adjusted_full_type(val, class_type, use_jaxtyping=use_jaxtyping))
+            Typename(get_full_type(val, use_jaxtyping=use_jaxtyping))
             for val in values
         ])
         argtypes.append(
