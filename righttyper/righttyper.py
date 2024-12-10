@@ -205,7 +205,7 @@ def enter_function(code: CodeType, offset: int) -> Any:
         assert code == frame.f_code
 
         try:
-            _, function = next(find_functions(frame, code))
+            function = next(find_functions(frame, code))
             defaults = {
                 param_name: [param.default]
                 for param_name, param in inspect.signature(function).parameters.items()
@@ -356,7 +356,7 @@ def process_function_arguments(
 def find_functions(
     caller_frame: FrameType,
     code: CodeType
-) -> abc.Iterator[tuple[str, abc.Callable]]:
+) -> abc.Iterator[abc.Callable]:
     """
     Attempts to map back from a code object to the functions that use it.
     """
@@ -364,16 +364,16 @@ def find_functions(
     visited_wrapped = set()
     visited_classes = set()
     
-    def check_function(name: str, obj: abc.Callable) -> abc.Iterator[tuple[str, abc.Callable]]:
+    def check_function(name: str, obj: abc.Callable) -> abc.Iterator[abc.Callable]:
         while hasattr(obj, "__wrapped__"):
             if obj in visited_wrapped:
                 break
             visited_wrapped.add(obj)
             obj = obj.__wrapped__
         if hasattr(obj, "__code__") and obj.__code__ is code:
-            yield (name, obj)
+            yield obj
 
-    def find_in_class(class_obj: object) -> abc.Iterator[tuple[str, abc.Callable]]:
+    def find_in_class(class_obj: object) -> abc.Iterator[abc.Callable]:
         if class_obj in visited_classes:
             return
         visited_classes.add(class_obj)
