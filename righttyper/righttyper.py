@@ -612,11 +612,17 @@ def process_all_files() -> list[SignatureChanges]:
             for process in processes:
                 process.join()
             progress.update(task1, completed=total)
+
+            exceptions: list[Exception] = []
             while not queue.empty():
                 result = queue.get()
                 if isinstance(result, Exception):
-                    raise result
+                    exceptions.append(result)
                 sig_changes.append(result)
+
+            # complete as much of the work as possible before raising
+            if exceptions:
+                raise exceptions.pop()
 
     return sig_changes
 
