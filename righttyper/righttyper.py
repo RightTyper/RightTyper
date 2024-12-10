@@ -162,7 +162,7 @@ class Observations:
 
 
     def update_visited_funcs_arguments(
-        self,
+        self: Self,
         t: FuncInfo,
         argtypes: list[ArgInfo]
     ) -> None:
@@ -299,8 +299,6 @@ def exit_function_worker(
     int: indicator whether to continue the monitoring, always returns sys.monitoring.DISABLE in this function.
     """
     # Check if the function name is in the excluded list
-    func_name = code.co_qualname
-    filename = code.co_filename
     if should_skip_function(
         code,
         options.script_dir,
@@ -310,8 +308,8 @@ def exit_function_worker(
         return sys.monitoring.DISABLE
 
     t = FuncInfo(
-        Filename(filename),
-        FunctionName(func_name),
+        Filename(code.co_filename),
+        FunctionName(code.co_qualname),
     )
 
     debug_print(f"exit processing, retval was {obs.visited_funcs_retval[t]=}")
