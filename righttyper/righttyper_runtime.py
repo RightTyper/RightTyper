@@ -88,28 +88,6 @@ def should_skip_function(
     return False
 
 
-def get_class_type_from_stack(
-    max_depth: int = 5,
-) -> type|None:
-    # Initialize the current frame
-    current_frame = inspect.currentframe()
-    try:
-        # Move up in the stack frame by frame
-        depth = 0
-        while current_frame and depth < max_depth:
-            # Check if 'self' is in the local variables of the frame
-            if "self" in current_frame.f_locals:
-                instance = current_frame.f_locals["self"]
-                return instance.__class__
-            # Move one level up in the stack
-            current_frame = current_frame.f_back
-            depth += 1
-    finally:
-        # Delete reference to the current frame to avoid reference cycles
-        del current_frame
-    return None
-
-
 def type_from_annotations(func: FunctionType | MethodType) -> str:
     # Get the signature of the function
     signature = inspect.signature(func)
@@ -360,14 +338,6 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
     return get_type_name(type(value), depth+1)
 
 
-def get_adjusted_full_type(value: Any, class_type: type|None=None, /, use_jaxtyping: bool = False) -> str:
-    #print(f"{type(value)=} {class_type=}")
-    if type(value) == class_type:
-        return "typing.Self"
-
-    return get_full_type(value, use_jaxtyping=use_jaxtyping)
-
-
 def isinstance_namedtuple(obj: object) -> bool:
     return (
         isinstance(obj, tuple)
@@ -378,13 +348,8 @@ def isinstance_namedtuple(obj: object) -> bool:
 
 def update_argtypes(
     argtypes: list[ArgInfo],
-    arg_types: dict[
-        tuple[FuncInfo, ArgumentName],
-        ArgumentType,
-    ],
     index: tuple[FuncInfo, ArgumentName],
     arg_values: Any,
-    class_type: type|None,
     argument_name: str,
     /,
     is_vararg: bool,
@@ -394,10 +359,9 @@ def update_argtypes(
 
     def add_arg_info(
         values: Any,
-        arg_type_enum: ArgumentType,
     ) -> None:
         types = TypenameSet([
-            Typename(get_adjusted_full_type(val, class_type, use_jaxtyping=use_jaxtyping))
+            Typename(get_full_type(val, use_jaxtyping=use_jaxtyping))
             for val in values
         ])
         argtypes.append(
@@ -406,64 +370,13 @@ def update_argtypes(
                 types,
             )
         )
-        arg_types[index] = arg_type_enum
 
     if is_vararg:
-        add_arg_info(
-            arg_values[0],
-            ArgumentType.vararg,
-        )
+        add_arg_info(arg_values[0])
     elif is_kwarg:
-        add_arg_info(
-            arg_values[0].values(),
-            ArgumentType.kwarg,
-        )
+        add_arg_info(arg_values[0].values())
     else:
-        add_arg_info(
-            arg_values,
-            ArgumentType.positional,
-        )
-
-
-def format_annotation(annotation: Any) -> str:
-    """Format an annotation (type hint) as a string."""
-    if isinstance(annotation, type):
-        return annotation.__name__
-    elif hasattr(annotation, "_name") and annotation._name is not None:
-        return str(annotation._name)
-    elif (
-        hasattr(annotation, "__origin__") and annotation.__origin__ is not None
-    ):
-        origin = format_annotation(annotation.__origin__)
-        args = ", ".join(
-            [format_annotation(arg) for arg in annotation.__args__]
-        )
-        return f"{origin}[{args}]"
-    else:
-        return str(annotation)
-
-
-def format_function_definition(
-    func_name: str,
-    arg_names: list[str],
-    type_hints: dict[str, Any],
-) -> str:
-    """Format the function definition based on its name, argument names, and type hints."""
-    params = []
-    for arg in arg_names:
-        type_hint = type_hints.get(arg)
-        if type_hint:
-            params.append(f"{arg}: {format_annotation(type_hint)}")
-        else:
-            params.append(arg)
-
-    return_annotation = ""
-    if "return" in type_hints:
-        return_annotation = f" -> {format_annotation(type_hints['return'])}"
-
-    params_str = ", ".join(params)
-    function_definition = f"def {func_name}({params_str}){return_annotation}:"
-    return function_definition
+        add_arg_info(arg_values)
 
 
 def _source_relative_to_pkg(file: Path) -> Path|None:

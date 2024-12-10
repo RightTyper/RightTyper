@@ -1,4 +1,4 @@
-from righttyper.righttyper_runtime import get_full_type, get_adjusted_full_type
+from righttyper.righttyper_runtime import get_full_type
 from collections.abc import Iterable
 from collections import namedtuple
 from typing import Any
@@ -27,6 +27,7 @@ def test_get_full_type():
     assert "list[str]" == get_full_type(dir())
 
     assert "list[str]" == get_full_type(['a', 'b'])
+    assert "list[typing.Never]" == get_full_type([])
     assert "list[int]" == get_full_type([0, 1])
     assert "list[tuple[int]]" == get_full_type([(0,), (1,)])
 
@@ -44,6 +45,7 @@ def test_get_full_type():
     assert "frozenset" == get_full_type(frozenset())
 
     assert "dict[str, str]" == get_full_type({'a': 'b'})
+    assert "dict[typing.Never, typing.Never]" == get_full_type(dict())
 
     assert "typing.KeysView[str]" == get_full_type({'a':0, 'b':1}.keys())
     assert "typing.ValuesView[int]" == get_full_type({'a':0, 'b':1}.values())
@@ -190,27 +192,6 @@ class MySet(set):
 def test_get_full_type_custom_collection():
     assert f"{__name__}.MyList[int]" == get_full_type(MyList([0,1]))
     assert f"{__name__}.MySet[int]" == get_full_type(MySet({0,1}))
-
-
-class Foo:
-    pass
-
-def test_adjusted_full_type():
-    # these types used to be special cased... ensure they still work
-    assert "None" == get_adjusted_full_type(None)
-    assert "bool" == get_adjusted_full_type(True)
-    assert "float" == get_adjusted_full_type(.0)
-    assert "int" == get_adjusted_full_type(0)
-
-    # get_adjusted_full_type's main function is to translate to 'Self'
-
-    class Bar:
-        pass
-
-    assert "typing.Self" == get_adjusted_full_type(Foo(), Foo)
-    assert f"{__name__}.Foo" == get_adjusted_full_type(Foo())
-
-    assert f"{__name__}.test_adjusted_full_type.<locals>.Bar" == get_adjusted_full_type(Bar())
 
 
 @pytest.mark.skipif((importlib.util.find_spec('numpy') is None or

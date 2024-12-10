@@ -17,7 +17,6 @@ from types import CodeType, FrameType, FunctionType
 from typing import (
     Any,
     TextIO,
-    get_type_hints,
     Self
 )
 
@@ -27,12 +26,11 @@ import click
 # from righttyper import replace_dicts
 from righttyper.righttyper_process import (
     process_file,
+    process_file_worker,
+    SignatureChanges
 )
 from righttyper.righttyper_runtime import (
-    format_annotation,
-    format_function_definition,
-    get_adjusted_full_type,
-    get_class_type_from_stack,
+    get_full_type,
     should_skip_function,
     update_argtypes,
     get_main_module_fqn
@@ -54,14 +52,12 @@ from righttyper.righttyper_types import (
     Typename,
     TypenameSet,
 )
-from righttyper.righttyper_utils import (  # get_sampling_interval,; update_sampling_interval,; reset_sampling_interval,
+from righttyper.righttyper_utils import (
     TOOL_ID,
     TOOL_NAME,
     debug_print,
     debug_print_set_level,
-    make_type_signature,
     skip_this_file,
-    unannotated,
     union_typeset_str,
 )
 
@@ -102,9 +98,6 @@ class Observations:
     # All visited functions (file name and function name)
     visited_funcs: set[FuncInfo] = field(default_factory=set)
 
-    # The existing spec for each function (that is, function prototype)
-    existing_spec: dict[FuncInfo, str] = field(default_factory=dict)
-
     # For each visited function, all the info about its arguments
     visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = field(default_factory=lambda: defaultdict(list))
 
@@ -113,17 +106,6 @@ class Observations:
 
     # For each visited function, the values it yielded
     visited_funcs_yieldval: dict[FuncInfo, TypenameSet] = field(default_factory=lambda: defaultdict(TypenameSet))
-
-    # For each function and argument, what type the argument is (e.g.,
-    # kwarg, vararg)
-    arg_types: dict[
-        tuple[FuncInfo, ArgumentName],
-        ArgumentType,
-    ] = field(default_factory=dict)
-
-    # Existing annotations (variable to type annotations, optionally
-    # including 'return')
-    existing_annotations: dict[FuncInfo, dict[ArgumentName, str]] = field(default_factory=lambda: defaultdict(dict))
 
     namespace: dict[str, Any] = field(default_factory=dict)
 
@@ -178,6 +160,21 @@ class Observations:
             # print(f"{type_annotations[t]} {t}")
         return type_annotations
 
+
+    def update_visited_funcs_arguments(
+        self: Self,
+        t: FuncInfo,
+        argtypes: list[ArgInfo]
+    ) -> None:
+        if t in self.visited_funcs_arguments:
+            for i, arginfo in enumerate(argtypes):
+                if i < len(self.visited_funcs_arguments[t]):
+                    self.visited_funcs_arguments[t][i].type_name_set.update(arginfo.type_name_set)
+                    # reset_sampling_interval() if all new
+        else:
+            self.visited_funcs_arguments[t] = argtypes
+
+
 obs = Observations()
 
 
@@ -201,8 +198,24 @@ def enter_function(code: CodeType, offset: int) -> Any:
     obs.visited_funcs.add(t)
 
     frame = inspect.currentframe()
-    if frame and frame.f_back and frame.f_back.f_back:
-        process_function_arguments(frame, t)
+    if frame and frame.f_back:
+        # NOTE: this backtracking logic is brittle and must be
+        # adjusted if the call chain changes length.
+        frame = frame.f_back
+        assert code == frame.f_code
+
+        try:
+            _, function = next(find_functions(frame, code))
+            defaults = {
+                param_name: [param.default]
+                for param_name, param in inspect.signature(function).parameters.items()
+                if param.default != inspect._empty
+            }
+        except StopIteration:
+            defaults = {}
+
+        process_function_arguments(t, inspect.getargvalues(frame), defaults)
+        del frame
 
     return sys.monitoring.DISABLE
 
@@ -286,8 +299,6 @@ def exit_function_worker(
     int: indicator whether to continue the monitoring, always returns sys.monitoring.DISABLE in this function.
     """
     # Check if the function name is in the excluded list
-    func_name = code.co_qualname
-    filename = code.co_filename
     if should_skip_function(
         code,
         options.script_dir,
@@ -297,15 +308,14 @@ def exit_function_worker(
         return sys.monitoring.DISABLE
 
     t = FuncInfo(
-        Filename(filename),
-        FunctionName(func_name),
+        Filename(code.co_filename),
+        FunctionName(code.co_qualname),
     )
 
     debug_print(f"exit processing, retval was {obs.visited_funcs_retval[t]=}")
 
-    class_type = get_class_type_from_stack()
     typename = Typename(
-        get_adjusted_full_type(return_value, class_type, use_jaxtyping=options.infer_shapes)
+        get_full_type(return_value, use_jaxtyping=options.infer_shapes)
     )
 
     if event_type == sys.monitoring.events.PY_YIELD:
@@ -317,64 +327,30 @@ def exit_function_worker(
 
 
 def process_function_arguments(
-    frame: Any,
     t: FuncInfo,
+    args: inspect.ArgInfo,
+    defaults: dict[str, Any]
 ) -> None:
-    # NOTE: this backtracking logic is brittle and must be
-    # adjusted if the call chain changes length.
-    caller_frame = frame.f_back #.f_back
-    code = caller_frame.f_code
-    class_type = get_class_type_from_stack()
-    arg_names, vararg, kwarg, the_values = inspect.getargvalues(caller_frame)
-    if vararg:
-        arg_names.append(vararg)
-    if kwarg:
-        arg_names.append(kwarg)
-
-    type_hints = get_function_type_hints(caller_frame, code)
-
-    update_function_annotations(
-        t,
-        caller_frame,
-        arg_names,
-        type_hints,
-    )
-
-    # also "observe" any default values
-    try:
-        _, function = next(find_functions(caller_frame, code))
-        defaults = {
-            param_name: [param.default]
-            for param_name, param in inspect.signature(function).parameters.items()
-            if param.default != inspect._empty
-        }
-    except StopIteration:
-        defaults = {}
+    if args.varargs:
+        args.args.append(args.varargs)
+    if args.keywords:
+        args.args.append(args.keywords)
 
     argtypes: list[ArgInfo] = []
-    for arg in arg_names:
+    for arg in args.args:
         if arg:
-            index = (
-                FuncInfo(
-                    Filename(caller_frame.f_code.co_filename),
-                    FunctionName(code.co_qualname),
-                ),
-                ArgumentName(arg),
-            )
             update_argtypes(
                 argtypes,
-                obs.arg_types,
-                index,
-                [the_values[arg], *defaults.get(arg, [])],
-                class_type,
+                (t, ArgumentName(arg)),
+                [args.locals[arg], *defaults.get(arg, [])],
                 arg,
-                is_vararg = (arg == vararg),
-                is_kwarg = (arg == kwarg),
+                is_vararg = (arg == args.varargs),
+                is_kwarg = (arg == args.keywords),
                 use_jaxtyping = options.infer_shapes
             )
 
     debug_print(f"processing {t=} {argtypes=}")
-    update_visited_funcs_arguments(t, argtypes)
+    obs.update_visited_funcs_arguments(t, argtypes)
 
 
 def find_functions(
@@ -416,57 +392,6 @@ def find_functions(
             yield from check_function(name, obj)
         elif inspect.isclass(obj):
             yield from find_in_class(obj)
-
-
-@functools.cache
-def get_function_type_hints(
-    caller_frame: Any,
-    code: CodeType,
-) -> dict[str, str]:
-    for (
-        name,
-        obj,
-    ) in find_functions(caller_frame, code):
-        try:
-            return get_type_hints(obj)
-        except Exception:
-            return {}
-    return {}
-
-
-def update_function_annotations(
-    t: FuncInfo,
-    caller_frame: Any,
-    args: list[str],
-    type_hints: dict[str, str],
-) -> None:
-
-    for (
-        name,
-        obj,
-    ) in find_functions(caller_frame, caller_frame.f_code):
-        # TODO stop at the first?
-        obs.existing_spec[t] = format_function_definition(
-            name,
-            args,
-            (type_hints if not options.ignore_annotations else {}),
-        )
-        obs.existing_annotations[t] = {
-            ArgumentName(name): format_annotation(type_hints[name])
-            for name in type_hints
-        }
-
-
-def update_visited_funcs_arguments(
-    t: FuncInfo, argtypes: list[ArgInfo]
-) -> None:
-    if t in obs.visited_funcs_arguments:
-        for i, arginfo in enumerate(argtypes):
-            if i < len(obs.visited_funcs_arguments[t]):
-                obs.visited_funcs_arguments[t][i].type_name_set.update(arginfo.type_name_set)
-                # reset_sampling_interval() if all new
-    else:
-        obs.visited_funcs_arguments[t] = argtypes
 
 
 def in_instrumentation_code(frame: FrameType) -> bool:
@@ -530,57 +455,6 @@ instrumentation_functions_code = set(
 )
 
 
-def output_type_signatures(
-    file: TextIO = sys.stdout,
-    namespace: dict[str, Any] = globals(),
-) -> None:
-    # Print all type signatures
-    fname_printed: dict[Filename, bool] = defaultdict(bool)
-    visited_funcs_by_fname = sorted(
-        obs.visited_funcs, key=lambda a: a.file_name + ":" + a.func_name
-    )
-    for t in visited_funcs_by_fname:
-        if skip_this_file(
-            t.file_name,
-            options.script_dir,
-            options.include_all,
-            options.include_files_regex,
-        ):
-            continue
-        try:
-            s = make_type_signature(
-                file_name=t.file_name,
-                func_name=t.func_name,
-                args=obs.visited_funcs_arguments[t],
-                retval=obs.visited_funcs_retval[t],
-                namespace=namespace,
-                arg_types=obs.arg_types,
-                existing_annotations=obs.existing_annotations,
-            )
-            if t in obs.existing_spec and s == obs.existing_spec[t]:
-                continue
-            if not fname_printed[t.file_name]:
-                print(
-                    f"{t.file_name}:\n{'=' * (len(t.file_name) + 1)}\n",
-                    file=file,
-                )
-                fname_printed[t.file_name] = True
-            print(f"{s} ...\n", file=file)
-            # Print diffs
-            if t in obs.existing_spec:
-                import difflib
-
-                diffs = difflib.ndiff(
-                    (obs.existing_spec[t] + "\n").splitlines(True),
-                    (s + "\n").splitlines(True),
-                )
-                print("".join(diffs), file=file)
-
-        except KeyError:
-            # Something weird happened
-            logger.exception(f"KeyError: {t=}")
-
-
 def execute_script_or_module(
     script: str,
     module: bool,
@@ -603,44 +477,65 @@ def execute_script_or_module(
         obs.namespace = runpy.run_path(script, run_name="__main__")
 
 
+def output_signatures(
+    sig_changes: list[SignatureChanges],
+    file: TextIO = sys.stdout,
+) -> None:
+    import difflib
+
+    for filename, changes in sorted(sig_changes):
+        if not changes:
+            continue
+
+        print(
+            f"{filename}:\n{'=' * (len(filename) + 1)}\n",
+            file=file,
+        )
+
+        for funcname, old, new in sorted(changes):
+            print(f"{funcname}\n", file=file)
+
+            # show signature diff
+            diffs = difflib.ndiff(
+                (old + "\n").splitlines(True),
+                (new + "\n").splitlines(True),
+            )
+            print("".join(diffs), file=file)
+
+
 def post_process() -> None:
-    output_type_signatures_to_file(obs.namespace)
-    if options.output_files or options.generate_stubs:
-        process_all_files()
+    sig_changes = process_all_files()
 
-
-def output_type_signatures_to_file(namespace: dict[str, Any]) -> None:
     with open(f"{TOOL_NAME}.out", "w+") as f:
-        output_type_signatures(f, namespace)
+        output_signatures(sig_changes, f)
 
 
-def process_all_files() -> None:
+def process_all_files() -> list[SignatureChanges]:
     module_names=[*sys.modules.keys(), get_main_module_fqn()]
 
-    processes: list[multiprocessing.Process] = []
-    all_files = list(set(t.file_name for t in obs.visited_funcs))
-    prefix = os.path.commonprefix(list(all_files))
+    fnames = list(set(
+        t.file_name
+        for t in obs.visited_funcs
+        if not skip_this_file(
+            t.file_name,
+            options.script_dir,
+            options.include_all,
+            options.include_files_regex,
+        )
+    ))
 
-    # Collect the file names to process
-    fnames_set = set()
-    for t in obs.visited_funcs:
-        fname = t.file_name
-        if fname and should_update_file(t, fname, prefix, obs.namespace):
-            assert not skip_this_file(
-                fname,
-                options.script_dir,
-                options.include_all,
-                options.include_files_regex,
-            )
-            fnames_set.add(fname)
+    if len(fnames) == 0:
+        return []
 
-    if len(fnames_set) == 0:
-        return
-
-    fnames = list(fnames_set)
     ### multiprocessing.set_start_method('fork')
     import rich.progress
     from rich.table import Column
+
+    if options.use_multiprocessing:
+        processes: list[multiprocessing.Process] = []
+        queue: multiprocessing.queues.Queue = multiprocessing.Queue()
+
+    sig_changes = []
 
     with rich.progress.Progress(  # rich.progress.TextColumn("[progress.description]{task.description}", table_column=Column(ratio=1)),
         rich.progress.BarColumn(table_column=Column(ratio=1)),
@@ -661,16 +556,15 @@ def process_all_files() -> None:
                 options.overwrite,
                 module_names,
                 options.ignore_annotations,
-                options.srcdir,
             )
             if options.use_multiprocessing:
                 process = multiprocessing.Process(
-                    target=process_file, args=args
+                    target=process_file_worker, args=(queue, *args)
                 )
                 processes.append(process)
                 process.start()
             else:
-                process_file(*args)
+                sig_changes.append(process_file(*args))
                 progress.update(task1, advance=1)
                 progress.refresh()
 
@@ -698,26 +592,18 @@ def process_all_files() -> None:
                 process.join()
             progress.update(task1, completed=total)
 
+            exceptions: list[Exception] = []
+            while not queue.empty():
+                result = queue.get()
+                if isinstance(result, Exception):
+                    exceptions.append(result)
+                sig_changes.append(result)
 
-def should_update_file(
-    t: FuncInfo,
-    fname: str,
-    prefix: str,
-    namespace: dict[str, Any],
-) -> bool:
-    try:
-        s = make_type_signature(
-            file_name=t.file_name,
-            func_name=t.func_name,
-            args=obs.visited_funcs_arguments[t],
-            retval=obs.visited_funcs_retval[t],
-            namespace=namespace,
-            arg_types=obs.arg_types,
-            existing_annotations=obs.existing_annotations,
-        )
-    except KeyError:
-        return False
-    return t not in obs.existing_spec or s != obs.existing_spec[t]
+            # complete as much of the work as possible before raising
+            if exceptions:
+                raise exceptions.pop()
+
+    return sig_changes
 
 
 FORMAT = "[%(filename)s:%(lineno)s] %(message)s"

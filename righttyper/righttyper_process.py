@@ -3,6 +3,7 @@ import os
 import pathlib
 from collections import defaultdict
 from typing import Any
+import multiprocessing.queues
 
 import libcst as cst
 
@@ -20,7 +21,6 @@ from righttyper.righttyper_types import (
 )
 from righttyper.righttyper_utils import (
     debug_print,
-    make_type_signature,
     skip_this_file,
     union_typeset_str,
 )
@@ -28,6 +28,8 @@ from righttyper.unified_transformer import UnifiedTransformer
 from righttyper.righttyper_runtime import source_to_module_fqn
 
 logger = logging.getLogger("righttyper")
+
+SignatureChanges = tuple[Filename, list[tuple[FunctionName, str, str]]]
 
 
 def correct_indentation_issues(file_contents: str) -> str:
@@ -93,19 +95,13 @@ def process_file(
     overwrite: bool,
     module_names: list[str],
     ignore_annotations: bool = False,
-    srcdir: str = "",
-) -> None:
+) -> SignatureChanges:
     debug_print(f"process_file: {filename}")
     try:
         with open(filename, "r") as file:
             source = file.read()
     except FileNotFoundError:
-        return
-
-    if output_files and overwrite:
-        with open(filename + ".bak", "w") as file:
-            file.write(source)
-
+        return filename, []
 
     try:
         cst_tree = cst.parse_module(source)
@@ -116,7 +112,7 @@ def process_file(
             cst_tree = cst.parse_module(source)
         except cst._exceptions.ParserSyntaxError:  # type: ignore
             print(f"Failed to parse source for {filename}.")
-            return
+            raise
 
     transformer = UnifiedTransformer(
         filename, type_annotations, ignore_annotations,
@@ -126,19 +122,24 @@ def process_file(
 
     try:
         transformed = cst_tree.visit(transformer)
-    except TypeError as e:
+    except TypeError:
         # This happens when "Mock" is passed around.
-        # Print a warning and bail.
-        print(f"Failed to transform {filename}. ({e})")
-        return
+        print(f"Failed to transform {filename}.")
+        raise
 
-    if output_files:
-        with open(
-            filename + ("" if overwrite else ".typed"),
-            "w",
-        ) as file:
-            file.write(transformed.code)
+    changes = transformer.get_signature_changes()
 
+    if output_files and changes:
+        if overwrite:
+            with open(filename + ".bak", "w") as file:
+                file.write(source)
+
+            with open(filename, "w") as file:
+                file.write(transformed.code)
+
+        else:
+            with open(filename + ".typed", "w") as file:
+                file.write(transformed.code)
 
     if generate_stubs:
         stub_file = pathlib.Path(filename).with_suffix(".pyi")
@@ -149,3 +150,14 @@ def process_file(
             stub_file.with_suffix(stub_file.suffix + ".bak").write_text(stub_file.read_text())
 
         stub_file.write_text(stubs.code)
+
+    return filename, changes
+
+
+def process_file_worker(queue: multiprocessing.queues.Queue, *args) -> None:
+    try:
+        result = process_file(*args)
+        queue.put(result)
+    except Exception as e:
+        queue.put(e)
+
