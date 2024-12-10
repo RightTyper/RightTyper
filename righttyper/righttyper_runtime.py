@@ -378,10 +378,6 @@ def isinstance_namedtuple(obj: object) -> bool:
 
 def update_argtypes(
     argtypes: list[ArgInfo],
-    arg_types: dict[
-        tuple[FuncInfo, ArgumentName],
-        ArgumentType,
-    ],
     index: tuple[FuncInfo, ArgumentName],
     arg_values: Any,
     class_type: type|None,
@@ -394,7 +390,6 @@ def update_argtypes(
 
     def add_arg_info(
         values: Any,
-        arg_type_enum: ArgumentType,
     ) -> None:
         types = TypenameSet([
             Typename(get_adjusted_full_type(val, class_type, use_jaxtyping=use_jaxtyping))
@@ -406,64 +401,13 @@ def update_argtypes(
                 types,
             )
         )
-        arg_types[index] = arg_type_enum
 
     if is_vararg:
-        add_arg_info(
-            arg_values[0],
-            ArgumentType.vararg,
-        )
+        add_arg_info(arg_values[0])
     elif is_kwarg:
-        add_arg_info(
-            arg_values[0].values(),
-            ArgumentType.kwarg,
-        )
+        add_arg_info(arg_values[0].values())
     else:
-        add_arg_info(
-            arg_values,
-            ArgumentType.positional,
-        )
-
-
-def format_annotation(annotation: Any) -> str:
-    """Format an annotation (type hint) as a string."""
-    if isinstance(annotation, type):
-        return annotation.__name__
-    elif hasattr(annotation, "_name") and annotation._name is not None:
-        return str(annotation._name)
-    elif (
-        hasattr(annotation, "__origin__") and annotation.__origin__ is not None
-    ):
-        origin = format_annotation(annotation.__origin__)
-        args = ", ".join(
-            [format_annotation(arg) for arg in annotation.__args__]
-        )
-        return f"{origin}[{args}]"
-    else:
-        return str(annotation)
-
-
-def format_function_definition(
-    func_name: str,
-    arg_names: list[str],
-    type_hints: dict[str, Any],
-) -> str:
-    """Format the function definition based on its name, argument names, and type hints."""
-    params = []
-    for arg in arg_names:
-        type_hint = type_hints.get(arg)
-        if type_hint:
-            params.append(f"{arg}: {format_annotation(type_hint)}")
-        else:
-            params.append(arg)
-
-    return_annotation = ""
-    if "return" in type_hints:
-        return_annotation = f" -> {format_annotation(type_hints['return'])}"
-
-    params_str = ", ".join(params)
-    function_definition = f"def {func_name}({params_str}){return_annotation}:"
-    return function_definition
+        add_arg_info(arg_values)
 
 
 def _source_relative_to_pkg(file: Path) -> Path|None:

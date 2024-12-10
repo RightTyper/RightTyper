@@ -17,7 +17,6 @@ from types import CodeType, FrameType, FunctionType
 from typing import (
     Any,
     TextIO,
-    get_type_hints,
     Self
 )
 
@@ -31,8 +30,6 @@ from righttyper.righttyper_process import (
     SignatureChanges
 )
 from righttyper.righttyper_runtime import (
-    format_annotation,
-    format_function_definition,
     get_adjusted_full_type,
     get_class_type_from_stack,
     should_skip_function,
@@ -56,14 +53,12 @@ from righttyper.righttyper_types import (
     Typename,
     TypenameSet,
 )
-from righttyper.righttyper_utils import (  # get_sampling_interval,; update_sampling_interval,; reset_sampling_interval,
+from righttyper.righttyper_utils import (
     TOOL_ID,
     TOOL_NAME,
     debug_print,
     debug_print_set_level,
-    make_type_signature,
     skip_this_file,
-    unannotated,
     union_typeset_str,
 )
 
@@ -104,9 +99,6 @@ class Observations:
     # All visited functions (file name and function name)
     visited_funcs: set[FuncInfo] = field(default_factory=set)
 
-    # The existing spec for each function (that is, function prototype)
-    existing_spec: dict[FuncInfo, str] = field(default_factory=dict)
-
     # For each visited function, all the info about its arguments
     visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = field(default_factory=lambda: defaultdict(list))
 
@@ -115,17 +107,6 @@ class Observations:
 
     # For each visited function, the values it yielded
     visited_funcs_yieldval: dict[FuncInfo, TypenameSet] = field(default_factory=lambda: defaultdict(TypenameSet))
-
-    # For each function and argument, what type the argument is (e.g.,
-    # kwarg, vararg)
-    arg_types: dict[
-        tuple[FuncInfo, ArgumentName],
-        ArgumentType,
-    ] = field(default_factory=dict)
-
-    # Existing annotations (variable to type annotations, optionally
-    # including 'return')
-    existing_annotations: dict[FuncInfo, dict[ArgumentName, str]] = field(default_factory=lambda: defaultdict(dict))
 
     namespace: dict[str, Any] = field(default_factory=dict)
 
@@ -333,14 +314,9 @@ def process_function_arguments(
     if kwarg:
         arg_names.append(kwarg)
 
-    type_hints = get_function_type_hints(caller_frame, code)
-
-    update_function_annotations(
-        t,
-        caller_frame,
-        arg_names,
-        type_hints,
-    )
+    # FIXME deleting this causes failures in tqdm tests, probably
+    # somehow because the caller frame is no longer held in memory.
+    get_function_type_hints(caller_frame, code)
 
     # also "observe" any default values
     try:
@@ -365,7 +341,6 @@ def process_function_arguments(
             )
             update_argtypes(
                 argtypes,
-                obs.arg_types,
                 index,
                 [the_values[arg], *defaults.get(arg, [])],
                 class_type,
@@ -425,38 +400,7 @@ def get_function_type_hints(
     caller_frame: Any,
     code: CodeType,
 ) -> dict[str, str]:
-    for (
-        name,
-        obj,
-    ) in find_functions(caller_frame, code):
-        try:
-            return get_type_hints(obj)
-        except Exception:
-            return {}
     return {}
-
-
-def update_function_annotations(
-    t: FuncInfo,
-    caller_frame: Any,
-    args: list[str],
-    type_hints: dict[str, str],
-) -> None:
-
-    for (
-        name,
-        obj,
-    ) in find_functions(caller_frame, caller_frame.f_code):
-        # TODO stop at the first?
-        obs.existing_spec[t] = format_function_definition(
-            name,
-            args,
-            (type_hints if not options.ignore_annotations else {}),
-        )
-        obs.existing_annotations[t] = {
-            ArgumentName(name): format_annotation(type_hints[name])
-            for name in type_hints
-        }
 
 
 def update_visited_funcs_arguments(
@@ -532,57 +476,6 @@ instrumentation_functions_code = set(
 )
 
 
-def output_type_signatures(
-    file: TextIO = sys.stdout,
-    namespace: dict[str, Any] = globals(),
-) -> None:
-    # Print all type signatures
-    fname_printed: dict[Filename, bool] = defaultdict(bool)
-    visited_funcs_by_fname = sorted(
-        obs.visited_funcs, key=lambda a: a.file_name + ":" + a.func_name
-    )
-    for t in visited_funcs_by_fname:
-        if skip_this_file(
-            t.file_name,
-            options.script_dir,
-            options.include_all,
-            options.include_files_regex,
-        ):
-            continue
-        try:
-            s = make_type_signature(
-                file_name=t.file_name,
-                func_name=t.func_name,
-                args=obs.visited_funcs_arguments[t],
-                retval=obs.visited_funcs_retval[t],
-                namespace=namespace,
-                arg_types=obs.arg_types,
-                existing_annotations=obs.existing_annotations,
-            )
-            if t in obs.existing_spec and s == obs.existing_spec[t]:
-                continue
-            if not fname_printed[t.file_name]:
-                print(
-                    f"{t.file_name}:\n{'=' * (len(t.file_name) + 1)}\n",
-                    file=file,
-                )
-                fname_printed[t.file_name] = True
-            print(f"{s} ...\n", file=file)
-            # Print diffs
-            if t in obs.existing_spec:
-                import difflib
-
-                diffs = difflib.ndiff(
-                    (obs.existing_spec[t] + "\n").splitlines(True),
-                    (s + "\n").splitlines(True),
-                )
-                print("".join(diffs), file=file)
-
-        except KeyError:
-            # Something weird happened
-            logger.exception(f"KeyError: {t=}")
-
-
 def execute_script_or_module(
     script: str,
     module: bool,
@@ -632,9 +525,6 @@ def output_signatures(
 
 
 def post_process() -> None:
-#    with open(f"{TOOL_NAME}.out", "w+") as f:
-#        output_type_signatures(f, obs.namespace)
-
     sig_changes = process_all_files()
 
     with open(f"{TOOL_NAME}.out", "w+") as f:

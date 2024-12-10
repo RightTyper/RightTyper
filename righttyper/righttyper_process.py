@@ -21,7 +21,6 @@ from righttyper.righttyper_types import (
 )
 from righttyper.righttyper_utils import (
     debug_print,
-    make_type_signature,
     skip_this_file,
     union_typeset_str,
 )

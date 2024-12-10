@@ -53,30 +53,6 @@ def debug_print_set_level(level: bool) -> None:
     _DEBUG_PRINT = level
 
 
-def unannotated(
-    f: object, ignore_annotations: bool = False
-) -> set[ArgumentName]:
-    """
-    Returns a set of the unannotated arguments and, if
-    unannotated, the return value (called "return"), for the
-    given function.
-    """
-    import inspect
-
-    assert inspect.isfunction(f)
-
-    sig = inspect.signature(f)
-    unannotated_args = set()
-
-    for name, param in sig.parameters.items():
-        if ignore_annotations or param.annotation is param.empty:
-            unannotated_args.add(ArgumentName(name))
-    if ignore_annotations or sig.return_annotation == inspect.Signature.empty:
-        unannotated_args.add(ArgumentName("return"))
-
-    return unannotated_args
-
-
 def union_typeset_str(
     typeset: TypenameSet,
     namespace: dict[str, Any] = globals(),
@@ -143,64 +119,6 @@ def find_most_specific_common_superclass_by_name(
             key=lambda cls: cls.__mro__.index(object),
         ).__name__
     )
-
-
-def make_type_signature(
-    file_name: str,
-    func_name: str,
-    args: list[ArgInfo],
-    retval: TypenameSet,
-    namespace: dict[str, Any],
-    arg_types: dict[
-        tuple[FuncInfo, ArgumentName],
-        ArgumentType,
-    ],
-    existing_annotations: dict[FuncInfo, dict[ArgumentName, str]],
-) -> str:
-    # print(f"make_type_signature {file_name} {func_name} {args} {retval}")
-    t = FuncInfo(
-        Filename(file_name),
-        FunctionName(func_name),
-    )
-    s = f"def {func_name}("
-    for index, arginfo in enumerate(args):
-        argname = arginfo.arg_name
-        arg_type = arg_types[
-            FuncInfo(Filename(file_name), FunctionName(func_name)),
-            argname,
-        ]
-        if arg_type == ArgumentType.vararg:
-            arg_prefix = "*"
-        elif arg_type == ArgumentType.kwarg:
-            arg_prefix = "**"
-        else:
-            assert arg_type == ArgumentType.positional
-            arg_prefix = ""
-        if argname not in existing_annotations[t]:
-            argtype_fullname_set = arginfo.type_name_set
-            argtype_fullname = Typename(
-                union_typeset_str(
-                    argtype_fullname_set,
-                    namespace,
-                )
-            )
-
-            s += f"{arg_prefix}{argname}: {argtype_fullname}"
-        else:
-            if argname in existing_annotations[t]:
-                s += f"{arg_prefix}{argname}: {existing_annotations[t][argname]}"
-            else:
-                s += f"{arg_prefix}{argname}"
-
-        if index < len(args) - 1:
-            s += ", "
-    s += ")"
-    if "return" in existing_annotations[t]:
-        retval_name = Typename(existing_annotations[t][ArgumentName("return")])
-    else:
-        retval_name = union_typeset_str(retval, namespace)
-    s += f" -> {retval_name}:"
-    return s
 
 
 @cache
