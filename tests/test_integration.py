@@ -913,3 +913,24 @@ def test_none_arg(tmp_cwd):
 
     output = Path("t.py").read_text()
     assert 'def foo(x: None) -> None:' in output
+
+
+@pytest.mark.xfail(reason="RT only recognizes 'self'")
+def test_self_by_another_name(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self.x = 10
+
+            def f(a):
+                return a.x
+
+        print(f"{C().f()=}")
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def f(a: Self) -> int:' in output
