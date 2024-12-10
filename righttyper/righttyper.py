@@ -204,14 +204,13 @@ def enter_function(code: CodeType, offset: int) -> Any:
         frame = frame.f_back
         assert code == frame.f_code
 
-        try:
-            function = next(find_functions(frame, code))
+        if function := next(find_functions(frame, code), None):
             defaults = {
                 param_name: [param.default]
                 for param_name, param in inspect.signature(function).parameters.items()
                 if param.default != inspect._empty
             }
-        except StopIteration:
+        else:
             defaults = {}
 
         process_function_arguments(t, inspect.getargvalues(frame), defaults)
