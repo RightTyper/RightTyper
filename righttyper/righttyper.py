@@ -515,7 +515,7 @@ def process_file_wrapper(args) -> SignatureChanges|BaseException:
 
 
 def process_all_files() -> list[SignatureChanges]:
-    fnames = list(set(
+    fnames = set(
         t.file_name
         for t in obs.visited_funcs
         if not skip_this_file(
@@ -524,20 +524,15 @@ def process_all_files() -> list[SignatureChanges]:
             options.include_all,
             options.include_files_regex,
         )
-    ))
+    )
 
     if len(fnames) == 0:
         return []
 
-    import rich.progress
-    from rich.table import Column
-
-    sig_changes = []
-
     type_annotations = obs.collect_annotations()
-    module_names=[*sys.modules.keys(), get_main_module_fqn()]
+    module_names = [*sys.modules.keys(), get_main_module_fqn()]
 
-    gen_args = (
+    args_gen = (
         (
             fname,
             options.output_files,
@@ -550,6 +545,18 @@ def process_all_files() -> list[SignatureChanges]:
         for fname in fnames
     )
 
+    def process_files() -> abc.Iterator[SignatureChanges|BaseException]:
+        if options.use_multiprocessing:
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                yield from executor.map(process_file_wrapper, args_gen)
+        else:
+            yield from map(process_file_wrapper, args_gen)
+
+    import rich.progress
+    from rich.table import Column
+
+    sig_changes = []
+
     with rich.progress.Progress(
         rich.progress.BarColumn(table_column=Column(ratio=1)),
         rich.progress.MofNCompleteColumn(),
@@ -560,27 +567,19 @@ def process_all_files() -> list[SignatureChanges]:
     ) as progress:
         task1 = progress.add_task(description="", total=len(fnames))
 
-        if options.use_multiprocessing:
-            exception = None
-            with concurrent.futures.ProcessPoolExecutor() as executor:
-                for result in executor.map(process_file_wrapper, gen_args):
-                    if isinstance(result, BaseException):
-                        exception = result
-                    else:
-                        sig_changes.append(result)
+        exception = None
+        for result in process_files():
+            if isinstance(result, BaseException):
+                exception = result
+            else:
+                sig_changes.append(result)
 
-                    progress.update(task1, advance=1)
-                    progress.refresh()
+            progress.update(task1, advance=1)
+            progress.refresh()
 
-            # complete as much of the work as possible before raising
-            if exception:
-                raise exception
-
-        else:
-            for args in gen_args:
-                sig_changes.append(process_file(*args))
-                progress.update(task1, advance=1)
-                progress.refresh()
+        # complete as much of the work as possible before raising
+        if exception:
+            raise exception
 
     return sig_changes
 
