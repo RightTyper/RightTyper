@@ -3,7 +3,6 @@ import os
 import pathlib
 from collections import defaultdict
 from typing import Any
-import multiprocessing.queues
 
 import libcst as cst
 
@@ -152,12 +151,3 @@ def process_file(
         stub_file.write_text(stubs.code)
 
     return filename, changes
-
-
-def process_file_worker(queue: multiprocessing.queues.Queue, *args) -> None:
-    try:
-        result = process_file(*args)
-        queue.put(result)
-    except Exception as e:
-        queue.put(e)
-
