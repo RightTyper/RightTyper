@@ -532,7 +532,7 @@ def process_all_files() -> list[SignatureChanges]:
 
     if options.use_multiprocessing:
         processes: list[multiprocessing.Process] = []
-        queue: multiprocessing.queues.Queue = multiprocessing.Queue()
+        queue: multiprocessing.queues.SimpleQueue = multiprocessing.SimpleQueue()
 
     sig_changes = []
 
