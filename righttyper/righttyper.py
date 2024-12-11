@@ -1,11 +1,10 @@
+import concurrent.futures
 import functools
 import importlib.metadata
 import importlib.util
 import inspect
 import itertools
 import logging
-import multiprocessing
-import multiprocessing.connection
 import os
 import runpy
 import signal
@@ -26,7 +25,6 @@ import click
 # from righttyper import replace_dicts
 from righttyper.righttyper_process import (
     process_file,
-    process_file_worker,
     SignatureChanges
 )
 from righttyper.righttyper_runtime import (
@@ -509,10 +507,15 @@ def post_process() -> None:
         output_signatures(sig_changes, f)
 
 
-def process_all_files() -> list[SignatureChanges]:
-    module_names=[*sys.modules.keys(), get_main_module_fqn()]
+def process_file_wrapper(args) -> SignatureChanges|BaseException:
+    try:
+        return process_file(*args)
+    except BaseException as e:
+        return e
 
-    fnames = list(set(
+
+def process_all_files() -> list[SignatureChanges]:
+    fnames = set(
         t.file_name
         for t in obs.visited_funcs
         if not skip_this_file(
@@ -521,22 +524,40 @@ def process_all_files() -> list[SignatureChanges]:
             options.include_all,
             options.include_files_regex,
         )
-    ))
+    )
 
     if len(fnames) == 0:
         return []
 
-    ### multiprocessing.set_start_method('fork')
+    type_annotations = obs.collect_annotations()
+    module_names = [*sys.modules.keys(), get_main_module_fqn()]
+
+    args_gen = (
+        (
+            fname,
+            options.output_files,
+            options.generate_stubs,
+            type_annotations,
+            options.overwrite,
+            module_names,
+            options.ignore_annotations,
+        )
+        for fname in fnames
+    )
+
+    def process_files() -> abc.Iterator[SignatureChanges|BaseException]:
+        if options.use_multiprocessing:
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                yield from executor.map(process_file_wrapper, args_gen)
+        else:
+            yield from map(process_file_wrapper, args_gen)
+
     import rich.progress
     from rich.table import Column
 
-    if options.use_multiprocessing:
-        processes: list[multiprocessing.Process] = []
-        queue: multiprocessing.queues.SimpleQueue = multiprocessing.SimpleQueue()
-
     sig_changes = []
 
-    with rich.progress.Progress(  # rich.progress.TextColumn("[progress.description]{task.description}", table_column=Column(ratio=1)),
+    with rich.progress.Progress(
         rich.progress.BarColumn(table_column=Column(ratio=1)),
         rich.progress.MofNCompleteColumn(),
         rich.progress.TimeRemainingColumn(),
@@ -545,62 +566,20 @@ def process_all_files() -> list[SignatureChanges]:
         auto_refresh=False,
     ) as progress:
         task1 = progress.add_task(description="", total=len(fnames))
-        type_annotations = obs.collect_annotations()
-        for fname in fnames:
-            args = (
-                fname,
-                options.output_files,
-                options.generate_stubs,
-                type_annotations,
-                options.overwrite,
-                module_names,
-                options.ignore_annotations,
-            )
-            if options.use_multiprocessing:
-                process = multiprocessing.Process(
-                    target=process_file_worker, args=(queue, *args)
-                )
-                processes.append(process)
-                process.start()
+
+        exception = None
+        for result in process_files():
+            if isinstance(result, BaseException):
+                exception = result
             else:
-                sig_changes.append(process_file(*args))
-                progress.update(task1, advance=1)
-                progress.refresh()
-
-        if options.use_multiprocessing:
-            sentinels = [p.sentinel for p in processes]
-            total = len(processes)
-            completed = 0
-            progress.start()
-            while completed < total:
-                ready_sentinels = multiprocessing.connection.wait(
-                    sentinels
-                )  # Wait for any process sentinel to become ready
-
-                for sentinel in ready_sentinels:
-                    if isinstance(
-                        sentinel, int
-                    ):  # should be true for all, mollifying mypy
-                        completed += 1
-                        progress.update(task1, advance=1)
-                        progress.refresh()
-                        # Remove the sentinel to avoid double counting
-                        sentinels.remove(sentinel)
-            # Ensure all processes have finished
-            for process in processes:
-                process.join()
-            progress.update(task1, completed=total)
-
-            exceptions: list[Exception] = []
-            while not queue.empty():
-                result = queue.get()
-                if isinstance(result, Exception):
-                    exceptions.append(result)
                 sig_changes.append(result)
 
-            # complete as much of the work as possible before raising
-            if exceptions:
-                raise exceptions.pop()
+            progress.update(task1, advance=1)
+            progress.refresh()
+
+        # complete as much of the work as possible before raising
+        if exception:
+            raise exception
 
     return sig_changes
 
