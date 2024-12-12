@@ -53,11 +53,11 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+dev = [
+    "mypy"
+]
 shapes = [
-    "beartype",
-    "numpy >= 1.26.4",
-    "pandas >= 2.2.0",
-    "torch >= 2.3.1",
+    "jaxtyping"
 ]
 
 [project.scripts]
