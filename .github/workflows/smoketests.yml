@@ -32,7 +32,7 @@ jobs:
 
     - uses: actions/checkout@v4
       with:
-        repository: 'https://github.com/tqdm/tqdm.git'
+        repository: 'tqdm/tqdm.git'
         ref: 'v4.67.1'
         path: 'tqdm'
 
