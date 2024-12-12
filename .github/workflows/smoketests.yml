@@ -32,25 +32,22 @@ jobs:
 
     - uses: actions/checkout@v4
       with:
-        repository: 'tqdm/tqdm.git'
-        ref: 'v4.67.1'
-        path: 'tqdm'
+        repository: 'Textualize/rich.git'
+        ref: 'v13.9.4'
+        path: 'rich'
 
-    - working-directory: ./tqdm
-      run: python3 -m pip install -e '.[dev]'
+    - working-directory: ./rich
+      run: python3 -m pip install -e .
 
-    # tqdm's tests are set to timeout at 30s, but they rarely run fast enough on GitHub;
-    # we need to raise that limit.  At the same time, we want to limit RightTyper's execution time
-    # to make sure it isn't hung; I am not sure whether pytest-timeout's timeout could interrupt it,
-    # so we run it using the "timeout" shell utility.
+    # Using SIGINT to interrupt usually gives a traceback, indicating where it was hung.
 
-    - working-directory: ./tqdm
+    - working-directory: ./rich
       run: |
-        timeout -s SIGINT 2m python3 -m righttyper --output-files --overwrite --no-use-multiprocessing -m pytest --timeout=300
-        python3 -m pytest --timeout=120
+        timeout -s SIGINT 2m python3 -m righttyper --output-files --overwrite --no-use-multiprocessing -m pytest
+        python3 -m pytest  # will the tests still run?
         git restore .
 
-    - working-directory: ./tqdm
+    - working-directory: ./rich
       run: |
-        timeout -s SIGINT 2m python3 -m righttyper --output-files --overwrite -m pytest --timeout=300
-        python3 -m pytest --timeout=120
+        timeout -s SIGINT 2m python3 -m righttyper --output-files --overwrite -m pytest
+        python3 -m pytest  # will the tests still run?
