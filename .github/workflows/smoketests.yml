@@ -1,0 +1,45 @@
+name: smoketests
+
+on:
+  push:
+    paths:
+      - righttyper/**
+
+  pull_request:
+
+  workflow_dispatch:
+
+jobs:
+  run-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest ]
+        python: [ '3.12' ]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python }}
+        allow-prereleases: true
+
+    - name: dependencies
+      run: |
+        python3 -m pip install pytest pytest-asyncio pytest-mock hypothesis ml_dtypes mypy
+        python3 -m pip install .
+
+    - uses: actions/checkout@v4
+      with:
+        repository: 'git@github.com:tqdm/tqdm.git'
+        ref: 'v4.67.1'
+        path: 'tqdm'
+
+    - run: |
+        cd tqdm
+        python3 -m pip install -e .
+
+    - run: |
+        timeout 30s python3 -m righttyper --output-files --overwrite -m pytest
+        python3 -m pytest
