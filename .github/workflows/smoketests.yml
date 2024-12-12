@@ -45,7 +45,7 @@ jobs:
     # so we run it using the "timeout" shell utility.
 
     - working-directory: ./tqdm
-      run: time python3 -m righttyper --output-files --overwrite -m pytest --timeout=120
+      run: timeout 2m python3 -m righttyper --output-files --overwrite -m pytest --timeout=300
 
     - working-directory: ./tqdm
       run: python3 -m pytest --timeout=120
