@@ -54,6 +54,7 @@ classifiers = [
 
 [project.optional-dependencies]
 tests = [
+    "pytest",
     "mypy",
     "numpy",
     "ml_dtypes",
