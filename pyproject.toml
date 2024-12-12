@@ -54,7 +54,11 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = [
-    "mypy"
+    "mypy",
+    "numpy",
+    "ml_dtypes",
+    "jaxtyping",
+    "torch",
 ]
 shapes = [
     "jaxtyping"
