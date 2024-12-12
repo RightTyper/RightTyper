@@ -36,11 +36,8 @@ jobs:
         ref: 'v4.67.1'
         path: 'tqdm'
 
-    - run: |
-        cd tqdm
-        python3 -m pip install -e '.[dev]'
+    - run: cd tqdm && python3 -m pip install -e '.[dev]'
 
-    - run: |
-        cd tqdm
-        timeout 2m python3 -m righttyper --output-files --overwrite -m pytest
-        python3 -m pytest
+    - run: cd tqdm && timeout 2m python3 -m righttyper --output-files --overwrite -m pytest
+
+    - run: cd tqdm && python3 -m pytest
