@@ -59,13 +59,6 @@ from righttyper.righttyper_utils import (
     union_typeset_str,
 )
 
-# Below is to mollify mypy.
-try:
-    import sys.monitoring  # pyright: ignore
-except Exception:
-    pass
-
-
 @dataclass
 class Options:
     script_dir: str = ""
@@ -224,15 +217,13 @@ def call_handler(
     arg0: object,
 ) -> Any:
     # If we are calling a function, activate its start, return, and yield handlers.
-    if isinstance(callable, FunctionType):
-        if should_skip_function(
+    if isinstance(callable, FunctionType) and isinstance(getattr(callable, "__code__", None), CodeType):
+        if not should_skip_function(
             code,
             options.script_dir,
             options.include_all,
             options.include_files_regex,
         ):
-            return sys.monitoring.DISABLE
-        try:
             sys.monitoring.set_local_events(
                 TOOL_ID,
                 callable.__code__,
@@ -240,8 +231,7 @@ def call_handler(
                 | sys.monitoring.events.PY_RETURN
                 | sys.monitoring.events.PY_YIELD,
             )
-        except AttributeError:
-            pass
+
     return sys.monitoring.DISABLE
 
 
@@ -467,8 +457,9 @@ def execute_script_or_module(
                 run_name="__main__",
                 alter_sys=True,
             )
-        except SystemExit:
-            pass
+        except SystemExit as e:
+            if e.code not in (None, 0):
+                raise
     else:
         sys.argv = [script] + tool_args + script_args
         obs.namespace = runpy.run_path(script, run_name="__main__")
@@ -551,6 +542,12 @@ def process_all_files() -> list[SignatureChanges]:
                 yield from executor.map(process_file_wrapper, args_gen)
         else:
             yield from map(process_file_wrapper, args_gen)
+
+    # 'rich' is unusable right after running its test suite,
+    # so reload it just in case we just did that.
+    if 'rich' in sys.modules:
+        importlib.reload(sys.modules['rich'])
+        importlib.reload(sys.modules['rich.progress'])
 
     import rich.progress
     from rich.table import Column
