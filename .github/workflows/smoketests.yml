@@ -46,11 +46,11 @@ jobs:
 
     - working-directory: ./tqdm
       run: |
-        timeout 2m python3 -m righttyper --output-files --overwrite --no-use-multiprocessing -m pytest --timeout=300
+        timeout -s SIGINT 2m python3 -m righttyper --output-files --overwrite --no-use-multiprocessing -m pytest --timeout=300
         python3 -m pytest --timeout=120
         git restore .
 
     - working-directory: ./tqdm
       run: |
-        timeout 2m python3 -m righttyper --output-files --overwrite -m pytest --timeout=300
+        timeout -s SIGINT 2m python3 -m righttyper --output-files --overwrite -m pytest --timeout=300
         python3 -m pytest --timeout=120
