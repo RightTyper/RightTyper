@@ -27,7 +27,7 @@ jobs:
 
     - name: dependencies
       run: |
-        python3 -m pip install pytest pytest-asyncio==0.24.0 pytest-mock hypothesis ml_dtypes mypy
+        python3 -m pip install pytest pytest-asyncio pytest-mock hypothesis ml_dtypes mypy
         python3 -m pip install .
 
     - uses: actions/checkout@v4
@@ -38,6 +38,6 @@ jobs:
 
     - run: |
         cd tqdm
-        python3 -m pip install -e .
+        python3 -m pip install -e '.[dev]'
         timeout 30s python3 -m righttyper --output-files --overwrite -m pytest
         python3 -m pytest
