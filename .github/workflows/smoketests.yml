@@ -43,6 +43,6 @@ jobs:
     # to make sure it isn't hung; I am not sure whether pytest-timeout's timeout could interrupt it,
     # so we run it using the "timeout" shell utility.
 
-    - run: cd tqdm && timeout 2m python3 -m righttyper --output-files --overwrite -m pytest --timeout 120
+    - run: cd tqdm && timeout 2m python3 -m righttyper --output-files --overwrite -m pytest --timeout=120
 
-    - run: cd tqdm && python3 -m pytest --timeout 120
+    - run: cd tqdm && python3 -m pytest --timeout=120
