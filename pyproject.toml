@@ -53,7 +53,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = [
+tests = [
     "mypy",
     "numpy",
     "ml_dtypes",
