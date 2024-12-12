@@ -32,14 +32,12 @@ jobs:
 
     - uses: actions/checkout@v4
       with:
-        repository: 'git@github.com:tqdm/tqdm.git'
+        repository: 'https://github.com/tqdm/tqdm.git'
         ref: 'v4.67.1'
         path: 'tqdm'
 
     - run: |
         cd tqdm
         python3 -m pip install -e .
-
-    - run: |
         timeout 30s python3 -m righttyper --output-files --overwrite -m pytest
         python3 -m pytest
