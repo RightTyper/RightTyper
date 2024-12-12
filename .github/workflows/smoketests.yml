@@ -36,13 +36,16 @@ jobs:
         ref: 'v4.67.1'
         path: 'tqdm'
 
-    - run: cd tqdm && python3 -m pip install -e '.[dev]'
+    - working-directory: ./tqdm
+      run: python3 -m pip install -e '.[dev]'
 
     # tqdm's tests are set to timeout at 30s, but they rarely run fast enough on GitHub;
     # we need to raise that limit.  At the same time, we want to limit RightTyper's execution time
     # to make sure it isn't hung; I am not sure whether pytest-timeout's timeout could interrupt it,
     # so we run it using the "timeout" shell utility.
 
-    - run: cd tqdm && timeout 2m python3 -m righttyper --output-files --overwrite -m pytest --timeout=120
+    - working-directory: ./tqdm
+      run: time timeout 2m python3 -m righttyper --output-files --overwrite -m pytest --timeout=120
 
-    - run: cd tqdm && python3 -m pytest --timeout=120
+    - working-directory: ./tqdm
+      run: python3 -m pytest --timeout=120
