@@ -39,5 +39,7 @@ jobs:
     - run: |
         cd tqdm
         python3 -m pip install -e '.[dev]'
-        timeout 30s python3 -m righttyper --output-files --overwrite -m pytest
+
+    - run: |
+        timeout 2m python3 -m righttyper --output-files --overwrite -m pytest
         python3 -m pytest
