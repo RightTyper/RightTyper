@@ -997,6 +997,30 @@ def test_zero_SystemExit(tmp_cwd, as_module, use_mp):
     assert "def foo(x: int) -> int:" in Path("t.py").read_text()
 
 
+def test_arg_parsing(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        import json
+        import sys
+
+        with open("out.json", "w") as f:
+            json.dump(sys.argv, f)
+    """))
+
+    def test_args(*args):
+        import json
+        subprocess.run([sys.executable, '-m', 'righttyper', *args], check=True)
+        with open("out.json", "r") as f:
+            return json.load(f)
+
+    assert ['t.py'] == test_args('t.py')
+    assert ['t.py', 'a', 'b'] == test_args('t.py', 'a', 'b')
+
+    assert [str(tmp_cwd / "t.py")] == test_args('-m', 't')
+    assert [str(tmp_cwd / "t.py"), 'a'] == test_args('-m', 't', 'a')
+
+    assert ['t.py', 'a', '-m'] == test_args('t.py', '--', 'a', '-m')
+
+
 def test_mocked_function(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         from unittest.mock import create_autospec
