@@ -88,7 +88,7 @@ def should_skip_function(
     return False
 
 
-def type_from_annotations(func: FunctionType | MethodType) -> str:
+def type_from_annotations(func: abc.Callable) -> str:
     # Get the signature of the function
     signature = inspect.signature(func)
     #print(f"{func=} {signature=}")
@@ -116,10 +116,10 @@ def type_from_annotations(func: FunctionType | MethodType) -> str:
         if isinstance(arg, GenericAlias):
             return str(arg)
 
-        if arg is None:
-            return "None"
+        if isinstance(arg, type):
+            return get_type_name(arg)
 
-        return get_type_name(arg)
+        return repr(arg)
 
     # Format the result
     arg_types_str = ", ".join([format_arg(arg) for arg in arg_types])

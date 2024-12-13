@@ -946,3 +946,70 @@ def test_self(tmp_cwd):
     assert 'def bar(self: Self, x: int) -> float:' in output
     assert 'def __init__(self: Self) -> None:' in output
     assert 'def baz(me: Self) -> Self:' in output
+
+
+def test_rich_is_messed_up(tmp_cwd):
+    # running rich's test suite leaves it unusable... simulate that situation.
+    Path("t.py").write_text(textwrap.dedent("""\
+        import sys
+        import rich.progress
+
+        def foo():
+            rich.progress.Progress = None  # just something to break it
+
+        foo()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+
+@pytest.mark.parametrize('as_module', [False, True])
+@pytest.mark.parametrize('use_mp', [False, True])
+def test_nonzero_SystemExit(tmp_cwd, as_module, use_mp):
+    Path("t.py").write_text(textwrap.dedent("""\
+        raise SystemExit("something")
+    """))
+
+    p = subprocess.run([sys.executable, '-m', 'righttyper',
+                        *(() if use_mp else ('--no-use-multiprocessing',)),
+                        *(('-m', 't') if as_module else ('t.py',))],
+                        check=False)
+    assert p.returncode != 0
+
+
+@pytest.mark.parametrize('as_module', [False, True])
+@pytest.mark.parametrize('use_mp', [False, True])
+def test_zero_SystemExit(tmp_cwd, as_module, use_mp):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x):
+            return x
+
+        foo(10)
+        raise SystemExit()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    *(() if use_mp else ('--no-use-multiprocessing',)),
+                    *(('-m', 't') if as_module else ('t.py',))],
+                   check=True)
+
+    assert "def foo(x: int) -> int:" in Path("t.py").read_text()
+
+
+def test_mocked_function(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        from unittest.mock import create_autospec
+
+        class C:
+            def m(self, x):
+                return x*2
+
+        def test_it():
+            mocked = create_autospec(C)
+            mocked.m.return_value = -1
+
+            assert -1 == mocked.m(2)
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--no-use-multiprocessing', '-m', 'pytest', 't.py'], check=True)

@@ -1,4 +1,4 @@
-from righttyper.righttyper_runtime import get_full_type
+from righttyper.righttyper_runtime import get_full_type, type_from_annotations
 from collections.abc import Iterable
 from collections import namedtuple
 from typing import Any
@@ -215,3 +215,10 @@ def test_get_full_type_torch_jaxtyping():
             get_full_type(torch.tensor([], dtype=torch.float64), use_jaxtyping=True)
     assert 'jaxtyping.Int32[torch.Tensor, "2 1"]' == \
             get_full_type(torch.tensor([[1],[2]], dtype=torch.int32), use_jaxtyping=True)
+
+
+def test_type_from_annotations():
+    def foo(x: int|float, y: list[tuple[bool, ...]]) -> complex|None:
+        pass
+
+    assert "typing.Callable[[int | float, list[tuple[bool, ...]]], complex | None]" == type_from_annotations(foo)
