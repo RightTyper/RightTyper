@@ -218,7 +218,7 @@ def test_get_full_type_torch_jaxtyping():
 
 
 def test_type_from_annotations():
-    def foo(x: int|float, y: list[tuple[bool, ...]]) -> complex:
+    def foo(x: int|float, y: list[tuple[bool, ...]]) -> complex|None:
         pass
 
-    assert "typing.Callable[[int | float, list[tuple[bool, ...]]], complex]" == type_from_annotations(foo)
+    assert "typing.Callable[[int | float, list[tuple[bool, ...]]], complex | None]" == type_from_annotations(foo)
