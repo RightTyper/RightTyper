@@ -445,24 +445,23 @@ instrumentation_functions_code = set(
 def execute_script_or_module(
     script: str,
     module: bool,
-    tool_args: list[str],
-    script_args: list[str],
+    args: list[str],
 ) -> None:
     obs.namespace = {}
-    if module:
-        sys.argv = [script] + tool_args + script_args
-        try:
+    try:
+        sys.argv = [script, *args]
+        if module:
             obs.namespace = runpy.run_module(
                 script,
                 run_name="__main__",
                 alter_sys=True,
             )
-        except SystemExit as e:
-            if e.code not in (None, 0):
-                raise
-    else:
-        sys.argv = [script] + tool_args + script_args
-        obs.namespace = runpy.run_path(script, run_name="__main__")
+        else:
+            obs.namespace = runpy.run_path(script, run_name="__main__")
+
+    except SystemExit as e:
+        if e.code not in (None, 0):
+            raise
 
 
 def output_signatures(
@@ -590,50 +589,38 @@ logging.basicConfig(
 logger = logging.getLogger("righttyper")
 
 
-class ScriptParamType(click.ParamType):
+class CheckModule(click.ParamType):
+    name = "module"
+
     def convert(self, value: str, param: Any, ctx: Any) -> str:
         # Check if it's a valid file path
-        if os.path.isfile(value):
+        if importlib.util.find_spec(value):
             return value
-        # Check if it's an importable module
-        try:
-            importlib.import_module(value)
-            return value
-        except ImportError:
-            self.fail(
-                f"{value} is neither a file nor a module",
-                param,
-                ctx,
-            )
-            return ""
 
-
-def split_args_at_triple_dash(
-    args: list[str],
-) -> tuple[list[str], list[str]]:
-    tool_args = []
-    script_args = []
-    triple_dash_found = False
-    for arg in args:
-        if arg == "---":
-            triple_dash_found = True
-            continue
-        if triple_dash_found:
-            script_args.append(arg)
-        else:
-            tool_args.append(arg)
-    return tool_args, script_args
-
-
-SCRIPT = ScriptParamType()
+        self.fail(
+            f"{value} isn't a valid module",
+            param,
+            ctx,
+        )
+        return ""
 
 
 @click.command(
-    context_settings=dict(
-        ignore_unknown_options=True,
-    )
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+    }
 )
-@click.argument("script", type=SCRIPT, required=False)
+@click.argument(
+    "script",
+    required=False,
+)
+@click.option(
+    "-m",
+    "--module",
+    help="Run the given module instead of a script.",
+    type=CheckModule(),
+)
 @click.option(
     "--all-files",
     is_flag=True,
@@ -676,12 +663,6 @@ SCRIPT = ScriptParamType()
     default=False,
 )
 @click.option(
-    "-m",
-    "--module",
-    is_flag=True,
-    help="Run the script as a module.",
-)
-@click.option(
     "--verbose",
     is_flag=True,
     help="Print diagnostic information.",
@@ -707,14 +688,6 @@ SCRIPT = ScriptParamType()
     type=click.Path(exists=True, file_okay=True),
     help="Report uncovered and partially covered files and functions when performing type annotation coverage analysis.",
 )  # Note: should only be available if coverage-by-directory or coverage-by-file are specified
-@click.option(
-    "---",
-    "triple_dash",
-    is_flag=True,
-    help="Indicator to separate tool arguments from script or module arguments.",
-    hidden=True,
-)
-@click.argument("args", nargs=-1, type=click.UNPROCESSED)
 @click.version_option(
     version=importlib.metadata.version(TOOL_NAME),
     prog_name=TOOL_NAME,
@@ -731,13 +704,13 @@ SCRIPT = ScriptParamType()
     hidden=True,
     help="Whether to use multiprocessing.",
 )
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
     script: str,
+    module: str,
+    args: list[str],
     all_files: bool,
     include_files: str,
-    module: bool,
-    triple_dash: bool,
-    args: list[str],
     type_coverage_by_directory: str,
     type_coverage_by_file: str,
     type_coverage_summary: str,
@@ -755,6 +728,16 @@ def main(
     RightTyper efficiently generates types for your function
     arguments and return values.
     """
+
+    if module:
+        args = [script, *args]
+        script = module
+    elif script:
+        if not os.path.isfile(script):
+            raise click.UsageError(f"\"{script}\" is not a file.")
+    else:
+        raise click.UsageError(f"Either -m/--module must be provided, or a script be passed.")
+
     if infer_shapes:
         # Check for required packages for shape inference
         found_package = defaultdict(bool)
@@ -815,7 +798,6 @@ def main(
     options.srcdir = srcdir
     options.use_multiprocessing = use_multiprocessing
 
-    tool_args, script_args = split_args_at_triple_dash(args)
     setup_tool_id()
     register_monitoring_callbacks(
         enter_function,
@@ -826,6 +808,6 @@ def main(
     sys.monitoring.restart_events()
     setup_timer(restart_sampling)
     # replace_dicts.replace_dicts()
-    execute_script_or_module(script, module, tool_args, script_args)
+    execute_script_or_module(script, bool(module), args)
     reset_monitoring()
     post_process()

@@ -964,20 +964,24 @@ def test_rich_is_messed_up(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
 
 
+@pytest.mark.parametrize('as_module', [False, True])
 @pytest.mark.parametrize('use_mp', [False, True])
-def test_nonzero_SystemExit(tmp_cwd, use_mp):
-    Path("m.py").write_text(textwrap.dedent("""\
+def test_nonzero_SystemExit(tmp_cwd, as_module, use_mp):
+    Path("t.py").write_text(textwrap.dedent("""\
         raise SystemExit("something")
     """))
 
     p = subprocess.run([sys.executable, '-m', 'righttyper',
-                        *(('--no-use-multiprocessing',) if use_mp else ()), '-m', 'm.py'], check=False)
+                        *(() if use_mp else ('--no-use-multiprocessing',)),
+                        *(('-m', 't') if as_module else ('t.py',))],
+                        check=False)
     assert p.returncode != 0
 
 
+@pytest.mark.parametrize('as_module', [False, True])
 @pytest.mark.parametrize('use_mp', [False, True])
-def test_zero_SystemExit(tmp_cwd, use_mp):
-    Path("m.py").write_text(textwrap.dedent("""\
+def test_zero_SystemExit(tmp_cwd, as_module, use_mp):
+    Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             return x
 
@@ -985,11 +989,12 @@ def test_zero_SystemExit(tmp_cwd, use_mp):
         raise SystemExit()
     """))
 
-    p = subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
-                        *(('--no-use-multiprocessing',) if use_mp else ()), '-m', 'm.py'], check=False)
-    assert p.returncode == 0
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    *(() if use_mp else ('--no-use-multiprocessing',)),
+                    *(('-m', 't') if as_module else ('t.py',))],
+                   check=True)
 
-    assert "def foo(x: int) -> int:" in Path("m.py").read_text()
+    assert "def foo(x: int) -> int:" in Path("t.py").read_text()
 
 
 def test_mocked_function(tmp_cwd):
