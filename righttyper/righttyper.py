@@ -724,13 +724,9 @@ def main(
     target_overhead: float,
     use_multiprocessing: bool
 ) -> None:
-    """
-    RightTyper efficiently generates types for your function
-    arguments and return values.
-    """
 
     if module:
-        args = [script, *args]
+        args = [*((script,) if script else ()), *args]  # script, if any, is really the 1st module arg
         script = module
     elif script:
         if not os.path.isfile(script):
