@@ -107,6 +107,21 @@ def test_transform_function():
 
     assert get_if_type_checking(code) == None
 
+    sig_changes = sorted(t.get_signature_changes())
+    it = iter(sig_changes)
+
+    name, old, new = next(it)
+    assert name == 'baz'
+    assert old == 'def baz(z):'
+    assert new == 'def baz(z: int):'
+
+    name, old, new = next(it)
+    assert name == 'foo'
+    assert old == 'def foo(x, y):'
+    assert new == 'def foo(x: int, y) -> float:'
+
+    assert next(it, None) is None
+
 
 def test_transform_method():
     code = cst.parse_module(textwrap.dedent("""\
@@ -173,6 +188,25 @@ def test_transform_method():
 
     assert get_if_type_checking(code) == None
 
+    sig_changes = sorted(t.get_signature_changes())
+    it = iter(sig_changes)
+
+    name, old, new = next(it)
+    assert name == 'C.bar'
+    assert old == 'def bar(x):'
+    assert new == 'def bar(x: int) -> float:'
+
+    name, old, new = next(it)
+    assert name == 'C.baz'
+    assert old == 'def baz(cls, z):'
+    assert new == 'def baz(cls, z: int) -> float:'
+
+    name, old, new = next(it)
+    assert name == 'C.foo'
+    assert old == 'def foo(self, x, y):'
+    assert new == 'def foo(self, x: int, y) -> float:'
+
+    assert next(it, None) is None
 
 def test_transform_local_function():
     code = cst.parse_module(textwrap.dedent("""\
@@ -308,7 +342,7 @@ def test_transform_unknown_type_as_string():
                 foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), Typename('int')),
-                        (ArgumentName('y'), Typename('x.y.WholeNumber|None'))
+                        (ArgumentName('y'), Typename('x.y.Something["quoted"]|None'))
                     ],
                     Typename('x.z.FloatingPointNumber')
                 )
@@ -324,7 +358,7 @@ def test_transform_unknown_type_as_string():
 
     code = code.visit(t)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: int, y: "x.y.WholeNumber|None") -> "x.z.FloatingPointNumber":
+        def foo(x: int, y: "x.y.Something[\\"quoted\\"]|None") -> "x.z.FloatingPointNumber":
             return x/2
     """)
 
@@ -578,7 +612,8 @@ def test_transform_locally_defined_types():
             module_name = 'foo',
             module_names=[
                 'foo'
-            ]
+            ],
+            use_self = False
         )
 
     code = code.visit(t)

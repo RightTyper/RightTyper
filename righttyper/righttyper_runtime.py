@@ -6,7 +6,7 @@ import collections.abc as abc
 from functools import cache
 from itertools import islice
 from types import CodeType, FrameType, NoneType, FunctionType, MethodType, GenericAlias
-from typing import Any
+from typing import Any, cast, TypeAlias
 from pathlib import Path
 
 from righttyper.random_dict import RandomDict
@@ -17,7 +17,6 @@ from righttyper.righttyper_types import (
     FuncInfo,
     T,
     Typename,
-    TypenameFrequency,
     TypenameSet,
 )
 from righttyper.righttyper_utils import skip_this_file
@@ -34,6 +33,33 @@ def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) 
     n = random.randint(1, MAX_ELEMENTS)
     return list(islice(value, n))[-1]
 
+
+JX_DTYPES = None
+def jx_dtype(value: Any) -> str|None:
+    global JX_DTYPES
+
+    if JX_DTYPES is None:
+        # we lazy load jaxtyping to avoid "PytestAssertRewriteWarning"s
+        try:
+            import jaxtyping as jx
+            jx_dtype_type: TypeAlias = jx._array_types._MetaAbstractDtype
+            JX_DTYPES = cast(list[jx_dtype_type], [
+                jx.UInt4, jx.UInt8, jx.UInt16, jx.UInt32, jx.UInt64,
+                jx.Int4, jx.Int8, jx.Int16, jx.Int32, jx.Int64,
+                jx.BFloat16, jx.Float16, jx.Float32, jx.Float64,
+                jx.Complex64, jx.Complex128,
+                jx.Bool, jx.UInt, jx.Int, jx.Integer,
+                jx.Float, jx.Complex, jx.Inexact, jx.Real,
+                jx.Num, jx.Shaped, jx.Key,
+            ])
+        except ImportError:
+            JX_DTYPES = []
+
+    t = type(value)
+    for dtype in JX_DTYPES:
+        if isinstance(value, dtype[t, "..."]):
+            return dtype.__qualname__
+    return None
 
 
 @cache
@@ -62,29 +88,7 @@ def should_skip_function(
     return False
 
 
-def get_class_type_from_stack(
-    max_depth: int = 5,
-) -> type|None:
-    # Initialize the current frame
-    current_frame = inspect.currentframe()
-    try:
-        # Move up in the stack frame by frame
-        depth = 0
-        while current_frame and depth < max_depth:
-            # Check if 'self' is in the local variables of the frame
-            if "self" in current_frame.f_locals:
-                instance = current_frame.f_locals["self"]
-                return instance.__class__
-            # Move one level up in the stack
-            current_frame = current_frame.f_back
-            depth += 1
-    finally:
-        # Delete reference to the current frame to avoid reference cycles
-        del current_frame
-    return None
-
-
-def type_from_annotations(func: FunctionType | MethodType) -> str:
+def type_from_annotations(func: abc.Callable) -> str:
     # Get the signature of the function
     signature = inspect.signature(func)
     #print(f"{func=} {signature=}")
@@ -112,10 +116,10 @@ def type_from_annotations(func: FunctionType | MethodType) -> str:
         if isinstance(arg, GenericAlias):
             return str(arg)
 
-        if arg is None:
-            return "None"
+        if isinstance(arg, type):
+            return get_type_name(arg)
 
-        return get_type_name(arg)
+        return repr(arg)
 
     # Format the result
     arg_types_str = ", ".join([format_arg(arg) for arg in arg_types])
@@ -260,7 +264,7 @@ def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
     return None
 
 
-def get_full_type(value: Any, depth: int = 0) -> str:
+def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -> str:
     """
     get_full_type takes a value (an instance) as input and returns a string representing its type.
 
@@ -282,27 +286,27 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         module = "" if t.__module__ == "builtins" else f"{t.__module__}."
         if value:
             el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
-            return f"{module}{t.__qualname__}[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
+            return f"{module}{t.__qualname__}[{', '.join(get_full_type(fld, depth=depth+1) for fld in el)}]"
         else:
-            return "{module}{t.__qualname__}[typing.Never, typing.Never]"
+            return f"{module}{t.__qualname__}[typing.Never, typing.Never]"
     elif isinstance(value, (list, set)):
         t = type(value)
         module = "" if t.__module__ == "builtins" else f"{t.__module__}."
         if value:
             el = sample_from_collection(value)
-            return f"{module}{t.__qualname__}[{get_full_type(el, depth+1)}]"
+            return f"{module}{t.__qualname__}[{get_full_type(el, depth=depth+1)}]"
         else:
             return f"{module}{t.__qualname__}[typing.Never]"
     elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
         if value:
             el = sample_from_collection(value)
-            return f"typing.{t.__qualname__}[{get_full_type(el, depth+1)}]"
+            return f"typing.{t.__qualname__}[{get_full_type(el, depth=depth+1)}]"
         else:
             return f"typing.{t.__qualname__}[typing.Never]"
     elif isinstance(value, abc.ItemsView):
         if value:
             el = sample_from_collection(value)
-            return f"typing.ItemsView[{get_full_type(el[0], depth+1)}, {get_full_type(el[1], depth+1)}]"
+            return f"typing.ItemsView[{get_full_type(el[0], depth=depth+1)}, {get_full_type(el[1], depth=depth+1)}]"
         else:
             return "typing.ItemsView[typing.Never, typing.Never]"
     elif isinstance(value, tuple):
@@ -310,7 +314,7 @@ def get_full_type(value: Any, depth: int = 0) -> str:
             return f"{value.__class__.__module__}.{value.__class__.__qualname__}"
         else:
             if value:
-                return f"tuple[{', '.join(get_full_type(elem, depth+1) for elem in value)}]"
+                return f"tuple[{', '.join(get_full_type(elem, depth=depth+1) for elem in value)}]"
             else:
                 return "tuple"
     elif isinstance(value, (FunctionType, MethodType)):
@@ -321,18 +325,17 @@ def get_full_type(value: Any, depth: int = 0) -> str:
         return "typing.AsyncGenerator[typing.Any, typing.Any]"  # FIXME needs yield / send types
     elif isinstance(value, abc.Coroutine):
         return "typing.Coroutine[typing.Any, typing.Any, typing.Any]"  # FIXME needs yield / send / return types
-    elif (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':
+
+
+    if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):
+        if (dtype := jx_dtype(value)) is not None:
+            shape = " ".join(str(d) for d in value.shape)
+            return f'jaxtyping.{dtype}[{get_type_name(type(value), depth+1)}, "{shape}"]'
+
+    if (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':
         return f"{get_type_name(t, depth+1)}[typing.Any, {get_type_name(type(value.dtype), depth+1)}]"
 
     return get_type_name(type(value), depth+1)
-
-
-def get_adjusted_full_type(value: Any, class_type: type|None=None) -> str:
-    #print(f"{type(value)=} {class_type=}")
-    if type(value) == class_type:
-        return "typing.Self"
-
-    return get_full_type(value)
 
 
 def isinstance_namedtuple(obj: object) -> bool:
@@ -345,136 +348,35 @@ def isinstance_namedtuple(obj: object) -> bool:
 
 def update_argtypes(
     argtypes: list[ArgInfo],
-    arg_types: dict[
-        tuple[FuncInfo, ArgumentName],
-        ArgumentType,
-    ],
     index: tuple[FuncInfo, ArgumentName],
     arg_values: Any,
-    class_type: type|None,
-    arg: str,
+    argument_name: str,
+    /,
     is_vararg: bool,
-    is_kwarg: bool
+    is_kwarg: bool,
+    use_jaxtyping: bool
 ) -> None:
 
     def add_arg_info(
-        argument_name: str,
         values: Any,
-        arg_type_enum: ArgumentType,
     ) -> None:
-        types = TypenameSet(
-            {
-                TypenameFrequency(
-                    Typename(get_adjusted_full_type(val, class_type)),
-                    1,
-                )
-                for val in values
-            }
-        )
+        types = TypenameSet([
+            Typename(get_full_type(val, use_jaxtyping=use_jaxtyping))
+            for val in values
+        ])
         argtypes.append(
             ArgInfo(
                 ArgumentName(argument_name),
                 types,
             )
         )
-        arg_types[index] = arg_type_enum
 
     if is_vararg:
-        add_arg_info(
-            arg,
-            arg_values[0],
-            ArgumentType.vararg,
-        )
+        add_arg_info(arg_values[0])
     elif is_kwarg:
-        add_arg_info(
-            arg,
-            arg_values[0].values(),
-            ArgumentType.kwarg,
-        )
+        add_arg_info(arg_values[0].values())
     else:
-        add_arg_info(
-            arg,
-            arg_values,
-            ArgumentType.positional,
-        )
-
-
-def format_annotation(annotation: Any) -> str:
-    """Format an annotation (type hint) as a string."""
-    if isinstance(annotation, type):
-        return annotation.__name__
-    elif hasattr(annotation, "_name") and annotation._name is not None:
-        return str(annotation._name)
-    elif (
-        hasattr(annotation, "__origin__") and annotation.__origin__ is not None
-    ):
-        origin = format_annotation(annotation.__origin__)
-        args = ", ".join(
-            [format_annotation(arg) for arg in annotation.__args__]
-        )
-        return f"{origin}[{args}]"
-    else:
-        return str(annotation)
-
-
-def format_function_definition(
-    func_name: str,
-    arg_names: list[str],
-    type_hints: dict[str, Any],
-) -> str:
-    """Format the function definition based on its name, argument names, and type hints."""
-    params = []
-    for arg in arg_names:
-        type_hint = type_hints.get(arg)
-        if type_hint:
-            params.append(f"{arg}: {format_annotation(type_hint)}")
-        else:
-            params.append(arg)
-
-    return_annotation = ""
-    if "return" in type_hints:
-        return_annotation = f" -> {format_annotation(type_hints['return'])}"
-
-    params_str = ", ".join(params)
-    function_definition = f"def {func_name}({params_str}){return_annotation}:"
-    return function_definition
-
-
-def get_class_source_file(cls: type) -> str:
-    module_name = cls.__module__
-
-    # Check if the class is built-in
-    if module_name == "builtins":
-        return ""  # Built-in classes do not have source files
-
-    try:
-        # Try to get the module from sys.modules
-        module = sys.modules[module_name]
-        # Try to get the __file__ attribute
-        file_path = getattr(module, "__file__", None)
-        if file_path:
-            return str(file_path)
-        # If __file__ is not available, use inspect to get the source file
-        import inspect
-
-        file_path = inspect.getfile(cls)
-        return file_path
-    except (KeyError, TypeError, AttributeError):
-        pass
-
-    # Derive the file path from the module name
-    try:
-        # Assuming the module is part of the standard package structure
-        import os
-
-        module_parts = module_name.split(".")
-        file_path = os.path.join(*module_parts)
-        return file_path
-
-    except Exception:
-        pass
-
-    return ""
+        add_arg_info(arg_values)
 
 
 def _source_relative_to_pkg(file: Path) -> Path|None:

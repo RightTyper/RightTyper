@@ -1,0 +1,53 @@
+name: Smoke Tests
+
+on:
+  push:
+    paths:
+      - righttyper/**
+
+  pull_request:
+
+  workflow_dispatch:
+
+jobs:
+  smoketests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest ]
+        python: [ '3.12.8', '3.13' ]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python }}
+        allow-prereleases: true
+
+    - name: dependencies
+      run: |
+        python3 -m pip install pytest pytest-asyncio pytest-mock hypothesis ml_dtypes mypy
+        python3 -m pip install .
+
+    - uses: actions/checkout@v4
+      with:
+        repository: 'Textualize/rich.git'
+        ref: 'v13.9.4'
+        path: 'rich'
+
+    - working-directory: ./rich
+      run: python3 -m pip install -e .
+
+    # Using SIGINT to interrupt usually gives a traceback, indicating where it was hung.
+
+    - working-directory: ./rich
+      run: |
+        timeout -s SIGINT 2m python3 -m righttyper --output-files --overwrite --no-use-multiprocessing -m pytest
+        python3 -m pytest  # will the tests still run?
+        git restore .
+
+    - working-directory: ./rich
+      run: |
+        timeout -s SIGINT 2m python3 -m righttyper --output-files --overwrite -m pytest
+        python3 -m pytest  # will the tests still run?

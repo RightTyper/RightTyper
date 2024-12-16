@@ -212,6 +212,29 @@ def test_internal_numpy_type(tmp_cwd):
     assert m.group(1).endswith('_ArrayFunctionDispatcher"')
 
 
+@pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
+                     importlib.util.find_spec('numpy') is None),
+                    reason='missing modules')
+def test_jaxtyping_annotation(tmp_cwd):
+    t = textwrap.dedent("""\
+        import numpy as np
+
+        def f(x):
+            return x
+
+        f(np.array([[1],[1]], dtype=np.int64))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--infer-shapes', '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert 'def f(x: "jaxtyping.Int64[np.ndarray, \\"2 1\\"]") ' +\
+           '-> "jaxtyping.Int64[np.ndarray, \\"2 1\\"]"' in output
+
+
 def test_call_with_none_default(tmp_cwd):
     t = textwrap.dedent("""\
         def func(n=None):
@@ -506,6 +529,7 @@ def test_generator(tmp_cwd):
     t = textwrap.dedent("""\
         def gen():
             yield 10
+            yield 1.2
 
         def main():
             for _ in gen():
@@ -524,8 +548,42 @@ def test_generator(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
     
-    # FIXME should be Generator[int] or Iterator[int]
-    assert "def gen() -> Generator[int, Any, Any]:" in output
+    assert "def gen() -> Iterator[float|int]:" in output
+
+    # FIXME this should be the same Iterator as above
+    assert "def g(f: Generator[Any, Any, Any]) -> None" in output
+
+
+def test_generator_return(tmp_cwd):
+    t = textwrap.dedent("""\
+        def gen():
+            yield 10
+            return "done"
+
+        def main():
+            g = gen()
+            next(g)
+            try:
+                next(g)
+            except StopIteration:
+                pass
+
+        def g(f):
+            pass
+
+        main()
+        g(gen())
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    
+    assert "def gen() -> Generator[int, Any, str]:" in output
+
+    # FIXME this should be the same Generator as above
     assert "def g(f: Generator[Any, Any, Any]) -> None" in output
 
 
@@ -554,7 +612,9 @@ def test_async_generator(tmp_cwd):
     output = Path("t.py").read_text()
     
     # FIXME should be AsyncGenerator[int] or AsyncIterator[int]
-    assert "def gen() -> AsyncGenerator[Any, Any]:" in output
+    assert "def gen() -> AsyncIterator[Any]:" in output
+
+    # FIXME this should be the same Iterator as above
     assert "def g(f: AsyncGenerator[Any, Any]) -> None" in output
 
 
@@ -853,3 +913,103 @@ def test_none_arg(tmp_cwd):
 
     output = Path("t.py").read_text()
     assert 'def foo(x: None) -> None:' in output
+
+
+def test_self(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(self):
+            return self/2
+
+        class C:
+            def bar(self, x):
+                class D:
+                    def __init__(self):
+                        pass
+
+                D()
+                return x/2
+
+            class E:
+                def baz(me):
+                    return me
+
+        foo(10)
+        C().bar(1)
+        C.E().baz()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(self: int) -> float:' in output
+    assert 'def bar(self: Self, x: int) -> float:' in output
+    assert 'def __init__(self: Self) -> None:' in output
+    assert 'def baz(me: Self) -> Self:' in output
+
+
+def test_rich_is_messed_up(tmp_cwd):
+    # running rich's test suite leaves it unusable... simulate that situation.
+    Path("t.py").write_text(textwrap.dedent("""\
+        import sys
+        import rich.progress
+
+        def foo():
+            rich.progress.Progress = None  # just something to break it
+
+        foo()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+
+@pytest.mark.parametrize('as_module', [False, True])
+@pytest.mark.parametrize('use_mp', [False, True])
+def test_nonzero_SystemExit(tmp_cwd, as_module, use_mp):
+    Path("t.py").write_text(textwrap.dedent("""\
+        raise SystemExit("something")
+    """))
+
+    p = subprocess.run([sys.executable, '-m', 'righttyper',
+                        *(() if use_mp else ('--no-use-multiprocessing',)),
+                        *(('-m', 't') if as_module else ('t.py',))],
+                        check=False)
+    assert p.returncode != 0
+
+
+@pytest.mark.parametrize('as_module', [False, True])
+@pytest.mark.parametrize('use_mp', [False, True])
+def test_zero_SystemExit(tmp_cwd, as_module, use_mp):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x):
+            return x
+
+        foo(10)
+        raise SystemExit()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    *(() if use_mp else ('--no-use-multiprocessing',)),
+                    *(('-m', 't') if as_module else ('t.py',))],
+                   check=True)
+
+    assert "def foo(x: int) -> int:" in Path("t.py").read_text()
+
+
+def test_mocked_function(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        from unittest.mock import create_autospec
+
+        class C:
+            def m(self, x):
+                return x*2
+
+        def test_it():
+            mocked = create_autospec(C)
+            mocked.m.return_value = -1
+
+            assert -1 == mocked.m(2)
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--no-use-multiprocessing', '-m', 'pytest', 't.py'], check=True)

@@ -1,4 +1,4 @@
-from righttyper.righttyper_runtime import get_full_type, get_adjusted_full_type
+from righttyper.righttyper_runtime import get_full_type, type_from_annotations
 from collections.abc import Iterable
 from collections import namedtuple
 from typing import Any
@@ -27,6 +27,7 @@ def test_get_full_type():
     assert "list[str]" == get_full_type(dir())
 
     assert "list[str]" == get_full_type(['a', 'b'])
+    assert "list[typing.Never]" == get_full_type([])
     assert "list[int]" == get_full_type([0, 1])
     assert "list[tuple[int]]" == get_full_type([(0,), (1,)])
 
@@ -44,6 +45,7 @@ def test_get_full_type():
     assert "frozenset" == get_full_type(frozenset())
 
     assert "dict[str, str]" == get_full_type({'a': 'b'})
+    assert "dict[typing.Never, typing.Never]" == get_full_type(dict())
 
     assert "typing.KeysView[str]" == get_full_type({'a':0, 'b':1}.keys())
     assert "typing.ValuesView[int]" == get_full_type({'a':0, 'b':1}.values())
@@ -192,22 +194,31 @@ def test_get_full_type_custom_collection():
     assert f"{__name__}.MySet[int]" == get_full_type(MySet({0,1}))
 
 
-class Foo:
-    pass
+@pytest.mark.skipif((importlib.util.find_spec('numpy') is None or
+                     importlib.util.find_spec('jaxtyping') is None),
+                    reason='missing modules')
+def test_get_full_type_numpy_jaxtyping():
+    import numpy as np
 
-def test_adjusted_full_type():
-    # these types used to be special cased... ensure they still work
-    assert "None" == get_adjusted_full_type(None)
-    assert "bool" == get_adjusted_full_type(True)
-    assert "float" == get_adjusted_full_type(.0)
-    assert "int" == get_adjusted_full_type(0)
+    assert 'jaxtyping.Float64[numpy.ndarray, "0"]' == get_full_type(np.array([], np.float64), use_jaxtyping=True)
+    assert 'jaxtyping.Float16[numpy.ndarray, "1 1 1"]' == \
+            get_full_type(np.array([[[1]]], np.float16), use_jaxtyping=True)
 
-    # get_adjusted_full_type's main function is to translate to 'Self'
 
-    class Bar:
+@pytest.mark.skipif((importlib.util.find_spec('torch') is None or
+                     importlib.util.find_spec('jaxtyping') is None),
+                    reason='missing modules')
+def test_get_full_type_torch_jaxtyping():
+    import torch
+
+    assert 'jaxtyping.Float64[torch.Tensor, "0"]' == \
+            get_full_type(torch.tensor([], dtype=torch.float64), use_jaxtyping=True)
+    assert 'jaxtyping.Int32[torch.Tensor, "2 1"]' == \
+            get_full_type(torch.tensor([[1],[2]], dtype=torch.int32), use_jaxtyping=True)
+
+
+def test_type_from_annotations():
+    def foo(x: int|float, y: list[tuple[bool, ...]]) -> complex|None:
         pass
 
-    assert "typing.Self" == get_adjusted_full_type(Foo(), Foo)
-    assert f"{__name__}.Foo" == get_adjusted_full_type(Foo())
-
-    assert f"{__name__}.test_adjusted_full_type.<locals>.Bar" == get_adjusted_full_type(Bar())
+    assert "typing.Callable[[int | float, list[tuple[bool, ...]]], complex | None]" == type_from_annotations(foo)

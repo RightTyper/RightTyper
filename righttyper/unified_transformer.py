@@ -91,6 +91,10 @@ def _get_str_attr(obj: object, path: str) -> str|None:
 def _annotation_as_string(annotation: cst.BaseExpression) -> str:
     return cst.Module([cst.SimpleStatementLine([cst.Expr(annotation)])]).code.strip('\n')
 
+def _quote(s: str) -> str:
+    s = s.replace('\\', '\\\\')
+    return '"' + s.replace('"', '\\"') + '"'
+
 
 class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
@@ -99,7 +103,9 @@ class UnifiedTransformer(cst.CSTTransformer):
         type_annotations: dict[FuncInfo, FuncAnnotation],
         override_annotations: bool,
         module_name: str|None,
-        module_names: list[str]
+        module_names: list[str],
+        *,
+        use_self: bool = True
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
@@ -107,6 +113,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.has_future_annotations = False
         self.module_name = module_name
         self.module_names = sorted(module_names, key=lambda name: -name.count('.'))
+        self.change_list: list[tuple[FunctionName, cst.FunctionDef, cst.FunctionDef]] = []
+        self.use_self = use_self
 
     def _module_for(self, name: str) -> tuple[str, str]:
         """Splits a dot name in its module and qualified name parts."""
@@ -306,6 +314,13 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         return True
 
+    def _try_rename_to_self(self, annotation: Typename) -> Typename:
+        if self.use_self and self.module_name:
+            # TODO this doesn't handle composite names, such as "list[Self]"... do we care?
+            if annotation == '.'.join((self.module_name, *self.name_stack)):
+                return Typename("typing.Self")
+        return annotation
+
     def _process_parameter(self, parameter: cst.Param, ann: FuncAnnotation) -> cst.Param:
         """Processes a parameter, either returning an updated parameter or the original one."""
         if (
@@ -316,8 +331,12 @@ class UnifiedTransformer(cst.CSTTransformer):
                     if arg == parameter.name.value
                 ), None)
             ) is None
-            or not self._is_valid(annotation)
         ):
+            return parameter
+
+        annotation = self._try_rename_to_self(annotation)
+
+        if not self._is_valid(annotation):
             return parameter
 
         annotation_expr: cst.BaseExpression = cst.parse_expression(annotation)
@@ -326,7 +345,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.unknown_types |= unknown_types
 
         if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-            annotation_expr = cst.SimpleString(f'"{_annotation_as_string(annotation_expr)}"')
+            annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
 
         new_par = parameter.with_changes(
             annotation=cst.Annotation(annotation=annotation_expr)
@@ -387,29 +406,30 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             if ((updated_node.returns is None or self.override_annotations)
                 and ann.retval is not None
-                and self._is_valid(ann.retval)
             ):
-                annotation_expr = cst.parse_expression(ann.retval)
-                annotation_expr = self._rename_types(annotation_expr)
-                unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
-                self.unknown_types |= unknown_types
+                annotation = self._try_rename_to_self(ann.retval)
+                if self._is_valid(annotation):
+                    annotation_expr = cst.parse_expression(annotation)
+                    annotation_expr = self._rename_types(annotation_expr)
+                    unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
+                    self.unknown_types |= unknown_types
 
-                if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-                    annotation_expr = cst.SimpleString(f'"{_annotation_as_string(annotation_expr)}"')
+                    if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
+                        annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
 
-                updated_node = updated_node.with_changes(
-                    returns=cst.Annotation(annotation=annotation_expr),
-                )
-
-                # remove "(...) -> retval"-style type hint comment
-                if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
-                    and _TYPE_HINT_COMMENT_FUNC.match(comment)):
                     updated_node = updated_node.with_changes(
-                        body=updated_node.body.with_changes(
-                            body=(updated_node.body.body[0].with_changes(leading_lines=[]),
-                                  *updated_node.body.body[1:])
-                        )
+                        returns=cst.Annotation(annotation=annotation_expr),
                     )
+
+                    # remove "(...) -> retval"-style type hint comment
+                    if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
+                        and _TYPE_HINT_COMMENT_FUNC.match(comment)):
+                        updated_node = updated_node.with_changes(
+                            body=updated_node.body.with_changes(
+                                body=(updated_node.body.body[0].with_changes(leading_lines=[]),
+                                      *updated_node.body.body[1:])
+                            )
+                        )
 
             # remove single-line type hint comment in the same line as the 'def'
             if ((comment := _get_str_attr(updated_node, "body.header.comment.value"))
@@ -417,6 +437,8 @@ class UnifiedTransformer(cst.CSTTransformer):
                 updated_node = updated_node.with_changes(
                     body=updated_node.body.with_changes(
                         header=cst.TrailingWhitespace()))
+
+            self.change_list.append((key.func_name, original_node, updated_node))
 
         return updated_node
 
@@ -558,6 +580,13 @@ class UnifiedTransformer(cst.CSTTransformer):
         return updated_node.with_changes(body=new_body)
 
 
+    def get_signature_changes(self: typing.Self) -> list[tuple[FunctionName, str, str]]:
+        return [
+            (name, format_signature(old), format_signature(new))
+            for name, old, new in self.change_list
+        ]
+
+
 def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:
     """Extracts all type names included in a type annotation."""
 
@@ -580,6 +609,8 @@ def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:
 
 def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
     """Extracts the names in a module or class."""
+
+    # FIXME handle 'global' and 'nonlocal'
 
     names: set[str] = set()
 
@@ -654,3 +685,30 @@ def list_rindex(l: list, item: object) -> int:
         return -1 - l[::-1].index(item)
     except ValueError:
         return 0
+
+
+def format_signature(f: cst.FunctionDef) -> str:
+    """Formats the signature of a function."""
+
+    class BodyRemover(cst.CSTTransformer):
+        def leave_FunctionDef(
+            self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
+        ) -> cst.FunctionDef:
+            return updated_node.with_changes(body=cst.IndentedBlock(body=[
+                cst.SimpleStatementLine(body=[])
+            ]))
+
+        def leave_Decorator(
+            self, original_node: cst.Decorator, updated_node: cst.Decorator
+        ) -> cst.RemovalSentinel:
+            return cst.RemoveFromParent()
+
+    bodyless = typing.cast(cst.FunctionDef, f.visit(BodyRemover()))
+    sig = cst.Module([bodyless]).code.strip()
+
+    # It's easier to let libcst generate "pass" for an empty body and then remove it
+    # than to find a way to have it emit a bodyless function...
+    if sig.endswith("pass"):
+        sig = sig[:-4].strip()
+
+    return sig

@@ -34,8 +34,7 @@ RightTyper imposes only 20% overhead, while RightTyper slows down
 execution by over 37x. In extreme cases, MonkeyType runs over 3,000x
 slower than RightTyper.
 
-![Overhead](https://github.com/righttyper/righttyper/raw/master/docs/benchmark_comparison_execution_times.png)
-
+![Overhead](https://github.com/RightTyper/RightTyper/blob/main/docs/benchmark_comparison_execution_times.png)
 
 ## Usage
 
@@ -83,6 +82,12 @@ To add type hints directly to your code, use this command:
 
 ```bash
 python3 -m righttyper --output-files --overwrite your_script.py [args...]
+```
+
+To do the same with `pytest`:
+
+```bash
+python3 -m righttyper --output-files --overwrite -m pytest your_directory
 ```
 
 Below is the full list of options:

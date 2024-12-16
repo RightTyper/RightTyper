@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, NewType, TypeVar
+from typing import Any, NewType, TypeVar, Self, Iterator, Iterable
 
 T = TypeVar("T")
 
@@ -33,21 +33,28 @@ class FuncAnnotation:
 Typename = NewType("Typename", str)
 
 
-@dataclass
-class TypenameFrequency:
-    typename: Typename
-    counter: int
+class TypenameSet:
+    def __init__(self: Self, names: Iterable[Typename] = []) -> None:
+        from collections import Counter
 
-    def __hash__(self: TypenameFrequency) -> int:
-        return hash(self.typename)
+        self.items: Counter[Typename] = Counter()
+        self.items.update(names)
 
-    def __eq__(self: TypenameFrequency, other: Any) -> bool:
-        if isinstance(other, TypenameFrequency):
-            return self.typename == other.typename
-        return False
+    def __iter__(self: Self) -> Iterator[Typename]:
+        return self.items.__iter__()
 
+    def __contains__(self: Self, name: object) -> bool:
+        return name in self.items
 
-TypenameSet = NewType("TypenameSet", set[TypenameFrequency])
+    def __len__(self: Self) -> int:
+        return len(self.items)
+
+    def update(self: Self, names: Iterable[Typename]) -> None:
+        self.items.update(names)
+
+    def frequency(self: Self, name: Typename) -> int:
+        """Returns how often a type has been added to this set."""
+        return self.items[name]
 
 
 @dataclass
