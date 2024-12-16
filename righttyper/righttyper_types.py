@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, NewType, TypeVar, Self, Iterator, Iterable
+from typing import Any, NewType, TypeVar, Self, Iterator, Iterable, TypeAlias
 
 T = TypeVar("T")
 
@@ -33,31 +33,42 @@ class FuncAnnotation:
 Typename = NewType("Typename", str)
 
 
-class TypenameSet:
-    def __init__(self: Self, names: Iterable[Typename] = []) -> None:
-        from collections import Counter
+@dataclass(eq=True, frozen=True)
+class TypeInfo:
+    module: str
+    name: str
+    args: tuple[Self|str, ...] = tuple()    # arguments within [] in the Typename
 
-        self.items: Counter[Typename] = Counter()
-        self.items.update(names)
+    func: FuncInfo|None = None              # if a callable, the FuncInfo
+    is_bound: bool = False                  # if a callable, whether bound
 
-    def __iter__(self: Self) -> Iterator[Typename]:
-        return self.items.__iter__()
+    def __str__(self: Self) -> str:
+        module = self.module + '.' if self.module else ''
+        if self.args:
+            return (
+                f"{module}{self.name}[" +
+                    ", ".join(str(a) for a in self.args) +
+                "]"
+            )
 
-    def __contains__(self: Self, name: object) -> bool:
-        return name in self.items
+        return f"{module}{self.name}"
 
-    def __len__(self: Self) -> int:
-        return len(self.items)
+    class Transformer:
+        def visit(self, node: "TypeInfo") -> "TypeInfo":
+            new_args = tuple(
+                self.visit(arg) if isinstance(arg, TypeInfo) else arg
+                for arg in node.args
+            )
+            if new_args != node.args:
+                return TypeInfo(node.module, node.name, args=new_args,
+                                func=node.func, is_bound=node.is_bound)
+            return node
 
-    def update(self: Self, names: Iterable[Typename]) -> None:
-        self.items.update(names)
 
-    def frequency(self: Self, name: Typename) -> int:
-        """Returns how often a type has been added to this set."""
-        return self.items[name]
+TypeInfoSet: TypeAlias = set[TypeInfo]
 
 
 @dataclass
 class ArgInfo:
     arg_name: ArgumentName
-    type_name_set: TypenameSet
+    type_set: TypeInfoSet

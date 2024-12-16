@@ -811,7 +811,6 @@ def test_function_type_in_annotation(tmp_cwd):
     assert 'def baz(f: Callable[[FunctionType, Any], Any], g: Callable[[int], float], x: int) -> float:' in output
 
 
-@pytest.mark.xfail(reason="our function types are all annotation-based so far")
 def test_discovered_function_type(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):

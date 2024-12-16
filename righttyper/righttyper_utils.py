@@ -12,7 +12,7 @@ from righttyper.righttyper_types import (
     FuncInfo,
     FunctionName,
     Typename,
-    TypenameSet,
+    TypeInfoSet,
 )
 
 TOOL_ID: int = 3
@@ -54,12 +54,13 @@ def debug_print_set_level(level: bool) -> None:
 
 
 def union_typeset_str(
-    typeset: TypenameSet,
+    typeinfoset: TypeInfoSet,
     namespace: dict[str, Any] = globals(),
-    threshold_frequency: float = 0.25,
 ) -> Typename:
-    if not typeset:
+    if not typeinfoset:
         return Typename("None") # Never observed any types.
+
+    typeset = {Typename(str(t)) for t in typeinfoset}
 
     if len(typeset) == 1:
         return next(iter(typeset))

@@ -48,7 +48,8 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     FunctionName,
     Typename,
-    TypenameSet,
+    TypeInfo,
+    TypeInfoSet,
 )
 from righttyper.righttyper_utils import (
     TOOL_ID,
@@ -93,62 +94,103 @@ class Observations:
     visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = field(default_factory=lambda: defaultdict(list))
 
     # For each visited function, the values it returned
-    visited_funcs_retval: dict[FuncInfo, TypenameSet] = field(default_factory=lambda: defaultdict(TypenameSet))
+    visited_funcs_retval: dict[FuncInfo, TypeInfoSet] = field(default_factory=lambda: defaultdict(TypeInfoSet))
 
     # For each visited function, the values it yielded
-    visited_funcs_yieldval: dict[FuncInfo, TypenameSet] = field(default_factory=lambda: defaultdict(TypenameSet))
+    visited_funcs_yieldval: dict[FuncInfo, TypeInfoSet] = field(default_factory=lambda: defaultdict(TypeInfoSet))
 
     namespace: dict[str, Any] = field(default_factory=dict)
+
+    def _transform_types(self, tr: TypeInfo.Transformer) -> None:
+        """Applies the 'tr' transformer to all TypeInfo objects in this class."""
+        for f, args in self.visited_funcs_arguments.items():
+            for i in range(len(args)):
+                self.visited_funcs_arguments[f][i].type_set = TypeInfoSet(
+                    tr.visit(t) for t in args[i].type_set
+                )
+
+        for f, ts in self.visited_funcs_yieldval.items():
+            self.visited_funcs_yieldval[f] = TypeInfoSet(
+                tr.visit(t) for t in ts
+            )
+
+        for f, ts in self.visited_funcs_retval.items():
+            self.visited_funcs_retval[f] = TypeInfoSet(
+                tr.visit(t) for t in ts
+            )
+
+
+    def return_type(self: Self, f: FuncInfo) -> Typename:
+        """Returns the return type for a given function."""
+
+        if f in self.visited_funcs_yieldval:
+            is_async = False
+            y = union_typeset_str(self.visited_funcs_yieldval[f])
+            if y == "builtins.async_generator_wrapped_value":
+                is_async = True
+                y = Typename("typing.Any") # how to unwrap the value without waiting on it?
+
+            r = union_typeset_str(self.visited_funcs_retval.get(f, TypeInfoSet({TypeInfo("", "None")})))
+
+            if is_async:
+                # FIXME capture send type and switch to AsyncGenerator if any sent
+                return Typename(f"typing.AsyncIterator[{y}]")
+
+            if r == "None":
+                # Note that we are unable to differentiate between an implicit "None"
+                # return and an explicit "return None".
+                return Typename(f"typing.Iterator[{y}]")
+
+            return Typename(f"typing.Generator[{y}, typing.Any, {r}]")
+
+        if f in self.visited_funcs_retval:
+            return union_typeset_str(
+                self.visited_funcs_retval[f],
+                self.namespace,
+            )
+
+        return Typename("None")
 
 
     def collect_annotations(self: Self) -> dict[FuncInfo, FuncAnnotation]:
         """Collects function type annotations from the observed types."""
 
+        class T(TypeInfo.Transformer):
+            """Updates Callable type declarations based on observations."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.func and not node.args:
+                    if node.func in self.visited_funcs:
+                        return TypeInfo('typing', 'Callable', args = (
+                                "[" + ", ".join(
+                                    union_typeset_str(arg.type_set, self.namespace)
+                                    for arg in self.visited_funcs_arguments[node.func][int(node.is_bound):]
+                                ) + "]",
+                                self.return_type(node.func)
+                            )
+                        )
+
+                return super().visit(node)
+
+        self._transform_types(T())
+
         type_annotations: dict[FuncInfo, FuncAnnotation] = {}
         for t in self.visited_funcs:
             args = self.visited_funcs_arguments[t]
-            arg_annotations = [
-                (
-                    ArgumentName(arginfo.arg_name),
-                    union_typeset_str(
-                        arginfo.type_name_set,
-                        self.namespace,
-                    ),
-                )
-                for arginfo in args
-            ]
 
-            if t in self.visited_funcs_yieldval:
-                is_async = False
-                y = union_typeset_str(self.visited_funcs_yieldval[t])
-                if y == "builtins.async_generator_wrapped_value":
-                    is_async = True
-                    y = Typename("typing.Any") # how to unwrap the value without waiting on it?
-
-                r = union_typeset_str(self.visited_funcs_retval.get(t, TypenameSet([Typename("None")])))
-
-                if is_async:
-                    # FIXME capture send type and switch to AsyncGenerator if any sent
-                    retval = f"typing.AsyncIterator[{y}]"
-                elif r == "None":
-                    # Note that we are unable to differentiate between an implicit "None"
-                    # return and an explicit "return None".
-                    retval = f"typing.Iterator[{y}]"
-                else:
-                    retval = f"typing.Generator[{y}, typing.Any, {r}]"
-
-            elif t in self.visited_funcs_retval:
-                retval = union_typeset_str(
-                    self.visited_funcs_retval[t],
-                    self.namespace,
-                )
-            else:
-                retval = "None"
             type_annotations[t] = FuncAnnotation(
-                arg_annotations,
-                Typename(retval),
+                [
+                    (
+                        arginfo.arg_name,
+                        union_typeset_str(
+                            arginfo.type_set,
+                            self.namespace,
+                        )
+                    )
+                    for arginfo in args
+                ],
+                self.return_type(t)
             )
-            # print(f"{type_annotations[t]} {t}")
+
         return type_annotations
 
 
@@ -160,7 +202,7 @@ class Observations:
         if t in self.visited_funcs_arguments:
             for i, arginfo in enumerate(argtypes):
                 if i < len(self.visited_funcs_arguments[t]):
-                    self.visited_funcs_arguments[t][i].type_name_set.update(arginfo.type_name_set)
+                    self.visited_funcs_arguments[t][i].type_set.update(arginfo.type_set)
                     # reset_sampling_interval() if all new
         else:
             self.visited_funcs_arguments[t] = argtypes
@@ -301,14 +343,12 @@ def exit_function_worker(
 
     debug_print(f"exit processing, retval was {obs.visited_funcs_retval[t]=}")
 
-    typename = Typename(
-        get_full_type(return_value, use_jaxtyping=options.infer_shapes)
-    )
+    typeinfo = get_full_type(return_value, use_jaxtyping=options.infer_shapes)
 
     if event_type == sys.monitoring.events.PY_YIELD:
-        obs.visited_funcs_yieldval[t].update([typename])
+        obs.visited_funcs_yieldval[t].add(typeinfo)
     else:
-        obs.visited_funcs_retval[t].update([typename])
+        obs.visited_funcs_retval[t].add(typeinfo)
 
     return sys.monitoring.DISABLE
 

@@ -16,7 +16,7 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     FunctionName,
     Typename,
-    TypenameSet,
+    TypeInfoSet,
 )
 from righttyper.righttyper_utils import (
     debug_print,
