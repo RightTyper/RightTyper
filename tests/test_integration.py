@@ -811,7 +811,7 @@ def test_function_type_in_annotation(tmp_cwd):
     assert 'def baz(f: Callable[[FunctionType, Any], Any], g: Callable[[int], float], x: int) -> float:' in output
 
 
-def test_discovered_function_type(tmp_cwd):
+def test_discovered_function_type_in_args(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             return x/2
@@ -829,6 +829,46 @@ def test_discovered_function_type(tmp_cwd):
     output = Path("t.py").read_text()
     assert "def foo(x: int) -> float:" in output
     assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
+
+
+def test_discovered_function_type_in_return(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x):
+            return x/2
+
+        def bar(f):
+            return f
+
+        bar(foo)(1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def foo(x: int) -> float:" in output
+    assert "def bar(f: Callable[[int], float]) -> Callable[[int], float]:" in output
+
+
+def test_discovered_function_type_in_yield(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x):
+            return x/2
+
+        def bar():
+            yield foo
+
+        next(bar())(1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def foo(x: int) -> float:" in output
+    assert "def bar() -> Iterator[Callable[[int], float]]:" in output
 
 
 def test_module_list_not_lost_with_multiprocessing(tmp_cwd):

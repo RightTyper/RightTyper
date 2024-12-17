@@ -103,21 +103,24 @@ class Observations:
 
     def _transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
-        for f, args in self.visited_funcs_arguments.items():
+
+        def transform_set(s: TypeInfoSet) -> None:
+            """Applies the transformer to a set, only replacing items where necessary."""
+            for t in list(s):
+                tprime = tr.visit(t)
+                if t is not tprime:
+                    s.remove(t)
+                    s.add(tprime)
+
+        for args in self.visited_funcs_arguments.values():
             for i in range(len(args)):
-                self.visited_funcs_arguments[f][i].type_set = TypeInfoSet(
-                    tr.visit(t) for t in args[i].type_set
-                )
+                transform_set(args[i].type_set)
 
-        for f, ts in self.visited_funcs_yieldval.items():
-            self.visited_funcs_yieldval[f] = TypeInfoSet(
-                tr.visit(t) for t in ts
-            )
-
-        for f, ts in self.visited_funcs_retval.items():
-            self.visited_funcs_retval[f] = TypeInfoSet(
-                tr.visit(t) for t in ts
-            )
+        for ts in itertools.chain(
+            self.visited_funcs_yieldval.values(),
+            self.visited_funcs_retval.values()
+        ):
+            transform_set(ts)
 
 
     def return_type(self: Self, f: FuncInfo) -> Typename:
