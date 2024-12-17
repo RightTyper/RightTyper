@@ -55,7 +55,7 @@ def debug_print_set_level(level: bool) -> None:
 
 def union_typeset_str(
     typeinfoset: TypeInfoSet,
-    namespace: dict[str, Any] = globals(),
+    namespace: dict[str, Any]
 ) -> Typename:
     if not typeinfoset:
         return Typename("None") # Never observed any types.
@@ -82,7 +82,7 @@ def union_typeset_str(
 
 def find_most_specific_common_superclass_by_name(
     type_names: list[str],
-    namespace: dict[str, Any] = globals(),
+    namespace: dict[str, Any]
 ) -> Typename|None:
     if not type_names:
         return None

@@ -128,12 +128,15 @@ class Observations:
 
         if f in self.visited_funcs_yieldval:
             is_async = False
-            y = union_typeset_str(self.visited_funcs_yieldval[f])
+            y = union_typeset_str(self.visited_funcs_yieldval[f], self.namespace)
             if y == "builtins.async_generator_wrapped_value":
                 is_async = True
                 y = Typename("typing.Any") # how to unwrap the value without waiting on it?
 
-            r = union_typeset_str(self.visited_funcs_retval.get(f, TypeInfoSet({TypeInfo("", "None")})))
+            r = union_typeset_str(
+                self.visited_funcs_retval[f],
+                self.namespace
+            )
 
             if is_async:
                 # FIXME capture send type and switch to AsyncGenerator if any sent
