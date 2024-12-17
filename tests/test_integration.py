@@ -1076,3 +1076,25 @@ def test_mocked_function(tmp_cwd):
     """))
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--no-use-multiprocessing', '-m', 'pytest', 't.py'], check=True)
+
+
+@pytest.mark.xfail(reason="Doesn't currently work")
+@pytest.mark.parametrize('as_module', [False, True])
+def test_union_superclass(tmp_cwd, as_module):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A: pass
+        class B(A): pass
+        class C(A): pass
+
+        def foo(x):
+            pass
+
+        foo(B())
+        foo(C())
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', *(('-m', 't') if as_module else ('t.py',))],
+                   check=True)
+
+    assert "def foo(x: A) -> None:" in Path("t.py").read_text()

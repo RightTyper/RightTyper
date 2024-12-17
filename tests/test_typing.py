@@ -1,4 +1,5 @@
-from righttyper.righttyper_types import TypeInfo
+from righttyper.righttyper_types import TypeInfo, TypeInfoSet
+from righttyper.righttyper_utils import union_typeset_str
 from collections.abc import Iterable
 from collections import namedtuple
 from typing import Any
@@ -238,3 +239,40 @@ def test_typeinfo():
     assert "foo.bar[m.baz, \"x y\"]" == str(TypeInfo("foo", "bar", (TypeInfo("m", "baz"), "\"x y\"")))
     assert "int" == str(TypeInfo("", "int"))
     assert "tuple[bool]" == str(TypeInfo("", "tuple", args=('bool',)))
+
+
+def test_union_typeset():
+    assert "None" == union_typeset_str(TypeInfoSet({}), dict())
+    assert "bool" == union_typeset_str({TypeInfo("", "bool")}, dict())
+
+    assert "bool|int|zoo.bar" == union_typeset_str({
+            TypeInfo("", "bool"),
+            TypeInfo("", "int"),
+            TypeInfo("zoo", "bar"),
+        },
+        dict()
+    )
+
+    assert "bool|int|None" == union_typeset_str({
+            TypeInfo("", "None"),
+            TypeInfo("", "bool"),
+            TypeInfo("", "int"),
+        },
+        dict()
+    )
+
+
+class A: pass
+class B(A): pass
+class C(B): pass
+class D(B): pass
+
+@pytest.mark.xfail(reason="Doesn't currently work")
+def test_union_typeset_superclass():
+    assert "B" == union_typeset_str(
+        {
+            TypeInfo(__name__, "C"),
+            TypeInfo(__name__, "D"),
+
+        }, globals()
+    )

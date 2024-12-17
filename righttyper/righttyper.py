@@ -73,6 +73,7 @@ class Options:
     generate_stubs: bool = False
     srcdir: str = ""
     use_multiprocessing: bool = True
+    sampling: bool = True
 
 options = Options()
 
@@ -255,7 +256,7 @@ def enter_function(code: CodeType, offset: int) -> Any:
         process_function_arguments(t, inspect.getargvalues(frame), defaults)
         del frame
 
-    return sys.monitoring.DISABLE
+    return sys.monitoring.DISABLE if options.sampling else None
 
 
 def call_handler(
@@ -356,7 +357,7 @@ def exit_function_worker(
     else:
         obs.visited_funcs_retval[t].add(typeinfo)
 
-    return sys.monitoring.DISABLE
+    return sys.monitoring.DISABLE if options.sampling else None
 
 
 def process_function_arguments(
@@ -750,6 +751,12 @@ class CheckModule(click.ParamType):
     hidden=True,
     help="Whether to use multiprocessing.",
 )
+@click.option(
+    "--sampling/--no-sampling",
+    default=options.sampling,
+    hidden=True,
+    help="Whether to sample calls and types or to use every one seen.",
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
     script: str,
@@ -768,7 +775,8 @@ def main(
     infer_shapes: bool,
     srcdir: str,
     target_overhead: float,
-    use_multiprocessing: bool
+    use_multiprocessing: bool,
+    sampling: bool,
 ) -> None:
 
     if module:
@@ -839,6 +847,7 @@ def main(
     options.generate_stubs = generate_stubs
     options.srcdir = srcdir
     options.use_multiprocessing = use_multiprocessing
+    options.sampling = sampling 
 
     setup_tool_id()
     register_monitoring_callbacks(
