@@ -300,6 +300,18 @@ def test_union_typeset_generics():
     )
 
 
+def test_union_typeset_generics_str_not_merged():
+    assert "Callable[[], None]|Callable[[int], None]" == union_typeset_str({
+            TypeInfo("", "Callable", args=(
+                "[], None",
+            )),
+            TypeInfo("", "Callable", args=(
+                "[int], None",
+            )),
+        }
+    )
+
+
 def test_union_typeset_superclass():
     class A: pass
     class B(A): pass
