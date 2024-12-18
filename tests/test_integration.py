@@ -811,8 +811,7 @@ def test_function_type_in_annotation(tmp_cwd):
     assert 'def baz(f: Callable[[FunctionType, Any], Any], g: Callable[[int], float], x: int) -> float:' in output
 
 
-@pytest.mark.xfail(reason="our function types are all annotation-based so far")
-def test_discovered_function_type(tmp_cwd):
+def test_discovered_function_type_in_args(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             return x/2
@@ -830,6 +829,46 @@ def test_discovered_function_type(tmp_cwd):
     output = Path("t.py").read_text()
     assert "def foo(x: int) -> float:" in output
     assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
+
+
+def test_discovered_function_type_in_return(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x):
+            return x/2
+
+        def bar(f):
+            return f
+
+        bar(foo)(1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def foo(x: int) -> float:" in output
+    assert "def bar(f: Callable[[int], float]) -> Callable[[int], float]:" in output
+
+
+def test_discovered_function_type_in_yield(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x):
+            return x/2
+
+        def bar():
+            yield foo
+
+        next(bar())(1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def foo(x: int) -> float:" in output
+    assert "def bar() -> Iterator[Callable[[int], float]]:" in output
 
 
 def test_module_list_not_lost_with_multiprocessing(tmp_cwd):
@@ -995,6 +1034,30 @@ def test_zero_SystemExit(tmp_cwd, as_module, use_mp):
                    check=True)
 
     assert "def foo(x: int) -> int:" in Path("t.py").read_text()
+
+
+def test_arg_parsing(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        import json
+        import sys
+
+        with open("out.json", "w") as f:
+            json.dump(sys.argv, f)
+    """))
+
+    def test_args(*args):
+        import json
+        subprocess.run([sys.executable, '-m', 'righttyper', *args], check=True)
+        with open("out.json", "r") as f:
+            return json.load(f)
+
+    assert ['t.py'] == test_args('t.py')
+    assert ['t.py', 'a', 'b'] == test_args('t.py', 'a', 'b')
+
+    assert [str(tmp_cwd / "t.py")] == test_args('-m', 't')
+    assert [str(tmp_cwd / "t.py"), 'a'] == test_args('-m', 't', 'a')
+
+    assert ['t.py', 'a', '-m'] == test_args('t.py', '--', 'a', '-m')
 
 
 def test_mocked_function(tmp_cwd):

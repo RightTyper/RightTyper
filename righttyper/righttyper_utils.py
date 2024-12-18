@@ -12,7 +12,7 @@ from righttyper.righttyper_types import (
     FuncInfo,
     FunctionName,
     Typename,
-    TypenameSet,
+    TypeInfoSet,
 )
 
 TOOL_ID: int = 3
@@ -54,49 +54,35 @@ def debug_print_set_level(level: bool) -> None:
 
 
 def union_typeset_str(
-    typeset: TypenameSet,
-    namespace: dict[str, Any] = globals(),
-    threshold_frequency: float = 0.25,
+    typeinfoset: TypeInfoSet,
+    namespace: dict[str, Any]
 ) -> Typename:
-    adjusted_typeset = typeset  # trim_and_test(typeset, threshold_frequency)
-    retval = None
+    if not typeinfoset:
+        return Typename("None") # Never observed any types.
 
-    if not typeset:
-        # Never observed any return types. Since we always sample at least once,
-        # this means we did not return any values.
-        return Typename("None")
+    typeset = {Typename(str(t)) for t in typeinfoset}
 
     if len(typeset) == 1:
         return next(iter(typeset))
 
     if super := find_most_specific_common_superclass_by_name(
-        list(adjusted_typeset),
+        list(typeset),
         namespace
     ):
         return super
 
-    if adjusted_typeset:
-        typenames = sorted(adjusted_typeset)
-        if len(typenames) == 1:
-            return typenames[0]
-
-        if "None" in typenames:
-            # "None" at the end is considered to be more readable
-            return Typename(
-                "|".join([t for t in typenames if t != "None"]
-                         + ["None"])
-            )
-
+    if Typename("None") in typeset:
+        # "None" at the end is considered to be more readable
         return Typename(
-            "|".join(typenames)
+            "|".join([*(t for t in sorted(typeset) if t != "None"), "None"])
         )
 
-    return Typename("Any") # worst case
+    return Typename("|".join(sorted(typeset)))
 
 
 def find_most_specific_common_superclass_by_name(
     type_names: list[str],
-    namespace: dict[str, Any] = globals(),
+    namespace: dict[str, Any]
 ) -> Typename|None:
     if not type_names:
         return None

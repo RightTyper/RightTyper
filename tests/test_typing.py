@@ -1,9 +1,18 @@
-from righttyper.righttyper_runtime import get_full_type, type_from_annotations
+from righttyper.righttyper_types import TypeInfo
 from collections.abc import Iterable
 from collections import namedtuple
 from typing import Any
 import pytest
 import importlib
+
+
+def get_full_type(*args, **kwargs) -> str:
+    import righttyper.righttyper_runtime as rt
+    return str(rt.get_full_type(*args, **kwargs))
+
+def type_from_annotations(*args, **kwargs) -> str:
+    import righttyper.righttyper_runtime as rt
+    return str(rt.type_from_annotations(*args, **kwargs))
 
 
 class IterableClass(Iterable):
@@ -222,3 +231,10 @@ def test_type_from_annotations():
         pass
 
     assert "typing.Callable[[int | float, list[tuple[bool, ...]]], complex | None]" == type_from_annotations(foo)
+
+
+def test_typeinfo():
+    assert "foo.bar" == str(TypeInfo("foo", "bar"))
+    assert "foo.bar[m.baz, \"x y\"]" == str(TypeInfo("foo", "bar", (TypeInfo("m", "baz"), "\"x y\"")))
+    assert "int" == str(TypeInfo("", "int"))
+    assert "tuple[bool]" == str(TypeInfo("", "tuple", args=('bool',)))
