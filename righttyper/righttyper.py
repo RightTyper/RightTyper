@@ -129,15 +129,12 @@ class Observations:
 
         if f in self.visited_funcs_yieldval:
             is_async = False
-            y = union_typeset_str(self.visited_funcs_yieldval[f], self.namespace)
+            y = union_typeset_str(self.visited_funcs_yieldval[f])
             if y == "builtins.async_generator_wrapped_value":
                 is_async = True
                 y = Typename("typing.Any") # how to unwrap the value without waiting on it?
 
-            r = union_typeset_str(
-                self.visited_funcs_retval[f],
-                self.namespace
-            )
+            r = union_typeset_str(self.visited_funcs_retval[f])
 
             if is_async:
                 # FIXME capture send type and switch to AsyncGenerator if any sent
@@ -151,10 +148,7 @@ class Observations:
             return Typename(f"typing.Generator[{y}, typing.Any, {r}]")
 
         if f in self.visited_funcs_retval:
-            return union_typeset_str(
-                self.visited_funcs_retval[f],
-                self.namespace,
-            )
+            return union_typeset_str(self.visited_funcs_retval[f])
 
         return Typename("None")
 
@@ -169,7 +163,7 @@ class Observations:
                     if node.func in self.visited_funcs:
                         return TypeInfo('typing', 'Callable', args = (
                                 "[" + ", ".join(
-                                    union_typeset_str(arg.type_set, self.namespace)
+                                    union_typeset_str(arg.type_set)
                                     for arg in self.visited_funcs_arguments[node.func][int(node.is_bound):]
                                 ) + "]",
                                 self.return_type(node.func)
@@ -188,10 +182,7 @@ class Observations:
                 [
                     (
                         arginfo.arg_name,
-                        union_typeset_str(
-                            arginfo.type_set,
-                            self.namespace,
-                        )
+                        union_typeset_str(arginfo.type_set)
                     )
                     for arginfo in args
                 ],

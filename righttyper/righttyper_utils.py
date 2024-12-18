@@ -2,7 +2,7 @@ import logging
 import os
 import re
 from functools import cache
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from righttyper.righttyper_types import (
     ArgInfo,
@@ -13,6 +13,7 @@ from righttyper.righttyper_types import (
     FunctionName,
     Typename,
     TypeInfoSet,
+    TYPE_OBJ_TYPES
 )
 
 TOOL_ID: int = 3
@@ -53,23 +54,17 @@ def debug_print_set_level(level: bool) -> None:
     _DEBUG_PRINT = level
 
 
-def union_typeset_str(
-    typeinfoset: TypeInfoSet,
-    namespace: dict[str, Any]
-) -> Typename:
+def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
     if not typeinfoset:
         return Typename("None") # Never observed any types.
 
-    typeset = {Typename(str(t)) for t in typeinfoset}
+    if len(typeinfoset) == 1:
+        return Typename(str(next(iter(typeinfoset))))
 
-    if len(typeset) == 1:
-        return next(iter(typeset))
-
-    if super := find_most_specific_common_superclass_by_name(
-        list(typeset),
-        namespace
-    ):
+    if super := find_most_specific_common_superclass_by_name(typeinfoset):
         return super
+
+    typeset = {Typename(str(t)) for t in typeinfoset}
 
     if Typename("None") in typeset:
         # "None" at the end is considered to be more readable
@@ -80,20 +75,12 @@ def union_typeset_str(
     return Typename("|".join(sorted(typeset)))
 
 
-def find_most_specific_common_superclass_by_name(
-    type_names: list[str],
-    namespace: dict[str, Any]
-) -> Typename|None:
-    if not type_names:
+def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> Typename|None:
+    if any(t.type_obj is None for t in typeinfoset):
         return None
 
-    try:
-        classes = [namespace[name] for name in type_names]
-    except KeyError:
-        # Fail gracefully
-        return None
     common_superclasses = set.intersection(
-        *(set(cls.mro()) for cls in classes)
+        *(set(cast(TYPE_OBJ_TYPES, t.type_obj).mro()) for t in typeinfoset)
     )
     common_superclasses.discard(object)
     if not common_superclasses:

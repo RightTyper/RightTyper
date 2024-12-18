@@ -242,37 +242,45 @@ def test_typeinfo():
 
 
 def test_union_typeset():
-    assert "None" == union_typeset_str(TypeInfoSet({}), dict())
-    assert "bool" == union_typeset_str({TypeInfo("", "bool")}, dict())
+    assert "None" == union_typeset_str(TypeInfoSet({}))
+    assert "bool" == union_typeset_str({TypeInfo("", "bool")})
 
     assert "bool|int|zoo.bar" == union_typeset_str({
             TypeInfo("", "bool"),
             TypeInfo("", "int"),
             TypeInfo("zoo", "bar"),
-        },
-        dict()
+        }
     )
 
     assert "bool|int|None" == union_typeset_str({
             TypeInfo("", "None"),
             TypeInfo("", "bool"),
             TypeInfo("", "int"),
-        },
-        dict()
+        }
     )
 
 
-class A: pass
-class B(A): pass
-class C(B): pass
-class D(B): pass
-
-@pytest.mark.xfail(reason="Doesn't currently work")
 def test_union_typeset_superclass():
-    assert "B" == union_typeset_str(
-        {
-            TypeInfo(__name__, "C"),
-            TypeInfo(__name__, "D"),
+    # TODO many more tests are needed
+    class A: pass
+    class B(A): pass
+    class C(B): pass
+    class D(B): pass
 
-        }, globals()
+    assert "B" == union_typeset_str({
+            TypeInfo.fromType(C),
+            TypeInfo.fromType(D)
+        }
+    )
+
+    assert "B" == union_typeset_str({
+            TypeInfo.fromType(B),
+            TypeInfo.fromType(D)
+        }
+    )
+
+    assert "A" == union_typeset_str({
+            TypeInfo.fromType(A),
+            TypeInfo.fromType(D)
+        }
     )

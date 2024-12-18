@@ -229,19 +229,19 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     # "list_iterator", aren't known by any particular name.
     if obj.__module__ == "builtins":
         if obj is NoneType:
-            return TypeInfo("", "None")
+            return TypeInfo("", "None", type_obj=obj)
         elif in_builtins_import(obj):
-            return TypeInfo("", obj.__name__) # these are "well known", so no module name needed
+            return TypeInfo("", obj.__name__, type_obj=obj) # these are "well known", so no module name needed
         elif (name := from_types_import(obj)):
-            return TypeInfo("types", name)
+            return TypeInfo("types", name, type_obj=obj)
         elif obj is RANGE_ITER_TYPE:
-            return TypeInfo("typing", "Iterator", args=(TypeInfo("", "int"),))
+            return TypeInfo("typing", "Iterator", args=(TypeInfo("", "int", type_obj=int),))
         # TODO match other ABC from collections.abc based on interface
         elif issubclass(obj, abc.Iterator):
             return TypeInfo("typing", "Iterator", args=(TypeInfo("typing", "Any"),))
         else:
             # fall back to its name, just so we can tell where it came from.
-            return TypeInfo("builtins", obj.__name__)
+            return TypeInfo.fromType(obj)
 
     # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
     if obj.__module__ == 'numpy' and 'dtype[' in obj.__name__ and hasattr(obj, "type"):
@@ -270,9 +270,9 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
                     return f"{name}.{obj.__name__}"
 
     if obj.__module__ == "__main__":    # TODO merge this into lookup_type_module
-        return TypeInfo(get_main_module_fqn(), obj.__qualname__)
+        return TypeInfo(get_main_module_fqn(), obj.__qualname__, type_obj=obj)
 
-    return TypeInfo(lookup_type_module(obj), obj.__qualname__)
+    return TypeInfo(lookup_type_module(obj), obj.__qualname__, type_obj=obj)
 
 
 def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
