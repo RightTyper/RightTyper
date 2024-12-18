@@ -2,7 +2,7 @@ import logging
 import os
 import re
 from functools import cache
-from typing import Any, Final, cast
+from typing import Any, Final, cast, Iterator
 import itertools
 from pathlib import Path
 import sys
@@ -73,6 +73,7 @@ def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
         typeinfoset = TypeInfoSet({*typeinfoset})   # avoid modifying
 
         group_key = lambda t: (t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args))
+        group: Iterator[TypeInfo]|TypeInfoSet
         for (mod, name, all_info, nargs), group in itertools.groupby(
             sorted(typeinfoset, key=group_key),
             group_key
@@ -82,7 +83,7 @@ def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
                 typeinfoset -= group
                 typeinfoset.add(TypeInfo(mod, name, args=tuple(
                         union_typeset_str(TypeInfoSet({
-                            member.args[i] for member in group
+                            cast(TypeInfo, member.args[i]) for member in group
                         }))
                         for i in range(nargs)
                     )

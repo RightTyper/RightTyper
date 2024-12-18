@@ -41,7 +41,7 @@ TYPE_OBJ_TYPES: TypeAlias = type
 class TypeInfo:
     module: str
     name: str
-    args: tuple[Self|str, ...] = tuple()    # arguments within [] in the Typename
+    args: "tuple[TypeInfo|str, ...]" = tuple()    # arguments within [] in the Typename
 
     func: FuncInfo|None = None              # if a callable, the FuncInfo
     is_bound: bool = False                  # if a callable, whether bound
