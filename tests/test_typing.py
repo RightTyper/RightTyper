@@ -261,7 +261,6 @@ def test_union_typeset():
 
 
 def test_union_typeset_superclass():
-    # TODO many more tests are needed
     class A: pass
     class B(A): pass
     class C(B): pass
@@ -282,5 +281,14 @@ def test_union_typeset_superclass():
     assert "A" == union_typeset_str({
             TypeInfo.fromType(A),
             TypeInfo.fromType(D)
+        }
+    )
+
+
+def test_union_typeset_superclass_bare_type():
+    # invoking type.mro() raises an exception
+    assert "builtins.int|builtins.type" == union_typeset_str({
+            TypeInfo.fromType(int),
+            TypeInfo.fromType(type)
         }
     )

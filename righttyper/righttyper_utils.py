@@ -80,9 +80,11 @@ def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> Ty
         return None
 
     common_superclasses = set.intersection(
-        *(set(cast(TYPE_OBJ_TYPES, t.type_obj).mro()) for t in typeinfoset)
+        *(set(cast(TYPE_OBJ_TYPES, t.type_obj).__mro__) for t in typeinfoset)
     )
-    common_superclasses.discard(object)
+
+    common_superclasses.discard(object) # not specific enough to be useful
+
     if not common_superclasses:
         return None
 
