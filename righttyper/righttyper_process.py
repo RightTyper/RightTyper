@@ -16,12 +16,11 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     FunctionName,
     Typename,
-    TypenameSet,
+    TypeInfoSet,
 )
 from righttyper.righttyper_utils import (
     debug_print,
     skip_this_file,
-    union_typeset_str,
 )
 from righttyper.unified_transformer import UnifiedTransformer
 from righttyper.righttyper_runtime import source_to_module_fqn
