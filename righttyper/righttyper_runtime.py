@@ -21,7 +21,7 @@ from righttyper.righttyper_types import (
     TypeInfoSet,
     TypeInfo
 )
-from righttyper.righttyper_utils import skip_this_file
+from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 
 
 def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) -> T:
@@ -151,8 +151,6 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
 
 def find_caller_frame() -> FrameType|None:
     """Attempts to find the stack frame which from which we were called. A bit brittle!"""
-    from pathlib import Path
-
     pkg_path = Path(find_caller_frame.__code__.co_filename).parent
 
     frame: FrameType|None = sys._getframe(1)
@@ -241,7 +239,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
             return TypeInfo("typing", "Iterator", args=(TypeInfo("typing", "Any"),))
         else:
             # fall back to its name, just so we can tell where it came from.
-            return TypeInfo.fromType(obj)
+            return TypeInfo.from_type(obj)
 
     # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
     if obj.__module__ == 'numpy' and 'dtype[' in obj.__name__ and hasattr(obj, "type"):
@@ -412,41 +410,3 @@ def update_argtypes(
         add_arg_info(arg_values[0].values())
     else:
         add_arg_info(arg_values)
-
-
-def _source_relative_to_pkg(file: Path) -> Path|None:
-    """Returns a Python source file's path relative to its package"""
-    if not file.is_absolute():
-        file = file.resolve()
-
-    parents = list(file.parents)
-
-    for d in sys.path:
-        path = Path(d)
-        if not path.is_absolute():
-            path = path.resolve()
-
-        for p in parents:
-            if p == path:
-                return file.relative_to(p)
-
-    return None
-
-
-def source_to_module_fqn(file: Path) -> str|None:
-    """Returns a source file's fully qualified package name, if possible."""
-    if not (path := _source_relative_to_pkg(file)):
-        return None
-
-    path = path.parent if path.name == '__init__.py' else path.parent / path.stem
-    return '.'.join(path.parts)
-
-
-@cache
-def get_main_module_fqn() -> str:
-    main = sys.modules['__main__']
-    if hasattr(main, "__file__") and main.__file__:
-        if fqn := source_to_module_fqn(Path(main.__file__)):
-            return fqn
-
-    return "__main__"

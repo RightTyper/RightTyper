@@ -31,7 +31,6 @@ from righttyper.righttyper_runtime import (
     get_full_type,
     should_skip_function,
     update_argtypes,
-    get_main_module_fqn
 )
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
@@ -58,6 +57,7 @@ from righttyper.righttyper_utils import (
     debug_print_set_level,
     skip_this_file,
     union_typeset_str,
+    get_main_module_fqn
 )
 
 @dataclass

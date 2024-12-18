@@ -59,7 +59,7 @@ class TypeInfo:
         return f"{module}{self.name}"
 
     @staticmethod
-    def fromType(t: TYPE_OBJ_TYPES, **kwargs) -> "TypeInfo":
+    def from_type(t: TYPE_OBJ_TYPES, **kwargs) -> "TypeInfo":
         return TypeInfo(t.__module__, t.__qualname__, type_obj=t, **kwargs)
 
     class Transformer:

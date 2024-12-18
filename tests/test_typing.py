@@ -260,27 +260,67 @@ def test_union_typeset():
     )
 
 
+def test_union_typeset_generics():
+    assert "list[bool|int]|None" == union_typeset_str({
+            TypeInfo("", "list", args=(TypeInfo("", "int"),)),
+            TypeInfo("", "list", args=(TypeInfo("", "bool"),)),
+            TypeInfo("", "None")
+        }
+    )
+
+    assert "list[tuple[bool|int, float]]" == union_typeset_str({
+            TypeInfo("", "list", args=(
+                TypeInfo("", "tuple", args=(
+                    TypeInfo("", "bool"),
+                    TypeInfo("", "float"),
+                )),
+            )),
+            TypeInfo("", "list", args=(
+                TypeInfo("", "tuple", args=(
+                    TypeInfo("", "int"),
+                    TypeInfo("", "float"),
+                )),
+            )),
+        }
+    )
+
+    assert "list[tuple[bool, float]|tuple[float]]" == union_typeset_str({
+            TypeInfo("", "list", args=(
+                TypeInfo("", "tuple", args=(
+                    TypeInfo("", "bool"),
+                    TypeInfo("", "float"),
+                )),
+            )),
+            TypeInfo("", "list", args=(
+                TypeInfo("", "tuple", args=(
+                    TypeInfo("", "float"),
+                )),
+            )),
+        }
+    )
+
+
 def test_union_typeset_superclass():
     class A: pass
     class B(A): pass
     class C(B): pass
     class D(B): pass
 
-    assert "B" == union_typeset_str({
-            TypeInfo.fromType(C),
-            TypeInfo.fromType(D)
+    assert f"{__name__}.{B.__qualname__}" == union_typeset_str({
+            TypeInfo.from_type(C),
+            TypeInfo.from_type(D)
         }
     )
 
-    assert "B" == union_typeset_str({
-            TypeInfo.fromType(B),
-            TypeInfo.fromType(D)
+    assert f"{__name__}.{B.__qualname__}" == union_typeset_str({
+            TypeInfo.from_type(B),
+            TypeInfo.from_type(D)
         }
     )
 
-    assert "A" == union_typeset_str({
-            TypeInfo.fromType(A),
-            TypeInfo.fromType(D)
+    assert f"{__name__}.{A.__qualname__}" == union_typeset_str({
+            TypeInfo.from_type(A),
+            TypeInfo.from_type(D)
         }
     )
 
@@ -288,7 +328,21 @@ def test_union_typeset_superclass():
 def test_union_typeset_superclass_bare_type():
     # invoking type.mro() raises an exception
     assert "builtins.int|builtins.type" == union_typeset_str({
-            TypeInfo.fromType(int),
-            TypeInfo.fromType(type)
+            TypeInfo.from_type(int),
+            TypeInfo.from_type(type)
+        }
+    )
+
+
+def test_union_typeset_generics_superclass():
+    class A: pass
+    class B(A): pass
+    class C(B): pass
+    class D(B): pass
+
+    assert f"list[{__name__}.{B.__qualname__}]|None" == union_typeset_str({
+            TypeInfo("", "list", args=(TypeInfo.from_type(C),)),
+            TypeInfo("", "list", args=(TypeInfo.from_type(D),)),
+            TypeInfo("", "None")
         }
     )
