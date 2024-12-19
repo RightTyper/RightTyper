@@ -582,8 +582,12 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def get_signature_changes(self: typing.Self) -> list[tuple[FunctionName, str, str]]:
         return [
-            (name, format_signature(old), format_signature(new))
-            for name, old, new in self.change_list
+            (name, old_sig, new_sig)
+            for name, old_sig, new_sig in (
+                (name, format_signature(old), format_signature(new))
+                for name, old, new in self.change_list
+            )
+            if new_sig != old_sig
         ]
 
 
