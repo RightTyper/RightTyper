@@ -21,9 +21,9 @@ from righttyper.righttyper_types import (
 from righttyper.righttyper_utils import (
     debug_print,
     skip_this_file,
+    source_to_module_fqn
 )
 from righttyper.unified_transformer import UnifiedTransformer
-from righttyper.righttyper_runtime import source_to_module_fqn
 
 logger = logging.getLogger("righttyper")
 

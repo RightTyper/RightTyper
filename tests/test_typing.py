@@ -1,4 +1,5 @@
-from righttyper.righttyper_types import TypeInfo
+from righttyper.righttyper_types import TypeInfo, TypeInfoSet
+from righttyper.righttyper_utils import union_typeset_str
 from collections.abc import Iterable
 from collections import namedtuple
 from typing import Any
@@ -238,3 +239,122 @@ def test_typeinfo():
     assert "foo.bar[m.baz, \"x y\"]" == str(TypeInfo("foo", "bar", (TypeInfo("m", "baz"), "\"x y\"")))
     assert "int" == str(TypeInfo("", "int"))
     assert "tuple[bool]" == str(TypeInfo("", "tuple", args=('bool',)))
+
+
+def test_union_typeset():
+    assert "None" == union_typeset_str(TypeInfoSet({}))
+    assert "bool" == union_typeset_str({TypeInfo("", "bool")})
+
+    assert "bool|int|zoo.bar" == union_typeset_str({
+            TypeInfo("", "bool"),
+            TypeInfo("", "int"),
+            TypeInfo("zoo", "bar"),
+        }
+    )
+
+    assert "bool|int|None" == union_typeset_str({
+            TypeInfo("", "None"),
+            TypeInfo("", "bool"),
+            TypeInfo("", "int"),
+        }
+    )
+
+
+def test_union_typeset_generics():
+    assert "list[bool|int]|None" == union_typeset_str({
+            TypeInfo("", "list", args=(TypeInfo("", "int"),)),
+            TypeInfo("", "list", args=(TypeInfo("", "bool"),)),
+            TypeInfo("", "None")
+        }
+    )
+
+    assert "list[tuple[bool|int, float]]" == union_typeset_str({
+            TypeInfo("", "list", args=(
+                TypeInfo("", "tuple", args=(
+                    TypeInfo("", "bool"),
+                    TypeInfo("", "float"),
+                )),
+            )),
+            TypeInfo("", "list", args=(
+                TypeInfo("", "tuple", args=(
+                    TypeInfo("", "int"),
+                    TypeInfo("", "float"),
+                )),
+            )),
+        }
+    )
+
+    assert "list[tuple[bool, float]|tuple[float]]" == union_typeset_str({
+            TypeInfo("", "list", args=(
+                TypeInfo("", "tuple", args=(
+                    TypeInfo("", "bool"),
+                    TypeInfo("", "float"),
+                )),
+            )),
+            TypeInfo("", "list", args=(
+                TypeInfo("", "tuple", args=(
+                    TypeInfo("", "float"),
+                )),
+            )),
+        }
+    )
+
+
+def test_union_typeset_generics_str_not_merged():
+    assert "Callable[[], None]|Callable[[int], None]" == union_typeset_str({
+            TypeInfo("", "Callable", args=(
+                "[], None",
+            )),
+            TypeInfo("", "Callable", args=(
+                "[int], None",
+            )),
+        }
+    )
+
+
+def test_union_typeset_superclass():
+    class A: pass
+    class B(A): pass
+    class C(B): pass
+    class D(B): pass
+
+    assert f"{__name__}.{B.__qualname__}" == union_typeset_str({
+            TypeInfo.from_type(C),
+            TypeInfo.from_type(D)
+        }
+    )
+
+    assert f"{__name__}.{B.__qualname__}" == union_typeset_str({
+            TypeInfo.from_type(B),
+            TypeInfo.from_type(D)
+        }
+    )
+
+    assert f"{__name__}.{A.__qualname__}" == union_typeset_str({
+            TypeInfo.from_type(A),
+            TypeInfo.from_type(D)
+        }
+    )
+
+
+def test_union_typeset_superclass_bare_type():
+    # invoking type.mro() raises an exception
+    assert "builtins.int|builtins.type" == union_typeset_str({
+            TypeInfo.from_type(int),
+            TypeInfo.from_type(type)
+        }
+    )
+
+
+def test_union_typeset_generics_superclass():
+    class A: pass
+    class B(A): pass
+    class C(B): pass
+    class D(B): pass
+
+    assert f"list[{__name__}.{B.__qualname__}]|None" == union_typeset_str({
+            TypeInfo("", "list", args=(TypeInfo.from_type(C),)),
+            TypeInfo("", "list", args=(TypeInfo.from_type(D),)),
+            TypeInfo("", "None")
+        }
+    )

@@ -33,14 +33,19 @@ class FuncAnnotation:
 Typename = NewType("Typename", str)
 
 
+# Valid non-None TypeInfo.type_obj types: allows static casting
+# 'None' away in situations where mypy doesn't recognize it.
+TYPE_OBJ_TYPES: TypeAlias = type
+
 @dataclass(eq=True, frozen=True)
 class TypeInfo:
     module: str
     name: str
-    args: tuple[Self|str, ...] = tuple()    # arguments within [] in the Typename
+    args: "tuple[TypeInfo|str, ...]" = tuple()    # arguments within [] in the Typename
 
     func: FuncInfo|None = None              # if a callable, the FuncInfo
     is_bound: bool = False                  # if a callable, whether bound
+    type_obj: TYPE_OBJ_TYPES|None = None
 
     def __str__(self: Self) -> str:
         module = self.module + '.' if self.module else ''
@@ -53,6 +58,10 @@ class TypeInfo:
 
         return f"{module}{self.name}"
 
+    @staticmethod
+    def from_type(t: TYPE_OBJ_TYPES, **kwargs) -> "TypeInfo":
+        return TypeInfo(t.__module__, t.__qualname__, type_obj=t, **kwargs)
+
     class Transformer:
         def visit(self, node: "TypeInfo") -> "TypeInfo":
             new_args = tuple(
@@ -61,7 +70,8 @@ class TypeInfo:
             )
             if new_args != node.args:
                 return TypeInfo(node.module, node.name, args=new_args,
-                                func=node.func, is_bound=node.is_bound)
+                                func=node.func, is_bound=node.is_bound,
+                                type_obj=node.type_obj)
             return node
 
 

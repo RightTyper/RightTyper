@@ -31,7 +31,6 @@ from righttyper.righttyper_runtime import (
     get_full_type,
     should_skip_function,
     update_argtypes,
-    get_main_module_fqn
 )
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
@@ -58,6 +57,7 @@ from righttyper.righttyper_utils import (
     debug_print_set_level,
     skip_this_file,
     union_typeset_str,
+    get_main_module_fqn
 )
 
 @dataclass
@@ -73,6 +73,7 @@ class Options:
     generate_stubs: bool = False
     srcdir: str = ""
     use_multiprocessing: bool = True
+    sampling: bool = True
 
 options = Options()
 
@@ -128,15 +129,12 @@ class Observations:
 
         if f in self.visited_funcs_yieldval:
             is_async = False
-            y = union_typeset_str(self.visited_funcs_yieldval[f], self.namespace)
+            y = union_typeset_str(self.visited_funcs_yieldval[f])
             if y == "builtins.async_generator_wrapped_value":
                 is_async = True
                 y = Typename("typing.Any") # how to unwrap the value without waiting on it?
 
-            r = union_typeset_str(
-                self.visited_funcs_retval[f],
-                self.namespace
-            )
+            r = union_typeset_str(self.visited_funcs_retval[f])
 
             if is_async:
                 # FIXME capture send type and switch to AsyncGenerator if any sent
@@ -150,10 +148,7 @@ class Observations:
             return Typename(f"typing.Generator[{y}, typing.Any, {r}]")
 
         if f in self.visited_funcs_retval:
-            return union_typeset_str(
-                self.visited_funcs_retval[f],
-                self.namespace,
-            )
+            return union_typeset_str(self.visited_funcs_retval[f])
 
         return Typename("None")
 
@@ -168,7 +163,7 @@ class Observations:
                     if node.func in self.visited_funcs:
                         return TypeInfo('typing', 'Callable', args = (
                                 "[" + ", ".join(
-                                    union_typeset_str(arg.type_set, self.namespace)
+                                    union_typeset_str(arg.type_set)
                                     for arg in self.visited_funcs_arguments[node.func][int(node.is_bound):]
                                 ) + "]",
                                 self.return_type(node.func)
@@ -187,10 +182,7 @@ class Observations:
                 [
                     (
                         arginfo.arg_name,
-                        union_typeset_str(
-                            arginfo.type_set,
-                            self.namespace,
-                        )
+                        union_typeset_str(arginfo.type_set)
                     )
                     for arginfo in args
                 ],
@@ -255,7 +247,7 @@ def enter_function(code: CodeType, offset: int) -> Any:
         process_function_arguments(t, inspect.getargvalues(frame), defaults)
         del frame
 
-    return sys.monitoring.DISABLE
+    return sys.monitoring.DISABLE if options.sampling else None
 
 
 def call_handler(
@@ -356,7 +348,7 @@ def exit_function_worker(
     else:
         obs.visited_funcs_retval[t].add(typeinfo)
 
-    return sys.monitoring.DISABLE
+    return sys.monitoring.DISABLE if options.sampling else None
 
 
 def process_function_arguments(
@@ -750,6 +742,12 @@ class CheckModule(click.ParamType):
     hidden=True,
     help="Whether to use multiprocessing.",
 )
+@click.option(
+    "--sampling/--no-sampling",
+    default=options.sampling,
+    hidden=True,
+    help="Whether to sample calls and types or to use every one seen.",
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
     script: str,
@@ -768,7 +766,8 @@ def main(
     infer_shapes: bool,
     srcdir: str,
     target_overhead: float,
-    use_multiprocessing: bool
+    use_multiprocessing: bool,
+    sampling: bool,
 ) -> None:
 
     if module:
@@ -839,6 +838,7 @@ def main(
     options.generate_stubs = generate_stubs
     options.srcdir = srcdir
     options.use_multiprocessing = use_multiprocessing
+    options.sampling = sampling 
 
     setup_tool_id()
     register_monitoring_callbacks(
