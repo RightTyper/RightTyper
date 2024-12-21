@@ -3,6 +3,7 @@ import os
 import random
 import re
 import sys
+
 import collections.abc as abc
 from functools import cache
 from itertools import islice
@@ -22,7 +23,7 @@ from righttyper.righttyper_types import (
     TypeInfoSet,
     TypeInfo
 )
-from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
+from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn, glob_translate_to_regex
 
 
 def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) -> T:
@@ -70,8 +71,8 @@ def should_skip_function(
     code: CodeType,
     script_dir: str,
     include_all: bool,
-    include_files_regex: str,
-    include_functions_regex: str
+    include_files_pattern: str,
+    include_functions_pattern: list[str]
 ) -> bool:
     if (
         code.co_name.startswith("<")
@@ -79,9 +80,9 @@ def should_skip_function(
             code.co_filename,
             script_dir,
             include_all,
-            include_files_regex,
+            include_files_pattern,
         )
-        or (include_functions_regex and not re.search(include_functions_regex, code.co_name))
+        or (include_functions_pattern and all([not re.search(glob_translate_to_regex(pattern), code.co_name) for pattern in include_functions_pattern]))
         or "righttyper" + os.sep in code.co_filename
     ):
         return True

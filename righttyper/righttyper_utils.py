@@ -1,11 +1,12 @@
 import logging
-import os
 import re
+import os
+import sys
+
 from functools import cache
 from typing import Any, Final, cast, Iterator
 import itertools
 from pathlib import Path
-import sys
 
 from righttyper.righttyper_types import (
     ArgInfo,
@@ -26,6 +27,16 @@ _SAMPLING_INTERVAL = 0.01
 _DEBUG_PRINT: bool = False
 
 logger = logging.getLogger("righttyper")
+
+
+def glob_translate_to_regex(r):
+    if sys.version_info < (3, 13):
+        # glob.translate not available until 3.13; use wcmatch's implementation
+        from wcmatch import glob
+        return glob.translate(r)[0][0]
+    else:
+        import glob
+        return glob.translate(r)
 
 
 def reset_sampling_interval() -> None:
@@ -129,10 +140,10 @@ def skip_this_file(
     filename: str,
     script_dir: str,
     include_all: bool,
-    include_files_regex: str,
+    include_files_pattern: str,
 ) -> bool:
     debug_print(
-        f"checking skip_this_file: {script_dir=}, {filename=}, {include_files_regex=}"
+        f"checking skip_this_file: {script_dir=}, {filename=}, {include_files_pattern=}"
     )
     if include_all:
         should_skip = False
@@ -145,9 +156,9 @@ def skip_this_file(
             or "righttyper.py" in filename
             or script_dir not in os.path.abspath(filename)
         )
-    if include_files_regex:
+    if include_files_pattern:
         should_skip = should_skip or not re.search(
-            include_files_regex, filename
+            glob_translate_to_regex(include_files_pattern), filename
         )
     return should_skip
 

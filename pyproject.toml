@@ -41,6 +41,7 @@ authors = [
 dependencies = [ "libcst >= 1.2.0",
 		 "click >= 8.1.7",
 		 "rich >= 13.7.1",
+		 "wcmatch >= 10.0",
 		 ]
 	 
 description = "A fast runtime type hint assistant for Python code."
