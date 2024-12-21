@@ -65,6 +65,7 @@ class Options:
     script_dir: str = ""
     include_files_regex: str = ""
     include_all: bool = False
+    include_functions_regex: str = ""
     target_overhead: float = 5.0
     infer_shapes: bool = False
     ignore_annotations: bool = False
@@ -219,6 +220,7 @@ def enter_function(code: CodeType, offset: int) -> Any:
         options.script_dir,
         options.include_all,
         options.include_files_regex,
+        options.include_functions_regex
     ):
         return sys.monitoring.DISABLE
 
@@ -263,6 +265,7 @@ def call_handler(
             options.script_dir,
             options.include_all,
             options.include_files_regex,
+            options.include_functions_regex,
         ):
             sys.monitoring.set_local_events(
                 TOOL_ID,
@@ -331,6 +334,7 @@ def exit_function_worker(
         options.script_dir,
         options.include_all,
         options.include_files_regex,
+        options.include_functions_regex
     ):
         return sys.monitoring.DISABLE
 
@@ -550,7 +554,7 @@ def process_all_files() -> list[SignatureChanges]:
             t.file_name,
             options.script_dir,
             options.include_all,
-            options.include_files_regex,
+            options.include_files_regex
         )
     )
 
@@ -670,6 +674,11 @@ class CheckModule(click.ParamType):
     help="Include only files matching the given regex pattern.",
 )
 @click.option(
+    "--include-functions",
+    type=str,
+    help="Only annotate functions matching the given regex pattern.",
+)
+@click.option(
     "--infer-shapes",
     is_flag=True,
     default=False,
@@ -755,6 +764,7 @@ def main(
     args: list[str],
     all_files: bool,
     include_files: str,
+    include_functions: str,
     type_coverage_by_directory: str,
     type_coverage_by_file: str,
     type_coverage_summary: str,
@@ -830,6 +840,7 @@ def main(
     options.script_dir = os.path.dirname(os.path.realpath(script))
     options.include_files_regex = include_files
     options.include_all = all_files
+    options.include_functions_regex = include_functions
     options.target_overhead = target_overhead
     options.infer_shapes = infer_shapes
     options.ignore_annotations = ignore_annotations
