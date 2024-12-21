@@ -1,6 +1,7 @@
 import inspect
 import os
 import random
+import re
 import sys
 import collections.abc as abc
 from functools import cache
@@ -70,6 +71,7 @@ def should_skip_function(
     script_dir: str,
     include_all: bool,
     include_files_regex: str,
+    include_functions_regex: str
 ) -> bool:
     if (
         code.co_name.startswith("<")
@@ -79,6 +81,7 @@ def should_skip_function(
             include_all,
             include_files_regex,
         )
+        or (include_functions_regex and not re.search(include_functions_regex, code.co_name))
         or "righttyper" + os.sep in code.co_filename
     ):
         return True
