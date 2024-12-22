@@ -152,13 +152,13 @@ def skip_this_file(
             filename.startswith("<")
             or filename.startswith("/Library")
             or filename.startswith("/opt/homebrew/")
-            or "/site-packages/" in filename
+            or os.sep + "site-packages" + os.sep in filename
             or "righttyper.py" in filename
             or script_dir not in os.path.abspath(filename)
         )
     if include_files_pattern:
         should_skip = should_skip or not re.search(
-            glob_translate_to_regex(include_files_pattern), filename
+            include_files_pattern, filename
         )
     return should_skip
 

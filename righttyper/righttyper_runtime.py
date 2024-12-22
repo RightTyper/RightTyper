@@ -23,7 +23,7 @@ from righttyper.righttyper_types import (
     TypeInfoSet,
     TypeInfo
 )
-from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn, glob_translate_to_regex
+from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 
 
 def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) -> T:
@@ -74,16 +74,20 @@ def should_skip_function(
     include_files_pattern: str,
     include_functions_pattern: list[str]
 ) -> bool:
+    skip_file = skip_this_file(
+        code.co_filename,
+        script_dir,
+        include_all,
+        include_files_pattern,
+    )
+    included_in_pattern = include_functions_pattern and \
+        all([not re.search(pattern, code.co_name) \
+             for pattern in include_functions_pattern])
     if (
         code.co_name.startswith("<")
-        or skip_this_file(
-            code.co_filename,
-            script_dir,
-            include_all,
-            include_files_pattern,
-        )
-        or (include_functions_pattern and all([not re.search(glob_translate_to_regex(pattern), code.co_name) for pattern in include_functions_pattern]))
-        or "righttyper" + os.sep in code.co_filename
+        or skip_file
+        or included_in_pattern
+        or "righttyper_" in code.co_filename
     ):
         return True
     if not (code.co_flags & 0x2):
