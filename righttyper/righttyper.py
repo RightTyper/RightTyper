@@ -9,6 +9,7 @@ import os
 import runpy
 import signal
 import sys
+
 import collections.abc as abc
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -63,8 +64,9 @@ from righttyper.righttyper_utils import (
 @dataclass
 class Options:
     script_dir: str = ""
-    include_files_regex: str = ""
+    include_files_pattern: str = ""
     include_all: bool = False
+    include_functions_pattern: str = ""
     target_overhead: float = 5.0
     infer_shapes: bool = False
     ignore_annotations: bool = False
@@ -218,7 +220,8 @@ def enter_function(code: CodeType, offset: int) -> Any:
         code,
         options.script_dir,
         options.include_all,
-        options.include_files_regex,
+        options.include_files_pattern,
+        options.include_functions_pattern
     ):
         return sys.monitoring.DISABLE
 
@@ -262,7 +265,8 @@ def call_handler(
             code,
             options.script_dir,
             options.include_all,
-            options.include_files_regex,
+            options.include_files_pattern,
+            options.include_functions_pattern,
         ):
             sys.monitoring.set_local_events(
                 TOOL_ID,
@@ -330,7 +334,8 @@ def exit_function_worker(
         code,
         options.script_dir,
         options.include_all,
-        options.include_files_regex,
+        options.include_files_pattern,
+        options.include_functions_pattern
     ):
         return sys.monitoring.DISABLE
 
@@ -550,7 +555,7 @@ def process_all_files() -> list[SignatureChanges]:
             t.file_name,
             options.script_dir,
             options.include_all,
-            options.include_files_regex,
+            options.include_files_pattern
         )
     )
 
@@ -667,7 +672,12 @@ class CheckModule(click.ParamType):
 @click.option(
     "--include-files",
     type=str,
-    help="Include only files matching the given regex pattern.",
+    help="Include only files matching the given pattern.",
+)
+@click.option(
+    "--include-functions",
+    multiple=True,
+    help="Only annotate functions matching the given pattern.",
 )
 @click.option(
     "--infer-shapes",
@@ -755,6 +765,7 @@ def main(
     args: list[str],
     all_files: bool,
     include_files: str,
+    include_functions: tuple[str],
     type_coverage_by_directory: str,
     type_coverage_by_file: str,
     type_coverage_summary: str,
@@ -828,8 +839,9 @@ def main(
 
     debug_print_set_level(verbose)
     options.script_dir = os.path.dirname(os.path.realpath(script))
-    options.include_files_regex = include_files
+    options.include_files_pattern = include_files
     options.include_all = all_files
+    options.include_functions_pattern = include_functions
     options.target_overhead = target_overhead
     options.infer_shapes = infer_shapes
     options.ignore_annotations = ignore_annotations
