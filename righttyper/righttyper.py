@@ -852,16 +852,18 @@ def main(
     options.use_multiprocessing = use_multiprocessing
     options.sampling = sampling 
 
-    setup_tool_id()
-    register_monitoring_callbacks(
-        enter_function,
-        call_handler,
-        exit_function,
-        yield_function,
-    )
-    sys.monitoring.restart_events()
-    setup_timer(restart_sampling)
-    # replace_dicts.replace_dicts()
-    execute_script_or_module(script, bool(module), args)
-    reset_monitoring()
-    post_process()
+    try:
+        setup_tool_id()
+        register_monitoring_callbacks(
+            enter_function,
+            call_handler,
+            exit_function,
+            yield_function,
+        )
+        sys.monitoring.restart_events()
+        setup_timer(restart_sampling)
+        # replace_dicts.replace_dicts()
+        execute_script_or_module(script, bool(module), args)
+    finally:
+        reset_monitoring()
+        post_process()
