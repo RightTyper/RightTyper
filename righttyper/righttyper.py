@@ -1,5 +1,4 @@
 import concurrent.futures
-import functools
 import importlib.metadata
 import importlib.util
 import inspect
@@ -42,7 +41,6 @@ from righttyper.righttyper_tool import (
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
-    ArgumentType,
     Filename,
     FuncInfo,
     FuncAnnotation,
@@ -788,7 +786,7 @@ def main(
         if not os.path.isfile(script):
             raise click.UsageError(f"\"{script}\" is not a file.")
     else:
-        raise click.UsageError(f"Either -m/--module must be provided, or a script be passed.")
+        raise click.UsageError("Either -m/--module must be provided, or a script be passed.")
 
     if infer_shapes:
         # Check for required packages for shape inference

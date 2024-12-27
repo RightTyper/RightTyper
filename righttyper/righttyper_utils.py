@@ -9,12 +9,6 @@ import itertools
 from pathlib import Path
 
 from righttyper.righttyper_types import (
-    ArgInfo,
-    ArgumentName,
-    ArgumentType,
-    Filename,
-    FuncInfo,
-    FunctionName,
     Typename,
     TypeInfo,
     TypeInfoSet,
@@ -83,7 +77,8 @@ def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
     if any(t.args for t in typeinfoset):
         typeinfoset = TypeInfoSet({*typeinfoset})   # avoid modifying
 
-        group_key = lambda t: (t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args))
+        def group_key(t):
+            return t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args)
         group: Iterator[TypeInfo]|TypeInfoSet
         for (mod, name, all_info, nargs), group in itertools.groupby(
             sorted(typeinfoset, key=group_key),

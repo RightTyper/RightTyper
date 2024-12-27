@@ -105,7 +105,7 @@ def test_transform_function():
             return z/2
     """)
 
-    assert get_if_type_checking(code) == None
+    assert get_if_type_checking(code) is None
 
     sig_changes = sorted(t.get_signature_changes())
     it = iter(sig_changes)
@@ -186,7 +186,7 @@ def test_transform_method():
             return z/2
     """)
 
-    assert get_if_type_checking(code) == None
+    assert get_if_type_checking(code) is None
 
     sig_changes = sorted(t.get_signature_changes())
     it = iter(sig_changes)
@@ -248,7 +248,7 @@ def test_transform_local_function():
             return bar(x+y)
     """)
 
-    assert get_if_type_checking(code) == None
+    assert get_if_type_checking(code) is None
 
 
 def test_override_annotations():
@@ -326,7 +326,7 @@ def test_transform_adds_typing_import_for_typing_names():
     code_str = str(code.code)
     assert re.search(r"^ *from typing import .*\bOptional\b", code_str)
     assert re.search(r"^ *from typing import .*\bNever\b", code_str)
-    assert get_if_type_checking(code) == None
+    assert get_if_type_checking(code) is None
 
 
 def test_transform_unknown_type_as_string():
@@ -453,7 +453,7 @@ def test_transform_deletes_type_hint_comments_in_header():
             pass
     """)
 
-    assert get_if_type_checking(code) == None
+    assert get_if_type_checking(code) is None
 
 
 def test_transform_deletes_type_hint_comments_in_parameters():
@@ -509,7 +509,7 @@ def test_transform_deletes_type_hint_comments_in_parameters():
             pass
     """)
 
-    assert get_if_type_checking(code) == None
+    assert get_if_type_checking(code) is None
 
 
 def test_transform_deletes_type_hint_comments_for_retval():
@@ -562,7 +562,7 @@ def test_transform_deletes_type_hint_comments_for_retval():
             pass
     """)
 
-    assert get_if_type_checking(code) == None
+    assert get_if_type_checking(code) is None
 
 
 def test_transform_locally_defined_types():
@@ -633,7 +633,7 @@ def test_transform_locally_defined_types():
             return F((x+y)/2)
     """)
 
-    assert get_if_type_checking(code) == None
+    assert get_if_type_checking(code) is None
 
 
 def test_uses_imported_aliases():
@@ -923,7 +923,7 @@ def test_relative_import():
         def foo(x: b.T, y: c.T, z: X): ...
     """)
 
-    assert get_if_type_checking(code) == None
+    assert get_if_type_checking(code) is None
 
 
 @pytest.mark.skip(reason="Not yet supported")
@@ -1453,7 +1453,7 @@ def test_builtin_name_conflicts():
             pass
     """)
 
-    assert get_if_type_checking(code) == textwrap.dedent(f"""\
+    assert get_if_type_checking(code) == textwrap.dedent("""\
         if TYPE_CHECKING:
             import builtins
     """)
@@ -1496,7 +1496,7 @@ def test_class_names_dont_affect_body_of_methods():
             pass
     """)
 
-    assert get_if_type_checking(code) == textwrap.dedent(f"""\
+    assert get_if_type_checking(code) == textwrap.dedent("""\
         if TYPE_CHECKING:
             import builtins
     """)
@@ -1556,7 +1556,7 @@ def test_inner_function():
                 pass
     """)
 
-    assert get_if_type_checking(code) == textwrap.dedent(f"""\
+    assert get_if_type_checking(code) == textwrap.dedent("""\
         if TYPE_CHECKING:
             import builtins
     """)

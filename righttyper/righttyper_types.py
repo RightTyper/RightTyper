@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, NewType, TypeVar, Self, Iterator, Iterable, TypeAlias
+from typing import NewType, TypeVar, Self, TypeAlias
 
 T = TypeVar("T")
 
