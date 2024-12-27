@@ -1,13 +1,11 @@
 import typing
 import builtins
 import collections.abc as abc
-import types
 import libcst as cst
 import libcst.matchers as cstm
 import re
 
 from righttyper.righttyper_types import (
-    ArgumentName,
     Filename,
     FuncInfo,
     FuncAnnotation,
@@ -682,11 +680,11 @@ def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
     return names
 
 
-def list_rindex(l: list, item: object) -> int:
+def list_rindex(lst: list, item: object) -> int:
     """Returns either a negative index for the last occurrence of 'item' on the list,
        or 0 if not found."""
     try:
-        return -1 - l[::-1].index(item)
+        return -1 - lst[::-1].index(item)
     except ValueError:
         return 0
 

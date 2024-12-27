@@ -1,26 +1,17 @@
 import logging
-import os
 import pathlib
-from collections import defaultdict
-from typing import Any
 
 import libcst as cst
 
 from righttyper.generate_stubs import PyiTransformer
 from righttyper.righttyper_types import (
-    ArgInfo,
-    ArgumentName,
-    ArgumentType,
     Filename,
     FuncInfo,
     FuncAnnotation,
     FunctionName,
-    Typename,
-    TypeInfoSet,
 )
 from righttyper.righttyper_utils import (
     debug_print,
-    skip_this_file,
     source_to_module_fqn
 )
 from righttyper.unified_transformer import UnifiedTransformer

@@ -1,5 +1,4 @@
 import inspect
-import os
 import random
 import re
 import sys
@@ -15,7 +14,6 @@ from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
-    ArgumentType,
     Filename,
     FunctionName,
     FuncInfo,
