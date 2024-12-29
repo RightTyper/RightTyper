@@ -287,7 +287,8 @@ def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
 
     return None
 
-def non_empty_safe(value: Any):
+def _is_non_empty_safe(value: Any):
+    """Check if a value is non-empty and return False if an error is thrown."""
     try:
         return len(value) != 0
     except Exception as e:
@@ -312,7 +313,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
 
     if isinstance(value, dict):
         t = type(value)
-        if non_empty_safe(value):
+        if _is_non_empty_safe(value):
             el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
             args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
         else:
@@ -321,7 +322,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         return TypeInfo(module, t.__qualname__, args=args)
     elif isinstance(value, (list, set)):
         t = type(value)
-        if non_empty_safe(value):
+        if _is_non_empty_safe(value):
             el = sample_from_collection(value)
             args = (get_full_type(el, depth=depth+1),)
         else:
@@ -329,14 +330,14 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         module = "" if t.__module__ == "builtins" else t.__module__
         return TypeInfo(module, t.__qualname__, args=args)
     elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
-        if non_empty_safe(value):
+        if _is_non_empty_safe(value):
             el = sample_from_collection(value)
             args = (get_full_type(el, depth=depth+1),)
         else:
             args = (TypeInfo("typing", "Never"),)
         return TypeInfo("typing", t.__qualname__, args=args)
     elif isinstance(value, abc.ItemsView):
-        if non_empty_safe(value):
+        if _is_non_empty_safe(value):
             el = sample_from_collection(value)
             args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
         else:
@@ -347,7 +348,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
             t = type(value)
             return TypeInfo(t.__module__, t.__qualname__)
         else:
-            if non_empty_safe(value):
+            if _is_non_empty_safe(value):
                 args = tuple(get_full_type(fld, depth=depth+1) for fld in value)
             else:
                 args = tuple()
