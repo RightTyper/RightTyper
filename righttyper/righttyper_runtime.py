@@ -287,6 +287,7 @@ def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
 
     return None
 
+
 def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
     """
     get_full_type takes a value (an instance) as input and returns a string representing its type.
