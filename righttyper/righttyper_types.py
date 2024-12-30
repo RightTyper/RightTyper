@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from collections import defaultdict
 from enum import Enum
 from typing import NewType, TypeVar, Self, TypeAlias
 
@@ -28,7 +29,7 @@ class FuncInfo:
 class FuncAnnotation:
     args: list[tuple[ArgumentName, Typename]]
     retval: Typename|None
-    generics: dict[str, list[Typename]]
+    generics: dict[str, list[Typename]] = field(default_factory=lambda: defaultdict(list))
 
 
 Typename = NewType("Typename", str)
