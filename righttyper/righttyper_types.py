@@ -105,14 +105,16 @@ class Generic:
         for g1 in b:
             for g2 in a:
                 if g1.arg_names <= g2.arg_names:
-                    # break apart into subset and non-subset
+                    # break apart into subset and leftover
                     a.remove(g2)
-                    if len(g1.arg_names) > 1:
-                        a.append(Generic(g1.arg_names, g2.is_return and g1.is_return))
+                    subset = Generic(g1.arg_names, g2.is_return and g1.is_return)
+                    leftover = Generic(g2.arg_names-g1.arg_names, g2.is_return and not g1.is_return)
 
-                    leftover = g2.arg_names-g1.arg_names
-                    if len(leftover) > 1:
-                        a.append(Generic(leftover, g2.is_return and not g1.is_return))
+                    # add new generics back to a if they're big enough
+                    if len(subset.arg_names) + subset.is_return > 1:
+                        a.append(subset)
+                    if len(leftover.arg_names) + leftover.is_return > 1:
+                        a.append(leftover)
 
                     break
 
