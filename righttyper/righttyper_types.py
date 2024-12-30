@@ -28,6 +28,7 @@ class FuncInfo:
 class FuncAnnotation:
     args: list[tuple[ArgumentName, Typename]]
     retval: Typename|None
+    generics: dict[str, list[Typename]]
 
 
 Typename = NewType("Typename", str)
@@ -82,3 +83,45 @@ TypeInfoSet: TypeAlias = set[TypeInfo]
 class ArgInfo:
     arg_name: ArgumentName
     type_set: TypeInfoSet
+
+
+@dataclass
+class Generic:
+    arg_names: set[str]
+    is_return: bool = False
+    name: str|None = None
+
+    # merge two lists of generics to construct the new list of 
+    # generics. This does something, I haven't written it yet.
+    def merge_generics(a: list[Self], b: list[Self]) -> list[Self]:
+        # for every b that's a subset of someting in a:
+        # break apart into subset and non-subset
+        # if return agrees on both, keep it, otherwise don't
+        # then we prune all single length generics, since
+        # that's literally just an argument
+
+        # copy a because we are going to mutate it
+        a: list[Self] = a.copy()
+        for g1 in b:
+            for g2 in a:
+                if g1.arg_names <= g2.arg_names:
+                    # break apart into subset and non-subset
+                    a.remove(g2)
+                    if len(g1.arg_names) > 1:
+                        a.append(Generic(g1.arg_names, g2.is_return and g1.is_return))
+
+                    leftover = g2.arg_names-g1.arg_names
+                    if len(leftover) > 1:
+                        a.append(Generic(leftover, g2.is_return and not g1.is_return))
+
+                    break
+
+        return a
+
+    def get(generics: list[Self], name: str) -> Self|None:
+        for generic in generics:
+            if name in generic.arg_names:
+                return generic
+
+        return None
+

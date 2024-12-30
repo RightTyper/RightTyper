@@ -10,7 +10,7 @@ import signal
 import sys
 
 import collections.abc as abc
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from dataclasses import dataclass, field
 from types import CodeType, FrameType, FunctionType
 from typing import (
@@ -48,6 +48,7 @@ from righttyper.righttyper_types import (
     Typename,
     TypeInfo,
     TypeInfoSet,
+    Generic,
 )
 from righttyper.righttyper_utils import (
     TOOL_ID,
@@ -93,6 +94,9 @@ class Observations:
 
     # For each visited function, all the info about its arguments
     visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = field(default_factory=lambda: defaultdict(list))
+
+    # For each visited function, all potential groups of generics
+    visited_funcs_generics: dict[FuncInfo, list[Generic]|None] = field(default_factory=lambda: defaultdict(None))
 
     # For each visited function, the values it returned
     visited_funcs_retval: dict[FuncInfo, TypeInfoSet] = field(default_factory=lambda: defaultdict(TypeInfoSet))
@@ -174,19 +178,63 @@ class Observations:
 
         self._transform_types(T())
 
+        generic_index = 0
         type_annotations: dict[FuncInfo, FuncAnnotation] = {}
+
         for t in self.visited_funcs:
             args = self.visited_funcs_arguments[t]
+            generics = self.visited_funcs_generics[t]
+
+            # prune unchanged generics
+            for arg in args:
+                generic = Generic.get(generics, arg.arg_name)
+                if not generic:
+                    continue
+
+                if len(arg.type_set) < 2:
+                    generics.remove(generic)
+
+            generic_typesets = {}
+            return_type = self.return_type(t)
+
+            for generic in generics:
+                # get the typeset
+                type_set = None
+                for arg in args:
+                    if arg.arg_name not in generic.arg_names:
+                        continue
+
+                    type_set = arg.type_set
+                    break
+                
+                types = "_".join(map(lambda a: a.name, type_set))
+                generic.name = f"T_{types}_{generic_index}"
+
+                # if this generic is also the return type, change the return type
+                if generic.is_return:
+                    return_type = generic.name
+
+
+                # if for whatever reason you can't find the argument name for the
+                # generic, we should just do nothing I guess
+                if not type_set:
+                    continue
+
+                generic_typesets[generic.name] = union_typeset_str(type_set).split("|")
+                generic_index += 1
+
+            arguments = []
+            for arg in args:
+                if g := Generic.get(generics, arg.arg_name):
+                    arguments.append((arg.arg_name, g.name))
+
+                else:
+                    arguments.append((arg.arg_name, union_typeset_str(arg.type_set)))
 
             type_annotations[t] = FuncAnnotation(
-                [
-                    (
-                        arginfo.arg_name,
-                        union_typeset_str(arginfo.type_set)
-                    )
-                    for arginfo in args
-                ],
-                self.return_type(t)
+                arguments,
+                return_type,
+                generic_typesets
             )
 
         return type_annotations
@@ -207,7 +255,6 @@ class Observations:
 
 
 obs = Observations()
-
 
 def enter_function(code: CodeType, offset: int) -> Any:
     """
@@ -351,6 +398,15 @@ def exit_function_worker(
     else:
         obs.visited_funcs_retval[t].add(typeinfo)
 
+    # get the arguments to check equality of types 
+    frame = inspect.currentframe()
+    if frame and frame.f_back and frame.f_back.f_back:
+        frame = frame.f_back.f_back
+        assert code == frame.f_code
+
+        process_generics(t, inspect.getargvalues(frame), return_value)
+        del frame
+
     return sys.monitoring.DISABLE if options.sampling else None
 
 
@@ -379,6 +435,32 @@ def process_function_arguments(
 
     debug_print(f"processing {t=} {argtypes=}")
     obs.update_visited_funcs_arguments(t, argtypes)
+
+def process_generics(
+    t: FuncInfo,
+    argtypes: ArgInfo,
+    return_value: Any
+) -> None:
+    generics = []
+    for a in argtypes.args:
+
+        # if we're already in a group no need to do anything
+        if a in sum(map(lambda a: list(a.arg_names), generics), []):
+            continue
+
+        typ = type(argtypes.locals[a])
+        g = Generic(set([a]), type(return_value) == typ)
+
+        for b in argtypes.args:
+            if type(argtypes.locals[b]) == typ:
+                g.arg_names.add(b)
+
+        generics.append(g)
+
+    if t in obs.visited_funcs_generics:
+        generics = Generic.merge_generics(obs.visited_funcs_generics[t], generics)
+
+    obs.visited_funcs_generics[t] = generics
 
 
 def find_functions(

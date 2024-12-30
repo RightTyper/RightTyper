@@ -209,6 +209,10 @@ class UnifiedTransformer(cst.CSTTransformer):
         # currently known global names
         self.known_names: set[str] = set(_BUILTIN_TYPES)
 
+        # make generic names known
+        # TODO: keep better track of collisions
+        self.known_names |= set(sum(map(lambda a: list(a.generics.keys()), self.type_annotations.values()), []))
+
         # global aliases from 'from .. import ..' and 'import .. as ..'
         self.aliases: dict[str, str] = {
             f"typing.{t}": t
@@ -462,16 +466,6 @@ class UnifiedTransformer(cst.CSTTransformer):
             else:
                 new_body.append(stmt)
 
-        missing_modules = {
-            mod
-            for mod in (
-                self._module_for(t)[0]
-                for t in self.unknown_types - _TYPING_TYPES
-                if '.' in t
-                and t.split('.')[0] not in self.known_names
-            )
-            if mod != ''
-        }
 
         def stmt_index(body: list[cst.BaseStatement], pattern: cstm.BaseMatcherNode) -> int|None:
             for i, stmt in enumerate(body):
@@ -493,6 +487,65 @@ class UnifiedTransformer(cst.CSTTransformer):
                     break
 
             return i
+                
+        # Emit typevars
+        for ann in self.type_annotations.values():
+            if len(ann.generics) == 0:
+                continue
+
+            exprs = [
+                cst.ImportFrom(module=cst.Name(value="typing"),names=[cst.ImportAlias(name=cst.Name("TypeVar"))]),
+                cst.Newline()
+            ]
+            for (name, types) in ann.generics.items():
+
+                type_exprs = []
+                for typ in types:
+                    if not self._is_valid(typ):
+                        continue
+                    
+                    # reuse the code from leave_FunctionDef
+                    annotation_expr: cst.BaseExpression = cst.parse_expression(typ)
+                    annotation_expr = self._rename_types(annotation_expr)
+                    unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
+                    self.unknown_types |= unknown_types
+
+                    # this will quote types that we import. I'm not sure if this is correct.
+                    if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
+                        annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
+
+                    type_exprs.append(cst.Arg(value=annotation_expr))
+
+                exprs.append(
+                    cst.SimpleStatementLine(
+                        body = [
+                            cst.Assign(
+                               targets=[cst.AssignTarget(target=cst.Name(name))],
+                               value=cst.Call(
+                                   func=cst.Name("TypeVar"),
+                                   args=[
+                                       cst.Arg(value=cst.SimpleString(_quote(name))),
+                                       *type_exprs
+                                   ])
+                               )
+                        ]
+                    )
+                )
+                exprs.append(cst.Newline())
+
+            b = find_beginning(new_body)
+            new_body[b:b] = exprs
+        
+        missing_modules = {
+            mod
+            for mod in (
+                self._module_for(t)[0]
+                for t in self.unknown_types - _TYPING_TYPES
+                if '.' in t
+                and t.split('.')[0] not in self.known_names
+            )
+            if mod != ''
+        }
 
         if_type_checking_position = stmt_index(new_body, cstm.If(
                 test=cstm.Name('TYPE_CHECKING'),
