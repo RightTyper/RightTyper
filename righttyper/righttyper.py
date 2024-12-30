@@ -10,7 +10,7 @@ import signal
 import sys
 
 import collections.abc as abc
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 from dataclasses import dataclass, field
 from types import CodeType, FrameType, FunctionType
 from typing import (
