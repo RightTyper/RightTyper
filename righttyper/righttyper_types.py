@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from collections import defaultdict
 from enum import Enum
-from typing import NewType, TypeVar, Self, TypeAlias
+from typing import Any, NewType, TypeVar, Self, Iterator, Iterable, TypeAlias
 
 T = TypeVar("T")
 
@@ -27,10 +27,17 @@ class FuncInfo:
 
 @dataclass(eq=True, frozen=True)
 class FuncAnnotation:
-    args: list[tuple[ArgumentName, Typename]]
-    retval: Typename|None
-    generics: dict[str, list[Typename]] = field(default_factory=lambda: defaultdict(list))
+    args: list[tuple[ArgumentName, Typename|int]]
 
+    # retval and yieldval are used to construct the return type
+    # if we're not returning a generic. If we are, returns_generic
+    # will be a non-None generic index
+    retval: Typename
+    yieldval: Typename|None
+    returns_generic: int|None
+
+    # maps generic indices to typesets
+    generics: dict[int, list[Typename]] = field(default_factory=lambda: defaultdict(list))
 
 Typename = NewType("Typename", str)
 
@@ -90,7 +97,7 @@ class ArgInfo:
 class Generic:
     arg_names: set[str]
     is_return: bool = False
-    name: str|None = None
+    index: int = -1
 
     # merge two lists of generics to construct the new list of 
     # generics. This does something, I haven't written it yet.

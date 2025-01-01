@@ -1,4 +1,5 @@
 import concurrent.futures
+import functools
 import importlib.metadata
 import importlib.util
 import inspect
@@ -41,6 +42,7 @@ from righttyper.righttyper_tool import (
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
+    ArgumentType,
     Filename,
     FuncInfo,
     FuncAnnotation,
@@ -156,6 +158,33 @@ class Observations:
 
         return Typename("None")
 
+    def prune_generics(self: Self, t: FuncInfo) -> list[Generic]:
+        
+        args = self.visited_funcs_arguments[t]
+        generics = self.visited_funcs_generics[t]
+        retval = self.visited_funcs_retval[t]
+
+        # should we have no genreics, die
+        if not generics:
+            return []
+
+        # prune unchanged generics
+        for arg in args:
+            generic = Generic.get(generics, arg.arg_name)
+            if not generic:
+                continue
+
+            if len(arg.type_set) < 2:
+                generics.remove(generic)
+
+            # if the return type and arg types mismatch, prune
+            # since we're working with sets of dataclasses we
+            # can use simple equality :)
+            elif generic.is_return:
+                if arg.type_set != retval:
+                    generics.remove(generic)
+
+        return generics
 
     def collect_annotations(self: Self) -> dict[FuncInfo, FuncAnnotation]:
         """Collects function type annotations from the observed types."""
@@ -182,22 +211,16 @@ class Observations:
         type_annotations: dict[FuncInfo, FuncAnnotation] = {}
 
         for t in self.visited_funcs:
+
             args = self.visited_funcs_arguments[t]
-            generics = self.visited_funcs_generics[t]
-
-            # prune unchanged generics
-            for arg in args:
-                generic = Generic.get(generics, arg.arg_name)
-                if not generic:
-                    continue
-
-                if len(arg.type_set) < 2:
-                    generics.remove(generic)
-
+            generics = self.prune_generics(t)
+            
             generic_typesets = {}
-            return_type = self.return_type(t)
+            return_index = None
 
             for generic in generics:
+                generic.index = generic_index
+
                 # get the typeset
                 type_set = None
                 for arg in args:
@@ -207,33 +230,42 @@ class Observations:
                     type_set = arg.type_set
                     break
                 
-                types = "_".join(map(lambda a: a.name, type_set))
-                generic.name = f"T_{types}_{generic_index}"
-
-                # if this generic is also the return type, change the return type
-                if generic.is_return:
-                    return_type = generic.name
-
-
                 # if for whatever reason you can't find the argument name for the
                 # generic, we should just do nothing I guess
                 if not type_set:
                     continue
 
-                generic_typesets[generic.name] = union_typeset_str(type_set).split("|")
+                # if this generic is also the return type, change the return type
+                if generic.is_return:
+                    return_index = generic.index
+
+                generic_typesets[generic.index] = union_typeset_str(type_set).split("|")
                 generic_index += 1
 
             arguments = []
             for arg in args:
                 if g := Generic.get(generics, arg.arg_name):
-                    arguments.append((arg.arg_name, g.name))
-
+                    arguments.append((arg.arg_name, g.index))
                 else:
                     arguments.append((arg.arg_name, union_typeset_str(arg.type_set)))
 
+            returns = list(filter(lambda a: a.is_return, generics))
+            if len(returns) == 1:
+                return_index = returns[0].index
+            else:
+                return_index = None
+
+            # we always return something so we're cool with union_typeset_str giving us "None"
+            retval = union_typeset_str(self.visited_funcs_retval[t])
+            yieldval = None
+            if t in self.visited_funcs_yieldval:
+                yieldval = union_typeset_str(self.visited_funcs_yieldval[t])
+
             type_annotations[t] = FuncAnnotation(
                 arguments,
-                return_type,
+                retval,
+                yieldval,
+                return_index,
                 generic_typesets
             )
 
@@ -868,7 +900,7 @@ def main(
         if not os.path.isfile(script):
             raise click.UsageError(f"\"{script}\" is not a file.")
     else:
-        raise click.UsageError("Either -m/--module must be provided, or a script be passed.")
+        raise click.UsageError(f"Either -m/--module must be provided, or a script be passed.")
 
     if infer_shapes:
         # Check for required packages for shape inference
