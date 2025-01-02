@@ -59,7 +59,8 @@ from righttyper.righttyper_utils import (
     debug_print_set_level,
     skip_this_file,
     union_typeset_str,
-    get_main_module_fqn
+    get_main_module_fqn,
+    find_most_specific_common_superclass_by_name
 )
 
 @dataclass
@@ -174,7 +175,12 @@ class Observations:
             if not generic:
                 continue
 
+            # if there's no args
             if len(arg.type_set) < 2:
+                generics.remove(generic)
+
+            # if it all has a superclass
+            elif find_most_specific_common_superclass_by_name(arg.type_set):
                 generics.remove(generic)
 
             # if the return type and arg types mismatch, prune
@@ -217,6 +223,7 @@ class Observations:
             
             generic_typesets = {}
             return_index = None
+            yield_index = None
 
             for generic in generics:
                 generic.index = generic_index
@@ -236,8 +243,8 @@ class Observations:
                     continue
 
                 # if this generic is also the return type, change the return type
-                if generic.is_return:
-                    return_index = generic.index
+                if generic.is_return: return_index = generic.index
+                if generic.is_yield: yield_index = generic.index
 
                 generic_typesets[generic.index] = union_typeset_str(type_set).split("|")
                 generic_index += 1
@@ -266,6 +273,7 @@ class Observations:
                 retval,
                 yieldval,
                 return_index,
+                yield_index,
                 generic_typesets
             )
 
@@ -436,7 +444,7 @@ def exit_function_worker(
         frame = frame.f_back.f_back
         assert code == frame.f_code
 
-        process_generics(t, inspect.getargvalues(frame), return_value)
+        process_generics(t, inspect.getargvalues(frame), return_value, event_type)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -471,7 +479,8 @@ def process_function_arguments(
 def process_generics(
     t: FuncInfo,
     argtypes: ArgInfo,
-    return_value: Any
+    return_value: Any,
+    event_type: int
 ) -> None:
     generics = []
     for a in argtypes.args:
@@ -481,7 +490,12 @@ def process_generics(
             continue
 
         typ = type(argtypes.locals[a])
-        g = Generic(set([a]), type(return_value) == typ)
+
+        # we set the other one to true always in order to not overwrite something
+        # accidentally. Does this work? dunno haven't really tested it yet
+        g = event_type == sys.monitoring.events.PY_YIELD and \
+            Generic(set([a]), is_yield=type(return_value) == typ) or\
+            Generic(set([a]), is_return=type(return_value) == typ)
 
         for b in argtypes.args:
             if type(argtypes.locals[b]) == typ:
@@ -490,9 +504,11 @@ def process_generics(
         generics.append(g)
 
     if t in obs.visited_funcs_generics:
+        print(event_type == sys.monitoring.events.PY_YIELD and "yield" or "return")
         generics = Generic.merge_generics(obs.visited_funcs_generics[t], generics)
 
     obs.visited_funcs_generics[t] = generics
+    print(generics)
 
 
 def find_functions(

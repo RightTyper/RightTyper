@@ -246,25 +246,28 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         return True
 
-    def _compute_return_type(self, retval: str, yieldval: str|None, genericname=None):
-        if yieldval:
-            if genericname is not None:
-                yieldval = genericname
-                retval = genericname
+    def _compute_return_type(self, ann: FuncAnnotation, generics: dict[int, str]):
 
+        ret_gen = generics.get(ann.returns_generic, None)
+        yield_gen = generics.get(ann.yields_generic, None)
+
+        retval = ret_gen or ann.retval
+        yieldval = ann.yieldval
+
+        if yieldval:
             if yieldval == "builtins.async_generator_wrapped_value":
                 # FIXME capture send type and switch to AsyncGenerator if any sent
                 return Typename("typing.AsyncIterator[typing.Any]") # how to unwrap the value without waiting on it?
 
+            if yield_gen:
+                yieldval = yield_gen
+            
             if retval == "None":
                 # Note that we are unable to differentiate between an implicit "None"
                 # return and an explicit "return None".
                 return Typename(f"typing.Iterator[{yieldval}]")
 
             return Typename(f"typing.Generator[{yieldval}, typing.Any, {retval}]")
-
-        if genericname is not None:
-            return genericname
 
         return retval
 
@@ -425,7 +428,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                     ann.args[i] = (ann.args[i][0], generics[idx])
 
             # update our retval based on the type we made for it and any yield stuff we may need to do
-            retval = self._compute_return_type(ann.retval, ann.yieldval, generics.get(ann.returns_generic, None))
+            retval = self._compute_return_type(ann, generics)
 
             # make generic names known and mark for later
             self.known_names |= set(generics.values())

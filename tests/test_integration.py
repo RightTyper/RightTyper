@@ -1097,3 +1097,63 @@ def test_union_superclass(tmp_cwd, as_module):
                    check=True)
 
     assert "def foo(x: A) -> None:" in Path("t.py").read_text()
+
+def test_generic_simple(tmp_cwd):
+    t = textwrap.dedent(
+        """\
+        def add(a, b):
+            return a + b
+
+        add(1, 2)
+        add("a", "b")
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    
+    assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)"
+    assert "def add(a: T_int_str_0, b: T_int_str_0) -> T_int_str_0" in output
+
+    
+def test_generic_yield(tmp_cwd):
+    t = textwrap.dedent(
+        """\
+        def y(a):
+            yield a
+
+        for _ in y(1): pass
+        for _ in y("a"): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    
+    assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)" in output
+    assert "def y(a: T_int_str_0) -> Iterator[T_int_str_0]" in output
+
+def test_generic_yield_generator(tmp_cwd):
+    t = textwrap.dedent(
+        """\
+        def y(a, b):
+            yield a
+            return b
+
+        for _ in y(1, "a"): pass
+        for _ in y("a", 1): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    
+    assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)" in output
+    assert "T_int_str_1 = TypeVar(\"T_int_str_1\", int, str)" in output
+    assert "def y(a: T_int_str_0, b: T_int_str_1) -> Generator[T_int_str_0, Any, T_int_str_1]" in output
