@@ -504,11 +504,9 @@ def process_generics(
         generics.append(g)
 
     if t in obs.visited_funcs_generics:
-        print(event_type == sys.monitoring.events.PY_YIELD and "yield" or "return")
         generics = Generic.merge_generics(obs.visited_funcs_generics[t], generics)
 
     obs.visited_funcs_generics[t] = generics
-    print(generics)
 
 
 def find_functions(

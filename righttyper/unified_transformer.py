@@ -579,7 +579,6 @@ class UnifiedTransformer(cst.CSTTransformer):
                         ]
                     )
                 )
-                exprs.append(cst.Newline())
 
             b = find_beginning(new_body)
             new_body[b:b] = exprs
