@@ -162,7 +162,8 @@ class Observations:
     def prune_generics(self: Self, t: FuncInfo) -> list[Generic]:
         
         args = self.visited_funcs_arguments[t]
-        generics = self.visited_funcs_generics[t]
+        generics = t in self.visited_funcs_generics and \
+            self.visited_funcs_generics[t] or []
         retval = self.visited_funcs_retval[t]
 
         # should we have no genreics, die
