@@ -1,3 +1,4 @@
 righttyper.egg-info/
-righttyper/__pycache__/
+*/__pycache__/
+.venv
 

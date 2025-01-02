@@ -1,4 +1,5 @@
 import concurrent.futures
+import functools
 import importlib.metadata
 import importlib.util
 import inspect
@@ -41,6 +42,7 @@ from righttyper.righttyper_tool import (
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
+    ArgumentType,
     Filename,
     FuncInfo,
     FuncAnnotation,
@@ -48,6 +50,7 @@ from righttyper.righttyper_types import (
     Typename,
     TypeInfo,
     TypeInfoSet,
+    Generic,
 )
 from righttyper.righttyper_utils import (
     TOOL_ID,
@@ -56,7 +59,8 @@ from righttyper.righttyper_utils import (
     debug_print_set_level,
     skip_this_file,
     union_typeset_str,
-    get_main_module_fqn
+    get_main_module_fqn,
+    find_most_specific_common_superclass_by_name
 )
 
 @dataclass
@@ -93,6 +97,9 @@ class Observations:
 
     # For each visited function, all the info about its arguments
     visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = field(default_factory=lambda: defaultdict(list))
+
+    # For each visited function, all potential groups of generics
+    visited_funcs_generics: dict[FuncInfo, list[Generic]|None] = field(default_factory=lambda: defaultdict(None))
 
     # For each visited function, the values it returned
     visited_funcs_retval: dict[FuncInfo, TypeInfoSet] = field(default_factory=lambda: defaultdict(TypeInfoSet))
@@ -152,6 +159,39 @@ class Observations:
 
         return Typename("None")
 
+    def prune_generics(self: Self, t: FuncInfo) -> list[Generic]:
+        
+        args = self.visited_funcs_arguments[t]
+        generics = t in self.visited_funcs_generics and \
+            self.visited_funcs_generics[t] or []
+        retval = self.visited_funcs_retval[t]
+
+        # should we have no genreics, die
+        if not generics:
+            return []
+
+        # prune unchanged generics
+        for arg in args:
+            generic = Generic.get(generics, arg.arg_name)
+            if not generic:
+                continue
+
+            # if there's no args
+            if len(arg.type_set) < 2:
+                generics.remove(generic)
+
+            # if it all has a superclass
+            elif find_most_specific_common_superclass_by_name(arg.type_set):
+                generics.remove(generic)
+
+            # if the return type and arg types mismatch, prune
+            # since we're working with sets of dataclasses we
+            # can use simple equality :)
+            elif generic.is_return:
+                if arg.type_set != retval:
+                    generics.remove(generic)
+
+        return generics
 
     def collect_annotations(self: Self) -> dict[FuncInfo, FuncAnnotation]:
         """Collects function type annotations from the observed types."""
@@ -174,19 +214,68 @@ class Observations:
 
         self._transform_types(T())
 
+        generic_index = 0
         type_annotations: dict[FuncInfo, FuncAnnotation] = {}
+
         for t in self.visited_funcs:
+
             args = self.visited_funcs_arguments[t]
+            generics = self.prune_generics(t)
+            
+            generic_typesets = {}
+            return_index = None
+            yield_index = None
+
+            for generic in generics:
+                generic.index = generic_index
+
+                # get the typeset
+                type_set = None
+                for arg in args:
+                    if arg.arg_name not in generic.arg_names:
+                        continue
+
+                    type_set = arg.type_set
+                    break
+                
+                # if for whatever reason you can't find the argument name for the
+                # generic, we should just do nothing I guess
+                if not type_set:
+                    continue
+
+                # if this generic is also the return type, change the return type
+                if generic.is_return: return_index = generic.index
+                if generic.is_yield: yield_index = generic.index
+
+                generic_typesets[generic.index] = union_typeset_str(type_set).split("|")
+                generic_index += 1
+
+            arguments = []
+            for arg in args:
+                if g := Generic.get(generics, arg.arg_name):
+                    arguments.append((arg.arg_name, g.index))
+                else:
+                    arguments.append((arg.arg_name, union_typeset_str(arg.type_set)))
+
+            returns = list(filter(lambda a: a.is_return, generics))
+            if len(returns) == 1:
+                return_index = returns[0].index
+            else:
+                return_index = None
+
+            # we always return something so we're cool with union_typeset_str giving us "None"
+            retval = union_typeset_str(self.visited_funcs_retval[t])
+            yieldval = None
+            if t in self.visited_funcs_yieldval:
+                yieldval = union_typeset_str(self.visited_funcs_yieldval[t])
 
             type_annotations[t] = FuncAnnotation(
-                [
-                    (
-                        arginfo.arg_name,
-                        union_typeset_str(arginfo.type_set)
-                    )
-                    for arginfo in args
-                ],
-                self.return_type(t)
+                arguments,
+                retval,
+                yieldval,
+                return_index,
+                yield_index,
+                generic_typesets
             )
 
         return type_annotations
@@ -207,7 +296,6 @@ class Observations:
 
 
 obs = Observations()
-
 
 def enter_function(code: CodeType, offset: int) -> Any:
     """
@@ -351,6 +439,15 @@ def exit_function_worker(
     else:
         obs.visited_funcs_retval[t].add(typeinfo)
 
+    # get the arguments to check equality of types 
+    frame = inspect.currentframe()
+    if frame and frame.f_back and frame.f_back.f_back:
+        frame = frame.f_back.f_back
+        assert code == frame.f_code
+
+        process_generics(t, inspect.getargvalues(frame), return_value, event_type)
+        del frame
+
     return sys.monitoring.DISABLE if options.sampling else None
 
 
@@ -379,6 +476,38 @@ def process_function_arguments(
 
     debug_print(f"processing {t=} {argtypes=}")
     obs.update_visited_funcs_arguments(t, argtypes)
+
+def process_generics(
+    t: FuncInfo,
+    argtypes: ArgInfo,
+    return_value: Any,
+    event_type: int
+) -> None:
+    generics = []
+    for a in argtypes.args:
+
+        # if we're already in a group no need to do anything
+        if a in sum(map(lambda a: list(a.arg_names), generics), []):
+            continue
+
+        typ = type(argtypes.locals[a])
+
+        # we set the other one to true always in order to not overwrite something
+        # accidentally. Does this work? dunno haven't really tested it yet
+        g = event_type == sys.monitoring.events.PY_YIELD and \
+            Generic(set([a]), is_yield=type(return_value) == typ) or\
+            Generic(set([a]), is_return=type(return_value) == typ)
+
+        for b in argtypes.args:
+            if type(argtypes.locals[b]) == typ:
+                g.arg_names.add(b)
+
+        generics.append(g)
+
+    if t in obs.visited_funcs_generics:
+        generics = Generic.merge_generics(obs.visited_funcs_generics[t], generics)
+
+    obs.visited_funcs_generics[t] = generics
 
 
 def find_functions(
@@ -786,7 +915,7 @@ def main(
         if not os.path.isfile(script):
             raise click.UsageError(f"\"{script}\" is not a file.")
     else:
-        raise click.UsageError("Either -m/--module must be provided, or a script be passed.")
+        raise click.UsageError(f"Either -m/--module must be provided, or a script be passed.")
 
     if infer_shapes:
         # Check for required packages for shape inference

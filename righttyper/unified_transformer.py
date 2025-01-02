@@ -1,11 +1,13 @@
 import typing
 import builtins
 import collections.abc as abc
+import types
 import libcst as cst
 import libcst.matchers as cstm
 import re
 
 from righttyper.righttyper_types import (
+    ArgumentName,
     Filename,
     FuncInfo,
     FuncAnnotation,
@@ -209,6 +211,9 @@ class UnifiedTransformer(cst.CSTTransformer):
         # currently known global names
         self.known_names: set[str] = set(_BUILTIN_TYPES)
 
+        # generic names we'll have to make the TypeVar for at the end
+        self.generics: list[tuple[str, list[str]]] = []
+
         # global aliases from 'from .. import ..' and 'import .. as ..'
         self.aliases: dict[str, str] = {
             f"typing.{t}": t
@@ -241,6 +246,30 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         return True
 
+    def _compute_return_type(self, ann: FuncAnnotation, generics: dict[int, str]):
+
+        ret_gen = generics.get(ann.returns_generic, None)
+        yield_gen = generics.get(ann.yields_generic, None)
+
+        retval = ret_gen or ann.retval
+        yieldval = ann.yieldval
+
+        if yieldval:
+            if yieldval == "builtins.async_generator_wrapped_value":
+                # FIXME capture send type and switch to AsyncGenerator if any sent
+                return Typename("typing.AsyncIterator[typing.Any]") # how to unwrap the value without waiting on it?
+
+            if yield_gen:
+                yieldval = yield_gen
+            
+            if retval == "None":
+                # Note that we are unable to differentiate between an implicit "None"
+                # return and an explicit "return None".
+                return Typename(f"typing.Iterator[{yieldval}]")
+
+            return Typename(f"typing.Generator[{yieldval}, typing.Any, {retval}]")
+
+        return retval
 
     def visit_If(self, node: cst.If) -> bool:
         if cstm.matches(node, cstm.If(test=cstm.Name("TYPE_CHECKING"))):
@@ -381,6 +410,32 @@ class UnifiedTransformer(cst.CSTTransformer):
         key = FuncInfo(Filename(self.filename), FunctionName(name))
 
         if ann := self.type_annotations.get(key):
+
+            # before we construct the types we have to compute generic names and
+            # replace the generic index placeholders with the real names
+            generics: dict[int, str] = {}
+            if len(ann.generics):
+                # TODO: in the future names will be done based off python version
+                # for now it's just T_types_index
+                for (i, (name, idx)) in enumerate(ann.args):
+                    if type(idx) != int:
+                        continue
+                    if idx not in generics:
+                        # regex is basically leavethis.keepthis[leavethis]
+                        types = "_".join(map(lambda a: re.sub(r"(?:.*?\.)?(\w+)(?:\[.*\])?", "\\1", a), ann.generics[idx]))
+                        generics[idx] = f"T_{types}_{idx}"
+                        
+                    # update the type
+                    ann.args[i] = (ann.args[i][0], generics[idx])
+
+            # update our retval based on the type we made for it and any yield stuff we may need to do
+            retval = self._compute_return_type(ann, generics)
+
+            # make generic names known and mark for later
+            self.known_names |= set(generics.values())
+            for (idx, name) in generics.items():
+                self.generics.append((name, ann.generics[idx]))
+            
             for attr_name in ['params', 'kwonly_params', 'posonly_params']:
                 if getattr(updated_node.params, attr_name):
                     new_parameters = []
@@ -403,9 +458,9 @@ class UnifiedTransformer(cst.CSTTransformer):
                     )
 
             if ((updated_node.returns is None or self.override_annotations)
-                and ann.retval is not None
+                and retval is not None
             ):
-                annotation = self._try_rename_to_self(ann.retval)
+                annotation = self._try_rename_to_self(retval)
                 if self._is_valid(annotation):
                     annotation_expr = cst.parse_expression(annotation)
                     annotation_expr = self._rename_types(annotation_expr)
@@ -462,16 +517,6 @@ class UnifiedTransformer(cst.CSTTransformer):
             else:
                 new_body.append(stmt)
 
-        missing_modules = {
-            mod
-            for mod in (
-                self._module_for(t)[0]
-                for t in self.unknown_types - _TYPING_TYPES
-                if '.' in t
-                and t.split('.')[0] not in self.known_names
-            )
-            if mod != ''
-        }
 
         def stmt_index(body: list[cst.BaseStatement], pattern: cstm.BaseMatcherNode) -> int|None:
             for i, stmt in enumerate(body):
@@ -493,6 +538,62 @@ class UnifiedTransformer(cst.CSTTransformer):
                     break
 
             return i
+                
+        # Emit typevars
+        if len(self.generics):
+
+            exprs = [
+                cst.ImportFrom(module=cst.Name(value="typing"),names=[cst.ImportAlias(name=cst.Name("TypeVar"))]),
+                cst.Newline()
+            ]
+            for name, types in self.generics:
+
+                type_exprs = []
+                for typ in types:
+                    if not self._is_valid(typ):
+                        continue
+                    
+                    # reuse the code from leave_FunctionDef
+                    annotation_expr: cst.BaseExpression = cst.parse_expression(typ)
+                    annotation_expr = self._rename_types(annotation_expr)
+                    unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
+                    self.unknown_types |= unknown_types
+
+                    # this will quote types that we import. I'm not sure if this is correct.
+                    if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
+                        annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
+
+                    type_exprs.append(cst.Arg(value=annotation_expr))
+
+                exprs.append(
+                    cst.SimpleStatementLine(
+                        body = [
+                            cst.Assign(
+                               targets=[cst.AssignTarget(target=cst.Name(name))],
+                               value=cst.Call(
+                                   func=cst.Name("TypeVar"),
+                                   args=[
+                                       cst.Arg(value=cst.SimpleString(_quote(name))),
+                                       *type_exprs
+                                   ])
+                               )
+                        ]
+                    )
+                )
+
+            b = find_beginning(new_body)
+            new_body[b:b] = exprs
+        
+        missing_modules = {
+            mod
+            for mod in (
+                self._module_for(t)[0]
+                for t in self.unknown_types - _TYPING_TYPES
+                if '.' in t
+                and t.split('.')[0] not in self.known_names
+            )
+            if mod != ''
+        }
 
         if_type_checking_position = stmt_index(new_body, cstm.If(
                 test=cstm.Name('TYPE_CHECKING'),
@@ -680,11 +781,11 @@ def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
     return names
 
 
-def list_rindex(lst: list, item: object) -> int:
+def list_rindex(l: list, item: object) -> int:
     """Returns either a negative index for the last occurrence of 'item' on the list,
        or 0 if not found."""
     try:
-        return -1 - lst[::-1].index(item)
+        return -1 - l[::-1].index(item)
     except ValueError:
         return 0
 
