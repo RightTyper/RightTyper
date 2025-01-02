@@ -421,7 +421,8 @@ class UnifiedTransformer(cst.CSTTransformer):
                     if type(idx) != int:
                         continue
                     if idx not in generics:
-                        types = "_".join(map(lambda a: re.sub(r"(?:.*?\.)?(\w+)", "\\1", a), ann.generics[idx]))
+                        # regex is basically leavethis.keepthis[leavethis]
+                        types = "_".join(map(lambda a: re.sub(r"(?:.*?\.)?(\w+)(?:\[.*\])?", "\\1", a), ann.generics[idx]))
                         generics[idx] = f"T_{types}_{idx}"
                         
                     # update the type
