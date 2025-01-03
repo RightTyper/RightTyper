@@ -254,7 +254,7 @@ def enter_function(code: CodeType, offset: int) -> Any:
                 if function in ancestor.__dict__.values():
                     is_method_call = True
 
-        process_function_arguments(t, inspect.getargvalues(frame), defaults)
+        process_function_arguments(t, inspect.getargvalues(frame), defaults, is_method_call, first_arg)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -366,7 +366,9 @@ def exit_function_worker(
 def process_function_arguments(
     t: FuncInfo,
     args: inspect.ArgInfo,
-    defaults: dict[str, Any]
+    defaults: dict[str, Any],
+    has_self: bool,
+    self_value: Any,
 ) -> None:
     if args.varargs:
         args.args.append(args.varargs)
@@ -383,7 +385,9 @@ def process_function_arguments(
                 arg,
                 is_vararg = (arg == args.varargs),
                 is_kwarg = (arg == args.keywords),
-                use_jaxtyping = options.infer_shapes
+                use_jaxtyping = options.infer_shapes,
+                has_self=has_self,
+                self_value=self_value
             )
 
     debug_print(f"processing {t=} {argtypes=}")

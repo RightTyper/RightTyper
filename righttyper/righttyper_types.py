@@ -47,7 +47,11 @@ class TypeInfo:
     is_bound: bool = False                  # if a callable, whether bound
     type_obj: TYPE_OBJ_TYPES|None = None
 
+    is_self: bool = False
+
     def __str__(self: Self) -> str:
+        if self.is_self:
+            return "Self"
         module = self.module + '.' if self.module else ''
         if self.args:
             return (
