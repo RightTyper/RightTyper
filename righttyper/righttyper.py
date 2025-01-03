@@ -246,11 +246,13 @@ def enter_function(code: CodeType, offset: int) -> Any:
             defaults = {}
         
         is_method_call = False
+        first_arg: object = None
         args = inspect.getargvalues(frame).args
         if args:
             first_arg = frame.f_locals[args[0]]
-            if function in first_arg.__class__.__dict__.values():
-                is_method_call = True
+            for ancestor in first_arg.__class__.mro():
+                if function in ancestor.__dict__.values():
+                    is_method_call = True
 
         process_function_arguments(t, inspect.getargvalues(frame), defaults)
         del frame
