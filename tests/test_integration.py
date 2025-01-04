@@ -1114,13 +1114,12 @@ def test_generic_simple(tmp_cwd):
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
     
-    assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)"
+    assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)" in output
     assert "def add(a: T_int_str_0, b: T_int_str_0) -> T_int_str_0" in output
 
     
 def test_generic_yield(tmp_cwd):
-    t = textwrap.dedent(
-        """\
+    t = textwrap.dedent("""\
         def y(a):
             yield a
 
@@ -1138,8 +1137,7 @@ def test_generic_yield(tmp_cwd):
     assert "def y(a: T_int_str_0) -> Iterator[T_int_str_0]" in output
 
 def test_generic_yield_generator(tmp_cwd):
-    t = textwrap.dedent(
-        """\
+    t = textwrap.dedent("""\
         def y(a, b):
             yield a
             return b
@@ -1157,3 +1155,34 @@ def test_generic_yield_generator(tmp_cwd):
     assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)" in output
     assert "T_int_str_1 = TypeVar(\"T_int_str_1\", int, str)" in output
     assert "def y(a: T_int_str_0, b: T_int_str_1) -> Generator[T_int_str_0, Any, T_int_str_1]" in output
+
+def test_generic_typevar_location(tmp_cwd):
+    t = textwrap.dedent("""\
+        def subtract(a, b):
+            return a - b
+
+        # comment and emptyline
+
+        def add(a, b):
+            return a + b
+
+        add(1, 2)
+        add("a", "b")
+        subtract(1, 2)
+        subtract({1, 2}, {1})
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    res = textwrap.dedent("""\
+        T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)
+        # comment and emptyline
+
+        def add(a: T_int_str_0, b: T_int_str_0) -> T_int_str_0:
+        """)
+
+    assert res in output

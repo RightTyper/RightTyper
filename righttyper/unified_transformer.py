@@ -408,6 +408,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.name_stack.pop()
         self.used_names.pop()
         key = FuncInfo(Filename(self.filename), FunctionName(name))
+        generic_csts = []
 
         if ann := self.type_annotations.get(key):
 
@@ -415,6 +416,9 @@ class UnifiedTransformer(cst.CSTTransformer):
             # replace the generic index placeholders with the real names
             generics: dict[int, str] = {}
             if len(ann.generics):
+
+                self.unknown_types.add("TypeVar")
+                
                 # TODO: in the future names will be done based off python version
                 # for now it's just T_types_index
                 for (i, (name, idx)) in enumerate(ann.args):
@@ -422,7 +426,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                         continue
                     if idx not in generics:
                         # regex is basically leavethis.keepthis[leavethis]
-                        types = "_".join(map(lambda a: re.sub(r"(?:.*?\.)?(\w+)(?:\[.*\])?", "\\1", a), ann.generics[idx]))
+                        types = "_".join(map(lambda a: re.sub(r"(?:[\w.]*?\.)?(\w+)(?:\[.*\])?$", "\\1", a), ann.generics[idx]))
                         generics[idx] = f"T_{types}_{idx}"
                         
                     # update the type
@@ -431,10 +435,34 @@ class UnifiedTransformer(cst.CSTTransformer):
             # update our retval based on the type we made for it and any yield stuff we may need to do
             retval = self._compute_return_type(ann, generics)
 
-            # make generic names known and mark for later
+            # make generic names known
             self.known_names |= set(generics.values())
-            for (idx, name) in generics.items():
-                self.generics.append((name, ann.generics[idx]))
+            # for (idx, name) in generics.items():
+                # self.generics.append((name, ann.generics[idx]))
+
+            for idx, name in generics.items():
+                type_exprs = []
+                for typ in ann.generics[idx]:
+                    if not self._is_valid(typ):
+                        continue
+            
+                    # reuse the code from leave_FunctionDef
+                    annotation_expr: cst.BaseExpression = cst.parse_expression(typ)
+                    annotation_expr = self._rename_types(annotation_expr)
+                    unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
+                    self.unknown_types |= unknown_types
+
+                    # this will quote types that we import. I'm not sure if this is correct.
+                    if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
+                        annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
+
+                    type_exprs.append(cst.Arg(value=annotation_expr))
+
+                # make TypeVar statement that we will append at the end of the function
+                generic_csts.append(cst.SimpleStatementLine(body=[
+                    cst.Assign(targets=[cst.AssignTarget(target=cst.Name(name))],value=
+                    cst.Call(func=cst.Name("TypeVar"), args=[cst.Arg(value=cst.SimpleString(_quote(name))), *type_exprs]))
+                ]))
             
             for attr_name in ['params', 'kwonly_params', 'posonly_params']:
                 if getattr(updated_node.params, attr_name):
@@ -493,6 +521,14 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             self.change_list.append((key.func_name, original_node, updated_node))
 
+        if generic_csts:
+            leading_lines = updated_node.leading_lines
+            find_comments = map(lambda a: a[0], filter(lambda a: type(a[1]) == cst.EmptyLine and a[1].comment != None, enumerate(leading_lines)))
+            if index := next(find_comments, None):
+                generic_csts[0] = generic_csts[0].with_changes(leading_lines=leading_lines[:index])
+                updated_node = updated_node.with_changes(leading_lines=leading_lines[index:])
+
+            return cst.FlattenSentinel([*generic_csts, updated_node])
         return updated_node
 
     # ConstructImportTransformer logic
@@ -539,51 +575,6 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             return i
                 
-        # Emit typevars
-        if len(self.generics):
-
-            exprs = [
-                cst.ImportFrom(module=cst.Name(value="typing"),names=[cst.ImportAlias(name=cst.Name("TypeVar"))]),
-                cst.Newline()
-            ]
-            for name, types in self.generics:
-
-                type_exprs = []
-                for typ in types:
-                    if not self._is_valid(typ):
-                        continue
-                    
-                    # reuse the code from leave_FunctionDef
-                    annotation_expr: cst.BaseExpression = cst.parse_expression(typ)
-                    annotation_expr = self._rename_types(annotation_expr)
-                    unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
-                    self.unknown_types |= unknown_types
-
-                    # this will quote types that we import. I'm not sure if this is correct.
-                    if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-                        annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
-
-                    type_exprs.append(cst.Arg(value=annotation_expr))
-
-                exprs.append(
-                    cst.SimpleStatementLine(
-                        body = [
-                            cst.Assign(
-                               targets=[cst.AssignTarget(target=cst.Name(name))],
-                               value=cst.Call(
-                                   func=cst.Name("TypeVar"),
-                                   args=[
-                                       cst.Arg(value=cst.SimpleString(_quote(name))),
-                                       *type_exprs
-                                   ])
-                               )
-                        ]
-                    )
-                )
-
-            b = find_beginning(new_body)
-            new_body[b:b] = exprs
-        
         missing_modules = {
             mod
             for mod in (
