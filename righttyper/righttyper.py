@@ -250,7 +250,7 @@ def enter_function(code: CodeType, offset: int) -> Any:
         args = inspect.getargvalues(frame).args
         if args:
             first_arg = frame.f_locals[args[0]]
-            for ancestor in first_arg.__class__.mro():
+            for ancestor in first_arg.__class__.__mro__:
                 if function in ancestor.__dict__.values():
                     is_method_call = True
 
