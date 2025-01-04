@@ -219,7 +219,7 @@ def lookup_type_module(t: type) -> str:
 
 RANGE_ITER_TYPE = type(iter(range(1)))
 
-def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
+def get_type_name(obj: type, depth: int = 0, is_self: bool = False) -> TypeInfo:
     """Returns a type's name as a string."""
 
     if depth > 255:
@@ -250,7 +250,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
     if obj.__module__ == 'numpy' and 'dtype[' in obj.__name__ and hasattr(obj, "type"):
         t_name = obj.__qualname__.split('[')[0]
-        return TypeInfo(obj.__module__, t_name, args=(get_type_name(obj.type, depth+1),))
+        return TypeInfo(obj.__module__, t_name, args=(get_type_name(obj.type, depth+1),), is_self=is_self)
 
     # Disabled for now: passing types using aliases at this point can lead to
     # confusion, as there can be an alias that conflicts with a module's fully
@@ -274,9 +274,9 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
                     return f"{name}.{obj.__name__}"
 
     if obj.__module__ == "__main__":    # TODO merge this into lookup_type_module
-        return TypeInfo(get_main_module_fqn(), obj.__qualname__, type_obj=obj)
+        return TypeInfo(get_main_module_fqn(), obj.__qualname__, type_obj=obj, is_self=is_self)
 
-    return TypeInfo(lookup_type_module(obj), obj.__qualname__, type_obj=obj)
+    return TypeInfo(lookup_type_module(obj), obj.__qualname__, type_obj=obj, is_self=is_self)
 
 
 def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
@@ -288,7 +288,14 @@ def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
     return None
 
 
-def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
+def get_full_type(
+    value: Any,
+    /,
+    use_jaxtyping: bool = False,
+    depth: int = 0,
+    has_self: bool = False,
+    self_value: Any = None,
+) -> TypeInfo:
     """
     get_full_type takes a value (an instance) as input and returns a string representing its type.
 
@@ -303,6 +310,8 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         print(f"Warning: RightTyper failed to compute the type of {value}.")
         return TypeInfo("typing", "Never")
 
+    is_self = has_self and self_value == value
+
     t: type|None
 
     if isinstance(value, dict):
@@ -313,7 +322,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         else:
             args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
         module = "" if t.__module__ == "builtins" else t.__module__
-        return TypeInfo(module, t.__qualname__, args=args)
+        return TypeInfo(module, t.__qualname__, args=args, is_self=is_self)
     elif isinstance(value, (list, set)):
         t = type(value)
         if value:
@@ -322,42 +331,42 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         else:
             args = (TypeInfo("typing", "Never"),)
         module = "" if t.__module__ == "builtins" else t.__module__
-        return TypeInfo(module, t.__qualname__, args=args)
+        return TypeInfo(module, t.__qualname__, args=args, is_self=is_self)
     elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
         if value:
             el = sample_from_collection(value)
             args = (get_full_type(el, depth=depth+1),)
         else:
             args = (TypeInfo("typing", "Never"),)
-        return TypeInfo("typing", t.__qualname__, args=args)
+        return TypeInfo("typing", t.__qualname__, args=args, is_self=is_self)
     elif isinstance(value, abc.ItemsView):
         if value:
             el = sample_from_collection(value)
             args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
         else:
             args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
-        return TypeInfo("typing", "ItemsView", args=args)
+        return TypeInfo("typing", "ItemsView", args=args, is_self=is_self)
     elif isinstance(value, tuple):
         if isinstance_namedtuple(value):
             t = type(value)
-            return TypeInfo(t.__module__, t.__qualname__)
+            return TypeInfo(t.__module__, t.__qualname__, is_self=is_self)
         else:
             if value:
                 args = tuple(get_full_type(fld, depth=depth+1) for fld in value)
             else:
                 args = tuple()
-            return TypeInfo("", "tuple", args=args)
+            return TypeInfo("", "tuple", args=args, is_self=is_self)
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
     elif isinstance(value, abc.Generator):
         any = TypeInfo("typing", "Any")
-        return TypeInfo("typing", "Generator", args=(any, any, any))  # FIXME needs yield / send / return types
+        return TypeInfo("typing", "Generator", args=(any, any, any), is_self=is_self)  # FIXME needs yield / send / return types
     elif isinstance(value, abc.AsyncGenerator):
         any = TypeInfo("typing", "Any")
-        return TypeInfo("typing", "AsyncGenerator", args=(any, any))  # FIXME needs yield / send types
+        return TypeInfo("typing", "AsyncGenerator", args=(any, any), is_self=is_self)  # FIXME needs yield / send types
     elif isinstance(value, abc.Coroutine):
         any = TypeInfo("typing", "Any")
-        return TypeInfo("typing", "Coroutine", args=(any, any, any))  # FIXME needs yield / send / return types
+        return TypeInfo("typing", "Coroutine", args=(any, any, any), is_self=is_self)  # FIXME needs yield / send / return types
 
 
     if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):
@@ -366,15 +375,15 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
             return TypeInfo("jaxtyping", dtype, args=(
                 get_type_name(type(value), depth+1),
                 f"\"{shape}\""
-            ))
+            ), is_self=is_self)
 
     if (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':
         return TypeInfo("numpy", "ndarray", args=(
             TypeInfo("typing", "Any"),
             get_type_name(type(value.dtype), depth+1)
-        ))
+        ), is_self=is_self)
 
-    return get_type_name(type(value), depth+1)
+    return get_type_name(type(value), depth+1, is_self=is_self)
 
 
 def isinstance_namedtuple(obj: object) -> bool:
@@ -393,14 +402,16 @@ def update_argtypes(
     /,
     is_vararg: bool,
     is_kwarg: bool,
-    use_jaxtyping: bool
+    use_jaxtyping: bool,
+    has_self: bool,
+    self_value: Any
 ) -> None:
 
     def add_arg_info(
         values: Any,
     ) -> None:
         types = TypeInfoSet([
-            get_full_type(val, use_jaxtyping=use_jaxtyping)
+            get_full_type(val, use_jaxtyping=use_jaxtyping, has_self=has_self, self_value=self_value)
             for val in values
         ])
         argtypes.append(

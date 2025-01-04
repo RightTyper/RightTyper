@@ -70,6 +70,9 @@ def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
     if len(typeinfoset) == 1:
         return Typename(str(next(iter(typeinfoset))))
 
+    if all(typeinfo.is_self for typeinfo in typeinfoset):
+        return Typename("Self")
+
     if super := find_most_specific_common_superclass_by_name(typeinfoset):
         return super
 
