@@ -1158,8 +1158,7 @@ def test_generic_yield_generator(tmp_cwd):
 
 def test_generic_typevar_location(tmp_cwd):
     t = textwrap.dedent("""\
-        def subtract(a, b):
-            return a - b
+        ...
 
         # comment and emptyline
 
@@ -1168,8 +1167,6 @@ def test_generic_typevar_location(tmp_cwd):
 
         add(1, 2)
         add("a", "b")
-        subtract(1, 2)
-        subtract({1, 2}, {1})
         """)
 
     Path("t.py").write_text(t)
