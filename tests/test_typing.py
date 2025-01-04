@@ -1,4 +1,4 @@
-from righttyper.righttyper_types import TypeInfo, TypeInfoSet
+from righttyper.righttyper_types import TypeInfo, TypeInfoSet, Generic
 from righttyper.righttyper_utils import union_typeset_str
 from collections.abc import Iterable
 from collections import namedtuple
@@ -358,3 +358,73 @@ def test_union_typeset_generics_superclass():
             TypeInfo("", "None")
         }
     )
+
+def test_generic_merge_simple():
+    # def t[T, U](a: T, b: T, c: U) -> U
+    # t(int, int, int) -> int
+    # t(bool, bool, str) -> str
+
+    call1 = [Generic({1, 2, 3, 4}, is_return=True)]
+    call2 = [Generic({1, 2}, is_return=False), Generic({3}, is_return=True)]
+    result = Generic.merge_generics(call1, call2)
+
+    assert result == [
+        Generic({1, 2}, is_return=False),
+        Generic({3}, is_return=True)
+    ]
+
+def test_generic_merge_complex():
+    # def t[T, U](a, b: T, c: T, d: V) -> Generator[T, Any, U]
+    # t(int, int, int, int) -> Generator[int, Any, int]
+    # t(int, str, str, str) -> Generator[str, Any, str]
+    # t(bool, str, str, bool) -> Generator[str, Any, bool]
+
+    return1 = [Generic({1, 2, 3, 4}, is_return=True)]
+    yield1 = [Generic({1, 2, 3, 4}, is_yield=True)]
+
+    return2 = [Generic({1}, is_return=False), Generic({2, 3, 4}, is_return=True)]
+    yield2 = [Generic({1}, is_yield=False), Generic({2, 3, 4}, is_yield=True)]
+
+    return3 = [Generic({1, 4}, is_return=False), Generic({2, 3}, is_return=True)]
+    yield3 = [Generic({1, 4}, is_yield=True), Generic({2, 3}, is_yield=False)]
+
+    result = Generic.merge_generics(return1, yield1)
+    result = Generic.merge_generics(result, return2)
+    result = Generic.merge_generics(result, yield2)
+    result = Generic.merge_generics(result, return3)
+    result = Generic.merge_generics(result, yield3)
+
+    assert result == [
+        Generic({4}, is_return=False, is_yield=True),
+        Generic({2, 3}, is_return=True, is_yield=False)
+    ]
+
+def test_generic_merge_increasing():
+    # def t[T](a, b: T, c: T)
+    # t(str, int, int)
+    # t(int, int, int)
+
+    return1 = [Generic({1}, is_return=False), Generic({2, 3}, is_return=False)]
+    return2 = [Generic({1, 2, 3}, is_return=False)]
+    result = Generic.merge_generics(return1, return2)
+
+    assert result == [Generic({2, 3}, is_return=False)]
+
+def test_generic_merge_decreasing():
+    # def t[T](a, b: T, c: T)
+    # t(int, int, int)
+    # t(str, int, int)
+
+    return1 = [Generic({1, 2, 3}, is_return=False)]
+    return2 = [Generic({1}, is_return=False), Generic({2, 3}, is_return=False)]
+    result = Generic.merge_generics(return1, return2)
+
+    assert result == [Generic({2, 3}, is_return=False)]
+
+
+
+def test_generic_merge_out_of_order():
+    ...
+
+    
+    

@@ -247,7 +247,19 @@ class Observations:
                 if generic.is_return: return_index = generic.index
                 if generic.is_yield: yield_index = generic.index
 
-                generic_typesets[generic.index] = union_typeset_str(type_set).split("|")
+                # we have to do a reduce here because you can't simply parse out the
+                # types with a regular expression due to union_typeset_str being recursive
+                # 
+                # ex. dog[a[b|c]|d[e|f]]: if we try to split by | we're going to have partially
+                # formed types, and to fix this we need matched parenthesis
+                split_types = union_typeset_str(type_set).split("|")
+                def split_items(acc: list[str], elem: str):
+                    if acc[-1].count("[") != acc[-1].count("]"):
+                        return [*acc[:-1], acc[-1]+elem]
+                    else:
+                        return [*acc, elem]
+                
+                generic_typesets[generic.index] = functools.reduce(split_items, split_types[1:], [split_types[0]])
                 generic_index += 1
 
             arguments = []
