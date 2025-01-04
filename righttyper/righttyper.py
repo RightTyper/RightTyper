@@ -17,7 +17,8 @@ from types import CodeType, FrameType, FunctionType
 from typing import (
     Any,
     TextIO,
-    Self
+    Self,
+    Optional
 )
 
 import click
@@ -99,7 +100,7 @@ class Observations:
     visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = field(default_factory=lambda: defaultdict(list))
 
     # For each visited function, all potential groups of generics
-    visited_funcs_generics: dict[FuncInfo, list[Generic]|None] = field(default_factory=lambda: defaultdict(None))
+    visited_funcs_generics: dict[FuncInfo, Optional[list[Generic]]] = field(default_factory=lambda: defaultdict(None))
 
     # For each visited function, the values it returned
     visited_funcs_retval: dict[FuncInfo, TypeInfoSet] = field(default_factory=lambda: defaultdict(TypeInfoSet))
@@ -130,7 +131,7 @@ class Observations:
         ):
             transform_set(ts)
 
-
+    # TODO: THIS IS NOW UNUSED, RETURN TYPE CONSTRUCTION IS DONE IN THE TRANSFORMER
     def return_type(self: Self, f: FuncInfo) -> Typename:
         """Returns the return type for a given function."""
 
@@ -160,15 +161,14 @@ class Observations:
         return Typename("None")
 
     def prune_generics(self: Self, t: FuncInfo) -> list[Generic]:
-        
-        args = self.visited_funcs_arguments[t]
-        generics = t in self.visited_funcs_generics and \
-            self.visited_funcs_generics[t] or []
-        retval = self.visited_funcs_retval[t]
 
         # should we have no genreics, die
-        if not generics:
+        if t not in self.visited_funcs_generics:
             return []
+        
+        args = self.visited_funcs_arguments[t]
+        generics = self.visited_funcs_generics[t]
+        retval = self.visited_funcs_retval[t]
 
         # prune unchanged generics
         for arg in args:
@@ -187,9 +187,8 @@ class Observations:
             # if the return type and arg types mismatch, prune
             # since we're working with sets of dataclasses we
             # can use simple equality :)
-            elif generic.is_return:
-                if arg.type_set != retval:
-                    generics.remove(generic)
+            elif generic.is_return and arg.type_set != retval:
+                generics.remove(generic)
 
         return generics
 
@@ -230,13 +229,7 @@ class Observations:
                 generic.index = generic_index
 
                 # get the typeset
-                type_set = None
-                for arg in args:
-                    if arg.arg_name not in generic.arg_names:
-                        continue
-
-                    type_set = arg.type_set
-                    break
+                type_set = next(map(lambda a: a.type_set, filter(lambda a: a.arg_name in generic.arg_names, args)), None)
                 
                 # if for whatever reason you can't find the argument name for the
                 # generic, we should just do nothing I guess
@@ -256,8 +249,8 @@ class Observations:
                 def split_items(acc: list[str], elem: str):
                     if acc[-1].count("[") != acc[-1].count("]"):
                         return [*acc[:-1], acc[-1]+elem]
-                    else:
-                        return [*acc, elem]
+
+                    return [*acc, elem]
                 
                 generic_typesets[generic.index] = functools.reduce(split_items, split_types[1:], [split_types[0]])
                 generic_index += 1
@@ -268,12 +261,6 @@ class Observations:
                     arguments.append((arg.arg_name, g.index))
                 else:
                     arguments.append((arg.arg_name, union_typeset_str(arg.type_set)))
-
-            returns = list(filter(lambda a: a.is_return, generics))
-            if len(returns) == 1:
-                return_index = returns[0].index
-            else:
-                return_index = None
 
             # we always return something so we're cool with union_typeset_str giving us "None"
             retval = union_typeset_str(self.visited_funcs_retval[t])
@@ -927,7 +914,7 @@ def main(
         if not os.path.isfile(script):
             raise click.UsageError(f"\"{script}\" is not a file.")
     else:
-        raise click.UsageError(f"Either -m/--module must be provided, or a script be passed.")
+        raise click.UsageError("Either -m/--module must be provided, or a script be passed.")
 
     if infer_shapes:
         # Check for required packages for shape inference

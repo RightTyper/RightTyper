@@ -421,10 +421,4 @@ def test_generic_merge_decreasing():
 
     assert result == [Generic({2, 3}, is_return=False)]
 
-
-
-def test_generic_merge_out_of_order():
-    ...
-
-    
-    
+  

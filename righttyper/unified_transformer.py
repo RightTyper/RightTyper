@@ -553,6 +553,16 @@ class UnifiedTransformer(cst.CSTTransformer):
             else:
                 new_body.append(stmt)
 
+        missing_modules = {
+            mod
+            for mod in (
+                self._module_for(t)[0]
+                for t in self.unknown_types - _TYPING_TYPES
+                if '.' in t
+                and t.split('.')[0] not in self.known_names
+            )
+            if mod != ''
+        }
 
         def stmt_index(body: list[cst.BaseStatement], pattern: cstm.BaseMatcherNode) -> int|None:
             for i, stmt in enumerate(body):
@@ -575,17 +585,6 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             return i
                 
-        missing_modules = {
-            mod
-            for mod in (
-                self._module_for(t)[0]
-                for t in self.unknown_types - _TYPING_TYPES
-                if '.' in t
-                and t.split('.')[0] not in self.known_names
-            )
-            if mod != ''
-        }
-
         if_type_checking_position = stmt_index(new_body, cstm.If(
                 test=cstm.Name('TYPE_CHECKING'),
                 body=cstm.IndentedBlock()
@@ -772,11 +771,11 @@ def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
     return names
 
 
-def list_rindex(l: list, item: object) -> int:
+def list_rindex(lst: list, item: object) -> int:
     """Returns either a negative index for the last occurrence of 'item' on the list,
        or 0 if not found."""
     try:
-        return -1 - l[::-1].index(item)
+        return -1 - lst[::-1].index(item)
     except ValueError:
         return 0
 
