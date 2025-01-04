@@ -293,8 +293,7 @@ def get_full_type(
     /,
     use_jaxtyping: bool = False,
     depth: int = 0,
-    has_self: bool = False,
-    self_value: Any = None,
+    self_type: type | None = None
 ) -> TypeInfo:
     """
     get_full_type takes a value (an instance) as input and returns a string representing its type.
@@ -310,7 +309,7 @@ def get_full_type(
         print(f"Warning: RightTyper failed to compute the type of {value}.")
         return TypeInfo("typing", "Never")
 
-    is_self = has_self and self_value == value
+    is_self = (self_type != None) and (self_type in value.__class__.__mro__)
 
     t: type|None
 
@@ -403,15 +402,14 @@ def update_argtypes(
     is_vararg: bool,
     is_kwarg: bool,
     use_jaxtyping: bool,
-    has_self: bool,
-    self_value: Any
+    self_type: type | None
 ) -> None:
 
     def add_arg_info(
         values: Any,
     ) -> None:
         types = TypeInfoSet([
-            get_full_type(val, use_jaxtyping=use_jaxtyping, has_self=has_self, self_value=self_value)
+            get_full_type(val, use_jaxtyping=use_jaxtyping, self_type=self_type)
             for val in values
         ])
         argtypes.append(

@@ -245,16 +245,15 @@ def enter_function(code: CodeType, offset: int) -> Any:
         else:
             defaults = {}
         
-        is_method_call = False
-        first_arg: object = None
+        self_type: type | None = None
         args = inspect.getargvalues(frame).args
         if args:
             first_arg = frame.f_locals[args[0]]
             for ancestor in first_arg.__class__.__mro__:
                 if function in ancestor.__dict__.values():
-                    is_method_call = True
-
-        process_function_arguments(t, inspect.getargvalues(frame), defaults, is_method_call, first_arg)
+                    self_type = first_arg.__class__
+        
+        process_function_arguments(t, inspect.getargvalues(frame), defaults, self_type)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -367,8 +366,7 @@ def process_function_arguments(
     t: FuncInfo,
     args: inspect.ArgInfo,
     defaults: dict[str, Any],
-    has_self: bool,
-    self_value: Any,
+    self_type: type | None,
 ) -> None:
     if args.varargs:
         args.args.append(args.varargs)
@@ -386,8 +384,7 @@ def process_function_arguments(
                 is_vararg = (arg == args.varargs),
                 is_kwarg = (arg == args.keywords),
                 use_jaxtyping = options.infer_shapes,
-                has_self=has_self,
-                self_value=self_value
+                self_type=self_type
             )
 
     debug_print(f"processing {t=} {argtypes=}")
