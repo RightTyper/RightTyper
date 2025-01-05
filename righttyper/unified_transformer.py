@@ -248,9 +248,9 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         ret_gen = None
         yield_gen = None
-        if ann.returns_generic is not None and ann.returns_generic in generics:
+        if ann.returns_generic in generics:
             ret_gen = generics[ann.returns_generic]
-        if ann.yields_generic is not None and ann.yields_generic in generics:
+        if ann.yields_generic in generics:
             yield_gen = generics[ann.yields_generic]
 
         retval = ret_gen or ann.retval

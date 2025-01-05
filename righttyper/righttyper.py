@@ -98,7 +98,7 @@ class Observations:
     visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = field(default_factory=lambda: defaultdict(list))
 
     # For each visited function, all potential groups of generics
-    visited_funcs_generics: dict[FuncInfo, list[Generic]] = field(default_factory=lambda: defaultdict(list))
+    visited_funcs_generics: dict[FuncInfo, list[Generic]] = field(default_factory=lambda: {})
 
     # For each visited function, the values it returned
     visited_funcs_retval: dict[FuncInfo, TypeInfoSet] = field(default_factory=lambda: defaultdict(TypeInfoSet))
