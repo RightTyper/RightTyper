@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from collections import defaultdict
 from enum import Enum
-from typing import Any, NewType, TypeVar, Self, Iterator, Iterable, TypeAlias
+from typing import Any, NewType, TypeVar, Self, Iterator, Iterable, TypeAlias, Optional
 
 T = TypeVar("T")
 
@@ -33,10 +33,10 @@ class FuncAnnotation:
     # if we're not returning a generic. If we are, returns_generic
     # will be a non-None generic index
     retval: Typename
-    yieldval: Typename|None = None
+    yieldval: Optional[Typename] = None
 
-    returns_generic: int|None = None
-    yields_generic: int|None = None
+    returns_generic: Optional[int] = None
+    yields_generic: Optional[int] = None
 
     # maps generic indices to typesets
     generics: dict[int, list[Typename]] = field(default_factory=lambda: defaultdict(list))
@@ -102,7 +102,8 @@ class Generic:
     is_yield: bool|None = None
     index: int = -1
 
-    def merge_generics(a: list[Self], b: list[Self]) -> list[Self]:
+    @staticmethod
+    def merge_generics(a: list[Generic], b: list[Generic]) -> list[Generic]:
         # for every b that's a subset of someting in a:
         # break apart into subset and non-subset
         # if return agrees on both, keep it, otherwise don't
@@ -165,7 +166,8 @@ class Generic:
     def is_useful(self: Self):
         return len(self.arg_names) > 1 or len(self.arg_names) > 0 and self.is_return or self.is_yield
 
-    def get(generics: list[Self], name: str) -> Self|None:
+    @staticmethod
+    def get(generics: list[Generic], name: str) -> Optional[Generic]:
         for generic in generics:
             if name in generic.arg_names:
                 return generic

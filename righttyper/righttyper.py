@@ -100,7 +100,7 @@ class Observations:
     visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = field(default_factory=lambda: defaultdict(list))
 
     # For each visited function, all potential groups of generics
-    visited_funcs_generics: dict[FuncInfo, Optional[list[Generic]]] = field(default_factory=lambda: defaultdict(None))
+    visited_funcs_generics: dict[FuncInfo, list[Generic]] = field(default_factory=lambda: defaultdict(list))
 
     # For each visited function, the values it returned
     visited_funcs_retval: dict[FuncInfo, TypeInfoSet] = field(default_factory=lambda: defaultdict(TypeInfoSet))
@@ -165,15 +165,16 @@ class Observations:
         # should we have no genreics, die
         if t not in self.visited_funcs_generics:
             return []
-        
+
         args = self.visited_funcs_arguments[t]
         generics = self.visited_funcs_generics[t]
         retval = self.visited_funcs_retval[t]
 
+
         # prune unchanged generics
         for arg in args:
             generic = Generic.get(generics, arg.arg_name)
-            if not generic:
+            if generic is None:
                 continue
 
             # if there's no args
@@ -233,7 +234,7 @@ class Observations:
                 
                 # if for whatever reason you can't find the argument name for the
                 # generic, we should just do nothing I guess
-                if not type_set:
+                if type_set is None:
                     continue
 
                 # if this generic is also the return type, change the return type
@@ -478,7 +479,7 @@ def process_function_arguments(
 
 def process_generics(
     t: FuncInfo,
-    argtypes: ArgInfo,
+    argtypes: inspect.ArgInfo,
     return_value: Any,
     event_type: int
 ) -> None:

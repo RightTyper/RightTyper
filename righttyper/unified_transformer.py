@@ -248,8 +248,12 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def _compute_return_type(self, ann: FuncAnnotation, generics: dict[int, str]):
 
-        ret_gen = generics.get(ann.returns_generic, None)
-        yield_gen = generics.get(ann.yields_generic, None)
+        ret_gen = None
+        yield_gen = None
+        if ann.returns_generic is not None and ann.returns_generic in generics:
+            ret_gen = generics[ann.returns_generic]
+        if ann.yields_generic is not None and ann.yields_generic in generics:
+            yield_gen = generics[ann.yields_generic]
 
         retval = ret_gen or ann.retval
         yieldval = ann.yieldval
@@ -361,6 +365,11 @@ class UnifiedTransformer(cst.CSTTransformer):
         ):
             return parameter
 
+        # type checking for pyright--the type of annotations allows
+        # for generics, but they should all have been resolved by now
+        if isinstance(annotation, int):
+            raise Exception("Unresolved generic")
+
         annotation = self._try_rename_to_self(annotation)
 
         if not self._is_valid(annotation):
@@ -402,7 +411,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
-    ) -> cst.FunctionDef:
+    ) -> cst.FunctionDef | cst.FlattenSentinel:
         name = ".".join(self.name_stack[:-1])
         self.name_stack.pop()
         self.name_stack.pop()
@@ -430,10 +439,10 @@ class UnifiedTransformer(cst.CSTTransformer):
                         generics[idx] = f"T_{types}_{idx}"
                         
                     # update the type
-                    ann.args[i] = (ann.args[i][0], generics[idx])
+                    ann.args[i] = (ann.args[i][0], Typename(generics[idx]))
 
             # update our retval based on the type we made for it and any yield stuff we may need to do
-            retval = self._compute_return_type(ann, generics)
+            retval = Typename(self._compute_return_type(ann, generics))
 
             # make generic names known
             self.known_names |= set(generics.values())
