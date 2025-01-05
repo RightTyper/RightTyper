@@ -1,13 +1,11 @@
 import typing
 import builtins
 import collections.abc as abc
-import types
 import libcst as cst
 import libcst.matchers as cstm
 import re
 
 from righttyper.righttyper_types import (
-    ArgumentName,
     Filename,
     FuncInfo,
     FuncAnnotation,
@@ -431,7 +429,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 # TODO: in the future names will be done based off python version
                 # for now it's just T_types_index
                 for (i, (name, idx)) in enumerate(ann.args):
-                    if type(idx) != int:
+                    if type(idx) is not int:
                         continue
                     if idx not in generics:
                         # regex is basically leavethis.keepthis[leavethis]
@@ -532,8 +530,8 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         if generic_csts:
             leading_lines = updated_node.leading_lines
-            find_comments = map(lambda a: a[0], filter(lambda a: type(a[1]) == cst.EmptyLine and a[1].comment != None, enumerate(leading_lines)))
-            if index := next(find_comments, None):
+            find_comments = map(lambda a: a[0], filter(lambda a: type(a[1]) is cst.EmptyLine and a[1].comment is not None, enumerate(leading_lines)))
+            if index := next(find_comments, None) is not None:
                 generic_csts[0] = generic_csts[0].with_changes(leading_lines=leading_lines[:index])
                 updated_node = updated_node.with_changes(leading_lines=leading_lines[index:])
 

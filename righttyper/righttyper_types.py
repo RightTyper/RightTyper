@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from collections import defaultdict
 from enum import Enum
-from typing import Any, NewType, TypeVar, Self, Iterator, Iterable, TypeAlias, Optional
+from typing import NewType, TypeVar, Self, TypeAlias, Optional
 
 T = TypeVar("T")
 
@@ -122,7 +122,8 @@ class Generic:
             # we're going to iterate through all available at each point in time
             for g2 in _a:
 
-                if not (g1.arg_names & g2.arg_names): continue
+                if not (g1.arg_names & g2.arg_names):
+                    continue
         
                 # break apart into subset and leftover
                 _a.remove(g2)
@@ -133,14 +134,14 @@ class Generic:
                 subset_is_return = g2.is_return
                 leftover_is_return = g2.is_return
                 if g1.is_return is not None:
-                    subset_is_return = g1.is_return and g2.is_return != False
-                    leftover_is_return = g2.is_return != False and g1.is_return == False
+                    subset_is_return = g1.is_return and g2.is_return != False # noqa: E712
+                    leftover_is_return = g2.is_return != False and g1.is_return == False # noqa: E712
 
                 subset_is_yield = g2.is_yield
                 leftover_is_yield = g2.is_yield
                 if g1.is_yield is not None:
-                    subset_is_yield = g1.is_yield and g2.is_yield != False
-                    leftover_is_yield = g2.is_yield != False and g1.is_yield == False
+                    subset_is_yield = g1.is_yield and g2.is_yield != False # noqa: E712
+                    leftover_is_yield = g2.is_yield != False and g1.is_yield == False # noqa: E712
 
                 subset = Generic(g1.arg_names & g2.arg_names,
                     subset_is_return,
@@ -153,9 +154,12 @@ class Generic:
                     leftover_is_yield)
 
                 # add new generics back to a if they're big enough
-                if subset.is_useful(): res.append(subset)
-                if leftover_a.is_useful(): _a.append(leftover_a)
-                if leftover_b.is_useful(): _b.append(leftover_b)
+                if subset.is_useful():
+                    res.append(subset)
+                if leftover_a.is_useful():
+                    _a.append(leftover_a)
+                if leftover_b.is_useful():
+                    _b.append(leftover_b)
 
                 break
 

@@ -17,8 +17,7 @@ from types import CodeType, FrameType, FunctionType
 from typing import (
     Any,
     TextIO,
-    Self,
-    Optional
+    Self
 )
 
 import click
@@ -43,7 +42,6 @@ from righttyper.righttyper_tool import (
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
-    ArgumentType,
     Filename,
     FuncInfo,
     FuncAnnotation,
@@ -238,8 +236,10 @@ class Observations:
                     continue
 
                 # if this generic is also the return type, change the return type
-                if generic.is_return: return_index = generic.index
-                if generic.is_yield: yield_index = generic.index
+                if generic.is_return:
+                    return_index = generic.index
+                if generic.is_yield:
+                    yield_index = generic.index
 
                 # we have to do a reduce here because you can't simply parse out the
                 # types with a regular expression due to union_typeset_str being recursive
@@ -495,11 +495,11 @@ def process_generics(
         # we set the other one to true always in order to not overwrite something
         # accidentally. Does this work? dunno haven't really tested it yet
         g = event_type == sys.monitoring.events.PY_YIELD and \
-            Generic(set([a]), is_yield=type(return_value) == typ) or\
-            Generic(set([a]), is_return=type(return_value) == typ)
+            Generic(set([a]), is_yield=type(return_value) is typ) or\
+            Generic(set([a]), is_return=type(return_value) is typ)
 
         for b in argtypes.args:
-            if type(argtypes.locals[b]) == typ:
+            if type(argtypes.locals[b]) is typ:
                 g.arg_names.add(b)
 
         generics.append(g)
