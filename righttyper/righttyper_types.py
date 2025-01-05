@@ -98,83 +98,70 @@ class ArgInfo:
 @dataclass
 class Generic:
     arg_names: set[str]
-    is_return: bool|None = None
-    is_yield: bool|None = None
+    is_return: Optional[bool] = None
+    is_yield: Optional[bool] = None
     index: int = -1
 
     @staticmethod
     def merge_generics(a: list[Generic], b: list[Generic]) -> list[Generic]:
-        # for every b that's a subset of someting in a:
-        # break apart into subset and non-subset
-        # if return agrees on both, keep it, otherwise don't
-        # then we prune all single length generics, since
-        # that's literally just an argument
+        """
+        Takes two lists of `Generic` objects and combines them into an updated list.
+        There are a couple complexities with this, but the main idea is as follows:
 
-        # we keep the generics we know are good in res
+        Each generic in list a is a group of arguments that we *know* have the same
+        type in all previous calls. Each generic in list b is a group of arguments
+        that have the same calls as of the most recent function invocation. We need
+        to square these two.
+
+        We also must take into account the knowledge we have about whether or not any
+        given generic also corresponds to either the return type or the yield type.
+        Yields and returns are handled seperately, so we need to not change any known
+        info about returns from a yield and vice versa. In this case, having either
+        is_yield or is_return be `None` means "we don't know anything about this field"
+
+        Args:
+        a (list[Generic]): List of generics as known before this new call
+        b (list[Generic]): List of potential generics we found from the most recent call
+
+        Returns:
+        list[Generic]: List of generics as known after this call
+        """
+
         res = []
 
-        _a = a.copy()
-        _b = b.copy()
-
-        while len(_b):
-            g1 = _b.pop(0)
-
-            # we're going to iterate through all available at each point in time
-            for g2 in _a:
-
-                if not (g1.arg_names & g2.arg_names):
+        for known in a:
+            for new in b:
+                if not (new.arg_names & known.arg_names):
                     continue
-        
-                # break apart into subset and leftover
-                _a.remove(g2)
 
-                # if we're not learning new information about the return, keep it as is
-                # if we are, our subset will be the return if the part we're cutting from is also return
-                # ex. {a,b}R, {a,b,c}R should result in {a,b}R -> res, {c} -> available
-                subset_is_return = g2.is_return
-                leftover_is_return = g2.is_return
-                if g1.is_return is not None:
-                    subset_is_return = g1.is_return and g2.is_return != False # noqa: E712
-                    leftover_is_return = g2.is_return != False and g1.is_return == False # noqa: E712
+                # by default assume the same knowledge about yeild and return as original
+                subset = Generic(new.arg_names & known.arg_names, known.is_return, known.is_yield)
 
-                subset_is_yield = g2.is_yield
-                leftover_is_yield = g2.is_yield
-                if g1.is_yield is not None:
-                    subset_is_yield = g1.is_yield and g2.is_yield != False # noqa: E712
-                    leftover_is_yield = g2.is_yield != False and g1.is_yield == False # noqa: E712
+                if new.is_return is not None:
+                    # we use != False because we want it to still be true even if
+                    # g2.is_return is None, since it being None means we know nothing
+                    # about the return type
+                    subset.is_return = new.is_return and known.is_return != False # noqa: E712
 
-                subset = Generic(g1.arg_names & g2.arg_names,
-                    subset_is_return,
-                    subset_is_yield)
-                leftover_a = Generic(g2.arg_names - (g1.arg_names & g2.arg_names),
-                    leftover_is_return,
-                    leftover_is_yield)
-                leftover_b = Generic(g1.arg_names - (g1.arg_names & g2.arg_names),
-                    leftover_is_return,
-                    leftover_is_yield)
+                if new.is_yield is not None:
+                    subset.is_yield= new.is_yield and known.is_yield != False # noqa: E712
 
-                # add new generics back to a if they're big enough
-                if subset.is_useful():
+                if len(subset.arg_names) + bool(subset.is_return or subset.is_yield) > 1:
                     res.append(subset)
-                if leftover_a.is_useful():
-                    _a.append(leftover_a)
-                if leftover_b.is_useful():
-                    _b.append(leftover_b)
-
-                break
 
         return res
 
-    # a generic is useful if it spans across two arguemnts, or it
-    # spans between >=1 argument and is either the return or yield
-    def is_useful(self: Self):
-        return len(self.arg_names) > 1 or len(self.arg_names) > 0 and self.is_return or self.is_yield
-
     @staticmethod
     def get(generics: list[Generic], name: str) -> Optional[Generic]:
-        for generic in generics:
-            if name in generic.arg_names:
-                return generic
+        """
+        Finds the generic an argument name corresponds to
 
-        return None
+        Args:
+        generics (list[Generic]): list of generics to search through
+        name (str): name of argument to get generic for
+
+        Returns:
+        Optional[Generic]: The found generic or None
+        """
+        return next(filter(lambda a: name in a.arg_names, generics), None)
 

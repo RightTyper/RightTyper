@@ -159,6 +159,21 @@ class Observations:
         return Typename("None")
 
     def prune_generics(self: Self, t: FuncInfo) -> list[Generic]:
+        """
+        For a given function, remove all unnecessary generics.
+        Specifically we prune the following cases:
+
+        - if there is only a single type in it's typeset, we can just use that type
+        - if there is some superclass, we can just use that superclass (handled by union_typeset_str)
+        - if the return and the generic disagree (e.g. we find things through the default argument that
+          are not borne out in the generic)
+
+        Args:
+        t (FuncInfo): key for indexing the dictionaries, the function itself
+
+        Returns:
+        list[Generic]: list of generics belonging to the given function that survive the pruning
+        """
 
         # should we have no genreics, die
         if t not in self.visited_funcs_generics:
@@ -483,6 +498,17 @@ def process_generics(
     return_value: Any,
     event_type: int
 ) -> None:
+    """
+    Processes information gathered either by a return or a yield, converts it into
+    generics and updates our current guesses as to what the generics are.
+
+    Args:
+    t (FuncInfo): The function whose call we're parsing
+    argtypes (ArgInfo): The arguments provided to the specific call
+    return_value (Any): The return value when provided said arguments
+    event_type (int): Either PY_YIELD or PY_RETURN
+    """
+    
     generics = []
     for a in argtypes.args:
 
