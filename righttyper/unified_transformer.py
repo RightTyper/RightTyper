@@ -531,7 +531,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         if generic_csts:
             leading_lines = updated_node.leading_lines
             find_comments = map(lambda a: a[0], filter(lambda a: type(a[1]) is cst.EmptyLine and a[1].comment is not None, enumerate(leading_lines)))
-            if index := next(find_comments, None) is not None:
+            if (index := next(find_comments, None)) is not None:
                 generic_csts[0] = generic_csts[0].with_changes(leading_lines=leading_lines[:index])
                 updated_node = updated_node.with_changes(leading_lines=leading_lines[index:])
 
