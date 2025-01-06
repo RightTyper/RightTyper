@@ -1,4 +1,5 @@
-from righttyper.righttyper_types import TypeInfo
+from righttyper.righttyper_types import TypeInfo, TypeInfoSet
+from righttyper.righttyper_utils import union_typeset_str
 import pytest
 
 def ti(name: str, **kwargs) -> TypeInfo:
@@ -24,10 +25,7 @@ def generalize(samples: list[tuple[TypeInfo, ...]]) -> list[str]:
                 typevars[types] = f"T{len(typevars)+1}"
                 parameters.append(typevars[types])
             else:
-                types = tuple(dict.fromkeys(types))
-                if NoneTypeInfo in types:
-                    types = (*tuple(t for t in types if t != NoneTypeInfo), None)
-                parameters.append('|'.join([str(t) for t in types]))
+                parameters.append(union_typeset_str(TypeInfoSet(types)))
     
     return parameters
 
@@ -46,8 +44,10 @@ def generalize2(tuples: list[tuple[type, ...]]) -> list[str]:
 def test_no_tuples():
     assert generalize2([]) == []
 
+
 def test_single_tuple():
     assert generalize2([(int, float, str)]) == ['int', 'float', 'str']
+
 
 def test_none():
     assert generalize2([(int, None)]) == ['int', 'None']
@@ -56,6 +56,7 @@ def test_none():
         (int, None),
         (int, bool)
     ]) == ['int', 'bool|None']
+
 
 def test_uniform_single_type():
     tuples = [
@@ -71,7 +72,8 @@ def test_first_same_then_different():
         (bool, bool),
         (int, bool)
     ]
-    assert generalize2(tuples) == ['int|bool', 'int|bool']
+    assert generalize2(tuples) == ['bool|int', 'bool|int']
+
 
 def test_mixed_with_constant_types():
     tuples = [
@@ -79,7 +81,8 @@ def test_mixed_with_constant_types():
         (bool, str, float),
         (float, str, bool)
     ]
-    assert generalize2(tuples) == ['int|bool|float', 'str', 'int|float|bool']
+    assert generalize2(tuples) == ['bool|float|int', 'str', 'bool|float|int']
+
 
 def test_shared_variability():
     tuples = [
@@ -88,6 +91,7 @@ def test_shared_variability():
     ]
     assert generalize2(tuples) == ['T1', 'T1', 'bool', 'T1']
 
+
 def test_multiple_length_tuples():
     tuples = [
         (int, int),
@@ -95,12 +99,14 @@ def test_multiple_length_tuples():
     ]
     assert generalize2(tuples) is None
 
+
 def test_all_distinct_types():
     tuples = [
         (int, str, float, bool),
         (float, str, bool, int)
     ]
-    assert generalize2(tuples) == ['int|float', 'str', 'float|bool', 'bool|int']
+    assert generalize2(tuples) == ['float|int', 'str', 'bool|float', 'bool|int']
+
 
 @pytest.mark.xfail()
 def test_generic():
