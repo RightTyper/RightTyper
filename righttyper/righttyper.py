@@ -344,10 +344,6 @@ def exception_handler(
             obs.visited_funcs_samples[t].add(processed_sample)
             del obs.visited_funcs_invocations[t][id]
 
-        if code.co_qualname == "test_size_can_fall_back_to_std_descriptors.<locals>.get_terminal_size_mock_impl":
-            import traceback
-            traceback.print_exception(type(exception), exception, exception.__traceback__)
-            print(frame.__hash__(), "died")
 
         del frame
 
