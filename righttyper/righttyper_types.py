@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import NewType, TypeVar, Self, TypeAlias
 
@@ -62,6 +62,9 @@ class TypeInfo:
     def from_type(t: TYPE_OBJ_TYPES, **kwargs) -> "TypeInfo":
         return TypeInfo(t.__module__, t.__qualname__, type_obj=t, **kwargs)
 
+    def replace(self, **kwargs) -> "TypeInfo":
+        return replace(self, **kwargs)
+
     class Transformer:
         def visit(self, node: "TypeInfo") -> "TypeInfo":
             new_args = tuple(
@@ -69,9 +72,8 @@ class TypeInfo:
                 for arg in node.args
             )
             if new_args != node.args:
-                return TypeInfo(node.module, node.name, args=new_args,
-                                func=node.func, is_bound=node.is_bound,
-                                type_obj=node.type_obj)
+                return node.replace(args=new_args)
+
             return node
 
 
