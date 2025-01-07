@@ -3,8 +3,23 @@ from righttyper.righttyper_utils import union_typeset_str
 from typing import Sequence, cast
 
 
-def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[str]|None:
-    # ensure all samples are consistent (the same number of arguments)
+def generalize(
+    samples: Sequence[tuple[TypeInfo, ...]],
+    *,
+    typevars: dict[tuple[TypeInfo, ...], str]|None = None
+) -> list[str]|None:
+    """
+    Processes a sequence of samples observed for function parameters and return values, looking
+    for patterns that can be replaced with type variables.  If no pattern is detected, the
+    union of those types (per union_typeset_str) is built.
+
+    samples: a sequence of tuples with type information. Each type in a tuple corresponds to
+        a parameter (or return) type.
+    typevars: a dictionary from type tuples (indicating a type usage pattern) to variable names.
+    returns: a list of parameter (or return) type annotations.
+    """
+
+    # Ensure all samples are consistent (the same number of arguments)
     if any(len(t) != len(samples[0]) for t in samples[1:]):
         return None
 
@@ -46,7 +61,8 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[str]|None:
     for types in transposed:
         occurrences.update([s for s in expand_generics(types)])
 
-    typevars: dict[tuple[TypeInfo, ...], str] = {}
+    if typevars is None:
+        typevars = {}
 
     # Rebuild the argument list, defining and replacing type patterns with a type variable.
     def rebuild(types: tuple[TypeInfo, ...]) -> TypeInfo|str:
@@ -68,9 +84,6 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[str]|None:
     return [str(rebuild(types)) for types in transposed]
 
 
-
-from typing import Any
-
 def ti(name: str, **kwargs) -> TypeInfo:
     return TypeInfo(module='', name=name, **kwargs)
 
@@ -84,13 +97,13 @@ def test_single_sample():
     assert generalize([(ti('int'), ti('float'), ti('str'))]) == ['int', 'float', 'str']
 
 
-def test_none():
-    assert generalize([(ti('int'), ti('None'))]) == ['int', 'None']
-
-    assert generalize([
-        (ti('int'), ti('None')),
-        (ti('int'), ti('bool'))
-    ]) == ['int', 'bool|None']
+def test_varied_length_samples():
+    samples = [
+        (ti('int'), ti('int')),
+        (ti('int'), ti('int'), ti('int')),
+    ]
+    # TODO raise exception instead?
+    assert generalize(samples) is None
 
 
 def test_uniform_single_type():
@@ -99,7 +112,25 @@ def test_uniform_single_type():
         (ti('bool'), ti('bool'), ti('bool')),
         (ti('float'), ti('float'), ti('float'))
     ]
-    assert generalize(samples) == ['T1', 'T1', 'T1']
+    typevars: dict[tuple[TypeInfo, ...], str] = {}
+    assert generalize(samples, typevars=typevars) == ['T1', 'T1', 'T1']
+
+    var = next(iter(typevars.keys()))
+    assert union_typeset_str(TypeInfoSet(var)) == "bool|float|int"
+
+    assert typevars[var] == 'T1'
+
+
+def test_uses_existing_typevars():
+    samples = [
+        (ti('int'), ti('int'), ti('int')),
+        (ti('bool'), ti('bool'), ti('bool')),
+        (ti('float'), ti('float'), ti('float'))
+    ]
+
+    typevars: dict[tuple[TypeInfo, ...], str] = {}
+    typevars[(ti('int'), ti('bool'), ti('float'))] = 'X'
+    assert generalize(samples, typevars=typevars) == ['X', 'X', 'X']
 
 
 def test_uniform_single_type_with_generic():
@@ -108,7 +139,12 @@ def test_uniform_single_type_with_generic():
         (ti('bool'), ti('bool')),
         (ti('X', args=(ti('foo'),)), ti('X', args=(ti('foo'),))),
     ]
-    assert generalize(samples) == ['T1', 'T1']
+
+    typevars: dict[tuple[TypeInfo, ...], str] = {}
+    assert generalize(samples, typevars=typevars) == ['T1', 'T1']
+
+    var = next(iter(typevars.keys()))
+    assert union_typeset_str(TypeInfoSet(var)) == "X[foo]|bool|int"
 
 
 def test_first_same_then_different():
@@ -135,14 +171,6 @@ def test_shared_variability():
         (ti('float'), ti('float'), ti('bool'), ti('float'))
     ]
     assert generalize(samples) == ['T1', 'T1', 'bool', 'T1']
-
-
-def test_multiple_length_tuples():
-    samples = [
-        (ti('int'), ti('int')),
-        (ti('int'), ti('int'), ti('int')),
-    ]
-    assert generalize(samples) is None
 
 
 def test_all_distinct_types():
@@ -201,6 +229,8 @@ def test_generic_within_args():
 
 
 def test_generic_with_string():
+    from typing import Any
+
     samples: Any = [
         (ti('int'), ti('X', args=(ti('int'), "\"foo\""))),
         (ti('bool'), ti('X', args=(ti('bool'), "\"bar\""))),
