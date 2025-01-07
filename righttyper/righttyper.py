@@ -85,6 +85,34 @@ sample_count_total = 0.0
 
 logger = logging.getLogger("righttyper")
 
+@dataclass
+class Sample:
+    args: list[TypeInfo] = field(default_factory=list)
+    yields: TypeInfoSet = field(default_factory=TypeInfoSet)
+    returns: TypeInfo = field(default_factory=lambda: TypeInfo.from_type(type(None)))
+
+    def process(self) -> tuple[TypeInfo]:
+
+        retval = self.returns
+        if len(self.yields):
+            y = TypeInfo("typing", "Union", tuple(yields))
+            is_async = False
+            
+            if len(self.yields) == 1:
+                if str(self.yields[0]) == "builtins.async_generator_wrapped_value": 
+                    y = TypeInfo("typing", "Any")
+                    is_async = True
+                else:
+                    y = self.yields[0]
+            
+            if str(self.returns) == None:
+                iter_type = is_async and "AsyncIterator" or "Iterator"
+                retval = TypeInfo("typing", iter_type, (y))
+
+            else:
+                retval = TypeInfo("typing", "Generator", (y, TypeInfo("typing", "Any"), returns))
+
+        return tuple(self.args + [retval])
 
 @dataclass
 class Observations:
@@ -99,6 +127,9 @@ class Observations:
 
     # For each visited function, the values it yielded
     visited_funcs_yieldval: dict[FuncInfo, TypeInfoSet] = field(default_factory=lambda: defaultdict(TypeInfoSet))
+
+    visited_funcs_invocations: dict[FuncInfo, dict[int, Sample]] = field(default_factory=lambda: defaultdict(dict))
+    visited_funcs_samples: dict[FuncInfo, set[tuple[TypeInfo]]] = field(default_factory=lambda: defaultdict(set))
 
     namespace: dict[str, Any] = field(default_factory=dict)
 
@@ -176,6 +207,7 @@ class Observations:
 
         type_annotations: dict[FuncInfo, FuncAnnotation] = {}
         for t in self.visited_funcs:
+            print([[*map(str, a)] for a in self.visited_funcs_samples[t]])
             args = self.visited_funcs_arguments[t]
 
             type_annotations[t] = FuncAnnotation(
@@ -245,11 +277,17 @@ def enter_function(code: CodeType, offset: int) -> Any:
         else:
             defaults = {}
 
-        process_function_arguments(t, inspect.getargvalues(frame), defaults)
+        args = inspect.getargvalues(frame)
+        process_function_arguments(t, args, defaults)
+        process_type_samples(t, args, frame.__hash__())
+
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
 
+def process_type_samples(t: FuncInfo, args: inspect.ArgInfo, id: int):
+    obs.visited_funcs_invocations[t][id] = \
+        Sample([get_full_type(args.locals[arg]) for arg in args.args])
 
 def call_handler(
     code: CodeType,
@@ -271,11 +309,42 @@ def call_handler(
                 callable.__code__,
                 sys.monitoring.events.PY_START
                 | sys.monitoring.events.PY_RETURN
-                | sys.monitoring.events.PY_YIELD,
+                | sys.monitoring.events.PY_YIELD
+                | sys.monitoring.events.PY_UNWIND,
             )
 
     return sys.monitoring.DISABLE
 
+def exception_handler(
+    code: CodeType,
+    instruction_offset: int,
+    exception: BaseException,
+) -> object:
+
+    if should_skip_function(
+        code,
+        options.script_dir,
+        options.include_all,
+        options.include_files_pattern,
+        options.include_functions_pattern
+    ):
+        return
+
+    t = FuncInfo(
+        Filename(code.co_filename),
+        FunctionName(code.co_qualname),
+    )
+
+    frame = inspect.currentframe()
+    if frame and frame.f_back:
+        frame = frame.f_back
+        assert code == frame.f_code
+
+        processed_sample = obs.visited_funcs_invocations[t][frame.__hash__()].process()
+        obs.visited_funcs_samples[t].add(processed_sample)
+        del obs.visited_funcs_invocations[t][id]
+
+        del frame
 
 def yield_function(
     code: CodeType,
@@ -343,6 +412,23 @@ def exit_function_worker(
     )
 
     debug_print(f"exit processing, retval was {obs.visited_funcs_retval[t]=}")
+
+    frame = inspect.currentframe()
+    if frame and frame.f_back and frame.f_back.f_back:
+        frame = frame.f_back.f_back
+        assert code == frame.f_code
+
+        id = frame.__hash__()
+        if event_type == sys.monitoring.events.PY_YIELD:
+            obs.visited_funcs_invocations[t][id].yields.add(get_full_type(return_value))
+        else:
+            obs.visited_funcs_invocations[t][id].returns = get_full_type(return_value)
+
+        processed_sample = obs.visited_funcs_invocations[t][id].process()
+        obs.visited_funcs_samples[t].add(processed_sample)
+        del obs.visited_funcs_invocations[t][id]
+
+        del frame
 
     typeinfo = get_full_type(return_value, use_jaxtyping=options.infer_shapes)
 
@@ -479,6 +565,7 @@ instrumentation_functions_code = set(
         call_handler.__code__,
         exit_function_worker.__code__,
         restart_sampling.__code__,
+        exception_handler.__code__,
     ]
 )
 
@@ -857,6 +944,7 @@ def main(
             call_handler,
             exit_function,
             yield_function,
+            exception_handler,
         )
         sys.monitoring.restart_events()
         setup_timer(restart_sampling)

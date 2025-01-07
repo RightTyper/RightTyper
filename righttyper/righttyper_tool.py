@@ -12,6 +12,7 @@ _EVENTS = frozenset(
         sys.monitoring.events.PY_RETURN,
         sys.monitoring.events.PY_YIELD,
         sys.monitoring.events.CALL,
+        sys.monitoring.events.PY_UNWIND,
     }
 )
 
@@ -21,6 +22,7 @@ def register_monitoring_callbacks(
     call_handler: Callable[[CodeType, int, object, object], Any],
     exit_function: Callable[[CodeType, int, Any], object],
     yield_function: Callable[[CodeType, int, Any], object],
+    exception_handler: Callable[[CodeType, int, BaseException], object],
 ) -> None:
     """Set up tracking for all enters, calls, exits, and yields."""
     event_set = 0
@@ -34,6 +36,7 @@ def register_monitoring_callbacks(
         sys.monitoring.events.CALL: call_handler,
         sys.monitoring.events.PY_RETURN: exit_function,
         sys.monitoring.events.PY_YIELD: yield_function,
+        sys.monitoring.events.PY_UNWIND: exception_handler,
     }
 
     for event in fns:
