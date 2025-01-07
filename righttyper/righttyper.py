@@ -95,22 +95,21 @@ class Sample:
 
         retval = self.returns
         if len(self.yields):
-            y = TypeInfo("typing", "Union", tuple(yields))
+            y = TypeInfo("typing", "Union", tuple(self.yields))
             is_async = False
             
             if len(self.yields) == 1:
-                if str(self.yields[0]) == "builtins.async_generator_wrapped_value": 
+                y = next(iter(self.yields))
+                if str(y) == "builtins.async_generator_wrapped_value": 
                     y = TypeInfo("typing", "Any")
                     is_async = True
-                else:
-                    y = self.yields[0]
             
             if str(self.returns) == None:
                 iter_type = is_async and "AsyncIterator" or "Iterator"
                 retval = TypeInfo("typing", iter_type, (y))
 
             else:
-                retval = TypeInfo("typing", "Generator", (y, TypeInfo("typing", "Any"), returns))
+                retval = TypeInfo("typing", "Generator", (y, TypeInfo("typing", "Any"), self.returns))
 
         return tuple(self.args + [retval])
 
@@ -207,7 +206,7 @@ class Observations:
 
         type_annotations: dict[FuncInfo, FuncAnnotation] = {}
         for t in self.visited_funcs:
-            print([[*map(str, a)] for a in self.visited_funcs_samples[t]])
+            # print([[*map(str, a)] for a in self.visited_funcs_samples[t]])
             args = self.visited_funcs_arguments[t]
 
             type_annotations[t] = FuncAnnotation(
@@ -310,7 +309,6 @@ def call_handler(
                 sys.monitoring.events.PY_START
                 | sys.monitoring.events.PY_RETURN
                 | sys.monitoring.events.PY_YIELD
-                | sys.monitoring.events.PY_UNWIND,
             )
 
     return sys.monitoring.DISABLE
@@ -340,9 +338,16 @@ def exception_handler(
         frame = frame.f_back
         assert code == frame.f_code
 
-        processed_sample = obs.visited_funcs_invocations[t][frame.__hash__()].process()
-        obs.visited_funcs_samples[t].add(processed_sample)
-        del obs.visited_funcs_invocations[t][id]
+        id = frame.__hash__()
+        if id in obs.visited_funcs_invocations[t]:
+            processed_sample = obs.visited_funcs_invocations[t][id].process()
+            obs.visited_funcs_samples[t].add(processed_sample)
+            del obs.visited_funcs_invocations[t][id]
+
+        if code.co_qualname == "test_size_can_fall_back_to_std_descriptors.<locals>.get_terminal_size_mock_impl":
+            import traceback
+            traceback.print_exception(type(exception), exception, exception.__traceback__)
+            print(frame.__hash__(), "died")
 
         del frame
 
@@ -424,9 +429,9 @@ def exit_function_worker(
         else:
             obs.visited_funcs_invocations[t][id].returns = get_full_type(return_value)
 
-        processed_sample = obs.visited_funcs_invocations[t][id].process()
-        obs.visited_funcs_samples[t].add(processed_sample)
-        del obs.visited_funcs_invocations[t][id]
+            processed_sample = obs.visited_funcs_invocations[t][id].process()
+            obs.visited_funcs_samples[t].add(processed_sample)
+            del obs.visited_funcs_invocations[t][id]
 
         del frame
 
