@@ -19,7 +19,8 @@ from righttyper.righttyper_types import (
     FuncInfo,
     T,
     TypeInfoSet,
-    TypeInfo
+    TypeInfo,
+    NoneTypeInfo
 )
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 
@@ -233,7 +234,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     # "list_iterator", aren't known by any particular name.
     if obj.__module__ == "builtins":
         if obj is NoneType:
-            return TypeInfo("", "None", type_obj=obj)
+            return NoneTypeInfo
         elif in_builtins_import(obj):
             return TypeInfo("", obj.__name__, type_obj=obj) # these are "well known", so no module name needed
         elif (name := from_types_import(obj)):

@@ -1,5 +1,6 @@
-from righttyper.righttyper_types import TypeInfo, TypeInfoSet
+from righttyper.righttyper_types import TypeInfo, TypeInfoSet, NoneTypeInfo
 from righttyper.righttyper_utils import union_typeset_str
+import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
 from collections import namedtuple
 from typing import Any
@@ -8,11 +9,9 @@ import importlib
 
 
 def get_full_type(*args, **kwargs) -> str:
-    import righttyper.righttyper_runtime as rt
     return str(rt.get_full_type(*args, **kwargs))
 
 def type_from_annotations(*args, **kwargs) -> str:
-    import righttyper.righttyper_runtime as rt
     return str(rt.type_from_annotations(*args, **kwargs))
 
 
@@ -22,6 +21,8 @@ class IterableClass(Iterable):
 
 
 def test_get_full_type():
+    assert NoneTypeInfo is rt.get_full_type(None)
+
     assert "bool" == get_full_type(True)
     assert "bool" == get_full_type(False)
     assert "int" == get_full_type(10)
@@ -268,10 +269,6 @@ def test_typeinfo_from_set():
         }))
 
     assert str(t) == 'builtins.bool|builtins.int'
-    args = sorted(t.args)
-
-    assert args[0].name == 'bool'
-    assert args[1].name == 'int'
 
     t = TypeInfo.from_set(TypeInfoSet({
             TypeInfo.from_type(int),
@@ -281,6 +278,7 @@ def test_typeinfo_from_set():
         }))
 
     assert str(t) == 'builtins.bool|builtins.int|z|None'
+    assert isinstance(t.args[-1], TypeInfo)
     assert t.args[-1].name == 'None'
 
 

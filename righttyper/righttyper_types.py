@@ -57,14 +57,9 @@ class TypeInfo:
         return f"{module}{self.name}"
 
 
-    def __lt__(self, other) -> bool:
-        return str(self) < str(other)
-
-
     @staticmethod
     def from_type(t: TYPE_OBJ_TYPES, **kwargs) -> "TypeInfo":
-        if t == types.NoneType:
-            return TypeInfo("", "None", type_obj=t, **kwargs)
+        if t == types.NoneType: return NoneTypeInfo
 
         return TypeInfo(t.__module__, t.__qualname__, type_obj=t, **kwargs)
 
@@ -82,7 +77,7 @@ class TypeInfo:
             name='UnionType',
             type_obj=types.UnionType,
             # 'None' at the end is seen as more readable
-            args=tuple(sorted(s, key = lambda x: (x.type_obj == types.NoneType, x)))
+            args=tuple(sorted(s, key = lambda x: (x == NoneTypeInfo, str(x))))
         )
 
 
@@ -100,6 +95,9 @@ class TypeInfo:
                 return node.replace(args=new_args)
 
             return node
+
+
+NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
 
 
 TypeInfoSet: TypeAlias = set[TypeInfo]
