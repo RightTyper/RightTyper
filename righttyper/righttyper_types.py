@@ -8,15 +8,10 @@ T = TypeVar("T")
 
 ArgumentName = NewType("ArgumentName", str)
 
-
-class ArgumentType(Enum):
-    positional = "PositionalArgument"
-    vararg = "VariableArgument"
-    kwarg = "KeywordArgument"
-
-
 Filename = NewType("Filename", str)
 FunctionName = NewType("FunctionName", str)
+
+Typename = NewType("Typename", str)
 
 
 @dataclass(eq=True, frozen=True)
@@ -24,13 +19,11 @@ class FuncInfo:
     file_name: Filename
     func_name: FunctionName
 
+
 @dataclass(eq=True, frozen=True)
 class FuncAnnotation:
     args: list[tuple[ArgumentName, Typename]]
     retval: Typename|None
-
-
-Typename = NewType("Typename", str)
 
 
 # Valid non-None TypeInfo.type_obj types: allows static casting
