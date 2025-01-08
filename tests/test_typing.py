@@ -240,6 +240,49 @@ def test_typeinfo():
     assert "int" == str(TypeInfo("", "int"))
     assert "tuple[bool]" == str(TypeInfo("", "tuple", args=('bool',)))
 
+    t = TypeInfo.from_type(type(None))
+    assert t.module == ''
+    assert t.name == 'None'
+    assert t.type_obj is type(None)
+    assert str(t) == "None"
+
+
+def test_typeinfo_from_set():
+    with pytest.raises(ValueError):
+        TypeInfo.from_set(TypeInfoSet({}))
+
+    t = TypeInfo.from_set(TypeInfoSet({
+            TypeInfo.from_type(int)
+        }))
+
+    assert str(t) == 'builtins.int'
+    assert t.name == 'int'
+    assert not t.args
+
+    assert t is not TypeInfo.from_type(int) # should be new object
+    assert t.type_obj is int
+
+    t = TypeInfo.from_set(TypeInfoSet({
+            TypeInfo.from_type(int),
+            TypeInfo.from_type(bool)
+        }))
+
+    assert str(t) == 'builtins.bool|builtins.int'
+    args = sorted(t.args)
+
+    assert args[0].name == 'bool'
+    assert args[1].name == 'int'
+
+    t = TypeInfo.from_set(TypeInfoSet({
+            TypeInfo.from_type(int),
+            TypeInfo.from_type(type(None)),
+            TypeInfo.from_type(bool),
+            TypeInfo(module='', name='z')
+        }))
+
+    assert str(t) == 'builtins.bool|builtins.int|z|None'
+    assert t.args[-1].name == 'None'
+
 
 def test_union_typeset():
     assert "None" == union_typeset_str(TypeInfoSet({}))
@@ -253,7 +296,7 @@ def test_union_typeset():
     )
 
     assert "bool|int|None" == union_typeset_str({
-            TypeInfo("", "None"),
+            TypeInfo.from_type(type(None)),
             TypeInfo("", "bool"),
             TypeInfo("", "int"),
         }
@@ -264,7 +307,7 @@ def test_union_typeset_generics():
     assert "list[bool|int]|None" == union_typeset_str({
             TypeInfo("", "list", args=(TypeInfo("", "int"),)),
             TypeInfo("", "list", args=(TypeInfo("", "bool"),)),
-            TypeInfo("", "None")
+            TypeInfo.from_type(type(None))
         }
     )
 
@@ -301,6 +344,7 @@ def test_union_typeset_generics():
 
 
 def test_union_typeset_generics_str_not_merged():
+    # the [...] parameters in Callable are passed as a string, which we don't merge (yet)
     assert "Callable[[], None]|Callable[[int], None]" == union_typeset_str({
             TypeInfo("", "Callable", args=(
                 "[], None",
@@ -355,6 +399,6 @@ def test_union_typeset_generics_superclass():
     assert f"list[{__name__}.{B.__qualname__}]|None" == union_typeset_str({
             TypeInfo("", "list", args=(TypeInfo.from_type(C),)),
             TypeInfo("", "list", args=(TypeInfo.from_type(D),)),
-            TypeInfo("", "None")
+            TypeInfo.from_type(type(None))
         }
     )

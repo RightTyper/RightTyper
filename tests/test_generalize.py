@@ -193,7 +193,7 @@ def test_generic_not_generalizable():
     samples = [
         (ti('int'), ti('list', args=(ti('int'),))),
         (ti('float'), ti('list', args=(ti('float'),))),
-        (ti('bool'), ti('None')),
+        (ti('bool'), TypeInfo.from_type(type(None))),
     ]
     assert generalize(samples) == ['bool|float|int', 'list[float|int]|None']
 

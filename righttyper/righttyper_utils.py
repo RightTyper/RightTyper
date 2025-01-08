@@ -63,12 +63,12 @@ def debug_print_set_level(level: bool) -> None:
     _DEBUG_PRINT = level
 
 
-def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
+def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
     if not typeinfoset:
-        return Typename("None") # Never observed any types.
+        return TypeInfo.from_type(type(None)) # Never observed any types.
 
     if len(typeinfoset) == 1:
-        return Typename(str(next(iter(typeinfoset))))
+        return next(iter(typeinfoset))
 
     if super := find_most_specific_common_superclass_by_name(typeinfoset):
         return super
@@ -86,9 +86,10 @@ def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
         ):
             if all_info:
                 group = set(group)
+                first = next(iter(group))
                 typeinfoset -= group
-                typeinfoset.add(TypeInfo(mod, name, args=tuple(
-                        union_typeset_str(TypeInfoSet({
+                typeinfoset.add(first.replace(args=tuple(
+                        union_typeset(TypeInfoSet({
                             cast(TypeInfo, member.args[i]) for member in group
                         }))
                         for i in range(nargs)
@@ -97,18 +98,14 @@ def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
 
     # TODO merge jaxtyping annotations by shape
 
-    typeset = {str(t) for t in typeinfoset}
-
-    if "None" in typeset:
-        # "None" at the end is considered to be more readable
-        return Typename(
-            "|".join([*(t for t in sorted(typeset) if t != "None"), "None"])
-        )
-
-    return Typename("|".join(sorted(typeset)))
+    return TypeInfo.from_set(typeinfoset)
 
 
-def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> Typename|None:
+def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
+    return Typename(str(union_typeset(typeinfoset)))
+
+
+def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> TypeInfo|None:
     if any(t.type_obj is None for t in typeinfoset):
         return None
 
@@ -127,7 +124,7 @@ def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> Ty
     )
 
     module = specific.__module__ if specific.__module__ != '__main__' else get_main_module_fqn()
-    return Typename(str(TypeInfo(module, specific.__qualname__, type_obj=specific)))
+    return TypeInfo(module, specific.__qualname__, type_obj=specific)
 
 
 @cache

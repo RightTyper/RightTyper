@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import NewType, TypeVar, Self, TypeAlias
+import types
 
 T = TypeVar("T")
 
@@ -40,7 +41,11 @@ class TypeInfo:
     is_bound: bool = False                  # if a callable, whether bound
     type_obj: TYPE_OBJ_TYPES|None = None
 
+
     def __str__(self: Self) -> str:
+        if self.type_obj == types.UnionType:
+            return "|".join(str(a) for a in self.args)
+        
         module = self.module + '.' if self.module else ''
         if self.args:
             return (
@@ -51,12 +56,39 @@ class TypeInfo:
 
         return f"{module}{self.name}"
 
+
+    def __lt__(self, other) -> bool:
+        return str(self) < str(other)
+
+
     @staticmethod
     def from_type(t: TYPE_OBJ_TYPES, **kwargs) -> "TypeInfo":
+        if t == types.NoneType:
+            return TypeInfo("", "None", type_obj=t, **kwargs)
+
         return TypeInfo(t.__module__, t.__qualname__, type_obj=t, **kwargs)
+
+
+    @staticmethod
+    def from_set(s: "TypeInfoSet") -> "TypeInfo":
+        if not s:
+            raise ValueError("Empty or invalid set passed to TypeInfo.from_set")
+
+        if len(s) == 1:
+            return next(iter(s))
+
+        return TypeInfo(
+            module='types',
+            name='UnionType',
+            type_obj=types.UnionType,
+            # 'None' at the end is seen as more readable
+            args=tuple(sorted(s, key = lambda x: (x.type_obj == types.NoneType, x)))
+        )
+
 
     def replace(self, **kwargs) -> "TypeInfo":
         return replace(self, **kwargs)
+
 
     class Transformer:
         def visit(self, node: "TypeInfo") -> "TypeInfo":
