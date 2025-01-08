@@ -1099,14 +1099,13 @@ def test_union_superclass(tmp_cwd, as_module):
     assert "def foo(x: A) -> None:" in Path("t.py").read_text()
 
 
-def test_custom_collection():
+def test_custom_collection(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         import collections.abc
 
         class MyKeysView(collections.abc.KeysView):
-
             def __init__(self):
-                super(MyContainer, self).__init__()
+                super()
 
         my_object = MyKeysView()
         """
