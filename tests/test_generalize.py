@@ -37,8 +37,8 @@ def generalize(
         first = types[0]
 
         return all(
-            t.module == first.module and 
-            t.name == first.name and 
+            t.module == first.module and
+            t.name == first.name and
             len(t.args) == len(first.args) and
             all(isinstance(a, TypeInfo) for a in t.args)
             for t in types[1:]
