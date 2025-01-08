@@ -102,8 +102,8 @@ class Sample:
                     y = TypeInfo("typing", "Any")
                     is_async = True
 
-            if str(self.returns) == None:
-                iter_type = is_async and "AsyncIterator" or "Iterator"
+            if str(self.returns) == "None":
+                iter_type = "AsyncIterator" if is_async else "Iterator"
                 retval = TypeInfo("typing", iter_type, (y))
 
             else:
