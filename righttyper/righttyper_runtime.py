@@ -383,36 +383,3 @@ def isinstance_namedtuple(obj: object) -> bool:
         and hasattr(obj, "_asdict")
         and hasattr(obj, "_fields")
     )
-
-
-def update_argtypes(
-    argtypes: list[ArgInfo],
-    index: tuple[FuncInfo, ArgumentName],
-    arg_values: Any,
-    argument_name: str,
-    /,
-    is_vararg: bool,
-    is_kwarg: bool,
-    use_jaxtyping: bool
-) -> None:
-
-    def add_arg_info(
-        values: Any,
-    ) -> None:
-        types = TypeInfoSet([
-            get_full_type(val, use_jaxtyping=use_jaxtyping)
-            for val in values
-        ])
-        argtypes.append(
-            ArgInfo(
-                ArgumentName(argument_name),
-                types,
-            )
-        )
-
-    if is_vararg:
-        add_arg_info(arg_values[0])
-    elif is_kwarg:
-        add_arg_info(arg_values[0].values())
-    else:
-        add_arg_info(arg_values)
