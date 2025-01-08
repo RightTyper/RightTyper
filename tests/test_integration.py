@@ -1099,17 +1099,17 @@ def test_union_superclass(tmp_cwd, as_module):
     assert "def foo(x: A) -> None:" in Path("t.py").read_text()
 
 
-# def test_custom_collection(tmp_cwd):
-#     Path("t.py").write_text(textwrap.dedent("""\
-#         import collections.abc
+def test_custom_collection(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        import collections.abc
 
-#         class MyKeysView(collections.abc.KeysView):
-#             def __init__(self):
-#                 super()
+        class MyKeysView(collections.abc.KeysView):
+            def __init__(self):
+                super()
 
-#         my_object = MyKeysView()
-#         """
-#     ))
+        my_object = MyKeysView()
+        """
+    ))
 
-#     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-#                     '--no-use-multiprocessing', 't.py'], check=True)
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
