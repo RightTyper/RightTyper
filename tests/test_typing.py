@@ -1,9 +1,9 @@
-from righttyper.righttyper_types import TypeInfo, TypeInfoSet, NoneTypeInfo
+from righttyper.righttyper_types import TypeInfo, TypeInfoSet, NoneTypeInfo, Sample
 from righttyper.righttyper_utils import union_typeset_str
 import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
 from collections import namedtuple
-from typing import Any
+from typing import Any, Callable
 import pytest
 import importlib
 
@@ -400,3 +400,80 @@ def test_union_typeset_generics_superclass():
             TypeInfo.from_type(type(None))
         }
     )
+
+str_ti = TypeInfo("", "str", type_obj=str)
+int_ti = TypeInfo("", "int", type_obj=int)
+bool_ti = TypeInfo("", "bool", type_obj=bool)
+any_ti = TypeInfo("typing", "Any")
+generator_ti = lambda *a: TypeInfo("typing", "Generator", tuple(a))
+iterator_ti = lambda *a: TypeInfo("typing", "Iterator", tuple(a))
+union_ti = lambda *a: TypeInfo("typing", "Union", tuple(a))
+
+def generate_sample(func: Callable, *args) -> Sample:
+    import righttyper.righttyper_runtime as rt
+
+    res = func(*args)
+    sample = Sample([rt.get_full_type(arg) for arg in args])
+    if type(res).__name__ == "generator":
+        try:
+            while True:
+                nex = next(res) # this can fail
+                sample.yields.add(rt.get_full_type(nex))
+        except StopIteration as e:
+            sample.returns = rt.get_full_type(e.value)
+    else:
+        sample.returns = rt.get_full_type(res)
+
+    return sample
+
+def test_sample_process_simple():
+    def dog(a):
+        return a
+
+    sample = generate_sample(dog, "hi")
+    assert sample == Sample([str_ti], returns=str_ti)
+    assert sample.process() == (str_ti, str_ti)
+
+def test_sample_process_generator():
+    def dog(a, b):
+        yield a
+        return b
+
+    sample = generate_sample(dog, 1, "hi")
+    assert sample == Sample([int_ti, str_ti], {int_ti}, str_ti)
+    assert sample.process() == (int_ti, str_ti, generator_ti(int_ti, any_ti, str_ti))
+
+def test_sample_process_iterator_union():
+    def dog(a, b):
+        yield a
+        yield b
+
+    sample = generate_sample(dog, 1, "hi")
+    assert sample == Sample([int_ti, str_ti], yields={int_ti, str_ti})
+    assert sample.process() == (int_ti, str_ti, iterator_ti(union_ti(str_ti, int_ti)))
+
+def test_sample_process_iterator():
+    def dog(a):
+        yield a
+
+    sample = generate_sample(dog, "hi")
+    assert sample == Sample([str_ti], yields={str_ti})
+    assert sample.process == (str_ti, iterator_ti((str_ti)))
+
+def test_sample_process_generator_union():
+    def dog(a, b, c):
+        yield a
+        yield b
+        return c
+
+    sample = generate_sample(dog, 1, "hi", True)
+    assert sample == Sample([int_ti, str_ti, bool_ti], {int_ti, str_ti}, bool_ti)
+    assert sample.process() == (int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), any_ti, bool_ti))
+
+def test_sample_process_asynciterator():
+    # TODO: do with real async test
+    sample = Sample(yields={TypeInfo("builtins", "async_generator_wrapped_value")})
+    assert sample.process() == (TypeInfo("typing", "AsyncIterator", (any_ti,)),)
+
+
+    

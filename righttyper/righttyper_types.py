@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 from enum import Enum
 from typing import NewType, TypeVar, Self, TypeAlias
 import types
@@ -107,3 +107,30 @@ TypeInfoSet: TypeAlias = set[TypeInfo]
 class ArgInfo:
     arg_name: ArgumentName
     type_set: TypeInfoSet
+
+@dataclass
+class Sample:
+    args: list[TypeInfo] = field(default_factory=list)
+    yields: TypeInfoSet = field(default_factory=TypeInfoSet)
+    returns: TypeInfo = field(default_factory=lambda: TypeInfo.from_type(type(None)))
+
+    def process(self) -> tuple[TypeInfo]:
+        retval = self.returns
+        if len(self.yields):
+            y = TypeInfo("typing", "Union", tuple(self.yields))
+            is_async = False
+
+            if len(self.yields) == 1:
+                y = next(iter(self.yields))
+                if str(y) == "builtins.async_generator_wrapped_value":
+                    y = TypeInfo("typing", "Any")
+                    is_async = True
+
+            if str(self.returns) == "builtins.NoneType":
+                iter_type = "AsyncIterator" if is_async else "Iterator"
+                retval = TypeInfo("typing", iter_type, (y,))
+
+            else:
+                retval = TypeInfo("typing", "Generator", (y, TypeInfo("typing", "Any"), self.returns))
+
+        return tuple(self.args + [retval])
