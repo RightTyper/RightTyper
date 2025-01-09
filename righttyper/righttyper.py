@@ -164,6 +164,7 @@ class Observations:
                 if node.func and not node.args:
                     if node.func in self.visited_funcs:
                         return TypeInfo('typing', 'Callable', args = (
+                                # FIXME these parameter types won't be mergeable, as they're in a string
                                 "[" + ", ".join(
                                     union_typeset_str(arg.type_set)
                                     for arg in self.visited_funcs_arguments[node.func][int(node.is_bound):]
