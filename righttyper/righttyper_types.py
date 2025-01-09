@@ -108,11 +108,13 @@ class ArgInfo:
     arg_name: ArgumentName
     type_set: TypeInfoSet
 
+
 @dataclass
 class Sample:
     args: list[TypeInfo] = field(default_factory=list)
     yields: TypeInfoSet = field(default_factory=TypeInfoSet)
     returns: TypeInfo = field(default_factory=lambda: NoneTypeInfo)
+
 
     def process(self) -> tuple[TypeInfo, ...]:
         retval = self.returns

@@ -428,6 +428,7 @@ def generate_sample(func: Callable, *args) -> Sample:
 
     return sample
 
+
 def test_sample_process_simple():
     def dog(a):
         return a
@@ -435,6 +436,7 @@ def test_sample_process_simple():
     sample = generate_sample(dog, "hi")
     assert sample == Sample([str_ti], returns=str_ti)
     assert sample.process() == (str_ti, str_ti)
+
 
 def test_sample_process_generator():
     def dog(a, b):
@@ -445,6 +447,7 @@ def test_sample_process_generator():
     assert sample == Sample([int_ti, str_ti], {int_ti}, str_ti)
     assert sample.process() == (int_ti, str_ti, generator_ti(int_ti, any_ti, str_ti))
 
+
 def test_sample_process_iterator_union():
     def dog(a, b):
         yield a
@@ -454,6 +457,7 @@ def test_sample_process_iterator_union():
     assert sample == Sample([int_ti, str_ti], yields={int_ti, str_ti})
     assert sample.process() == (int_ti, str_ti, iterator_ti(union_ti(int_ti, str_ti)))
 
+
 def test_sample_process_iterator():
     def dog(a):
         yield a
@@ -461,6 +465,7 @@ def test_sample_process_iterator():
     sample = generate_sample(dog, "hi")
     assert sample == Sample([str_ti], yields={str_ti})
     assert sample.process() == (str_ti, iterator_ti((str_ti)))
+
 
 def test_sample_process_generator_union():
     def dog(a, b, c):
@@ -471,6 +476,7 @@ def test_sample_process_generator_union():
     sample = generate_sample(dog, 1, "hi", True)
     assert sample == Sample([int_ti, str_ti, bool_ti], {int_ti, str_ti}, bool_ti)
     assert sample.process() == (int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), any_ti, bool_ti))
+
 
 def test_sample_process_asynciterator():
     # TODO: do with real async test

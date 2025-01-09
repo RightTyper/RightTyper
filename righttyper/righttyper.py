@@ -286,6 +286,7 @@ def call_handler(
 
     return sys.monitoring.DISABLE
 
+
 def exception_handler(
     code: CodeType,
     instruction_offset: int,
@@ -317,8 +318,8 @@ def exception_handler(
             obs.visited_funcs_samples[t].add(processed_sample)
             del obs.visited_funcs_invocations[t][id]
 
-
         del frame
+
 
 def yield_function(
     code: CodeType,
