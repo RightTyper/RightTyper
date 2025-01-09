@@ -210,6 +210,33 @@ class Observations:
             self.visited_funcs_arguments[t] = argtypes
 
 
+    def sample_start(self, func: FuncInfo, frame_id: int, arg_types: tuple[TypeInfo, ...]) -> None:
+        self.visited_funcs_invocations[func][frame_id] = Sample(arg_types)
+
+
+    def sample_yield(self, func: FuncInfo, frame_id: int, yield_type: TypeInfo) -> bool:
+        if (sample := self.visited_funcs_invocations[func].get(frame_id)):
+            sample.yields.add(yield_type)
+            return True
+
+        return False
+
+
+    def sample_return(self, func: FuncInfo, frame_id: int, return_type: TypeInfo) -> bool:
+        if (sample := self.visited_funcs_invocations[func].get(frame_id)):
+            sample.returns = return_type
+            self.sample_end(func, frame_id)
+            return True
+
+        return False
+
+
+    def sample_end(self, func: FuncInfo, frame_id: int) -> None:
+        if (sample := self.visited_funcs_invocations[func].get(frame_id)):
+            self.visited_funcs_samples[func].add(sample.process())
+            del self.visited_funcs_invocations[func][frame_id]
+
+
 obs = Observations()
 
 
@@ -250,16 +277,16 @@ def enter_function(code: CodeType, offset: int) -> Any:
             defaults = {}
 
         args = inspect.getargvalues(frame)
-        process_function_arguments(t, args, defaults)
-        process_type_samples(t, args, frame.__hash__())
+        process_function_arguments(t, args, defaults) # Beware, this modifies 'args'
+        obs.sample_start(t, id(frame), tuple(
+            get_full_type(args.locals[arg], use_jaxtyping=options.infer_shapes)
+            for arg in args.args
+        ))
 
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
 
-def process_type_samples(t: FuncInfo, args: inspect.ArgInfo, id: int):
-    obs.visited_funcs_invocations[t][id] = \
-        Sample([get_full_type(args.locals[arg]) for arg in args.args])
 
 def call_handler(
     code: CodeType,
@@ -312,12 +339,7 @@ def exception_handler(
         frame = frame.f_back
         assert code == frame.f_code
 
-        id = frame.__hash__()
-        if id in obs.visited_funcs_invocations[t]:
-            processed_sample = obs.visited_funcs_invocations[t][id].process()
-            obs.visited_funcs_samples[t].add(processed_sample)
-            del obs.visited_funcs_invocations[t][id]
-
+        obs.sample_end(t, id(frame))
         del frame
 
 
@@ -386,38 +408,26 @@ def exit_function_worker(
         FunctionName(code.co_qualname),
     )
 
-    debug_print(f"exit processing, retval was {obs.visited_funcs_retval[t]=}")
+    found = False
+    typeinfo = get_full_type(return_value, use_jaxtyping=options.infer_shapes)
 
     frame = inspect.currentframe()
     if frame and frame.f_back and frame.f_back.f_back:
         frame = frame.f_back.f_back
         assert code == frame.f_code
 
-        id = frame.__hash__()
-
-        if id not in obs.visited_funcs_invocations[t]:
-            del frame
-            return None
-        
         if event_type == sys.monitoring.events.PY_YIELD:
-            obs.visited_funcs_invocations[t][id].yields.add(get_full_type(return_value))
+            obs.visited_funcs_yieldval[t].add(typeinfo)
+            found = obs.sample_yield(t, id(frame), typeinfo)
         else:
-            obs.visited_funcs_invocations[t][id].returns = get_full_type(return_value)
-
-            processed_sample = obs.visited_funcs_invocations[t][id].process()
-            obs.visited_funcs_samples[t].add(processed_sample)
-            del obs.visited_funcs_invocations[t][id]
+            obs.visited_funcs_retval[t].add(typeinfo)
+            found = obs.sample_return(t, id(frame), typeinfo)
 
         del frame
 
-    typeinfo = get_full_type(return_value, use_jaxtyping=options.infer_shapes)
-
-    if event_type == sys.monitoring.events.PY_YIELD:
-        obs.visited_funcs_yieldval[t].add(typeinfo)
-    else:
-        obs.visited_funcs_retval[t].add(typeinfo)
-
-    return sys.monitoring.DISABLE if options.sampling else None
+    # If the frame wasn't found, keep the event enabled, as this event may be from another
+    # invocation whose start we missed.
+    return sys.monitoring.DISABLE if (options.sampling and found) else None
 
 
 def process_function_arguments(

@@ -1097,3 +1097,30 @@ def test_union_superclass(tmp_cwd, as_module):
                    check=True)
 
     assert "def foo(x: A) -> None:" in Path("t.py").read_text()
+
+
+def test_sampling_overlaps(tmp_cwd):
+    # While sampling, the function is started twice, with the first invocation outlasting
+    # the second.  We'll get a START and YIELD events for the first invocation and then
+    # a RETURN event for the second... if we don't leave the event enabled, we may not
+    # see the first invocation's RETURN.
+    t = textwrap.dedent("""\
+        def gen(more: bool):
+            while more:
+                yield 0
+            yield 1
+
+        a = gen(True)
+        b = gen(False)
+        next(a)
+        next(b)
+        next(a)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def gen(more: bool) -> Iterator[int]:" in output

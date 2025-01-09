@@ -111,9 +111,9 @@ class ArgInfo:
 
 @dataclass
 class Sample:
-    args: list[TypeInfo] = field(default_factory=list)
+    args: tuple[TypeInfo, ...]
     yields: TypeInfoSet = field(default_factory=TypeInfoSet)
-    returns: TypeInfo = field(default_factory=lambda: NoneTypeInfo)
+    returns: TypeInfo = NoneTypeInfo
 
 
     def process(self) -> tuple[TypeInfo, ...]:
@@ -128,11 +128,12 @@ class Sample:
                     y = TypeInfo("typing", "Any")
                     is_async = True
 
-            if self.returns == NoneTypeInfo:
+            if self.returns is NoneTypeInfo:
+                # FIXME return value doesn't matter for AsyncIterator
                 iter_type = "AsyncIterator" if is_async else "Iterator"
                 retval = TypeInfo("typing", iter_type, (y,))
 
             else:
                 retval = TypeInfo("typing", "Generator", (y, TypeInfo("typing", "Any"), self.returns))
 
-        return tuple(self.args + [retval])
+        return (*self.args, retval)

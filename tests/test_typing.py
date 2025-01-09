@@ -480,8 +480,5 @@ def test_sample_process_generator_union():
 
 def test_sample_process_asynciterator():
     # TODO: do with real async test
-    sample = Sample(yields={TypeInfo("builtins", "async_generator_wrapped_value")})
+    sample = Sample(tuple(), yields={TypeInfo("builtins", "async_generator_wrapped_value")})
     assert sample.process() == (TypeInfo("typing", "AsyncIterator", (any_ti,)),)
-
-
-    
