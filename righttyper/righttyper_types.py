@@ -96,6 +96,9 @@ class TypeInfo:
 
             return node
 
+    def __lt__(self, o: Self) -> bool:
+        return str(self) < str(o)
+
 
 NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
 
@@ -112,12 +115,12 @@ class ArgInfo:
 class Sample:
     args: list[TypeInfo] = field(default_factory=list)
     yields: TypeInfoSet = field(default_factory=TypeInfoSet)
-    returns: TypeInfo = field(default_factory=lambda: TypeInfo.from_type(type(None)))
+    returns: TypeInfo = field(default_factory=lambda: NoneTypeInfo)
 
-    def process(self) -> tuple[TypeInfo]:
+    def process(self) -> tuple[TypeInfo, ...]:
         retval = self.returns
         if len(self.yields):
-            y = TypeInfo("typing", "Union", tuple(self.yields))
+            y = TypeInfo("typing", "UnionType", tuple(sorted(self.yields)))
             is_async = False
 
             if len(self.yields) == 1:
@@ -126,7 +129,7 @@ class Sample:
                     y = TypeInfo("typing", "Any")
                     is_async = True
 
-            if str(self.returns) == "builtins.NoneType":
+            if self.returns == NoneTypeInfo:
                 iter_type = "AsyncIterator" if is_async else "Iterator"
                 retval = TypeInfo("typing", iter_type, (y,))
 

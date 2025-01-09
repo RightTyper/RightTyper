@@ -407,7 +407,7 @@ bool_ti = TypeInfo("", "bool", type_obj=bool)
 any_ti = TypeInfo("typing", "Any")
 generator_ti = lambda *a: TypeInfo("typing", "Generator", tuple(a))
 iterator_ti = lambda *a: TypeInfo("typing", "Iterator", tuple(a))
-union_ti = lambda *a: TypeInfo("typing", "Union", tuple(a))
+union_ti = lambda *a: TypeInfo("typing", "UnionType", tuple(a))
 
 def generate_sample(func: Callable, *args) -> Sample:
     import righttyper.righttyper_runtime as rt
@@ -420,7 +420,8 @@ def generate_sample(func: Callable, *args) -> Sample:
                 nex = next(res) # this can fail
                 sample.yields.add(rt.get_full_type(nex))
         except StopIteration as e:
-            sample.returns = rt.get_full_type(e.value)
+            if e.value is not None:
+                sample.returns = rt.get_full_type(e.value)
     else:
         sample.returns = rt.get_full_type(res)
 
@@ -450,7 +451,7 @@ def test_sample_process_iterator_union():
 
     sample = generate_sample(dog, 1, "hi")
     assert sample == Sample([int_ti, str_ti], yields={int_ti, str_ti})
-    assert sample.process() == (int_ti, str_ti, iterator_ti(union_ti(str_ti, int_ti)))
+    assert sample.process() == (int_ti, str_ti, iterator_ti(union_ti(int_ti, str_ti)))
 
 def test_sample_process_iterator():
     def dog(a):
@@ -458,7 +459,7 @@ def test_sample_process_iterator():
 
     sample = generate_sample(dog, "hi")
     assert sample == Sample([str_ti], yields={str_ti})
-    assert sample.process == (str_ti, iterator_ti((str_ti)))
+    assert sample.process() == (str_ti, iterator_ti((str_ti)))
 
 def test_sample_process_generator_union():
     def dog(a, b, c):

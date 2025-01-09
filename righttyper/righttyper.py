@@ -100,7 +100,7 @@ class Observations:
     visited_funcs_yieldval: dict[FuncInfo, TypeInfoSet] = field(default_factory=lambda: defaultdict(TypeInfoSet))
 
     visited_funcs_invocations: dict[FuncInfo, dict[int, Sample]] = field(default_factory=lambda: defaultdict(dict))
-    visited_funcs_samples: dict[FuncInfo, set[tuple[TypeInfo]]] = field(default_factory=lambda: defaultdict(set))
+    visited_funcs_samples: dict[FuncInfo, set[tuple[TypeInfo, ...]]] = field(default_factory=lambda: defaultdict(set))
 
     namespace: dict[str, Any] = field(default_factory=dict)
 
@@ -289,7 +289,7 @@ def exception_handler(
     code: CodeType,
     instruction_offset: int,
     exception: BaseException,
-) -> object:
+):
 
     if should_skip_function(
         code,
