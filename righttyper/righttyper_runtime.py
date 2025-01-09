@@ -71,7 +71,7 @@ def should_skip_function(
     script_dir: str,
     include_all: bool,
     include_files_pattern: str,
-    include_functions_pattern: list[str]
+    include_functions_pattern: tuple[str, ...]
 ) -> bool:
     skip_file = skip_this_file(
         code.co_filename,
