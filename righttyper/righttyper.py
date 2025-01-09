@@ -394,6 +394,11 @@ def exit_function_worker(
         assert code == frame.f_code
 
         id = frame.__hash__()
+
+        if id not in obs.visited_funcs_invocations[t]:
+            del frame
+            return None
+        
         if event_type == sys.monitoring.events.PY_YIELD:
             obs.visited_funcs_invocations[t][id].yields.add(get_full_type(return_value))
         else:
