@@ -16,7 +16,8 @@ from types import CodeType, FrameType, FunctionType
 from typing import (
     Any,
     TextIO,
-    Self
+    Self,
+    Callable
 )
 
 import click
@@ -244,15 +245,7 @@ def enter_function(code: CodeType, offset: int) -> Any:
         else:
             defaults = {}
         
-        self_type: type | None = None
-        args = inspect.getargvalues(frame).args
-        if args:
-            first_arg = frame.f_locals[args[0]]
-            for ancestor in first_arg.__class__.__mro__:
-                if function in ancestor.__dict__.values():
-                    self_type = first_arg.__class__
-        
-        process_function_arguments(t, inspect.getargvalues(frame), defaults, self_type)
+        process_function_arguments(t, inspect.getargvalues(frame), defaults, function)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -365,13 +358,20 @@ def process_function_arguments(
     t: FuncInfo,
     args: inspect.ArgInfo,
     defaults: dict[str, Any],
-    self_type: type | None,
+    function_object: Callable | None
 ) -> None:
     if args.varargs:
         args.args.append(args.varargs)
     if args.keywords:
         args.args.append(args.keywords)
 
+    self_type: type | None = None
+    if args.args and function_object:
+        first_arg = args.locals[args.args[0]]
+        for ancestor in first_arg.__class__.__mro__:
+            if ancestor.__dict__.get(function_object.__name__, None) is function_object:
+                self_type = first_arg.__class__
+        
     argtypes: list[ArgInfo] = []
     for arg_name in args.args:
         if arg_name:
