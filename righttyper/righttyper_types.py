@@ -106,7 +106,7 @@ TypeInfoSet: TypeAlias = set[TypeInfo]
 @dataclass
 class ArgInfo:
     arg_name: ArgumentName
-    type_set: TypeInfoSet
+    default: TypeInfo|None
 
 
 @dataclass
@@ -122,13 +122,17 @@ class Sample:
             y = TypeInfo.from_set(self.yields)
             is_async = False
 
+            # FIXME capture send type and switch to Generator/AsyncGenerator if any sent
+
             if len(self.yields) == 1:
                 y = next(iter(self.yields))
                 if str(y) == "builtins.async_generator_wrapped_value":
-                    y = TypeInfo("typing", "Any")
+                    y = TypeInfo("typing", "Any")  # FIXME how to unwrap the value without waiting on it?
                     is_async = True
 
             if self.returns is NoneTypeInfo:
+                # Note that we are unable to differentiate between an implicit "None"
+                # return and an explicit "return None".
                 # FIXME return value doesn't matter for AsyncIterator
                 iter_type = "AsyncIterator" if is_async else "Iterator"
                 retval = TypeInfo("typing", iter_type, (y,))

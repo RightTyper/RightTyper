@@ -16,7 +16,8 @@ from types import CodeType, FrameType, FunctionType
 from typing import (
     Any,
     TextIO,
-    Self
+    Self,
+    Callable
 )
 
 import click
@@ -87,89 +88,69 @@ logger = logging.getLogger("righttyper")
 
 @dataclass
 class Observations:
-    # All visited functions (file name and function name)
-    visited_funcs: set[FuncInfo] = field(default_factory=set)
+    # Visited functions' argument names and their defaults' types, if any
+    functions_visited: dict[FuncInfo, tuple[ArgInfo, ...]] = field(default_factory=dict)
 
-    # For each visited function, all the info about its arguments
-    visited_funcs_arguments: dict[FuncInfo, list[ArgInfo]] = field(default_factory=lambda: defaultdict(list))
+    # Started, but not completed samples by (function, frame ID)
+    pending_samples: dict[tuple[FuncInfo, int], Sample] = field(default_factory=dict)
 
-    # For each visited function, the values it returned
-    visited_funcs_retval: dict[FuncInfo, TypeInfoSet] = field(default_factory=lambda: defaultdict(TypeInfoSet))
-
-    # For each visited function, the values it yielded
-    visited_funcs_yieldval: dict[FuncInfo, TypeInfoSet] = field(default_factory=lambda: defaultdict(TypeInfoSet))
-
-    visited_funcs_invocations: dict[FuncInfo, dict[int, Sample]] = field(default_factory=lambda: defaultdict(dict))
-    visited_funcs_samples: dict[FuncInfo, set[tuple[TypeInfo, ...]]] = field(default_factory=lambda: defaultdict(set))
+    # Completed samples by function
+    samples: dict[FuncInfo, set[tuple[TypeInfo, ...]]] = field(default_factory=lambda: defaultdict(set))
 
     namespace: dict[str, Any] = field(default_factory=dict)
+
 
     def _transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
 
-        def transform_set(s: TypeInfoSet) -> None:
-            """Applies the transformer to a set, only replacing items where necessary."""
-            for t in list(s):
-                tprime = tr.visit(t)
-                if t is not tprime:
-                    s.remove(t)
-                    s.add(tprime)
+        for sample_set in self.samples.values():
+            for s in list(sample_set):
+                sprime = tuple(tr.visit(t) for t in s)
+                if sprime != s:
+                    sample_set.remove(s)
+                    sample_set.add(sprime)
 
-        for args in self.visited_funcs_arguments.values():
-            for i in range(len(args)):
-                transform_set(args[i].type_set)
-
-        for ts in itertools.chain(
-            self.visited_funcs_yieldval.values(),
-            self.visited_funcs_retval.values()
-        ):
-            transform_set(ts)
-
-
-    def return_type(self: Self, f: FuncInfo) -> Typename:
-        """Returns the return type for a given function."""
-
-        if f in self.visited_funcs_yieldval:
-            is_async = False
-            y = union_typeset_str(self.visited_funcs_yieldval[f])
-            if y == "builtins.async_generator_wrapped_value":
-                is_async = True
-                y = Typename("typing.Any") # how to unwrap the value without waiting on it?
-
-            r = union_typeset_str(self.visited_funcs_retval[f])
-
-            if is_async:
-                # FIXME capture send type and switch to AsyncGenerator if any sent
-                return Typename(f"typing.AsyncIterator[{y}]")
-
-            if r == "None":
-                # Note that we are unable to differentiate between an implicit "None"
-                # return and an explicit "return None".
-                return Typename(f"typing.Iterator[{y}]")
-
-            return Typename(f"typing.Generator[{y}, typing.Any, {r}]")
-
-        if f in self.visited_funcs_retval:
-            return union_typeset_str(self.visited_funcs_retval[f])
-
-        return Typename("None")
 
 
     def collect_annotations(self: Self) -> dict[FuncInfo, FuncAnnotation]:
         """Collects function type annotations from the observed types."""
 
+        # Finish samples for any generators that are still unfinished
+        # TODO are there other cases we should handle?
+        for (func, _), sample in self.pending_samples.items():
+            if sample.yields:
+                self.samples[func].add(sample.process())
+
+        def mk_annotation(t: FuncInfo) -> FuncAnnotation:
+            args = self.functions_visited[t]
+            samples = self.samples[t]
+            return FuncAnnotation(
+                [
+                    (
+                        arg.arg_name,
+                        union_typeset_str(TypeInfoSet((
+                            *(s[i] for s in samples),
+                            *((arg.default,) if arg.default is not None else ())
+                        )))
+                    )
+                    for i, arg in enumerate(args)
+                ],
+                union_typeset_str(TypeInfoSet(s[-1] for s in samples))
+            )
+
+
         class T(TypeInfo.Transformer):
             """Updates Callable type declarations based on observations."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 if node.func and not node.args:
-                    if node.func in self.visited_funcs:
+                    if node.func in self.samples:
+                        ann = mk_annotation(node.func)
                         return TypeInfo('typing', 'Callable', args = (
-                                # FIXME these parameter types won't be mergeable, as they're in a string
+                                # FIXME these parameter types won't be mergeable, as they're strings
                                 "[" + ", ".join(
-                                    union_typeset_str(arg.type_set)
-                                    for arg in self.visited_funcs_arguments[node.func][int(node.is_bound):]
+                                    arg[1] for arg in ann.args[int(node.is_bound):]
                                 ) + "]",
-                                self.return_type(node.func)
+                                ann.retval
                             )
                         )
 
@@ -177,45 +158,33 @@ class Observations:
 
         self._transform_types(T())
 
-        type_annotations: dict[FuncInfo, FuncAnnotation] = {}
-        for t in self.visited_funcs:
-            # print([[*map(str, a)] for a in self.visited_funcs_samples[t]])
-            args = self.visited_funcs_arguments[t]
-
-            type_annotations[t] = FuncAnnotation(
-                [
-                    (
-                        arginfo.arg_name,
-                        union_typeset_str(arginfo.type_set)
-                    )
-                    for arginfo in args
-                ],
-                self.return_type(t)
-            )
-
-        return type_annotations
+        return {
+            t: mk_annotation(t)
+            for t in self.samples
+        }
 
 
-    def update_visited_funcs_arguments(
-        self: Self,
-        t: FuncInfo,
-        argtypes: list[ArgInfo]
+    def record_function(
+        self,
+        func: FuncInfo,
+        arg_names: tuple[str, ...],
+        get_default_type: Callable[[str], TypeInfo|None]
     ) -> None:
-        if t in self.visited_funcs_arguments:
-            for i, arginfo in enumerate(argtypes):
-                if i < len(self.visited_funcs_arguments[t]):
-                    self.visited_funcs_arguments[t][i].type_set.update(arginfo.type_set)
-                    # reset_sampling_interval() if all new
-        else:
-            self.visited_funcs_arguments[t] = argtypes
+        if func not in self.functions_visited:
+            self.functions_visited[func] = tuple(
+                ArgInfo(name, get_default_type(name))
+                for name in arg_names
+            )
 
 
     def sample_start(self, func: FuncInfo, frame_id: int, arg_types: tuple[TypeInfo, ...]) -> None:
-        self.visited_funcs_invocations[func][frame_id] = Sample(arg_types)
+#        print(f"sample_start {func}")
+        self.pending_samples[(func, frame_id)] = Sample(arg_types)
 
 
     def sample_yield(self, func: FuncInfo, frame_id: int, yield_type: TypeInfo) -> bool:
-        if (sample := self.visited_funcs_invocations[func].get(frame_id)):
+#        print(f"sample_yield {func}")
+        if (sample := self.pending_samples.get((func, frame_id))):
             sample.yields.add(yield_type)
             return True
 
@@ -223,18 +192,21 @@ class Observations:
 
 
     def sample_return(self, func: FuncInfo, frame_id: int, return_type: TypeInfo) -> bool:
-        if (sample := self.visited_funcs_invocations[func].get(frame_id)):
+#        print(f"sample_return {func}")
+        if (sample := self.pending_samples.get((func, frame_id))):
             sample.returns = return_type
-            self.sample_end(func, frame_id)
+            self.samples[func].add(sample.process())
+            del self.pending_samples[(func, frame_id)]
             return True
 
         return False
 
 
-    def sample_end(self, func: FuncInfo, frame_id: int) -> None:
-        if (sample := self.visited_funcs_invocations[func].get(frame_id)):
-            self.visited_funcs_samples[func].add(sample.process())
-            del self.visited_funcs_invocations[func][frame_id]
+    def sample_exception(self, func: FuncInfo, frame_id: int) -> None:
+#        print(f"sample_exception {func}")
+        if (sample := self.pending_samples.get((func, frame_id))):
+            # TODO record anything?
+            del self.pending_samples[(func, frame_id)]
 
 
 obs = Observations()
@@ -258,7 +230,6 @@ def enter_function(code: CodeType, offset: int) -> Any:
         Filename(code.co_filename),
         FunctionName(code.co_qualname),
     )
-    obs.visited_funcs.add(t)
 
     frame = inspect.currentframe()
     if frame and frame.f_back:
@@ -269,20 +240,15 @@ def enter_function(code: CodeType, offset: int) -> Any:
 
         if function := next(find_functions(frame, code), None):
             defaults = {
-                param_name: [param.default]
+                # use tuple to differentiate a None default from no default
+                param_name: (param.default,)
                 for param_name, param in inspect.signature(function).parameters.items()
                 if param.default != inspect._empty
             }
         else:
             defaults = {}
 
-        args = inspect.getargvalues(frame)
-        process_function_arguments(t, args, defaults) # Beware, this modifies 'args'
-        obs.sample_start(t, id(frame), tuple(
-            get_full_type(args.locals[arg], use_jaxtyping=options.infer_shapes)
-            for arg in args.args
-        ))
-
+        process_function_arguments(t, id(frame), inspect.getargvalues(frame), defaults)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -339,7 +305,7 @@ def exception_handler(
         frame = frame.f_back
         assert code == frame.f_code
 
-        obs.sample_end(t, id(frame))
+        obs.sample_exception(t, id(frame))
         del frame
 
 
@@ -417,10 +383,8 @@ def exit_function_worker(
         assert code == frame.f_code
 
         if event_type == sys.monitoring.events.PY_YIELD:
-            obs.visited_funcs_yieldval[t].add(typeinfo)
             found = obs.sample_yield(t, id(frame), typeinfo)
         else:
-            obs.visited_funcs_retval[t].add(typeinfo)
             found = obs.sample_return(t, id(frame), typeinfo)
 
         del frame
@@ -432,35 +396,48 @@ def exit_function_worker(
 
 def process_function_arguments(
     t: FuncInfo,
+    frame_id: int,
     args: inspect.ArgInfo,
-    defaults: dict[str, Any]
+    defaults: dict[str, tuple[Any]]
 ) -> None:
-    if args.varargs:
-        args.args.append(args.varargs)
-    if args.keywords:
-        args.args.append(args.keywords)
 
-    argtypes: list[ArgInfo] = []
-    for arg_name in args.args:
-        if arg_name == args.varargs:
-            arg_values = args.locals[arg_name]
-        elif arg_name == args.keywords:
-            arg_values = args.locals[arg_name].values()
-        else:
-            arg_values = [args.locals[arg_name], *defaults.get(arg_name, [])]
+    def get_type(v: Any) -> TypeInfo:
+        return get_full_type(v, use_jaxtyping=options.infer_shapes)
 
-        argtypes.append(
-            ArgInfo(
-                ArgumentName(arg_name),
-                TypeInfoSet([
-                    get_full_type(val, use_jaxtyping=options.infer_shapes)
-                    for val in arg_values
-                ])
-            )
+    def get_default_type(name: str) -> TypeInfo|None:
+        if (def_value := defaults.get(name)):
+            return get_type(*def_value)
+
+        return None
+
+    arg_values = (
+        *(get_type(args.locals[arg_name]) for arg_name in args.args),
+        *(
+            (TypeInfo.from_set(
+                TypeInfoSet(
+                    get_type(val) for val in args.locals[args.varargs]
+                )
+            ),) if args.varargs else ()
+        ),
+        *(
+            (TypeInfo.from_set(
+                TypeInfoSet(
+                    get_type(val) for val in args.locals[args.keywords].values()
+                )
+            ),) if args.keywords else ()
         )
+    )
 
-    debug_print(f"processing {t=} {argtypes=}")
-    obs.update_visited_funcs_arguments(t, argtypes)
+    obs.record_function(
+        t, (
+            *(a for a in args.args),
+            *((args.varargs,) if args.varargs else ()),
+            *((args.keywords,) if args.keywords else ())
+        ),
+        get_default_type
+    )
+
+    obs.sample_start(t, frame_id, arg_values)
 
 
 def find_functions(
@@ -631,7 +608,7 @@ def process_file_wrapper(args) -> SignatureChanges|BaseException:
 def process_all_files() -> list[SignatureChanges]:
     fnames = set(
         t.file_name
-        for t in obs.visited_funcs
+        for t in obs.functions_visited
         if not skip_this_file(
             t.file_name,
             options.script_dir,

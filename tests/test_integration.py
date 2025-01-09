@@ -1106,7 +1106,7 @@ def test_sampling_overlaps(tmp_cwd):
     # see the first invocation's RETURN.
     t = textwrap.dedent("""\
         def gen(more: bool):
-            while more:
+            if more:
                 yield 0
             yield 1
 
@@ -1114,7 +1114,8 @@ def test_sampling_overlaps(tmp_cwd):
         b = gen(False)
         next(a)
         next(b)
-        next(a)
+        for _ in a:
+            pass
         """)
 
     Path("t.py").write_text(t)
@@ -1124,3 +1125,24 @@ def test_sampling_overlaps(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "def gen(more: bool) -> Iterator[int]:" in output
+
+
+def test_no_return(tmp_cwd):
+    # A function for which we never see a RETURN: can we still type it?
+    t = textwrap.dedent("""\
+        def gen():
+            while True:
+                yield 0
+
+        g = gen()
+        next(g)
+        next(g)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def gen() -> Iterator[int]:" in output
