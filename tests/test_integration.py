@@ -1097,3 +1097,78 @@ def test_union_superclass(tmp_cwd, as_module):
                    check=True)
 
     assert "def foo(x: A) -> None:" in Path("t.py").read_text()
+
+
+def test_self_subtype(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class MyClass:
+
+            def __init__(self):
+                pass
+
+            def foo(self):
+                pass
+
+        class MySubClass(MyClass):
+
+            def __init__(self):
+                super()
+                pass
+        
+        a = MySubClass()
+        a.foo()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self) -> None:" in Path("t.py").read_text()
+
+
+def test_self_subtype_returns(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class MyClass:
+
+            def __init__(self):
+                pass
+
+            def foo(self):
+                return self
+
+        class MySubClass(MyClass):
+
+            def __init__(self):
+                super()
+                pass
+        
+        a = MySubClass()
+        a.foo()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
+
+
+def test_self_classmethod(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class MyClass:
+
+            def __init__(self):
+                pass
+
+            @classmethod
+            def static_initializer(cls):
+                return cls()
+
+        a = MyClass.static_initializer()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def static_initializer(cls: type[Self]) -> Self:" in Path("t.py").read_text()
