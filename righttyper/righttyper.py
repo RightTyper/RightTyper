@@ -63,7 +63,7 @@ class Options:
     script_dir: str = ""
     include_files_pattern: str = ""
     include_all: bool = False
-    include_functions_pattern: str = ""
+    include_functions_pattern: tuple[str, ...] = tuple()
     target_overhead: float = 5.0
     infer_shapes: bool = False
     ignore_annotations: bool = False
@@ -769,7 +769,7 @@ def main(
     args: list[str],
     all_files: bool,
     include_files: str,
-    include_functions: tuple[str],
+    include_functions: tuple[str, ...],
     type_coverage_by_directory: str,
     type_coverage_by_file: str,
     type_coverage_summary: str,
