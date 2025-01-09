@@ -96,9 +96,6 @@ class TypeInfo:
 
             return node
 
-    def __lt__(self, o: Self) -> bool:
-        return str(self) < str(o)
-
 
 NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
 
@@ -120,7 +117,7 @@ class Sample:
     def process(self) -> tuple[TypeInfo, ...]:
         retval = self.returns
         if len(self.yields):
-            y = TypeInfo("typing", "UnionType", tuple(sorted(self.yields)))
+            y = TypeInfo.from_set(self.yields)
             is_async = False
 
             if len(self.yields) == 1:

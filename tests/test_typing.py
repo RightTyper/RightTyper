@@ -6,6 +6,7 @@ from collections import namedtuple
 from typing import Any, Callable
 import pytest
 import importlib
+import types
 
 
 def get_full_type(*args, **kwargs) -> str:
@@ -407,7 +408,7 @@ bool_ti = TypeInfo("", "bool", type_obj=bool)
 any_ti = TypeInfo("typing", "Any")
 generator_ti = lambda *a: TypeInfo("typing", "Generator", tuple(a))
 iterator_ti = lambda *a: TypeInfo("typing", "Iterator", tuple(a))
-union_ti = lambda *a: TypeInfo("typing", "UnionType", tuple(a))
+union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.UnionType)
 
 def generate_sample(func: Callable, *args) -> Sample:
     import righttyper.righttyper_runtime as rt
