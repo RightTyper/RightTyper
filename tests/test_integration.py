@@ -922,6 +922,22 @@ def test_varargs(tmp_cwd):
     assert 'def foo(x: bool, *args: float|int|str) -> None:' in output
 
 
+def test_varargs_empty(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, *args):
+            pass
+
+        foo(True)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: bool, *args: None) -> None:' in output
+
+
 def test_kwargs(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, **kwargs):
@@ -936,6 +952,22 @@ def test_kwargs(tmp_cwd):
 
     output = Path("t.py").read_text()
     assert 'def foo(x: bool, **kwargs: float|int|str) -> None:' in output
+
+
+def test_kwargs_empty(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, **kwargs):
+            pass
+
+        foo(True)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: bool, **kwargs: None) -> None:' in output
 
 
 def test_none_arg(tmp_cwd):

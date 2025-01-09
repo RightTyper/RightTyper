@@ -67,7 +67,7 @@ class TypeInfo:
     @staticmethod
     def from_set(s: "TypeInfoSet") -> "TypeInfo":
         if not s:
-            raise ValueError("Empty or invalid set passed to TypeInfo.from_set")
+            return NoneTypeInfo # TODO or should this be Never?
 
         if len(s) == 1:
             return next(iter(s))

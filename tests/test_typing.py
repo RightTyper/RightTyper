@@ -250,8 +250,8 @@ def test_typeinfo():
 
 
 def test_typeinfo_from_set():
-    with pytest.raises(ValueError):
-        TypeInfo.from_set(TypeInfoSet({}))
+    t = TypeInfo.from_set(TypeInfoSet({}))
+    assert t == NoneTypeInfo    # or should this be Never ?
 
     t = TypeInfo.from_set(TypeInfoSet({
             TypeInfo.from_type(int)
