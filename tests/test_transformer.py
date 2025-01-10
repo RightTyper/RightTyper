@@ -81,7 +81,7 @@ def test_transform_function():
                     [
                         (ArgumentName('z'), Typename('int'))
                     ],
-                    None
+                    Typename('None')
                 )
             },
             override_annotations=False,
@@ -101,7 +101,7 @@ def test_transform_function():
     """)
 
     assert get_function(code, 'baz') == textwrap.dedent("""\
-        def baz(z: int):
+        def baz(z: int) -> None:
             return z/2
     """)
 
@@ -113,7 +113,7 @@ def test_transform_function():
     name, old, new = next(it)
     assert name == 'baz'
     assert old == 'def baz(z):'
-    assert new == 'def baz(z: int):'
+    assert new == 'def baz(z: int) -> None:'
 
     name, old, new = next(it)
     assert name == 'foo'
@@ -432,7 +432,7 @@ def test_transform_deletes_type_hint_comments_in_header():
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('int'))
                     ],
-                    None
+                    Typename('None')
                 )
             },
             override_annotations=False,
@@ -444,7 +444,7 @@ def test_transform_deletes_type_hint_comments_in_header():
 
     code = code.visit(t)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: int, y: int):
+        def foo(x: int, y: int) -> None:
             return (x+y)/2
     """)
 
@@ -481,7 +481,7 @@ def test_transform_deletes_type_hint_comments_in_parameters():
                         (ArgumentName('x'), Typename('int')),
                         (ArgumentName('y'), Typename('int'))
                     ],
-                    None
+                    Typename('None')
                 )
             },
             override_annotations=False,
@@ -496,8 +496,7 @@ def test_transform_deletes_type_hint_comments_in_parameters():
         def foo(
             x: int,
             y: int
-        ):
-            # type: (...) -> Any
+        ) -> None:
             return (x+y)/2
     """)
 
@@ -905,7 +904,7 @@ def test_relative_import():
                         (ArgumentName('y'), Typename('pkg.a.c.T')),
                         (ArgumentName('z'), Typename('pkg.a.c.X')),
                     ],
-                    None
+                    Typename('None')
                 ),
             },
             override_annotations=False,
@@ -920,7 +919,7 @@ def test_relative_import():
 
     code = code.visit(t)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: b.T, y: c.T, z: X): ...
+        def foo(x: b.T, y: c.T, z: X) -> None: ...
     """)
 
     assert get_if_type_checking(code) is None
@@ -1183,7 +1182,7 @@ def test_import_conflicts_with_import():
                         (ArgumentName('x'), Typename('a.T')),
                         (ArgumentName('y'), Typename('c.d.e.T')),
                     ],
-                    None
+                    Typename('None')
                 ),
             },
             override_annotations=False,
@@ -1199,7 +1198,7 @@ def test_import_conflicts_with_import():
 
     code = code.visit(t)
 
-    m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\): ...', get_function(code, 'foo'))
+    m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\) -> None: ...', get_function(code, 'foo'))
     m1, t1 = _split(m.group(1))
     m2, t2 = _split(m.group(2))
 
@@ -1237,7 +1236,7 @@ def test_import_conflicts_with_definitions():
                         (ArgumentName('x'), Typename('a.T')),
                         (ArgumentName('y'), Typename('c.d.e.T')),
                     ],
-                    None
+                    Typename('None')
                 ),
             },
             override_annotations=False,
@@ -1253,7 +1252,7 @@ def test_import_conflicts_with_definitions():
 
     code = code.visit(t)
 
-    m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\): ...', get_function(code, 'foo'))
+    m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\) -> None: ...', get_function(code, 'foo'))
     m1, t1 = _split(m.group(1))
     m2, t2 = _split(m.group(2))
 
@@ -1292,7 +1291,7 @@ def test_import_conflicts_with_assignments():
                         (ArgumentName('x'), Typename('a.T')),
                         (ArgumentName('y'), Typename('c.d.e.T')),
                     ],
-                    None
+                    Typename('None')
                 ),
             },
             override_annotations=False,
@@ -1308,7 +1307,7 @@ def test_import_conflicts_with_assignments():
 
     code = code.visit(t)
 
-    m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\): ...', get_function(code, 'foo'))
+    m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\) -> None: ...', get_function(code, 'foo'))
     m1, t1 = _split(m.group(1))
     m2, t2 = _split(m.group(2))
 
@@ -1345,7 +1344,7 @@ def test_import_conflicts_with_with():
                     [
                         (ArgumentName('x'), Typename('a.T')),
                     ],
-                    None
+                    Typename('None')
                 ),
             },
             override_annotations=False,
@@ -1358,7 +1357,7 @@ def test_import_conflicts_with_with():
 
     code = code.visit(t)
 
-    m = assert_regex(r'def foo\(x: "(.*?)"\): ...', get_function(code, 'foo'))
+    m = assert_regex(r'def foo\(x: "(.*?)"\) -> None: ...', get_function(code, 'foo'))
     m1, t1 = _split(m.group(1))
 
     assert m1 != 'a'
@@ -1387,7 +1386,7 @@ def test_import_conflicts_alias_for_module():
                     [
                         (ArgumentName('x'), Typename('a')), # module "a" meant here, not something in it
                     ],
-                    None
+                    Typename('None')
                 ),
             },
             override_annotations=False,
@@ -1400,7 +1399,7 @@ def test_import_conflicts_alias_for_module():
 
     code = code.visit(t)
 
-    m = assert_regex(r'def foo\(x: "(.*?)"\): ...', get_function(code, 'foo'))
+    m = assert_regex(r'def foo\(x: "(.*?)"\) -> None: ...', get_function(code, 'foo'))
     m1, t1 = _split(m.group(1))
 
     assert m1 != 'a'

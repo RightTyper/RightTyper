@@ -24,7 +24,7 @@ class FuncInfo:
 @dataclass(eq=True, frozen=True)
 class FuncAnnotation:
     args: list[tuple[ArgumentName, Typename]]
-    retval: Typename|None
+    retval: Typename
 
 
 # Valid non-None TypeInfo.type_obj types: allows static casting
@@ -67,7 +67,7 @@ class TypeInfo:
     @staticmethod
     def from_set(s: "TypeInfoSet") -> "TypeInfo":
         if not s:
-            return NoneTypeInfo # TODO or should this be Never?
+            return NoneTypeInfo
 
         if len(s) == 1:
             return next(iter(s))

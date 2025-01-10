@@ -172,7 +172,7 @@ class Observations:
     ) -> None:
         if func not in self.functions_visited:
             self.functions_visited[func] = tuple(
-                ArgInfo(name, get_default_type(name))
+                ArgInfo(ArgumentName(name), get_default_type(name))
                 for name in arg_names
             )
 

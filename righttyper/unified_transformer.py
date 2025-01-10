@@ -402,9 +402,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                         )
                     )
 
-            if ((updated_node.returns is None or self.override_annotations)
-                and ann.retval is not None
-            ):
+            if updated_node.returns is None or self.override_annotations:
                 annotation = self._try_rename_to_self(ann.retval)
                 if self._is_valid(annotation):
                     annotation_expr = cst.parse_expression(annotation)
