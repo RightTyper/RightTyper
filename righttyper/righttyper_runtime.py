@@ -323,8 +323,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
                 el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
                 args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
         except Exception: pass
-        module = "" if t.__module__ == "builtins" else t.__module__
-        return TypeInfo(module, t.__qualname__, args=args)
+        return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
     elif isinstance(value, (list, set)):
         t = type(value)
         args = (TypeInfo("typing", "Never"),)
@@ -333,8 +332,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
                 el = sample_from_collection(value)
                 args = (get_full_type(el, depth=depth+1),)
         except Exception: pass
-        module = "" if t.__module__ == "builtins" else t.__module__
-        return TypeInfo(module, t.__qualname__, args=args)
+        return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
     elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
         args = (TypeInfo("typing", "Never"),)
         try:
@@ -354,7 +352,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
     elif isinstance(value, tuple):
         if isinstance_namedtuple(value):
             t = type(value)
-            return TypeInfo(t.__module__, t.__qualname__)
+            return TypeInfo(lookup_type_module(t), t.__qualname__)
         else:
             args = tuple()
             try:
