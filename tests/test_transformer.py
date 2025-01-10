@@ -291,7 +291,7 @@ def test_override_annotations():
                 ),
                 bar: FuncAnnotation(
                     [
-                        (ArgumentName('self'), TypeInfo.from_type(typing.Self)),
+                        (ArgumentName('self'), TypeInfo(module='typing', name='Self')),
                         (ArgumentName('x'), TypeInfo.from_type(int, module=''))
                     ],
                     TypeInfo.from_type(float, module='')
@@ -325,9 +325,12 @@ def test_transform_adds_typing_import_for_typing_names():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), TypeInfo.from_type(typing.Optional, args=(TypeInfo.from_type(int, module=''),)))
+                        (ArgumentName('x'), TypeInfo(module='typing', name='Optional', args=(
+                            TypeInfo.from_type(int, module=''),
+                            )
+                        ))
                     ],
-                    TypeInfo.from_type(list, module='', args=(TypeInfo.from_type(typing.Never),))
+                    TypeInfo.from_type(list, module='', args=(TypeInfo(module='typing', name='Never'),))
                 )
             },
             override_annotations=False,
@@ -819,7 +822,7 @@ def test_existing_typing_imports():
                     [
                         (ArgumentName('x'), TypeInfo.from_type(ast.If))
                     ],
-                    TypeInfo.from_type(typing.Any)
+                    TypeInfo(module='typing', name='Any')
                 ),
             },
             override_annotations=False,
@@ -874,7 +877,7 @@ def test_inserts_imports_after_docstring_and_space():
                     [
                         (ArgumentName('x'), TypeInfo.from_type(ast.If))
                     ],
-                    TypeInfo.from_type(typing.Any)
+                    TypeInfo(module='typing', name='Any')
                 ),
             },
             override_annotations=False,

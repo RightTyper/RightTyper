@@ -62,12 +62,12 @@ class TypeInfo:
 
 
     @staticmethod
-    def from_type(t: TYPE_OBJ_TYPES, **kwargs) -> "TypeInfo":
+    def from_type(t: TYPE_OBJ_TYPES, module: str|None = None, **kwargs) -> "TypeInfo":
         if t == types.NoneType: return NoneTypeInfo
 
         return TypeInfo(
             name=t.__qualname__,
-            **({'module': t.__module__} if 'module' not in kwargs else {}),
+            module=(t.__module__ if module is None else module),
             type_obj=t,
             **kwargs
         )

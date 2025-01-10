@@ -143,7 +143,7 @@ def test_generic_with_string():
     assert generalize(samples) == ['bool|int', 'X[bool, \"bar\"]|X[int, \"foo\"]']
 
     # first has a string, others don't
-    samples: Any = [
+    samples = [
         (ti('int'), ti('X', args=(ti('int'), '"foo"'))),
         (ti('bool'), ti('X', args=(ti('bool'), ti('bool')))),
     ]
