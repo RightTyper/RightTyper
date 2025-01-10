@@ -190,6 +190,19 @@ def in_builtins_import(t: type) -> bool:
     return False
 
 
+def normalize_module_name(module_name: str):
+    """Converts a module name into a consistent format.
+
+    In particular, the module `__main__` is replaced with the name of the main module, and `builtins` is replaced
+    with the global scope.
+    """
+    if module_name.startswith("__main__"):
+        module_name =  get_main_module_fqn() + module_name.removeprefix("__main__")
+    module_name = module_name.removeprefix("builtins")
+    module_name = module_name.removeprefix(".")
+    return module_name
+
+
 @cache
 def lookup_type_module(t: type) -> str:
     parts = t.__qualname__.split('.')
@@ -206,15 +219,15 @@ def lookup_type_module(t: type) -> str:
 
     if (m := sys.modules.get(t.__module__)):
         if is_defined_in_module(m.__dict__):
-            return t.__module__
+            return normalize_module_name(t.__module__)
 
     module_prefix = f"{t.__module__}."
     for name, mod in sys.modules.items():
         if name.startswith(module_prefix) and is_defined_in_module(mod.__dict__):
-            return name
+            return normalize_module_name(name)
 
     # it's not in the module, but keep it as a last resort, to facilitate diagnostics
-    return t.__module__
+    return normalize_module_name(t.__module__)
 
 
 RANGE_ITER_TYPE = type(iter(range(1)))
@@ -272,9 +285,6 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
                     and getattr(mod, obj.__name__) is obj
                 ):
                     return f"{name}.{obj.__name__}"
-
-    if obj.__module__ == "__main__":    # TODO merge this into lookup_type_module
-        return TypeInfo(get_main_module_fqn(), obj.__qualname__, type_obj=obj)
 
     return TypeInfo(lookup_type_module(obj), obj.__qualname__, type_obj=obj)
 
