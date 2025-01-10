@@ -97,7 +97,60 @@ class Observations:
     # Completed samples by function
     samples: dict[FuncInfo, set[tuple[TypeInfo, ...]]] = field(default_factory=lambda: defaultdict(set))
 
-    namespace: dict[str, Any] = field(default_factory=dict)
+
+    def record_function(
+        self,
+        func: FuncInfo,
+        arg_names: tuple[str, ...],
+        get_default_type: Callable[[str], TypeInfo|None]
+    ) -> None:
+        """Records that a function was visited, along with its argument names and any defaults."""
+
+        if func not in self.functions_visited:
+            self.functions_visited[func] = tuple(
+                ArgInfo(ArgumentName(name), get_default_type(name))
+                for name in arg_names
+            )
+
+
+    def record_start(self, func: FuncInfo, frame_id: int, arg_types: tuple[TypeInfo, ...]) -> None:
+        """Records a function start."""
+
+#        print(f"record_start {func}")
+        self.pending_samples[(func, frame_id)] = Sample(arg_types)
+
+
+    def record_yield(self, func: FuncInfo, frame_id: int, yield_type: TypeInfo) -> bool:
+        """Records a yield."""
+
+#        print(f"record_yield {func}")
+        if (sample := self.pending_samples.get((func, frame_id))):
+            sample.yields.add(yield_type)
+            return True
+
+        return False
+
+
+    def record_return(self, func: FuncInfo, frame_id: int, return_type: TypeInfo) -> bool:
+        """Records a return."""
+
+#        print(f"record_return {func}")
+        if (sample := self.pending_samples.get((func, frame_id))):
+            sample.returns = return_type
+            self.samples[func].add(sample.process())
+            del self.pending_samples[(func, frame_id)]
+            return True
+
+        return False
+
+
+    def record_exception(self, func: FuncInfo, frame_id: int) -> None:
+        """Records an exception."""
+
+#        print(f"record_exception {func}")
+        if (sample := self.pending_samples.get((func, frame_id))):
+            # TODO record anything?
+            del self.pending_samples[(func, frame_id)]
 
 
     def _transform_types(self, tr: TypeInfo.Transformer) -> None:
@@ -164,55 +217,10 @@ class Observations:
         }
 
 
-    def record_function(
-        self,
-        func: FuncInfo,
-        arg_names: tuple[str, ...],
-        get_default_type: Callable[[str], TypeInfo|None]
-    ) -> None:
-        if func not in self.functions_visited:
-            self.functions_visited[func] = tuple(
-                ArgInfo(ArgumentName(name), get_default_type(name))
-                for name in arg_names
-            )
-
-
-    def sample_start(self, func: FuncInfo, frame_id: int, arg_types: tuple[TypeInfo, ...]) -> None:
-#        print(f"sample_start {func}")
-        self.pending_samples[(func, frame_id)] = Sample(arg_types)
-
-
-    def sample_yield(self, func: FuncInfo, frame_id: int, yield_type: TypeInfo) -> bool:
-#        print(f"sample_yield {func}")
-        if (sample := self.pending_samples.get((func, frame_id))):
-            sample.yields.add(yield_type)
-            return True
-
-        return False
-
-
-    def sample_return(self, func: FuncInfo, frame_id: int, return_type: TypeInfo) -> bool:
-#        print(f"sample_return {func}")
-        if (sample := self.pending_samples.get((func, frame_id))):
-            sample.returns = return_type
-            self.samples[func].add(sample.process())
-            del self.pending_samples[(func, frame_id)]
-            return True
-
-        return False
-
-
-    def sample_exception(self, func: FuncInfo, frame_id: int) -> None:
-#        print(f"sample_exception {func}")
-        if (sample := self.pending_samples.get((func, frame_id))):
-            # TODO record anything?
-            del self.pending_samples[(func, frame_id)]
-
-
 obs = Observations()
 
 
-def enter_function(code: CodeType, offset: int) -> Any:
+def enter_handler(code: CodeType, offset: int) -> Any:
     """
     Process the function entry point, perform monitoring related operations,
     and manage the profiling of function execution.
@@ -226,17 +234,17 @@ def enter_function(code: CodeType, offset: int) -> Any:
     ):
         return sys.monitoring.DISABLE
 
-    t = FuncInfo(
-        Filename(code.co_filename),
-        FunctionName(code.co_qualname),
-    )
-
     frame = inspect.currentframe()
-    if frame and frame.f_back:
+    if frame and frame.f_back: # FIXME DRY this
         # NOTE: this backtracking logic is brittle and must be
         # adjusted if the call chain changes length.
         frame = frame.f_back
         assert code == frame.f_code
+
+        t = FuncInfo(
+            Filename(code.co_filename),
+            FunctionName(code.co_qualname),
+        )
 
         if function := next(find_functions(frame, code), None):
             defaults = {
@@ -285,7 +293,6 @@ def exception_handler(
     instruction_offset: int,
     exception: BaseException,
 ):
-
     if should_skip_function(
         code,
         options.script_dir,
@@ -295,27 +302,27 @@ def exception_handler(
     ):
         return
 
-    t = FuncInfo(
-        Filename(code.co_filename),
-        FunctionName(code.co_qualname),
-    )
-
     frame = inspect.currentframe()
-    if frame and frame.f_back:
+    if frame and frame.f_back: # FIXME DRY this
         frame = frame.f_back
         assert code == frame.f_code
 
-        obs.sample_exception(t, id(frame))
+        t = FuncInfo(
+            Filename(code.co_filename),
+            FunctionName(code.co_qualname),
+        )
+
+        obs.record_exception(t, id(frame))
         del frame
 
 
-def yield_function(
+def yield_handler(
     code: CodeType,
     instruction_offset: int,
     return_value: Any,
 ) -> object:
     # We do the same thing for yields and exits.
-    return exit_function_worker(
+    return process_yield_or_return(
         code,
         instruction_offset,
         return_value,
@@ -323,12 +330,12 @@ def yield_function(
     )
 
 
-def exit_function(
+def return_handler(
     code: CodeType,
     instruction_offset: int,
     return_value: Any,
 ) -> object:
-    return exit_function_worker(
+    return process_yield_or_return(
         code,
         instruction_offset,
         return_value,
@@ -336,13 +343,14 @@ def exit_function(
     )
 
 
-def exit_function_worker(
+def process_yield_or_return(
     code: CodeType,
     instruction_offset: int,
     return_value: Any,
     event_type: int,
 ) -> object:
     """
+    Processes a yield or return event for a function.
     Function to gather statistics on a function call and determine
     whether it should be excluded from profiling, when the function exits.
 
@@ -369,23 +377,24 @@ def exit_function_worker(
     ):
         return sys.monitoring.DISABLE
 
-    t = FuncInfo(
-        Filename(code.co_filename),
-        FunctionName(code.co_qualname),
-    )
-
     found = False
-    typeinfo = get_full_type(return_value, use_jaxtyping=options.infer_shapes)
 
     frame = inspect.currentframe()
-    if frame and frame.f_back and frame.f_back.f_back:
+    if frame and frame.f_back and frame.f_back.f_back: # FIXME DRY this
         frame = frame.f_back.f_back
         assert code == frame.f_code
 
+        t = FuncInfo(
+            Filename(code.co_filename),
+            FunctionName(code.co_qualname),
+        )
+
+        typeinfo = get_full_type(return_value, use_jaxtyping=options.infer_shapes)
+
         if event_type == sys.monitoring.events.PY_YIELD:
-            found = obs.sample_yield(t, id(frame), typeinfo)
+            found = obs.record_yield(t, id(frame), typeinfo)
         else:
-            found = obs.sample_return(t, id(frame), typeinfo)
+            found = obs.record_return(t, id(frame), typeinfo)
 
         del frame
 
@@ -410,6 +419,15 @@ def process_function_arguments(
 
         return None
 
+    obs.record_function(
+        t, (
+            *(a for a in args.args),
+            *((args.varargs,) if args.varargs else ()),
+            *((args.keywords,) if args.keywords else ())
+        ),
+        get_default_type
+    )
+
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
         *(
@@ -428,16 +446,7 @@ def process_function_arguments(
         )
     )
 
-    obs.record_function(
-        t, (
-            *(a for a in args.args),
-            *((args.varargs,) if args.varargs else ()),
-            *((args.keywords,) if args.keywords else ())
-        ),
-        get_default_type
-    )
-
-    obs.sample_start(t, frame_id, arg_values)
+    obs.record_start(t, frame_id, arg_values)
 
 
 def find_functions(
@@ -534,9 +543,9 @@ def restart_sampling(_signum: int, frame: FrameType|None) -> None:
 
 instrumentation_functions_code = set(
     [
-        enter_function.__code__,
+        enter_handler.__code__,
         call_handler.__code__,
-        exit_function_worker.__code__,
+        process_yield_or_return.__code__,
         restart_sampling.__code__,
         exception_handler.__code__,
     ]
@@ -548,17 +557,16 @@ def execute_script_or_module(
     module: bool,
     args: list[str],
 ) -> None:
-    obs.namespace = {}
     try:
         sys.argv = [script, *args]
         if module:
-            obs.namespace = runpy.run_module(
+            runpy.run_module(
                 script,
                 run_name="__main__",
                 alter_sys=True,
             )
         else:
-            obs.namespace = runpy.run_path(script, run_name="__main__")
+            runpy.run_path(script, run_name="__main__")
 
     except SystemExit as e:
         if e.code not in (None, 0):
@@ -913,10 +921,10 @@ def main(
     try:
         setup_tool_id()
         register_monitoring_callbacks(
-            enter_function,
+            enter_handler,
             call_handler,
-            exit_function,
-            yield_function,
+            return_handler,
+            yield_handler,
             exception_handler,
         )
         sys.monitoring.restart_events()
