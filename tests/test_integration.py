@@ -1099,6 +1099,19 @@ def test_union_superclass(tmp_cwd, as_module):
     assert "def foo(x: A) -> None:" in Path("t.py").read_text()
 
 
+def get_empty_container(superclass: str, class_name: str):
+    if superclass in ["list", "set"]:
+        return f"{class_name}[Never]"
+    elif superclass in ["dict"]:
+        return f"{class_name}[Never, Never]"
+    elif superclass in ["KeysView", "ValuesView"]:
+        return f"{superclass}[Never]"
+    elif superclass in ["ItemsView"]:
+        return f"{superclass}[Never, Never]"
+    elif superclass in ["tuple"]:
+        return f"tuple"
+
+
 @pytest.mark.parametrize('superclass', ["list", "set", "dict", "KeysView", "ValuesView", "ItemsView", "tuple"])
 def test_custom_collection_len_error(tmp_cwd, superclass):
     Path("t.py").write_text(textwrap.dedent(f"""\
@@ -1124,14 +1137,4 @@ def test_custom_collection_len_error(tmp_cwd, superclass):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', '-m', 't'], check=True)
 
-    # Are we supposed to generate types in the __main__ module?
-    if superclass in ["list", "set"]:
-        assert f"def foo(bar: MyContainer[Never]) -> None" in Path("t.py").read_text()
-    elif superclass in ["dict"]:
-        assert f"def foo(bar: MyContainer[Never, Never]) -> None" in Path("t.py").read_text()
-    elif superclass in ["KeysView", "ValuesView"]:
-        assert f"def foo(bar: {superclass}[Never]) -> None" in Path("t.py").read_text()
-    elif superclass in ["ItemsView"]:
-        assert f"def foo(bar: {superclass}[Never, Never]) -> None" in Path("t.py").read_text()
-    elif superclass in ["tuple"]:
-        assert f"def foo(bar: tuple) -> None" in Path("t.py").read_text()
+    assert f"def foo(bar: {get_empty_container(superclass, "MyContainer")}) -> None" in Path("t.py").read_text()
