@@ -41,10 +41,14 @@ class TypeInfo:
     is_bound: bool = False                  # if a callable, whether bound
     type_obj: TYPE_OBJ_TYPES|None = None
     typevar_index: int = 0
+    typevar_name: str|None = None
 
 
     def __str__(self: Self) -> str:
         if self.typevar_index:
+            if self.typevar_name:
+                return self.typevar_name
+
             return f"T{self.typevar_index}"
 
         if self.type_obj == types.UnionType:

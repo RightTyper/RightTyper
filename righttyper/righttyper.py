@@ -50,7 +50,7 @@ from righttyper.righttyper_types import (
     TypeInfoSet,
     Sample,
 )
-from righttyper.typeinfo import union_typeset_str
+from righttyper.typeinfo import union_typeset_str, generalize
 from righttyper.righttyper_utils import (
     TOOL_ID,
     TOOL_NAME,
@@ -177,6 +177,11 @@ class Observations:
         def mk_annotation(t: FuncInfo) -> FuncAnnotation:
             args = self.functions_visited[t]
             samples = self.samples[t]
+
+            test = {}
+            print(generalize(list(samples), typevars=test))
+            print(test)
+            
             return FuncAnnotation(
                 [
                     (
