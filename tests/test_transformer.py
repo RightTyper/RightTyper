@@ -2,10 +2,27 @@ import libcst as cst
 import libcst.matchers as cstm
 import textwrap
 from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation, used_names
-from righttyper.righttyper_types import FuncInfo, Filename, FunctionName, Typename, ArgumentName, FuncAnnotation
+from righttyper.righttyper_types import (
+    FuncInfo,
+    Filename,
+    FunctionName,
+    Typename,
+    ArgumentName,
+    TypeInfo,
+    NoneTypeInfo,
+    TypeInfoSet,
+    FuncAnnotation as rt_FuncAnnotation
+)
 import typing
 import pytest
 import re
+
+
+def FuncAnnotation(args: list[tuple[ArgumentName, TypeInfo]], retval: TypeInfo) -> rt_FuncAnnotation:
+    return rt_FuncAnnotation(
+        [(name, Typename(str(typeinfo))) for name, typeinfo in args],
+        Typename(str(retval))
+    )
 
 
 def get_function(m: cst.Module, name: str) -> str|None:
@@ -73,15 +90,15 @@ def test_transform_function():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('int'))
+                        (ArgumentName('x'), TypeInfo.from_type(int, module=''))
                     ],
-                    Typename('float')
+                    TypeInfo.from_type(float, module='')
                 ),
                 baz: FuncAnnotation(
                     [
-                        (ArgumentName('z'), Typename('int'))
+                        (ArgumentName('z'), TypeInfo.from_type(int, module=''))
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 )
             },
             override_annotations=False,
@@ -146,21 +163,21 @@ def test_transform_method():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('int'))
+                        (ArgumentName('x'), TypeInfo.from_type(int, module=''))
                     ],
-                    Typename('float')
+                    TypeInfo.from_type(float, module='')
                 ),
                 bar: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('int'))
+                        (ArgumentName('x'), TypeInfo.from_type(int, module=''))
                     ],
-                    Typename('float')
+                    TypeInfo.from_type(float, module='')
                 ),
                 baz: FuncAnnotation(
                     [
-                        (ArgumentName('z'), Typename('int'))
+                        (ArgumentName('z'), TypeInfo.from_type(int, module=''))
                     ],
-                    Typename('float')
+                    TypeInfo.from_type(float, module='')
                 )
             },
             override_annotations=False,
@@ -223,16 +240,16 @@ def test_transform_local_function():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('int')),
-                        (ArgumentName('y'), Typename('float'))
+                        (ArgumentName('x'), TypeInfo.from_type(int, module='')),
+                        (ArgumentName('y'), TypeInfo.from_type(float, module=''))
                     ],
-                    Typename('float')
+                    TypeInfo.from_type(float, module='')
                 ),
                 bar: FuncAnnotation(
                     [
-                        (ArgumentName('z'), Typename('int'))
+                        (ArgumentName('z'), TypeInfo.from_type(int, module=''))
                     ],
-                    Typename('float')
+                    TypeInfo.from_type(float, module='')
                 ),
             },
             override_annotations=False,
@@ -268,16 +285,16 @@ def test_override_annotations():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('float'))
+                        (ArgumentName('x'), TypeInfo.from_type(float, module=''))
                     ],
-                    Typename('float')
+                    TypeInfo.from_type(float, module='')
                 ),
                 bar: FuncAnnotation(
                     [
-                        (ArgumentName('self'), Typename('typing.Self')),
-                        (ArgumentName('x'), Typename('int'))
+                        (ArgumentName('self'), TypeInfo.from_type(typing.Self)),
+                        (ArgumentName('x'), TypeInfo.from_type(int, module=''))
                     ],
-                    Typename('float')
+                    TypeInfo.from_type(float, module='')
                 ),
             },
             override_annotations=True,
@@ -308,9 +325,9 @@ def test_transform_adds_typing_import_for_typing_names():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('typing.Optional[int]'))
+                        (ArgumentName('x'), TypeInfo.from_type(typing.Optional, args=(TypeInfo.from_type(int, module=''),)))
                     ],
-                    Typename('list[typing.Never]')
+                    TypeInfo.from_type(list, module='', args=(TypeInfo.from_type(typing.Never),))
                 )
             },
             override_annotations=False,
@@ -341,10 +358,13 @@ def test_transform_unknown_type_as_string():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('int')),
-                        (ArgumentName('y'), Typename('x.y.Something["quoted"]|None'))
+                        (ArgumentName('x'), TypeInfo.from_type(int, module='')),
+                        (ArgumentName('y'), TypeInfo.from_set(TypeInfoSet((
+                            TypeInfo(module='x.y', name='Something', args=('"quoted"',)),
+                            NoneTypeInfo
+                        ))))
                     ],
-                    Typename('x.z.FloatingPointNumber')
+                    TypeInfo(module='x.z', name='FloatingPointNumber')
                 )
             },
             override_annotations=False,
@@ -383,10 +403,13 @@ def test_transform_unknown_type_with_import_annotations():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('int')),
-                        (ArgumentName('y'), Typename('x.y.WholeNumber|None'))
+                        (ArgumentName('x'), TypeInfo.from_type(int, module='')),
+                        (ArgumentName('y'), TypeInfo.from_set(TypeInfoSet((
+                            TypeInfo(module='x.y', name='WholeNumber'),
+                            NoneTypeInfo
+                        ))))
                     ],
-                    Typename('x.z.FloatingPointNumber')
+                    TypeInfo(module='x.z', name='FloatingPointNumber')
                 )
             },
             override_annotations=False,
@@ -429,10 +452,10 @@ def test_transform_deletes_type_hint_comments_in_header():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('int')),
-                        (ArgumentName('y'), Typename('int'))
+                        (ArgumentName('x'), TypeInfo.from_type(int, module='')),
+                        (ArgumentName('y'), TypeInfo.from_type(int, module=''))
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 )
             },
             override_annotations=False,
@@ -478,10 +501,10 @@ def test_transform_deletes_type_hint_comments_in_parameters():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('int')),
-                        (ArgumentName('y'), Typename('int'))
+                        (ArgumentName('x'), TypeInfo.from_type(int, module='')),
+                        (ArgumentName('y'), TypeInfo.from_type(int, module=''))
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 )
             },
             override_annotations=False,
@@ -534,7 +557,7 @@ def test_transform_deletes_type_hint_comments_for_retval():
                 foo: FuncAnnotation(
                     [
                     ],
-                    Typename('float')
+                    TypeInfo.from_type(float, module='')
                 )
             },
             override_annotations=False,
@@ -588,23 +611,23 @@ def test_transform_locally_defined_types():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('int')),
-                        (ArgumentName('y'), Typename('int'))
+                        (ArgumentName('x'), TypeInfo.from_type(int, module='')),
+                        (ArgumentName('y'), TypeInfo.from_type(int, module=''))
                     ],
-                    Typename('foo.F')
+                    TypeInfo(module='foo', name='F')
                 ),
                 f_foo: FuncAnnotation(
                     [
-                        (ArgumentName('v'), Typename('float')),
+                        (ArgumentName('v'), TypeInfo.from_type(float, module='')),
                     ],
-                    Typename('foo.F')
+                    TypeInfo(module='foo', name='F')
                 ),
                 bar: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('int')),
-                        (ArgumentName('y'), Typename('int'))
+                        (ArgumentName('x'), TypeInfo.from_type(int, module='')),
+                        (ArgumentName('y'), TypeInfo.from_type(int, module=''))
                     ],
-                    Typename('foo.F')
+                    TypeInfo(module='foo', name='F')
                 )
             },
             override_annotations=False,
@@ -653,11 +676,11 @@ def test_uses_imported_aliases():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('x.y.z')),
-                        (ArgumentName('y'), Typename('y.T')),
-                        (ArgumentName('z'), Typename('a.b.c.T')),
+                        (ArgumentName('x'), TypeInfo(module='x.y', name='z')),
+                        (ArgumentName('y'), TypeInfo(module='y', name='T')),
+                        (ArgumentName('z'), TypeInfo(module='a.b', name='c.T'))
                     ],
-                    Typename('r.t.T')
+                    TypeInfo(module='r', name='t.T')
                 ),
             },
             override_annotations=False,
@@ -704,10 +727,10 @@ def test_uses_imported_domains():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('x.y.z')),
-                        (ArgumentName('y'), Typename('a.T')),
+                        (ArgumentName('x'), TypeInfo(module='x.y', name='z')),
+                        (ArgumentName('y'), TypeInfo(module='a', name='T'))
                     ],
-                    Typename('r.t.T')
+                    TypeInfo(module='r', name='t.T')
                 ),
             },
             override_annotations=False,
@@ -746,9 +769,9 @@ def test_imports_subdomain_if_needed():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('x.y.z')),
+                        (ArgumentName('x'), TypeInfo(module='x.y', name='z'))
                     ],
-                    Typename('a.b')
+                    TypeInfo(module='a', name='b')
                 ),
             },
             override_annotations=False,
@@ -786,15 +809,17 @@ def test_existing_typing_imports():
         def bar(x: "ast.For") -> "m.T": ...
     """))
 
+    import ast
+
     foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('ast.If')),
+                        (ArgumentName('x'), TypeInfo.from_type(ast.If))
                     ],
-                    Typename('typing.Any')
+                    TypeInfo.from_type(typing.Any)
                 ),
             },
             override_annotations=False,
@@ -839,15 +864,17 @@ def test_inserts_imports_after_docstring_and_space():
         def foo(x): ...
     """))
 
+    import ast
+
     foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('ast.If')),
+                        (ArgumentName('x'), TypeInfo.from_type(ast.If))
                     ],
-                    Typename('typing.Any')
+                    TypeInfo.from_type(typing.Any)
                 ),
             },
             override_annotations=False,
@@ -900,11 +927,11 @@ def test_relative_import():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('pkg.b.T')),
-                        (ArgumentName('y'), Typename('pkg.a.c.T')),
-                        (ArgumentName('z'), Typename('pkg.a.c.X')),
+                        (ArgumentName('x'), TypeInfo(module='pkg.b', name='T')),
+                        (ArgumentName('y'), TypeInfo(module='pkg.a.c', name='T')),
+                        (ArgumentName('z'), TypeInfo(module='pkg.a.c', name='X')),
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 ),
             },
             override_annotations=False,
@@ -951,28 +978,28 @@ def test_uses_local_imports():
             type_annotations = {
                 foobar: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('m.n.T')),
+                        (ArgumentName('x'), TypeInfo(module='m.n', name='T')),
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 ),
                 Cfoo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('n.o.T')),
+                        (ArgumentName('x'), TypeInfo(module='n', name='o.T')),
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 ),
                 Dfoo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('n.o.T')),
+                        (ArgumentName('x'), TypeInfo(module='n', name='o.T')),
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 ),
                 f : FuncAnnotation(
                     [
-                        (ArgumentName('a'), Typename('m.n.T')),
-                        (ArgumentName('b'), Typename('n.o.T')),
+                        (ArgumentName('a'), TypeInfo(module='m.n', name='T')),
+                        (ArgumentName('b'), TypeInfo(module='n', name='o.T')),
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 ),
             },
             override_annotations=False,
@@ -1025,16 +1052,16 @@ def test_nonglobal_imported_modules_are_ignored():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('a.T')),
-                        (ArgumentName('y'), Typename('a.b.T')),
+                        (ArgumentName('x'), TypeInfo(module='a', name='T')),
+                        (ArgumentName('y'), TypeInfo(module='a.b', name='T'))
                     ],
-                    Typename('a.c.T')
+                    TypeInfo(module='a.c', name='T')
                 ),
                 bar: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('m.T')),
+                        (ArgumentName('x'), TypeInfo(module='m', name='T')),
                     ],
-                    Typename('m.T')
+                    TypeInfo(module='m', name='T')
                 ),
             },
             override_annotations=False,
@@ -1089,15 +1116,15 @@ def test_nonglobal_assignments_are_ignored():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('a.T')),
+                        (ArgumentName('x'), TypeInfo(module='a', name='T')),
                     ],
-                    Typename('')
+                    NoneTypeInfo
                 ),
                 bar: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('m.T')),
+                        (ArgumentName('x'), TypeInfo(module='m', name='T')),
                     ],
-                    Typename('')
+                    NoneTypeInfo
                 ),
             },
             override_annotations=False,
@@ -1111,12 +1138,12 @@ def test_nonglobal_assignments_are_ignored():
 
     code = code.visit(t)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: "a.T"):
+        def foo(x: "a.T") -> None:
             a = Any
     """)
 
     assert get_function(code, 'bar') == textwrap.dedent("""\
-        def bar(x: "m.T"):
+        def bar(x: "m.T") -> None:
             pass
     """)
 
@@ -1141,9 +1168,9 @@ def test_if_type_checking_insertion():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('c.T')),
+                        (ArgumentName('x'), TypeInfo(module='c', name='T'))
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 ),
             },
             override_annotations=False,
@@ -1179,10 +1206,10 @@ def test_import_conflicts_with_import():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('a.T')),
-                        (ArgumentName('y'), Typename('c.d.e.T')),
+                        (ArgumentName('x'), TypeInfo(module='a', name='T')),
+                        (ArgumentName('y'), TypeInfo(module='c.d', name='e.T')),
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 ),
             },
             override_annotations=False,
@@ -1233,10 +1260,10 @@ def test_import_conflicts_with_definitions():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('a.T')),
-                        (ArgumentName('y'), Typename('c.d.e.T')),
+                        (ArgumentName('x'), TypeInfo(module='a', name='T')),
+                        (ArgumentName('y'), TypeInfo(module='c.d', name='e.T')),
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 ),
             },
             override_annotations=False,
@@ -1288,10 +1315,10 @@ def test_import_conflicts_with_assignments():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('a.T')),
-                        (ArgumentName('y'), Typename('c.d.e.T')),
+                        (ArgumentName('x'), TypeInfo(module='a', name='T')),
+                        (ArgumentName('y'), TypeInfo(module='c.d', name='e.T')),
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 ),
             },
             override_annotations=False,
@@ -1342,9 +1369,9 @@ def test_import_conflicts_with_with():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('a.T')),
+                        (ArgumentName('x'), TypeInfo(module='a', name='T')),
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 ),
             },
             override_annotations=False,
@@ -1384,9 +1411,9 @@ def test_import_conflicts_alias_for_module():
             type_annotations = {
                 foo: FuncAnnotation(
                     [
-                        (ArgumentName('x'), Typename('a')), # module "a" meant here, not something in it
+                        (ArgumentName('x'), TypeInfo(module='', name='a')), # module "a" meant here, not something in it
                     ],
-                    Typename('None')
+                    NoneTypeInfo
                 ),
             },
             override_annotations=False,
@@ -1434,7 +1461,7 @@ def test_builtin_name_conflicts():
                 f: FuncAnnotation(
                     [
                     ],
-                    Typename('tuple[int, float]')
+                    TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int, module=''), TypeInfo.from_type(float, module='')))
                 ),
             },
             override_annotations=False,
@@ -1477,7 +1504,7 @@ def test_class_names_dont_affect_body_of_methods():
                 g: FuncAnnotation(
                     [
                     ],
-                    Typename('tuple[int]')
+                    TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int, module=''),))
                 ),
             },
             override_annotations=False,
@@ -1525,13 +1552,17 @@ def test_inner_function():
     h = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.g.<locals>.h'))
     i = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.D.i'))
     j = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.D.i.<locals>.j'))
+    tuple_int_float = TypeInfo.from_type(tuple, args=(
+        TypeInfo.from_type(int, module=''),
+        TypeInfo.from_type(float, module='')
+    ))
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                g: FuncAnnotation([], Typename('tuple[int, float]')),
-                h: FuncAnnotation([], Typename('tuple[int, float]')),
-                i: FuncAnnotation([], Typename('tuple[int, float]')),
-                j: FuncAnnotation([], Typename('tuple[int, float]')),
+                g: FuncAnnotation([], tuple_int_float),
+                h: FuncAnnotation([], tuple_int_float),
+                i: FuncAnnotation([], tuple_int_float),
+                j: FuncAnnotation([], tuple_int_float)
             },
             override_annotations=False,
             module_name = 'foo',
@@ -1584,7 +1615,10 @@ def test_builtin_name_conflicts_even_module_name():
                 f: FuncAnnotation(
                     [
                     ],
-                    Typename('tuple[int, float]')
+                    TypeInfo.from_type(tuple, args=(
+                        TypeInfo.from_type(int, module=''),
+                        TypeInfo.from_type(float, module='')
+                    ))
                 ),
             },
             override_annotations=False,
