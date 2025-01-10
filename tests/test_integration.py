@@ -1138,3 +1138,40 @@ def test_custom_collection_len_error(tmp_cwd, superclass):
                     '--no-use-multiprocessing', '-m', 't'], check=True)
 
     assert f"def foo(bar: {get_empty_container(superclass, "MyContainer")}) -> None" in Path("t.py").read_text()
+
+
+@pytest.mark.parametrize('superclass', ["list", "set", "dict", "KeysView", "ValuesView", "ItemsView", "tuple"])
+def test_custom_collection_sample_error(tmp_cwd, superclass):
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        from collections.abc import *
+
+        class MyContainer({superclass}):
+            def __init__(self):
+                super()
+            
+            def __len__(self):
+                return 1
+            
+            def __getitem__(self, key):
+                raise Exception("Oops, something went wrong!")
+
+            def __contains__(self, key):
+                raise Exception("Oops, something went wrong!")
+
+            def __iter__(self):
+                raise Exception("Oops, something went wrong!")
+
+
+        def foo(bar):
+            pass
+        
+
+        my_object = MyContainer()
+        foo(my_object)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+
+    assert f"def foo(bar: {get_empty_container(superclass, "MyContainer")}) -> None" in Path("t.py").read_text()
