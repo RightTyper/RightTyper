@@ -1,5 +1,5 @@
 from righttyper.righttyper_types import TypeInfo, TypeInfoSet, NoneTypeInfo, Sample
-from righttyper.righttyper_utils import union_typeset_str
+from righttyper.typeinfo import union_typeset_str
 import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
 from collections import namedtuple

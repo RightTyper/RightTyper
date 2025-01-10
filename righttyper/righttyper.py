@@ -50,13 +50,13 @@ from righttyper.righttyper_types import (
     TypeInfoSet,
     Sample,
 )
+from righttyper.typeinfo import union_typeset_str
 from righttyper.righttyper_utils import (
     TOOL_ID,
     TOOL_NAME,
     debug_print,
     debug_print_set_level,
     skip_this_file,
-    union_typeset_str,
     get_main_module_fqn
 )
 
