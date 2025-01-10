@@ -1178,3 +1178,90 @@ def test_no_return(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "def gen() -> Iterator[int]:" in output
+
+
+@pytest.mark.skip
+def test_generic_simple(tmp_cwd):
+    t = textwrap.dedent(
+        """\
+        def add(a, b):
+            return a + b
+        add(1, 2)
+        add("a", "b")
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)" in output
+    assert "def add(a: T_int_str_0, b: T_int_str_0) -> T_int_str_0" in output
+
+
+@pytest.mark.skip
+def test_generic_yield(tmp_cwd):
+    t = textwrap.dedent("""\
+        def y(a):
+            yield a
+        for _ in y(1): pass
+        for _ in y("a"): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)" in output
+    assert "def y(a: T_int_str_0) -> Iterator[T_int_str_0]" in output
+
+
+@pytest.mark.skip
+def test_generic_yield_generator(tmp_cwd):
+    t = textwrap.dedent("""\
+        def y(a, b):
+            yield a
+            return b
+        for _ in y(1, "a"): pass
+        for _ in y("a", 1): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)" in output
+    assert "T_int_str_1 = TypeVar(\"T_int_str_1\", int, str)" in output
+    assert "def y(a: T_int_str_0, b: T_int_str_1) -> Generator[T_int_str_0, Any, T_int_str_1]" in output
+
+
+@pytest.mark.skip
+def test_generic_typevar_location(tmp_cwd):
+    t = textwrap.dedent("""\
+        ...
+        # comment and emptyline
+        def add(a, b):
+            return a + b
+        add(1, 2)
+        add("a", "b")
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    res = textwrap.dedent("""\
+        T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)
+        # comment and emptyline
+        def add(a: T_int_str_0, b: T_int_str_0) -> T_int_str_0:
+        """)
+
+    assert res in output
+    
