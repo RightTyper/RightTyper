@@ -1,9 +1,18 @@
 from righttyper.righttyper_types import TypeInfo, TypeInfoSet
-from righttyper.typeinfo import generalize, union_typeset_str
+from righttyper.typeinfo import union_typeset_str
+import righttyper.typeinfo
 
 
 def ti(name: str, **kwargs) -> TypeInfo:
     return TypeInfo(module='', name=name, **kwargs)
+
+
+def generalize(samples):
+    result = righttyper.typeinfo.generalize(samples)
+    if result:
+        return [str(r) for r in result]
+
+    return result
 
 
 def test_empty():
@@ -30,25 +39,7 @@ def test_uniform_single_type():
         (ti('bool'), ti('bool'), ti('bool')),
         (ti('float'), ti('float'), ti('float'))
     ]
-    typevars: dict[tuple[TypeInfo, ...], str] = {}
-    assert generalize(samples, typevars=typevars) == ['T1', 'T1', 'T1']
-
-    var = next(iter(typevars.keys()))
-    assert union_typeset_str(TypeInfoSet(var)) == "bool|float|int"
-
-    assert typevars[var] == 'T1'
-
-
-def test_uses_existing_typevars():
-    samples = [
-        (ti('int'), ti('int'), ti('int')),
-        (ti('bool'), ti('bool'), ti('bool')),
-        (ti('float'), ti('float'), ti('float'))
-    ]
-
-    typevars: dict[tuple[TypeInfo, ...], str] = {}
-    typevars[(ti('int'), ti('bool'), ti('float'))] = 'X'
-    assert generalize(samples, typevars=typevars) == ['X', 'X', 'X']
+    assert generalize(samples) == ['T1', 'T1', 'T1']
 
 
 def test_uniform_single_type_with_generic():
@@ -58,11 +49,7 @@ def test_uniform_single_type_with_generic():
         (ti('X', args=(ti('foo'),)), ti('X', args=(ti('foo'),))),
     ]
 
-    typevars: dict[tuple[TypeInfo, ...], str] = {}
-    assert generalize(samples, typevars=typevars) == ['T1', 'T1']
-
-    var = next(iter(typevars.keys()))
-    assert union_typeset_str(TypeInfoSet(var)) == "X[foo]|bool|int"
+    assert generalize(samples) == ['T1', 'T1']
 
 
 def test_first_same_then_different():

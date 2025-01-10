@@ -40,9 +40,13 @@ class TypeInfo:
     func: FuncInfo|None = None              # if a callable, the FuncInfo
     is_bound: bool = False                  # if a callable, whether bound
     type_obj: TYPE_OBJ_TYPES|None = None
+    typevar_index: int = 0
 
 
     def __str__(self: Self) -> str:
+        if self.typevar_index:
+            return f"T{self.typevar_index}"
+
         if self.type_obj == types.UnionType:
             return "|".join(str(a) for a in self.args)
         
@@ -65,7 +69,7 @@ class TypeInfo:
 
 
     @staticmethod
-    def from_set(s: "TypeInfoSet") -> "TypeInfo":
+    def from_set(s: "TypeInfoSet", **kwargs) -> "TypeInfo":
         if not s:
             return NoneTypeInfo
 
@@ -77,7 +81,8 @@ class TypeInfo:
             name='UnionType',
             type_obj=types.UnionType,
             # 'None' at the end is seen as more readable
-            args=tuple(sorted(s, key = lambda x: (x == NoneTypeInfo, str(x))))
+            args=tuple(sorted(s, key = lambda x: (x == NoneTypeInfo, str(x)))),
+            **kwargs
         )
 
 

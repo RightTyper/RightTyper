@@ -69,11 +69,7 @@ def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> Ty
 
 
 
-def generalize(
-    samples: Sequence[tuple[TypeInfo, ...]],
-    *,
-    typevars: dict[tuple[TypeInfo, ...], str]|None = None
-) -> list[str]|None:
+def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
     """
     Processes a sequence of samples observed for function parameters and return values, looking
     for patterns that can be replaced with type variables.  If no pattern is detected, the
@@ -127,11 +123,10 @@ def generalize(
     for types in transposed:
         occurrences.update([s for s in expand_generics(types)])
 
-    if typevars is None:
-        typevars = {}
+    typevars: dict[tuple[TypeInfo, ...], TypeInfo] = {}
 
     # Rebuild the argument list, defining and replacing type patterns with a type variable.
-    def rebuild(types: tuple[TypeInfo, ...]) -> TypeInfo|str:
+    def rebuild(types: tuple[TypeInfo, ...]) -> TypeInfo:
         if is_homogeneous_generic(types):
             args = tuple(
                 rebuild(cast(tuple[TypeInfo, ...], tuple(t.args[i] for t in types)))
@@ -142,9 +137,12 @@ def generalize(
 
         if occurrences[types] > 1:
             if types not in typevars:
-                typevars[types] = f"T{len(typevars)+1}"
+                typevars[types] = TypeInfo.from_set(
+                    TypeInfoSet(types),
+                    typevar_index = len(typevars)+1
+                )
             return typevars[types]
 
-        return union_typeset_str(TypeInfoSet(types))
+        return union_typeset(TypeInfoSet(types))
 
-    return [str(rebuild(types)) for types in transposed]
+    return [rebuild(types) for types in transposed]
