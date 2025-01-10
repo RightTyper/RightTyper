@@ -30,7 +30,6 @@ from righttyper.righttyper_process import (
 from righttyper.righttyper_runtime import (
     get_full_type,
     should_skip_function,
-    update_argtypes,
 )
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
@@ -64,7 +63,7 @@ class Options:
     script_dir: str = ""
     include_files_pattern: str = ""
     include_all: bool = False
-    include_functions_pattern: str = ""
+    include_functions_pattern: tuple[str, ...] = tuple()
     target_overhead: float = 5.0
     infer_shapes: bool = False
     ignore_annotations: bool = False
@@ -365,17 +364,23 @@ def process_function_arguments(
         args.args.append(args.keywords)
 
     argtypes: list[ArgInfo] = []
-    for arg in args.args:
-        if arg:
-            update_argtypes(
-                argtypes,
-                (t, ArgumentName(arg)),
-                [args.locals[arg], *defaults.get(arg, [])],
-                arg,
-                is_vararg = (arg == args.varargs),
-                is_kwarg = (arg == args.keywords),
-                use_jaxtyping = options.infer_shapes
+    for arg_name in args.args:
+        if arg_name == args.varargs:
+            arg_values = args.locals[arg_name]
+        elif arg_name == args.keywords:
+            arg_values = args.locals[arg_name].values()
+        else:
+            arg_values = [args.locals[arg_name], *defaults.get(arg_name, [])]
+
+        argtypes.append(
+            ArgInfo(
+                ArgumentName(arg_name),
+                TypeInfoSet([
+                    get_full_type(val, use_jaxtyping=options.infer_shapes)
+                    for val in arg_values
+                ])
             )
+        )
 
     debug_print(f"processing {t=} {argtypes=}")
     obs.update_visited_funcs_arguments(t, argtypes)
@@ -763,7 +768,7 @@ def main(
     args: list[str],
     all_files: bool,
     include_files: str,
-    include_functions: tuple[str],
+    include_functions: tuple[str, ...],
     type_coverage_by_directory: str,
     type_coverage_by_file: str,
     type_coverage_summary: str,

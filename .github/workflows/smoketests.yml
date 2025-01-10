@@ -37,7 +37,9 @@ jobs:
         path: 'rich'
 
     - working-directory: ./rich
-      run: python3 -m pip install -e .
+      run: |
+        python3 -m pip install pygments==2.17.2 # avoids apparent issues in 2.19.[01]
+        python3 -m pip install -e .
 
     # Using SIGINT to interrupt usually gives a traceback, indicating where it was hung.
 
