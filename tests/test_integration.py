@@ -1126,9 +1126,9 @@ def test_custom_collection_len_error(tmp_cwd, superclass):
 
     # Are we supposed to generate types in the __main__ module?
     if superclass in ["list", "set"]:
-        assert f"def foo(bar: \"__main__.MyContainer[Never]\") -> None" in Path("t.py").read_text()
+        assert f"def foo(bar: MyContainer[Never]) -> None" in Path("t.py").read_text()
     elif superclass in ["dict"]:
-        assert f"def foo(bar: \"__main__.MyContainer[Never, Never]\") -> None" in Path("t.py").read_text()
+        assert f"def foo(bar: MyContainer[Never, Never]) -> None" in Path("t.py").read_text()
     elif superclass in ["KeysView", "ValuesView"]:
         assert f"def foo(bar: {superclass}[Never]) -> None" in Path("t.py").read_text()
     elif superclass in ["ItemsView"]:
