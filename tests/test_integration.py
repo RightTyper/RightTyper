@@ -859,7 +859,7 @@ def test_discovered_function_type_in_yield(tmp_cwd):
         def bar():
             yield foo
 
-        next(bar())(1)
+        for a in bar(): a(1)
         """
     ))
 
