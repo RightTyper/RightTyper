@@ -11,6 +11,7 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     FunctionName,
     Typename,
+    TypeInfo,
 )
 
 
@@ -125,11 +126,11 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         return '', name
 
-    def _is_valid(self, annotation: str) -> bool:
+    def _is_valid(self, annotation: TypeInfo) -> bool:
         """Returns whether the annotation can be parsed."""
         # local names such as foo.<locals>.Bar yield this exception
         try:
-            cst.parse_expression(annotation)
+            cst.parse_expression(str(annotation))
             return True
         except cst.ParserSyntaxError:
             return False
@@ -312,11 +313,11 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         return True
 
-    def _try_rename_to_self(self, annotation: Typename) -> Typename:
+    def _try_rename_to_self(self, annotation: TypeInfo) -> TypeInfo:
         if self.use_self and self.module_name:
             # TODO this doesn't handle composite names, such as "list[Self]"... do we care?
-            if annotation == '.'.join((self.module_name, *self.name_stack)):
-                return Typename("typing.Self")
+            if str(annotation) == '.'.join((self.module_name, *self.name_stack)):
+                return TypeInfo("typing", "Self")
         return annotation
 
     def _process_parameter(self, parameter: cst.Param, ann: FuncAnnotation) -> cst.Param:
@@ -337,7 +338,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         if not self._is_valid(annotation):
             return parameter
 
-        annotation_expr: cst.BaseExpression = cst.parse_expression(annotation)
+        annotation_expr: cst.BaseExpression = cst.parse_expression(str(annotation))
         annotation_expr = self._rename_types(annotation_expr)
         unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
         self.unknown_types |= unknown_types
@@ -405,7 +406,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             if updated_node.returns is None or self.override_annotations:
                 annotation = self._try_rename_to_self(ann.retval)
                 if self._is_valid(annotation):
-                    annotation_expr = cst.parse_expression(annotation)
+                    annotation_expr = cst.parse_expression(str(annotation))
                     annotation_expr = self._rename_types(annotation_expr)
                     unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
                     self.unknown_types |= unknown_types

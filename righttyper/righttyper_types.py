@@ -23,8 +23,8 @@ class FuncInfo:
 
 @dataclass(eq=True, frozen=True)
 class FuncAnnotation:
-    args: list[tuple[ArgumentName, Typename]]
-    retval: Typename
+    args: list[tuple[ArgumentName, TypeInfo]]
+    retval: TypeInfo
 
 
 # Valid non-None TypeInfo.type_obj types: allows static casting
@@ -56,6 +56,12 @@ class TypeInfo:
         
         module = self.module + '.' if self.module else ''
         if self.args:
+            # TODO: fix callable arguments being strings
+            # if self.module == "typing" and self.name == "Callable":
+            #     return f"{module}{self.name}[[" + \
+            #         ", ".join(str(a) for a in self.args[:-1]) + \
+            #         f"], {str(self.args[-1])}]"
+            
             return (
                 f"{module}{self.name}[" +
                     ", ".join(str(a) for a in self.args) +

@@ -50,7 +50,10 @@ from righttyper.righttyper_types import (
     TypeInfoSet,
     Sample,
 )
-from righttyper.typeinfo import union_typeset_str, generalize
+from righttyper.typeinfo import (
+    union_typeset_str,
+    generalize,
+)
 from righttyper.righttyper_utils import (
     TOOL_ID,
     TOOL_NAME,
@@ -174,28 +177,36 @@ class Observations:
             if sample.yields:
                 self.samples[func].add(sample.process())
 
+        # some modules are unpickleable. Specifically anything found in
+        # __main__. I believe this is because __main__ in the original
+        # file is different than __main__ at the time of pickling, causing
+        # a `attribute lookup A on __main__ failed` error.
+        class RemoveTypeObjTransformer(TypeInfo.Transformer):
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.type_obj and node.type_obj.__module__ == "__main__":
+                    node = node.replace(type_obj=None)
+                return super().visit(node)
+
         def mk_annotation(t: FuncInfo) -> FuncAnnotation:
             args = self.functions_visited[t]
             samples = self.samples[t]
 
-            test = {}
-            print(generalize(list(samples), typevars=test))
-            print(test)
+            signature = generalize(list(samples))
             
+
+            tr = RemoveTypeObjTransformer()
+            signature = list(map(tr.visit, signature))
+
             return FuncAnnotation(
-                [
+                args=[
                     (
                         arg.arg_name,
-                        union_typeset_str(TypeInfoSet((
-                            *(s[i] for s in samples),
-                            *((arg.default,) if arg.default is not None else ())
-                        )))
+                        signature[i]
                     )
                     for i, arg in enumerate(args)
                 ],
-                union_typeset_str(TypeInfoSet(s[-1] for s in samples))
+                retval=signature[-1]
             )
-
 
         class T(TypeInfo.Transformer):
             """Updates Callable type declarations based on observations."""
@@ -203,16 +214,15 @@ class Observations:
                 if node.func and not node.args:
                     if node.func in self.samples:
                         ann = mk_annotation(node.func)
-                        return TypeInfo('typing', 'Callable', args = (
-                                # FIXME these parameter types won't be mergeable, as they're strings
-                                "[" + ", ".join(
-                                    arg[1] for arg in ann.args[int(node.is_bound):]
-                                ) + "]",
-                                ann.retval
-                            )
-                        )
+                        # TODO: fix callable arguments being strings
+                        return TypeInfo('typing', 'Callable', args=(
+                            f"[{", ".join(map(lambda a: str(a[1]), ann.args))}]",
+                            ann.retval
+                        ))
 
                 return super().visit(node)
+
+
 
         self._transform_types(T())
 
