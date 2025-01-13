@@ -217,7 +217,7 @@ class Observations:
                         ann = mk_annotation(node.func)
                         # TODO: fix callable arguments being strings
                         return TypeInfo('typing', 'Callable', args=(
-                            f"[{", ".join(map(lambda a: str(a[1]), ann.args))}]",
+                            f"[{", ".join(map(lambda a: str(a[1]), ann.args[int(node.is_bound):]))}]",
                             ann.retval
                         ))
 
