@@ -41,7 +41,7 @@ class TypeInfo:
     is_bound: bool = False                  # if a callable, whether bound
     type_obj: TYPE_OBJ_TYPES|None = None
     typevar_index: int = 0
-    typevar_name: str|None = None
+    typevar_name: str|None = None   # TODO delete me?
 
 
     def __str__(self: Self) -> str:
