@@ -859,7 +859,7 @@ def test_discovered_function_type_in_yield(tmp_cwd):
         def bar():
             yield foo
 
-        next(bar())(1)
+        for a in bar(): a(1)
         """
     ))
 
@@ -1180,7 +1180,6 @@ def test_no_return(tmp_cwd):
     assert "def gen() -> Iterator[int]:" in output
 
 
-@pytest.mark.skip
 def test_generic_simple(tmp_cwd):
     t = textwrap.dedent(
         """\
@@ -1200,7 +1199,6 @@ def test_generic_simple(tmp_cwd):
     assert "def add(a: T_int_str_0, b: T_int_str_0) -> T_int_str_0" in output
 
 
-@pytest.mark.skip
 def test_generic_yield(tmp_cwd):
     t = textwrap.dedent("""\
         def y(a):
@@ -1219,7 +1217,6 @@ def test_generic_yield(tmp_cwd):
     assert "def y(a: T_int_str_0) -> Iterator[T_int_str_0]" in output
 
 
-@pytest.mark.skip
 def test_generic_yield_generator(tmp_cwd):
     t = textwrap.dedent("""\
         def y(a, b):
@@ -1235,12 +1232,12 @@ def test_generic_yield_generator(tmp_cwd):
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
+    print(output)
     assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)" in output
     assert "T_int_str_1 = TypeVar(\"T_int_str_1\", int, str)" in output
     assert "def y(a: T_int_str_0, b: T_int_str_1) -> Generator[T_int_str_0, Any, T_int_str_1]" in output
 
 
-@pytest.mark.skip
 def test_generic_typevar_location(tmp_cwd):
     t = textwrap.dedent("""\
         ...

@@ -103,7 +103,8 @@ def test_transform_function():
             },
             override_annotations=False,
             module_name='foo',
-            module_names=['foo']
+            module_names=['foo'],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -182,7 +183,8 @@ def test_transform_method():
             },
             override_annotations=False,
             module_name='foo',
-            module_names=['foo']
+            module_names=['foo'],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -254,7 +256,8 @@ def test_transform_local_function():
             },
             override_annotations=False,
             module_name='foo',
-            module_names=['foo']
+            module_names=['foo'],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -299,7 +302,8 @@ def test_override_annotations():
             },
             override_annotations=True,
             module_name='foo',
-            module_names=['foo']
+            module_names=['foo'],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -335,7 +339,8 @@ def test_transform_adds_typing_import_for_typing_names():
             },
             override_annotations=False,
             module_name='foo',
-            module_names=['foo']
+            module_names=['foo'],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -376,7 +381,8 @@ def test_transform_unknown_type_as_string():
                 "foo",
                 "x.y",
                 "x"
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -421,7 +427,8 @@ def test_transform_unknown_type_with_import_annotations():
                 "foo",
                 "x.y",
                 "x"
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -465,7 +472,8 @@ def test_transform_deletes_type_hint_comments_in_header():
             module_name = 'foo',
             module_names = [
                 'foo'
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -514,7 +522,8 @@ def test_transform_deletes_type_hint_comments_in_parameters():
             module_name = 'foo',
             module_names = [
                 'foo'
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -567,7 +576,8 @@ def test_transform_deletes_type_hint_comments_for_retval():
             module_name = 'foo',
             module_names=[
                 'foo'
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -638,6 +648,7 @@ def test_transform_locally_defined_types():
             module_names=[
                 'foo'
             ],
+            inline_generics=False,
             use_self = False
         )
 
@@ -696,7 +707,8 @@ def test_uses_imported_aliases():
                 'a',
                 'a.b',
                 'r'
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -744,7 +756,8 @@ def test_uses_imported_domains():
                 'x',
                 'x.y',
                 'r'
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -786,7 +799,8 @@ def test_imports_subdomain_if_needed():
                 'a',
                 'a.b',
                 'a.b.c',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -832,7 +846,8 @@ def test_existing_typing_imports():
                 'ast',
                 'm',
                 'typing',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -886,7 +901,8 @@ def test_inserts_imports_after_docstring_and_space():
                 'foo',
                 'ast',
                 'typing',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -944,7 +960,8 @@ def test_relative_import():
                 'pkg.a.a',
                 'pkg.b',
                 'pkg.a.c',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1011,7 +1028,8 @@ def test_uses_local_imports():
                 'foo',
                 'm.n',
                 'n',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1075,7 +1093,8 @@ def test_nonglobal_imported_modules_are_ignored():
                 'a.b',
                 'a.c',
                 'm',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1136,7 +1155,8 @@ def test_nonglobal_assignments_are_ignored():
                 'foo',
                 'a',
                 'm'
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1183,7 +1203,8 @@ def test_if_type_checking_insertion():
                 'a',
                 'c',
                 'typing'
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1223,7 +1244,8 @@ def test_import_conflicts_with_import():
                 'b',
                 'c',
                 'c.d'
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1277,7 +1299,8 @@ def test_import_conflicts_with_definitions():
                 'b',
                 'c',
                 'c.d'
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1332,7 +1355,8 @@ def test_import_conflicts_with_assignments():
                 'b',
                 'c',
                 'c.d'
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1382,7 +1406,8 @@ def test_import_conflicts_with_with():
             module_names = [
                 'foo',
                 'a',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1424,7 +1449,8 @@ def test_import_conflicts_alias_for_module():
             module_names = [
                 'foo',
                 'a',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1472,7 +1498,8 @@ def test_builtin_name_conflicts():
             module_names = [
                 'foo',
                 'builtins',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1515,7 +1542,8 @@ def test_class_names_dont_affect_body_of_methods():
             module_names = [
                 'foo',
                 'builtins',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1572,7 +1600,8 @@ def test_inner_function():
             module_names = [
                 'foo',
                 'builtins',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)
@@ -1629,7 +1658,8 @@ def test_builtin_name_conflicts_even_module_name():
             module_names = [
                 'foo',
                 'builtins',
-            ]
+            ],
+            inline_generics=False
         )
 
     code = code.visit(t)

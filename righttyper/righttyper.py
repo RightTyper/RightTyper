@@ -78,6 +78,7 @@ class Options:
     srcdir: str = ""
     use_multiprocessing: bool = True
     sampling: bool = True
+    inline_generics: bool = False
 
 options = Options()
 
@@ -119,14 +120,14 @@ class Observations:
     def record_start(self, func: FuncInfo, frame_id: int, arg_types: tuple[TypeInfo, ...]) -> None:
         """Records a function start."""
 
-#        print(f"record_start {func}")
+        # print(f"record_start {func}")
         self.pending_samples[(func, frame_id)] = Sample(arg_types)
 
 
     def record_yield(self, func: FuncInfo, frame_id: int, yield_type: TypeInfo) -> bool:
         """Records a yield."""
 
-#        print(f"record_yield {func}")
+        # print(f"record_yield {func}")
         if (sample := self.pending_samples.get((func, frame_id))):
             sample.yields.add(yield_type)
             return True
@@ -137,7 +138,7 @@ class Observations:
     def record_return(self, func: FuncInfo, frame_id: int, return_type: TypeInfo) -> bool:
         """Records a return."""
 
-#        print(f"record_return {func}")
+        # print(f"record_return {func}")
         if (sample := self.pending_samples.get((func, frame_id))):
             sample.returns = return_type
             self.samples[func].add(sample.process())
@@ -150,7 +151,7 @@ class Observations:
     def record_exception(self, func: FuncInfo, frame_id: int) -> None:
         """Records an exception."""
 
-#        print(f"record_exception {func}")
+        # print(f"record_exception {func}")
         if (sample := self.pending_samples.get((func, frame_id))):
             # TODO record anything?
             del self.pending_samples[(func, frame_id)]
@@ -655,6 +656,7 @@ def process_all_files() -> list[SignatureChanges]:
             options.overwrite,
             module_names,
             options.ignore_annotations,
+            options.inline_generics
         )
         for fname in fnames
     )

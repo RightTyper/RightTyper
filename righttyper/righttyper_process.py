@@ -84,6 +84,7 @@ def process_file(
     overwrite: bool,
     module_names: list[str],
     ignore_annotations: bool = False,
+    inline_generics: bool = False,
 ) -> SignatureChanges:
     debug_print(f"process_file: {filename}")
     try:
@@ -104,7 +105,7 @@ def process_file(
             raise
 
     transformer = UnifiedTransformer(
-        filename, type_annotations, ignore_annotations,
+        filename, type_annotations, ignore_annotations, inline_generics,
         module_name=source_to_module_fqn(pathlib.Path(filename)),
         module_names=module_names
     )

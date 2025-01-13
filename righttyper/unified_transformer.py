@@ -101,6 +101,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         filename: str,
         type_annotations: dict[FuncInfo, FuncAnnotation],
         override_annotations: bool,
+        inline_generics: bool,
         module_name: str|None,
         module_names: list[str],
         *,
@@ -109,6 +110,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.filename = filename
         self.type_annotations = type_annotations
         self.override_annotations = override_annotations
+        self.inline_generics = inline_generics
         self.has_future_annotations = False
         self.module_name = module_name
         self.module_names = sorted(module_names, key=lambda name: -name.count('.'))
@@ -201,6 +203,43 @@ class UnifiedTransformer(cst.CSTTransformer):
                 yield t
 
 
+    def _process_generics(self, ann: FuncAnnotation, existing_generics) -> tuple[FuncAnnotation, dict[int, TypeInfo]]:
+
+        generics: dict[int, TypeInfo] = {}
+        local_generic_index = 0
+
+        class RenameGenericsTransformer(TypeInfo.Transformer):
+            def visit(vself, node: TypeInfo|str) -> TypeInfo:
+                if type(node) is str:
+                    return node
+
+                if node.typevar_index == 0:
+                    return super().visit(node)
+
+                if node.typevar_index not in generics:
+                    if self.inline_generics:
+                        while (name := f"T{local_generic_index}") in existing_generics:
+                            local_generic_index += 1
+                        local_generic_index += 1
+                    else:
+                        name = "T_" \
+                             + "_".join([arg.name for arg in node.args]) \
+                             + f"_{str(self.module_generic_index)}"
+                        self.module_generic_index += 1
+                    
+                    generics[node.typevar_index] = node.replace(typevar_name=name)
+
+                return node.replace(typevar_name=generics[node.typevar_index].typevar_name)
+
+        tr = RenameGenericsTransformer()
+        updated_ann = FuncAnnotation(
+            [(name, tr.visit(ti)) for (name, ti) in ann.args],
+            tr.visit(ann.retval)
+        )
+        
+        return (updated_ann, generics)
+                    
+
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
 
@@ -239,6 +278,8 @@ class UnifiedTransformer(cst.CSTTransformer):
                 )
             )
         )
+
+        self.module_generic_index = 0
 
         return True
 
@@ -320,6 +361,31 @@ class UnifiedTransformer(cst.CSTTransformer):
                 return TypeInfo("typing", "Self")
         return annotation
 
+    def _get_annotation_expr(self, annotation: TypeInfo|str):
+
+        class FindGenerics(TypeInfo.Transformer):
+            def __init__(self):
+                self.generics = set()
+            def visit(self, node: TypeInfo|str|None) -> TypeInfo:
+                if type(node) is not TypeInfo:
+                    return
+                if node.typevar_name is not None:
+                    self.generics.add(node.typevar_name)
+                return super().visit(node)
+        
+        fr = FindGenerics()
+        fr.visit(annotation)
+
+        annotation_expr: cst.BaseExpression = cst.parse_expression(str(annotation))
+        annotation_expr = self._rename_types(annotation_expr)
+        unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
+        self.unknown_types |= unknown_types - fr.generics
+
+        if not self.has_future_annotations and (unknown_types - fr.generics - _TYPING_TYPES):
+            annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
+
+        return annotation_expr
+    
     def _process_parameter(self, parameter: cst.Param, ann: FuncAnnotation) -> cst.Param:
         """Processes a parameter, either returning an updated parameter or the original one."""
         if (
@@ -338,13 +404,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         if not self._is_valid(annotation):
             return parameter
 
-        annotation_expr: cst.BaseExpression = cst.parse_expression(str(annotation))
-        annotation_expr = self._rename_types(annotation_expr)
-        unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
-        self.unknown_types |= unknown_types
-
-        if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-            annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
+        annotation_expr = self._get_annotation_expr(annotation)
 
         new_par = parameter.with_changes(
             annotation=cst.Annotation(annotation=annotation_expr)
@@ -374,14 +434,45 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
-    ) -> cst.FunctionDef:
+    ) -> cst.FunctionDef | cst.FlattenSentinel:
         name = ".".join(self.name_stack[:-1])
         self.name_stack.pop()
         self.name_stack.pop()
         self.used_names.pop()
         key = FuncInfo(Filename(self.filename), FunctionName(name))
+        pre_function = []
 
         if ann := self.type_annotations.get(key):
+
+            existing_generics = []
+            if original_node.type_parameters is not None:
+                existing_generics = [param.param.name.value for param in original_node.type_parameters.params]
+            
+            ann, generics = self._process_generics(ann, existing_generics)
+
+            if self.inline_generics:
+                existing_params = []
+                if original_node.type_parameters is not None:
+                    existing_params = original_node.type_parameters.params
+
+                our_params = []
+                for generic in generics.values():
+                    our_params.append(cst.TypeParam(param=cst.TypeVar(
+                        name=cst.Name(value=generic.typevar_name),
+                        bound=cst.Tuple(elements=[cst.Element(value=self._get_annotation_expr(arg)) for arg in generic.args])
+                    )))
+
+                updated_node = updated_node.with_changes(type_parametsrs=existing_params + our_params)
+
+            else:
+                for generic in generics.values():
+                    pre_function.append(cst.SimpleStatementLine(body=[
+                        cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],value=
+                        cst.Call(func=cst.Name("TypeVar"), args=[
+                            cst.Arg(value=cst.SimpleString(_quote(generic.typevar_name))),
+                            *[cst.Arg(value=self._get_annotation_expr(arg)) for arg in generic.args]]))
+                    ]))
+            
             for attr_name in ['params', 'kwonly_params', 'posonly_params']:
                 if getattr(updated_node.params, attr_name):
                     new_parameters = []
@@ -406,13 +497,8 @@ class UnifiedTransformer(cst.CSTTransformer):
             if updated_node.returns is None or self.override_annotations:
                 annotation = self._try_rename_to_self(ann.retval)
                 if self._is_valid(annotation):
-                    annotation_expr = cst.parse_expression(str(annotation))
-                    annotation_expr = self._rename_types(annotation_expr)
-                    unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
-                    self.unknown_types |= unknown_types
 
-                    if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-                        annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
+                    annotation_expr = self._get_annotation_expr(annotation)
 
                     updated_node = updated_node.with_changes(
                         returns=cst.Annotation(annotation=annotation_expr),
@@ -436,6 +522,15 @@ class UnifiedTransformer(cst.CSTTransformer):
                         header=cst.TrailingWhitespace()))
 
             self.change_list.append((key.func_name, original_node, updated_node))
+
+        if len(pre_function):
+            leading_lines = updated_node.leading_lines
+            find_comments = map(lambda a: a[0], filter(lambda a: type(a[1]) is cst.EmptyLine and a[1].comment is not None, enumerate(leading_lines)))
+            if (index := next(find_comments, None)) is not None:
+                pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:index])
+                updated_node = updated_node.with_changes(leading_lines=leading_lines[index:])
+
+            return cst.FlattenSentinel([*pre_function, updated_node])
 
         return updated_node
 
