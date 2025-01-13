@@ -190,6 +190,18 @@ def in_builtins_import(t: type) -> bool:
     return False
 
 
+def normalize_module_name(module_name: str) -> str:
+    """Applies common substitutions to a type's module's name."""
+    if module_name == "__main__":
+        # "__main__" isn't generally usable for typing, and only unique in this execution
+        return get_main_module_fqn()
+
+    if module_name == "builtins":
+        return ""   # we consider these "well-known" and, for brevity, omit the module name
+
+    return module_name
+
+
 @cache
 def lookup_type_module(t: type) -> str:
     parts = t.__qualname__.split('.')
@@ -204,17 +216,20 @@ def lookup_type_module(t: type) -> str:
 
         return False
 
+    # Is it defined where it claims to be?
     if (m := sys.modules.get(t.__module__)):
         if is_defined_in_module(m.__dict__):
-            return t.__module__
+            return normalize_module_name(t.__module__)
 
+    # Can we find it some submodule?
+    # FIXME this search could be more exhaustive and/or more principled
     module_prefix = f"{t.__module__}."
     for name, mod in sys.modules.items():
         if name.startswith(module_prefix) and is_defined_in_module(mod.__dict__):
-            return name
+            return normalize_module_name(name)
 
-    # it's not in the module, but keep it as a last resort, to facilitate diagnostics
-    return t.__module__
+    # Keep it as a last resort, to facilitate diagnostics
+    return normalize_module_name(t.__module__)
 
 
 RANGE_ITER_TYPE = type(iter(range(1)))
@@ -273,9 +288,6 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
                 ):
                     return f"{name}.{obj.__name__}"
 
-    if obj.__module__ == "__main__":    # TODO merge this into lookup_type_module
-        return TypeInfo(get_main_module_fqn(), obj.__qualname__, type_obj=obj)
-
     return TypeInfo(lookup_type_module(obj), obj.__qualname__, type_obj=obj)
 
 
@@ -304,48 +316,52 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         return TypeInfo("typing", "Never")
 
     t: type|None
+    args: tuple[TypeInfo, ...]
 
     if isinstance(value, dict):
         t = type(value)
-        if value:
-            el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
-            args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
-        else:
-            args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
-        module = "" if t.__module__ == "builtins" else t.__module__
-        return TypeInfo(module, t.__qualname__, args=args)
+        args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+        try:
+            if value:
+                el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
+                args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
+        except Exception: pass
+        return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
     elif isinstance(value, (list, set)):
         t = type(value)
-        if value:
-            el = sample_from_collection(value)
-            args = (get_full_type(el, depth=depth+1),)
-        else:
-            args = (TypeInfo("typing", "Never"),)
-        module = "" if t.__module__ == "builtins" else t.__module__
-        return TypeInfo(module, t.__qualname__, args=args)
+        args = (TypeInfo("typing", "Never"),)
+        try:
+            if value:
+                el = sample_from_collection(value)
+                args = (get_full_type(el, depth=depth+1),)
+        except Exception: pass
+        return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
     elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
-        if value:
-            el = sample_from_collection(value)
-            args = (get_full_type(el, depth=depth+1),)
-        else:
-            args = (TypeInfo("typing", "Never"),)
+        args = (TypeInfo("typing", "Never"),)
+        try:
+            if value:
+                el = sample_from_collection(value)
+                args = (get_full_type(el, depth=depth+1),)
+        except Exception: pass
         return TypeInfo("typing", t.__qualname__, args=args)
     elif isinstance(value, abc.ItemsView):
-        if value:
-            el = sample_from_collection(value)
-            args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
-        else:
-            args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+        args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+        try:
+            if value:
+                el = sample_from_collection(value)
+                args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
+        except Exception: pass
         return TypeInfo("typing", "ItemsView", args=args)
     elif isinstance(value, tuple):
         if isinstance_namedtuple(value):
             t = type(value)
-            return TypeInfo(t.__module__, t.__qualname__)
+            return TypeInfo(lookup_type_module(t), t.__qualname__)
         else:
-            if value:
-                args = tuple(get_full_type(fld, depth=depth+1) for fld in value)
-            else:
-                args = tuple()
+            args = tuple()
+            try:
+                if value:
+                    args = tuple(get_full_type(fld, depth=depth+1) for fld in value)
+            except Exception: pass
             return TypeInfo("", "tuple", args=args)
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
