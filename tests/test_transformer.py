@@ -11,18 +11,11 @@ from righttyper.righttyper_types import (
     TypeInfo,
     NoneTypeInfo,
     TypeInfoSet,
-    FuncAnnotation as rt_FuncAnnotation
+    FuncAnnotation
 )
 import typing
 import pytest
 import re
-
-
-def FuncAnnotation(args: list[tuple[ArgumentName, TypeInfo]], retval: TypeInfo) -> rt_FuncAnnotation:
-    return rt_FuncAnnotation(
-        [(name, Typename(str(typeinfo))) for name, typeinfo in args],
-        Typename(str(retval))
-    )
 
 
 def get_function(m: cst.Module, name: str) -> str|None:
