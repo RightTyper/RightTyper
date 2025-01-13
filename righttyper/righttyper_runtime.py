@@ -316,6 +316,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         return TypeInfo("typing", "Never")
 
     t: type|None
+    args: tuple[TypeInfo, ...]
 
     if isinstance(value, dict):
         t = type(value)
