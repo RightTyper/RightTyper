@@ -1174,6 +1174,52 @@ def test_self_classmethod(tmp_cwd):
     assert "def static_initializer(cls: type[Self]) -> Self:" in Path("t.py").read_text()
 
 
+def test_self_optional(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class MyClass:
+
+            def __init__(self):
+                pass
+
+            def foo(self, return_none):
+                if(return_none):
+                    return None
+                else:
+                    return self
+
+        a = MyClass()
+        a.foo(true)
+        a.foo(false)
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self, return_none: bool) -> Self | None:" in Path("t.py").read_text()
+
+
+def test_self_parameter(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class MyClass:
+
+            def __init__(self):
+                pass
+
+            def foo(self):
+                return [self, self]
+
+        a = MyClass()
+        a.foo()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self) -> list[Self]" in Path("t.py").read_text()
+
+
 @pytest.mark.parametrize('superclass, expected', [
     ("list", "MyContainer[Never]"),
     ("set", "MyContainer[Never]"),
