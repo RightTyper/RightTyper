@@ -205,10 +205,11 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def _process_generics(self, ann: FuncAnnotation, existing_generics) -> tuple[FuncAnnotation, dict[int, TypeInfo]]:
 
-        generics: dict[int, TypeInfo] = {}
-        local_generic_index = 0
-
         class RenameGenericsTransformer(TypeInfo.Transformer):
+            def __init__(self):
+                self.local_generic_index = 0
+                self.generics = {}
+            
             def visit(vself, node: TypeInfo|str) -> TypeInfo:
                 if type(node) is str:
                     return node
@@ -216,20 +217,20 @@ class UnifiedTransformer(cst.CSTTransformer):
                 if node.typevar_index == 0:
                     return super().visit(node)
 
-                if node.typevar_index not in generics:
+                if node.typevar_index not in vself.generics:
                     if self.inline_generics:
-                        while (name := f"T{local_generic_index}") in existing_generics:
-                            local_generic_index += 1
-                        local_generic_index += 1
+                        while (name := f"T{vself.local_generic_index}") in existing_generics:
+                            vself.local_generic_index += 1
+                        vself.local_generic_index += 1
                     else:
                         name = "T_" \
                              + "_".join([arg.name for arg in node.args]) \
                              + f"_{str(self.module_generic_index)}"
                         self.module_generic_index += 1
                     
-                    generics[node.typevar_index] = node.replace(typevar_name=name)
+                    vself.generics[node.typevar_index] = node.replace(typevar_name=name)
 
-                return node.replace(typevar_name=generics[node.typevar_index].typevar_name)
+                return node.replace(typevar_name=vself.generics[node.typevar_index].typevar_name)
 
         tr = RenameGenericsTransformer()
         updated_ann = FuncAnnotation(
@@ -237,7 +238,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             tr.visit(ann.retval)
         )
         
-        return (updated_ann, generics)
+        return (updated_ann, tr.generics)
                     
 
     def visit_Module(self, node: cst.Module) -> bool:
@@ -462,7 +463,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                         bound=cst.Tuple(elements=[cst.Element(value=self._get_annotation_expr(arg)) for arg in generic.args])
                     )))
 
-                updated_node = updated_node.with_changes(type_parametsrs=existing_params + our_params)
+                updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(params=existing_params + our_params))
 
             else:
                 for generic in generics.values():

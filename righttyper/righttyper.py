@@ -841,6 +841,11 @@ class CheckModule(click.ParamType):
     hidden=True,
     help="Whether to sample calls and types or to use every one seen.",
 )
+@click.option(
+    "--inline-generics",
+    is_flag=True,
+    help="Whether generics should be declared as a seperate variable or inline"
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
     script: str,
@@ -862,6 +867,7 @@ def main(
     target_overhead: float,
     use_multiprocessing: bool,
     sampling: bool,
+    inline_generics: bool
 ) -> None:
 
     if module:
@@ -934,6 +940,7 @@ def main(
     options.srcdir = srcdir
     options.use_multiprocessing = use_multiprocessing
     options.sampling = sampling 
+    options.inline_generics = inline_generics
 
     try:
         setup_tool_id()
