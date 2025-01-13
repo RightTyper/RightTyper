@@ -168,7 +168,6 @@ class Observations:
                     sample_set.add(sprime)
 
 
-
     def collect_annotations(self: Self) -> dict[FuncInfo, FuncAnnotation]:
         """Collects function type annotations from the observed types."""
 
@@ -178,25 +177,23 @@ class Observations:
             if sample.yields:
                 self.samples[func].add(sample.process())
 
-        # some modules are unpickleable. Specifically anything found in
-        # __main__. I believe this is because __main__ in the original
-        # file is different than __main__ at the time of pickling, causing
-        # a `attribute lookup A on __main__ failed` error.
-        class RemoveTypeObjTransformer(TypeInfo.Transformer):
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                if node.type_obj and node.type_obj.__module__ == "__main__":
-                    node = node.replace(type_obj=None)
-                return super().visit(node)
-
         def mk_annotation(t: FuncInfo) -> FuncAnnotation:
             args = self.functions_visited[t]
             samples = self.samples[t]
 
             signature = generalize(list(samples))
-            
+
+            # Annotations are pickled by 'multiprocessing', but types defined
+            # in '__main__' aren't pickleable because they don't exist in the
+            # multiprocessing subprocess' __main__.
+            class RemoveTypeObjTransformer(TypeInfo.Transformer):
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    if node.type_obj and node.type_obj.__module__ == "__main__":
+                        node = node.replace(type_obj=None)
+                    return super().visit(node)
 
             tr = RemoveTypeObjTransformer()
-            signature = list(map(tr.visit, signature))
+            signature = tuple(map(tr.visit, signature))
 
             return FuncAnnotation(
                 args=[
@@ -222,8 +219,6 @@ class Observations:
                         ))
 
                 return super().visit(node)
-
-
 
         self._transform_types(T())
 
@@ -475,7 +470,7 @@ def find_functions(
 
     visited_wrapped = set()
     visited_classes = set()
-    
+
     def check_function(name: str, obj: abc.Callable) -> abc.Iterator[abc.Callable]:
         while hasattr(obj, "__wrapped__"):
             if obj in visited_wrapped:
@@ -939,7 +934,7 @@ def main(
     options.generate_stubs = generate_stubs
     options.srcdir = srcdir
     options.use_multiprocessing = use_multiprocessing
-    options.sampling = sampling 
+    options.sampling = sampling
     options.inline_generics = inline_generics
 
     try:

@@ -203,25 +203,28 @@ class UnifiedTransformer(cst.CSTTransformer):
                 yield t
 
 
-    def _process_generics(self, ann: FuncAnnotation, existing_generics) -> tuple[FuncAnnotation, dict[int, TypeInfo]]:
+    def _process_generics(
+        self,
+        ann: FuncAnnotation,
+        existing_generics: set[str]
+    ) -> tuple[FuncAnnotation, dict[int, TypeInfo]]:
+        """Transforms an annotation, defining type variables and using them."""
 
         class RenameGenericsTransformer(TypeInfo.Transformer):
             def __init__(self):
                 self.local_generic_index = 0
                 self.generics = {}
             
-            def visit(vself, node: TypeInfo|str) -> TypeInfo:
-                if type(node) is str:
-                    return node
-
-                if node.typevar_index == 0:
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if not node.typevar_index:
                     return super().visit(node)
 
                 if node.typevar_index not in vself.generics:
                     if self.inline_generics:
+                        # TODO do we ever replace some args, but not others?
+                        # If we don't, we can just use node.typevar_index...
                         while (name := f"T{vself.local_generic_index}") in existing_generics:
                             vself.local_generic_index += 1
-                        vself.local_generic_index += 1
                     else:
                         name = "T_" \
                              + "_".join([arg.name for arg in node.args]) \
@@ -230,11 +233,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                     
                     vself.generics[node.typevar_index] = node.replace(typevar_name=name)
 
-                return node.replace(typevar_name=vself.generics[node.typevar_index].typevar_name)
+                return vself.generics[node.typevar_index]
 
         tr = RenameGenericsTransformer()
         updated_ann = FuncAnnotation(
-            [(name, tr.visit(ti)) for (name, ti) in ann.args],
+            [(name, tr.visit(ti)) for name, ti in ann.args],
             tr.visit(ann.retval)
         )
         
@@ -363,13 +366,11 @@ class UnifiedTransformer(cst.CSTTransformer):
         return annotation
 
     def _get_annotation_expr(self, annotation: TypeInfo|str):
-
         class FindGenerics(TypeInfo.Transformer):
             def __init__(self):
                 self.generics = set()
-            def visit(self, node: TypeInfo|str|None) -> TypeInfo:
-                if type(node) is not TypeInfo:
-                    return
+
+            def visit(self, node: TypeInfo) -> TypeInfo:
                 if node.typevar_name is not None:
                     self.generics.add(node.typevar_name)
                 return super().visit(node)
@@ -444,10 +445,9 @@ class UnifiedTransformer(cst.CSTTransformer):
         pre_function = []
 
         if ann := self.type_annotations.get(key):
-
-            existing_generics = []
+            existing_generics = {}
             if original_node.type_parameters is not None:
-                existing_generics = [param.param.name.value for param in original_node.type_parameters.params]
+                existing_generics = {param.param.name.value for param in original_node.type_parameters.params}
             
             ann, generics = self._process_generics(ann, existing_generics)
 
@@ -460,18 +460,25 @@ class UnifiedTransformer(cst.CSTTransformer):
                 for generic in generics.values():
                     our_params.append(cst.TypeParam(param=cst.TypeVar(
                         name=cst.Name(value=generic.typevar_name),
-                        bound=cst.Tuple(elements=[cst.Element(value=self._get_annotation_expr(arg)) for arg in generic.args])
+                        bound=cst.Tuple(elements=[
+                            cst.Element(value=self._get_annotation_expr(arg))
+                            for arg in generic.args
+                        ])
                     )))
 
-                updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(params=existing_params + our_params))
+                updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
+                    params=existing_params + our_params
+                ))
 
             else:
                 for generic in generics.values():
                     pre_function.append(cst.SimpleStatementLine(body=[
-                        cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],value=
-                        cst.Call(func=cst.Name("TypeVar"), args=[
-                            cst.Arg(value=cst.SimpleString(_quote(generic.typevar_name))),
-                            *[cst.Arg(value=self._get_annotation_expr(arg)) for arg in generic.args]]))
+                        cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
+                                   value=cst.Call(func=cst.Name("TypeVar"), args=[
+                                       cst.Arg(value=cst.SimpleString(_quote(generic.typevar_name))),
+                                       *[cst.Arg(value=self._get_annotation_expr(arg)) for arg in generic.args]
+                                   ])
+                        )
                     ]))
             
             for attr_name in ['params', 'kwonly_params', 'posonly_params']:
@@ -524,12 +531,16 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             self.change_list.append((key.func_name, original_node, updated_node))
 
-        if len(pre_function):
+        if pre_function:
             leading_lines = updated_node.leading_lines
-            find_comments = map(lambda a: a[0], filter(lambda a: type(a[1]) is cst.EmptyLine and a[1].comment is not None, enumerate(leading_lines)))
-            if (index := next(find_comments, None)) is not None:
-                pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:index])
-                updated_node = updated_node.with_changes(leading_lines=leading_lines[index:])
+            first_comment = next((
+                    i
+                    for i, el in enumerate(leading_lines)
+                    if isinstance(el, cst.EmptyLine) and el.comment is not None
+                ), None)
+            if first_comment is not None:
+                pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:first_comment])
+                updated_node = updated_node.with_changes(leading_lines=leading_lines[first_comment:])
 
             return cst.FlattenSentinel([*pre_function, updated_node])
 
