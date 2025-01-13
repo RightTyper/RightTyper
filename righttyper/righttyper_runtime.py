@@ -190,16 +190,15 @@ def in_builtins_import(t: type) -> bool:
     return False
 
 
-def normalize_module_name(module_name: str):
-    """Converts a module name into a consistent format.
+def normalize_module_name(module_name: str) -> str:
+    """Applies common substitutions to a type's module's name."""
+    if module_name == "__main__":
+        # "__main__" isn't generally usable for typing, and only unique in this execution
+        return get_main_module_fqn()
 
-    In particular, the module `__main__` is replaced with the name of the main module, and `builtins` is replaced
-    with the global scope.
-    """
-    if module_name.startswith("__main__"):
-        module_name =  get_main_module_fqn() + module_name.removeprefix("__main__")
-    module_name = module_name.removeprefix("builtins")
-    module_name = module_name.removeprefix(".")
+    if module_name == "builtins":
+        return ""   # we consider these "well-known" and, for brevity, omit the module name
+
     return module_name
 
 
@@ -217,16 +216,19 @@ def lookup_type_module(t: type) -> str:
 
         return False
 
+    # Is it defined where it claims to be?
     if (m := sys.modules.get(t.__module__)):
         if is_defined_in_module(m.__dict__):
             return normalize_module_name(t.__module__)
 
+    # Can we find it some submodule?
+    # FIXME this search could be more exhaustive and/or more principled
     module_prefix = f"{t.__module__}."
     for name, mod in sys.modules.items():
         if name.startswith(module_prefix) and is_defined_in_module(mod.__dict__):
             return normalize_module_name(name)
 
-    # it's not in the module, but keep it as a last resort, to facilitate diagnostics
+    # Keep it as a last resort, to facilitate diagnostics
     return normalize_module_name(t.__module__)
 
 
