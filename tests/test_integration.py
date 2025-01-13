@@ -1099,35 +1099,30 @@ def test_union_superclass(tmp_cwd, as_module):
     assert "def foo(x: A) -> None:" in Path("t.py").read_text()
 
 
-def get_empty_container(superclass: str, class_name: str):
-    if superclass in ["list", "set"]:
-        return f"{class_name}[Never]"
-    elif superclass in ["dict"]:
-        return f"{class_name}[Never, Never]"
-    elif superclass in ["KeysView", "ValuesView"]:
-        return f"{superclass}[Never]"
-    elif superclass in ["ItemsView"]:
-        return f"{superclass}[Never, Never]"
-    elif superclass in ["tuple"]:
-        return f"tuple"
-
-
-@pytest.mark.parametrize('superclass', ["list", "set", "dict", "KeysView", "ValuesView", "ItemsView", "tuple"])
-def test_custom_collection_len_error(tmp_cwd, superclass):
+@pytest.mark.parametrize('superclass, expected', [
+    ("list", "MyContainer[Never]"),
+    ("set", "MyContainer[Never]"),
+    ("dict", "MyContainer[Never, Never]"),
+    ("KeysView", "KeysView[Never]"),
+    ("ValuesView", "ValuesView[Never]"),
+    ("ItemsView", "ItemsView[Never, Never]"),
+    ("tuple", "tuple")
+])
+def test_custom_collection_len_error(tmp_cwd, superclass, expected):
     Path("t.py").write_text(textwrap.dedent(f"""\
         from collections.abc import *
 
         class MyContainer({superclass}):
             def __init__(self):
                 super()
-            
+
             def __len__(self):
                 raise Exception("Oops, something went wrong!")
 
 
         def foo(bar):
             pass
-        
+
 
         my_object = MyContainer()
         foo(my_object)
@@ -1137,21 +1132,29 @@ def test_custom_collection_len_error(tmp_cwd, superclass):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', '-m', 't'], check=True)
 
-    assert f"def foo(bar: {get_empty_container(superclass, "MyContainer")}) -> None" in Path("t.py").read_text()
+    assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
 
 
-@pytest.mark.parametrize('superclass', ["list", "set", "dict", "KeysView", "ValuesView", "ItemsView", "tuple"])
-def test_custom_collection_sample_error(tmp_cwd, superclass):
+@pytest.mark.parametrize('superclass, expected', [
+    ("list", "MyContainer[Never]"),
+    ("set", "MyContainer[Never]"),
+    ("dict", "MyContainer[Never, Never]"),
+    ("KeysView", "KeysView[Never]"),
+    ("ValuesView", "ValuesView[Never]"),
+    ("ItemsView", "ItemsView[Never, Never]"),
+    ("tuple", "tuple")
+])
+def test_custom_collection_sample_error(tmp_cwd, superclass, expected):
     Path("t.py").write_text(textwrap.dedent(f"""\
         from collections.abc import *
 
         class MyContainer({superclass}):
             def __init__(self):
                 super()
-            
+
             def __len__(self):
                 return 1
-            
+
             def __getitem__(self, key):
                 raise Exception("Oops, something went wrong!")
 
@@ -1164,7 +1167,7 @@ def test_custom_collection_sample_error(tmp_cwd, superclass):
 
         def foo(bar):
             pass
-        
+
 
         my_object = MyContainer()
         foo(my_object)
@@ -1174,4 +1177,4 @@ def test_custom_collection_sample_error(tmp_cwd, superclass):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', '-m', 't'], check=True)
 
-    assert f"def foo(bar: {get_empty_container(superclass, "MyContainer")}) -> None" in Path("t.py").read_text()
+    assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
