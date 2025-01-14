@@ -1730,7 +1730,7 @@ def test_types_in_annotation():
     assert {'Union', 'int', 'float', 'Tuple', 'a.b.c'} == get_types('Union[int, float, Tuple[int, a.b.c]]')
 
 def make_generic_typeinfo(args: list, i: int):
-    return TypeInfo("types", "UnionType", args=(get_type_name(arg) for arg in args), typevar_index=i)
+    return TypeInfo("types", "UnionType", args=tuple(get_type_name(arg) for arg in args), typevar_index=i)
 
 def test_generics_inline_simple():
     code = cst.parse_module(textwrap.dedent("""\
