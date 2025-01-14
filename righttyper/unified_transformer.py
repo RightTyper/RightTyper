@@ -226,9 +226,8 @@ class UnifiedTransformer(cst.CSTTransformer):
                         while (name := f"T{vself.local_generic_index}") in existing_generics:
                             vself.local_generic_index += 1
                     else:
-                        name = "T_" \
-                             + "_".join([arg.name for arg in node.args]) \
-                             + f"_{str(self.module_generic_index)}"
+                        # FIXME check for name conflicts
+                        name = f"T_{str(self.module_generic_index)}"
                         self.module_generic_index += 1
                     
                     vself.generics[node.typevar_index] = node.replace(typevar_name=name)
@@ -365,7 +364,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 return TypeInfo("typing", "Self")
         return annotation
 
-    def _get_annotation_expr(self, annotation: TypeInfo|str):
+    def _get_annotation_expr(self, annotation: TypeInfo) -> cst.BaseExpression:
         class FindGenerics(TypeInfo.Transformer):
             def __init__(self):
                 self.generics = set()
@@ -445,23 +444,25 @@ class UnifiedTransformer(cst.CSTTransformer):
         pre_function = []
 
         if ann := self.type_annotations.get(key):
-            existing_generics = {}
+            existing_generics: set[str] = set()
             if original_node.type_parameters is not None:
                 existing_generics = {param.param.name.value for param in original_node.type_parameters.params}
             
             ann, generics = self._process_generics(ann, existing_generics)
 
             if self.inline_generics:
-                existing_params = []
+                existing_params: list[cst.TypeParam] = []
                 if original_node.type_parameters is not None:
-                    existing_params = original_node.type_parameters.params
+                    existing_params = list(original_node.type_parameters.params)
 
                 our_params = []
                 for generic in generics.values():
+                    assert isinstance(generic.typevar_name, str)
+                    assert all(isinstance(arg, TypeInfo) for arg in generic.args)
                     our_params.append(cst.TypeParam(param=cst.TypeVar(
-                        name=cst.Name(value=generic.typevar_name),
+                        name=cst.Name(value=typing.cast(str, generic.typevar_name)),
                         bound=cst.Tuple(elements=[
-                            cst.Element(value=self._get_annotation_expr(arg))
+                            cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
                             for arg in generic.args
                         ])
                     )))
@@ -472,11 +473,18 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             else:
                 for generic in generics.values():
+                    assert isinstance(generic.typevar_name, str)
+                    assert all(isinstance(arg, TypeInfo) for arg in generic.args)
                     pre_function.append(cst.SimpleStatementLine(body=[
                         cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
                                    value=cst.Call(func=cst.Name("TypeVar"), args=[
-                                       cst.Arg(value=cst.SimpleString(_quote(generic.typevar_name))),
-                                       *[cst.Arg(value=self._get_annotation_expr(arg)) for arg in generic.args]
+                                       cst.Arg(value=cst.SimpleString(
+                                           _quote(typing.cast(str, generic.typevar_name)))
+                                        ),
+                                       *(cst.Arg(value=self._get_annotation_expr(
+                                           typing.cast(TypeInfo, arg)))
+                                         for arg in generic.args
+                                        )
                                    ])
                         )
                     ]))

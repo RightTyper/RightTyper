@@ -177,11 +177,14 @@ class Observations:
             if sample.yields:
                 self.samples[func].add(sample.process())
 
-        def mk_annotation(t: FuncInfo) -> FuncAnnotation:
+        def mk_annotation(t: FuncInfo) -> FuncAnnotation|None:
             args = self.functions_visited[t]
             samples = self.samples[t]
 
-            signature = generalize(list(samples))
+            if (signature := generalize(list(samples))) is None:
+                print(f"Error generalizing {t}: inconsistent samples.\n" +
+                      f"{[tuple(str(t) for t in s) for s in samples]}")
+                return None
 
             # Annotations are pickled by 'multiprocessing', but types defined
             # in '__main__' aren't pickleable because they don't exist in the
@@ -193,7 +196,7 @@ class Observations:
                     return super().visit(node)
 
             tr = RemoveTypeObjTransformer()
-            signature = tuple(map(tr.visit, signature))
+            signature = list(map(tr.visit, signature))
 
             return FuncAnnotation(
                 args=[
@@ -209,9 +212,10 @@ class Observations:
         class T(TypeInfo.Transformer):
             """Updates Callable type declarations based on observations."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
-                if node.func and not node.args:
-                    if node.func in self.samples:
-                        ann = mk_annotation(node.func)
+                # if 'args' is there, the function is already annotated
+                # FIXME make overriding dependent upon ignore_annotations
+                if node.func and not node.args and node.func in self.samples:
+                    if (ann := mk_annotation(node.func)):
                         # TODO: fix callable arguments being strings
                         return TypeInfo('typing', 'Callable', args=(
                             f"[{", ".join(map(lambda a: str(a[1]), ann.args[int(node.is_bound):]))}]",
@@ -223,8 +227,9 @@ class Observations:
         self._transform_types(T())
 
         return {
-            t: mk_annotation(t)
+            t: annotation
             for t in self.samples
+            if (annotation := mk_annotation(t)) is not None
         }
 
 

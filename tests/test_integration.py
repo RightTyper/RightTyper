@@ -1197,8 +1197,8 @@ def test_generic_simple(tmp_cwd):
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)" in output
-    assert "def add(a: T_int_str_0, b: T_int_str_0) -> T_int_str_0" in output
+    assert 'T_0 = TypeVar("T_0", int, str)' in output
+    assert "def add(a: T_0, b: T_0) -> T_0" in output
 
 
 def test_generic_yield(tmp_cwd):
@@ -1215,8 +1215,8 @@ def test_generic_yield(tmp_cwd):
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)" in output
-    assert "def y(a: T_int_str_0) -> Iterator[T_int_str_0]" in output
+    assert 'T_0 = TypeVar("T_0", int, str)' in output
+    assert "def y(a: T_0) -> Iterator[T_0]" in output
 
 
 def test_generic_yield_generator(tmp_cwd):
@@ -1235,9 +1235,9 @@ def test_generic_yield_generator(tmp_cwd):
     output = Path("t.py").read_text()
 
     print(output)
-    assert "T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)" in output
-    assert "T_int_str_1 = TypeVar(\"T_int_str_1\", int, str)" in output
-    assert "def y(a: T_int_str_0, b: T_int_str_1) -> Generator[T_int_str_0, Any, T_int_str_1]" in output
+    assert 'T_0 = TypeVar("T_0", int, str)' in output
+    assert 'T_1 = TypeVar("T_1", int, str)' in output
+    assert "def y(a: T_0, b: T_1) -> Generator[T_0, Any, T_1]" in output
 
 
 def test_generic_typevar_location(tmp_cwd):
@@ -1257,9 +1257,9 @@ def test_generic_typevar_location(tmp_cwd):
     output = Path("t.py").read_text()
 
     res = textwrap.dedent("""\
-        T_int_str_0 = TypeVar(\"T_int_str_0\", int, str)
+        T_0 = TypeVar("T_0", int, str)
         # comment and emptyline
-        def add(a: T_int_str_0, b: T_int_str_0) -> T_int_str_0:
+        def add(a: T_0, b: T_0) -> T_0:
         """)
 
     assert res in output
