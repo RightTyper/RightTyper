@@ -1201,6 +1201,29 @@ def test_generic_simple(tmp_cwd):
     assert "def add(a: rt_T0, b: rt_T0) -> rt_T0" in output
 
 
+def test_generic_name_conflict(tmp_cwd):
+    t = textwrap.dedent("""\
+        rt_T0 = None
+        rt_T1 = None
+
+        def add(a, b):
+            return a + b
+
+        add(1, 2)
+        add("a", "b")
+        """
+    )
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert 'rt_T2 = TypeVar("rt_T2", int, str)' in output
+    assert "def add(a: rt_T2, b: rt_T2) -> rt_T2" in output
+
+
 def test_generic_yield(tmp_cwd):
     t = textwrap.dedent("""\
         def y(a):

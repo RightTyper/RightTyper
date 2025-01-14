@@ -227,8 +227,8 @@ class UnifiedTransformer(cst.CSTTransformer):
                             vself.local_generic_index += 1
                         vself.local_generic_index += 1
                     else:
-                        # FIXME check for name conflicts
-                        name = f"rt_T{str(self.module_generic_index)}"
+                        while (name := f"rt_T{self.module_generic_index}") in self.used_names[-1]:
+                            self.module_generic_index += 1
                         self.module_generic_index += 1
                     
                     vself.generics[node.typevar_index] = node.replace(typevar_name=name)
