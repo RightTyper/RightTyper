@@ -1180,7 +1180,6 @@ def test_custom_collection_sample_error(tmp_cwd, superclass, expected):
     assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
 
 
-@pytest.mark.xfail(reason="Doesn't currently work")
 def test_class_properties(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
@@ -1189,7 +1188,7 @@ def test_class_properties(tmp_cwd):
 
             @property
             def x(self):
-                return self._x
+                return str(self._x)
 
             @x.setter
             def x(self, value):
@@ -1214,6 +1213,6 @@ def test_class_properties(tmp_cwd):
     assert "def __init__(self: Self) -> None:" in output
 
     # TODO parse functions out so that the annotation is included
-    assert "def x(self: Self) -> int:" in output                # getter
+    assert "def x(self: Self) -> str:" in output                # getter
     assert "def x(self: Self, value: int) -> None:" in output   # setter
     assert "def x(self: Self) -> None:" in output               # deleter

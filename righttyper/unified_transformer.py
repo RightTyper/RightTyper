@@ -378,6 +378,19 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.name_stack.pop()
         self.name_stack.pop()
         self.used_names.pop()
+
+        decorators = {
+            _nodes_to_dotted_name(d.decorator)
+            for d in original_node.decorators
+            if isinstance(d.decorator, (cst.Name, cst.Attribute))
+        }
+        if "property" in decorators:
+            name += '.getter'
+        elif f"{original_node.name.value}.setter" in decorators:
+            name += '.setter'
+        elif f"{original_node.name.value}.deleter" in decorators:
+            name += '.deleter'
+
         key = FuncInfo(Filename(self.filename), FunctionName(name))
 
         if ann := self.type_annotations.get(key):

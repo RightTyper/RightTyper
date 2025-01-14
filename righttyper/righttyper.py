@@ -207,6 +207,7 @@ class Observations:
 
 obs = Observations()
 
+code2property_role: dict[CodeType, str] = dict()
 
 def enter_function(code: CodeType, offset: int) -> Any:
     """
@@ -221,12 +222,6 @@ def enter_function(code: CodeType, offset: int) -> Any:
         options.include_functions_pattern
     ):
         return sys.monitoring.DISABLE
-
-    t = FuncInfo(
-        Filename(code.co_filename),
-        FunctionName(code.co_qualname),
-    )
-    obs.visited_funcs.add(t)
 
     frame = inspect.currentframe()
     if frame and frame.f_back:
@@ -244,7 +239,29 @@ def enter_function(code: CodeType, offset: int) -> Any:
         else:
             defaults = {}
 
-        process_function_arguments(t, inspect.getargvalues(frame), defaults)
+        args = inspect.getargvalues(frame)
+
+        role: str|None = None
+
+        if (
+            args.args and
+            (attr := getattr(type(args.locals[args.args[0]]), code.co_name, None)) and
+            isinstance(attr, property)
+        ):
+            if getattr(attr.fset, "__code__") == code:
+                role = code2property_role[code] = ".setter"
+            elif getattr(attr.fget, "__code__") == code:
+                role = code2property_role[code] = ".getter"
+            elif getattr(attr.fdel, "__code__") == code:
+                role = code2property_role[code] = ".deleter"
+
+        t = FuncInfo(
+            Filename(code.co_filename),
+            FunctionName(code.co_qualname + (role if role else ""))
+        )
+        obs.visited_funcs.add(t)
+
+        process_function_arguments(t, args, defaults)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -336,9 +353,11 @@ def exit_function_worker(
     ):
         return sys.monitoring.DISABLE
 
+    role = code2property_role.get(code)
+
     t = FuncInfo(
         Filename(code.co_filename),
-        FunctionName(code.co_qualname),
+        FunctionName(code.co_qualname + (role if role else ""))
     )
 
     debug_print(f"exit processing, retval was {obs.visited_funcs_retval[t]=}")
