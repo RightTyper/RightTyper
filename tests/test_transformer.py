@@ -1893,8 +1893,8 @@ def test_generics_defined_simple():
     code = code.visit(t)
 
     assert textwrap.dedent("""\
-        T_0 = TypeVar(\"T_0\", int, str)
-        def add(a: T_0, b: T_0) -> T_0:
+        rt_T0 = TypeVar(\"rt_T0\", int, str)
+        def add(a: rt_T0, b: rt_T0) -> rt_T0:
             return a + b
     """) in code.code
 
