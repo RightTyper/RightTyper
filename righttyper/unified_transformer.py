@@ -225,6 +225,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                         # If we don't, we can just use node.typevar_index...
                         while (name := f"T{vself.local_generic_index}") in existing_generics:
                             vself.local_generic_index += 1
+                        vself.local_generic_index += 1
                     else:
                         # FIXME check for name conflicts
                         name = f"T_{str(self.module_generic_index)}"
