@@ -51,7 +51,7 @@ from righttyper.righttyper_types import (
     Sample,
 )
 from righttyper.typeinfo import (
-    union_typeset_str,
+    union_typeset,
     generalize,
 )
 from righttyper.righttyper_utils import (
@@ -202,7 +202,10 @@ class Observations:
                 args=[
                     (
                         arg.arg_name,
-                        signature[i]
+                        union_typeset(TypeInfoSet((
+                            signature[i],
+                            *((arg.default,) if arg.default is not None else ())
+                        )))
                     )
                     for i, arg in enumerate(args)
                 ],

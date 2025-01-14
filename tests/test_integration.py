@@ -252,7 +252,6 @@ def test_call_with_none_default(tmp_cwd):
     assert "def func(n: None=None) -> int" in output
 
 
-@pytest.mark.xfail(reason='Need to figure out how to merge this with typevar generalization')
 def test_default_arg(tmp_cwd):
     t = textwrap.dedent("""\
         def func(n=None):
@@ -479,7 +478,6 @@ def test_return_private_class(tmp_cwd):
     assert "def g(x) -> None:" in output # FIXME what is a good way to express the type?
 
 
-@pytest.mark.xfail(reason='Need to figure out how to merge this with typevar generalization')
 def test_default_inner_function(tmp_cwd):
     t = textwrap.dedent("""\
         def f(x):
@@ -1286,6 +1284,25 @@ def test_generic_typevar_location(tmp_cwd):
         """)
 
     assert res in output
+
+
+def test_generic_and_defaults(tmp_cwd):
+    t = textwrap.dedent("""\
+        def f(a, b=None, c=None):
+            pass
+
+        f(10, 10, 5)
+        f(10.0, 2, 10.0)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '--inline-generics', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    print(output)
+    assert "def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None" in output
 
 
 @pytest.mark.parametrize('superclass, expected', [
