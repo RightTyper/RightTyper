@@ -248,11 +248,11 @@ def enter_function(code: CodeType, offset: int) -> Any:
             (attr := getattr(type(args.locals[args.args[0]]), code.co_name, None)) and
             isinstance(attr, property)
         ):
-            if getattr(attr.fset, "__code__") == code:
-                role = code2property_role[code] = ".setter"
-            elif getattr(attr.fget, "__code__") == code:
+            if getattr(attr.fget, "__code__", None) == code:
                 role = code2property_role[code] = ".getter"
-            elif getattr(attr.fdel, "__code__") == code:
+            elif getattr(attr.fset, "__code__", None) == code:
+                role = code2property_role[code] = ".setter"
+            elif getattr(attr.fdel, "__code__", None) == code:
                 role = code2property_role[code] = ".deleter"
 
         t = FuncInfo(
