@@ -137,10 +137,10 @@ def test_generic_with_string():
     from typing import Any
 
     samples: Any = [
-        (ti('int'), ti('X', args=(ti('int'), "\"foo\""))),
-        (ti('bool'), ti('X', args=(ti('bool'), "\"bar\""))),
+        (ti('int'), ti('X', args=(ti('int'), '"foo"'))),
+        (ti('bool'), ti('X', args=(ti('bool'), '"bar"'))),
     ]
-    assert generalize(samples) == ['bool|int', 'X[bool, \"bar\"]|X[int, \"foo\"]']
+    assert generalize(samples) == ['bool|int', 'X[bool, "bar"]|X[int, "foo"]']
 
     # first has a string, others don't
     samples = [
@@ -150,7 +150,7 @@ def test_generic_with_string():
     assert generalize(samples) == ['bool|int', 'X[bool, bool]|X[int, "foo"]']
 
     samples = [
-        (ti('X', args=(ti('int'), "\"foo\"")),),
-        (ti('X', args=(ti('bool'), "\"bar\"")),),
+        (ti('X', args=(ti('int'), '"foo"')),),
+        (ti('X', args=(ti('bool'), '"bar"')),),
     ]
-    assert generalize(samples) == ['X[bool, \"bar\"]|X[int, \"foo\"]']
+    assert generalize(samples) == ['X[bool, "bar"]|X[int, "foo"]']
