@@ -434,9 +434,9 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.pop()
         key = FuncInfo(Filename(self.filename), FunctionName(name))
 
-        if ann := self.type_annotations.get(key):
+        if ann := typing.cast(FuncAnnotation, self.type_annotations.get(key)):  # cast to make mypy happy
             pre_function = []
-            argmap = {aname: atype for aname, atype in ann.args}
+            argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
 
             # Do existing annotations overlap with typevar args/return ?
             typevar_overlap = not self.override_annotations and (
@@ -445,7 +445,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                         par.annotation is not None and
                         par.name.value in argmap and
                         argmap[par.name.value].is_typevar()
-                        for par in cstm.findall(updated_node.params, cstm.Param())
+                        for par in typing.cast(typing.Iterator[cst.Param], cstm.findall(updated_node.params, cstm.Param()))
                     )
                 )
 
@@ -473,6 +473,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
                 else:
                     for generic in generics.values():
+                        assert generic.typevar_name is not None
                         assert all(isinstance(arg, TypeInfo) for arg in generic.args)
                         pre_function.append(cst.SimpleStatementLine(body=[
                             cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
