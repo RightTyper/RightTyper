@@ -10,7 +10,17 @@ def ti(name: str, **kwargs) -> TypeInfo:
 def generalize(samples):
     result = righttyper.typeinfo.generalize(samples)
     if result:
-        return [str(r) for r in result]
+        class Renamer(TypeInfo.Transformer):
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.typevar_index:
+                    return TypeInfo(
+                        module='',
+                        name=f"T{node.typevar_index}",
+                        typevar_index=node.typevar_index
+                    )
+                return super().visit(node)
+
+        return [str(Renamer().visit(r)) for r in result]
 
     return result
 
@@ -154,3 +164,32 @@ def test_generic_with_string():
         (ti('X', args=(ti('bool'), '"bar"')),),
     ]
     assert generalize(samples) == ['X[bool, "bar"]|X[int, "foo"]']
+
+
+def test_is_typevar():
+    assert False == TypeInfo.from_type(int).is_typevar()
+    assert False == TypeInfo.from_set(TypeInfoSet((
+        TypeInfo("", "list", args=(
+            TypeInfo.from_type(int),
+        )),
+        TypeInfo.from_type(int),
+        TypeInfo.from_type(bool),
+    ))).is_typevar()
+
+    assert True == TypeInfo.from_set(
+        TypeInfoSet((
+            TypeInfo.from_type(int),
+            TypeInfo.from_type(bool),
+        )),
+        typevar_index=1
+    ).is_typevar()
+
+    assert True == TypeInfo("", "list", args=(
+        TypeInfo.from_set(
+            TypeInfoSet((
+                TypeInfo.from_type(int),
+                TypeInfo.from_type(bool),
+            )),
+            typevar_index=1
+        ),
+    )).is_typevar()

@@ -1729,8 +1729,13 @@ def test_types_in_annotation():
     assert {'Dict', 'foo.bar', 'bar.baz'} == get_types('Dict[foo.bar, bar.baz]')
     assert {'Union', 'int', 'float', 'Tuple', 'a.b.c'} == get_types('Union[int, float, Tuple[int, a.b.c]]')
 
-def make_generic_typeinfo(args: list, i: int):
-    return TypeInfo("types", "UnionType", args=tuple(get_type_name(arg) for arg in args), typevar_index=i)
+
+def make_typevar(args: list, i: int) -> TypeInfo:
+    return TypeInfo.from_set(
+        TypeInfoSet(get_type_name(arg) for arg in args),
+        typevar_index=i
+    )
+
 
 def test_generics_inline_simple():
     code = cst.parse_module(textwrap.dedent("""\
@@ -1738,17 +1743,17 @@ def test_generics_inline_simple():
             return a + b
     """))
 
-    T0 = make_generic_typeinfo([str, int], 1)
+    T1 = make_typevar([str, int], 1)
     f = FuncInfo(Filename('foo.py'), FunctionName('add'))
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
                 f: FuncAnnotation(
                     [
-                        (ArgumentName("a"), T0),
-                        (ArgumentName("b"), T0)
+                        (ArgumentName("a"), T1),
+                        (ArgumentName("b"), T1)
                     ],
-                    T0
+                    T1
                 ),
             },
             override_annotations=False,
@@ -1760,9 +1765,155 @@ def test_generics_inline_simple():
     code = code.visit(t)
 
     assert get_function(code, 'add') == textwrap.dedent("""\
-        def add[T0: (str, int)](a: T0, b: T0) -> T0:
+        def add[T1: (int, str)](a: T1, b: T1) -> T1:
             return a + b
     """)
+
+
+@pytest.mark.parametrize('override', [False, True])
+def test_generics_arg_already_annotated(override):
+    code = cst.parse_module(textwrap.dedent("""\
+        def add(a, b: int|str):
+            return a + b
+    """))
+
+    T1 = make_typevar([str, int], 1)
+    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: FuncAnnotation(
+                    [
+                        (ArgumentName("a"), T1),
+                        (ArgumentName("b"), T1)
+                    ],
+                    T1
+                ),
+            },
+            override_annotations=override,
+            module_name = 'foo',
+            module_names = ['builtins', 'foo'],
+            inline_generics=True
+        )
+
+    code = code.visit(t)
+
+    if override:
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add[T1: (int, str)](a: T1, b: T1) -> T1:
+                return a + b
+        """)
+    else:
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add(a: int|str, b: int|str) -> int|str:
+                return a + b
+        """)
+
+
+@pytest.mark.parametrize('override', [False, True])
+def test_generics_ret_already_annotated(override):
+    code = cst.parse_module(textwrap.dedent("""\
+        def add(a, b) -> int|str:
+            return a + b
+    """))
+
+    T1 = make_typevar([str, int], 1)
+    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: FuncAnnotation(
+                    [
+                        (ArgumentName("a"), T1),
+                        (ArgumentName("b"), T1)
+                    ],
+                    T1
+                ),
+            },
+            override_annotations=override,
+            module_name = 'foo',
+            module_names = ['builtins', 'foo'],
+            inline_generics=True
+        )
+
+    code = code.visit(t)
+
+    if override:
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add[T1: (int, str)](a: T1, b: T1) -> T1:
+                return a + b
+        """)
+    else:
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add(a: int|str, b: int|str) -> int|str:
+                return a + b
+        """)
+
+
+def test_generics_already_annotated_no_overlap():
+    code = cst.parse_module(textwrap.dedent("""\
+        def add(a, b: bool):
+            return a + b
+    """))
+
+    T1 = make_typevar([str, int], 1)
+    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: FuncAnnotation(
+                    [
+                        (ArgumentName("a"), T1),
+                    ],
+                    T1
+                ),
+            },
+            override_annotations=False,
+            module_name = 'foo',
+            module_names = ['builtins', 'foo'],
+            inline_generics=True
+        )
+
+    code = code.visit(t)
+
+    assert get_function(code, 'add') == textwrap.dedent("""\
+        def add[T1: (int, str)](a: T1, b: bool) -> T1:
+            return a + b
+    """)
+
+
+def test_generics_existing_generics():
+    # we don't (yet) attempt to merge inline generics
+    code = cst.parse_module(textwrap.dedent("""\
+        def add[X: (int, bool)](a, b: X):
+            return a + b
+    """))
+
+    T1 = make_typevar([str, int], 1)
+    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: FuncAnnotation(
+                    [
+                        (ArgumentName("a"), T1),
+                    ],
+                    T1
+                ),
+            },
+            override_annotations=False,
+            module_name = 'foo',
+            module_names = ['builtins', 'foo'],
+            inline_generics=True
+        )
+
+    code = code.visit(t)
+
+    assert get_function(code, 'add') == textwrap.dedent("""\
+        def add[X: (int, bool)](a: int|str, b: X) -> int|str:
+            return a + b
+    """)
+
 
 def test_generics_inline_multiple():
     code = cst.parse_module(textwrap.dedent("""\
@@ -1770,18 +1921,18 @@ def test_generics_inline_multiple():
             pass
     """))
 
-    T0 = make_generic_typeinfo([int, str], 1)
-    T1 = make_generic_typeinfo([int, str], 2)
+    T1 = make_typevar([int, str], 1)
+    T2 = make_typevar([int, str], 2)
     f = FuncInfo(Filename('foo.py'), FunctionName('foo'))
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
                 f: FuncAnnotation(
                     [
-                        (ArgumentName("a"), T0),
-                        (ArgumentName("b"), T0),
-                        (ArgumentName("c"), T1),
-                        (ArgumentName("d"), T1)
+                        (ArgumentName("a"), T1),
+                        (ArgumentName("b"), T1),
+                        (ArgumentName("c"), T2),
+                        (ArgumentName("d"), T2)
                     ],
                     NoneTypeInfo
                 ),
@@ -1795,7 +1946,7 @@ def test_generics_inline_multiple():
     code = code.visit(t)
 
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo[T0: (int, str), T1: (int, str)](a: T0, b: T0, c: T1, d: T1) -> None:
+        def foo[T1: (int, str), T2: (int, str)](a: T1, b: T1, c: T2, d: T2) -> None:
             pass
     """)
 
@@ -1806,17 +1957,17 @@ def test_generics_inline_nested():
             return [a + _b for _b in b]
     """))
 
-    T0 = make_generic_typeinfo([int, str], 1)
+    T1 = make_typevar([int, str], 1)
     f = FuncInfo(Filename('foo.py'), FunctionName('add'))
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
                 f: FuncAnnotation(
                     [
-                        (ArgumentName("a"), T0),
-                        (ArgumentName("b"), TypeInfo("", "list", (T0,))),
+                        (ArgumentName("a"), T1),
+                        (ArgumentName("b"), TypeInfo("", "list", (T1,))),
                     ],
-                    TypeInfo("", "list", (T0,)),
+                    TypeInfo("", "list", (T1,)),
                 ),
             },
             override_annotations=False,
@@ -1828,42 +1979,10 @@ def test_generics_inline_nested():
     code = code.visit(t)
 
     assert get_function(code, 'add') == textwrap.dedent("""\
-        def add[T0: (int, str)](a: T0, b: list[T0]) -> list[T0]:
+        def add[T1: (int, str)](a: T1, b: list[T1]) -> list[T1]:
             return [a + _b for _b in b]
     """)
 
-@pytest.mark.xfail(reason="not yet implemented")
-def test_generics_inline_with_existing():
-    code = cst.parse_module(textwrap.dedent("""\
-        def add[T](a: T, b: T):
-            return a + b
-    """))
-
-    T0 = make_generic_typeinfo([int, str], 1)
-    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
-    t = UnifiedTransformer(
-            filename='foo.py',
-            type_annotations = {
-                f: FuncAnnotation(
-                    [
-                        (ArgumentName("a"), T0),
-                        (ArgumentName("b"), TypeInfo("", "list", (T0,))),
-                    ],
-                    TypeInfo("", "list", (T0,)),
-                ),
-            },
-            override_annotations=False,
-            module_name = 'foo',
-            module_names = ['foo'],
-            inline_generics=True
-        )
-
-    code = code.visit(t)
-
-    assert get_function(code, 'add') == textwrap.dedent("""\
-        def add[T](a: T, b: T) -> str|int:
-            return a + b
-    """)
 
 def test_generics_defined_simple():
     code = cst.parse_module(textwrap.dedent("""\
@@ -1871,17 +1990,17 @@ def test_generics_defined_simple():
             return a + b
     """))
 
-    T0 = make_generic_typeinfo([int, str], 1)
+    T1 = make_typevar([int, str], 1)
     f = FuncInfo(Filename('foo.py'), FunctionName('add'))
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
                 f: FuncAnnotation(
                     [
-                        (ArgumentName("a"), T0),
-                        (ArgumentName("b"), T0),
+                        (ArgumentName("a"), T1),
+                        (ArgumentName("b"), T1),
                     ],
-                    T0,
+                    T1,
                 ),
             },
             override_annotations=False,
@@ -1892,11 +2011,9 @@ def test_generics_defined_simple():
 
     code = code.visit(t)
 
-    assert textwrap.dedent("""\
-        rt_T0 = TypeVar(\"rt_T0\", int, str)
-        def add(a: rt_T0, b: rt_T0) -> rt_T0:
+    assert 'rt_T1 = TypeVar("rt_T1", int, str)' in code.code
+        
+    assert get_function(code, 'add') == textwrap.dedent("""\
+        def add(a: rt_T1, b: rt_T1) -> rt_T1:
             return a + b
-    """) in code.code
-
-
-    
+    """)

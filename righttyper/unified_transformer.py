@@ -203,16 +203,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                 yield t
 
 
-    def _process_generics(
-        self,
-        ann: FuncAnnotation,
-        existing_generics: set[str]
-    ) -> tuple[FuncAnnotation, dict[int, TypeInfo]]:
+    def _process_generics(self, ann: FuncAnnotation) -> tuple[FuncAnnotation, dict[int, TypeInfo]]:
         """Transforms an annotation, defining type variables and using them."""
 
         class RenameGenericsTransformer(TypeInfo.Transformer):
             def __init__(self):
-                self.local_generic_index = 0
                 self.generics = {}
             
             def visit(vself, node: TypeInfo) -> TypeInfo:
@@ -221,16 +216,12 @@ class UnifiedTransformer(cst.CSTTransformer):
 
                 if node.typevar_index not in vself.generics:
                     if self.inline_generics:
-                        # TODO do we ever replace some args, but not others?
-                        # If we don't, we can just use node.typevar_index...
-                        while (name := f"T{vself.local_generic_index}") in existing_generics:
-                            vself.local_generic_index += 1
-                        vself.local_generic_index += 1
+                        name = f"T{node.typevar_index}"
                     else:
                         while (name := f"rt_T{self.module_generic_index}") in self.used_names[-1]:
                             self.module_generic_index += 1
                         self.module_generic_index += 1
-                    
+
                     vself.generics[node.typevar_index] = node.replace(typevar_name=name)
 
                 return vself.generics[node.typevar_index]
@@ -283,7 +274,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             )
         )
 
-        self.module_generic_index = 0
+        self.module_generic_index = 1
 
         return True
 
@@ -442,74 +433,64 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.name_stack.pop()
         self.used_names.pop()
         key = FuncInfo(Filename(self.filename), FunctionName(name))
-        pre_function = []
 
         if ann := self.type_annotations.get(key):
-            existing_generics: set[str] = set()
-            if original_node.type_parameters is not None:
-                existing_generics = {param.param.name.value for param in original_node.type_parameters.params}
-            
-            ann, generics = self._process_generics(ann, existing_generics)
+            pre_function = []
+            argmap = {aname: atype for aname, atype in ann.args}
 
-            if self.inline_generics:
-                existing_params: list[cst.TypeParam] = []
-                if original_node.type_parameters is not None:
-                    existing_params = list(original_node.type_parameters.params)
-
-                our_params = []
-                for generic in generics.values():
-                    assert isinstance(generic.typevar_name, str)
-                    assert all(isinstance(arg, TypeInfo) for arg in generic.args)
-                    our_params.append(cst.TypeParam(param=cst.TypeVar(
-                        name=cst.Name(value=typing.cast(str, generic.typevar_name)),
-                        bound=cst.Tuple(elements=[
-                            cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
-                            for arg in generic.args
-                        ])
-                    )))
-
-                updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
-                    params=existing_params + our_params
-                ))
-
-            else:
-                for generic in generics.values():
-                    assert isinstance(generic.typevar_name, str)
-                    assert all(isinstance(arg, TypeInfo) for arg in generic.args)
-                    pre_function.append(cst.SimpleStatementLine(body=[
-                        cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
-                                   value=cst.Call(func=cst.Name("TypeVar"), args=[
-                                       cst.Arg(value=cst.SimpleString(
-                                           _quote(typing.cast(str, generic.typevar_name)))
-                                        ),
-                                       *(cst.Arg(value=self._get_annotation_expr(
-                                           typing.cast(TypeInfo, arg)))
-                                         for arg in generic.args
-                                        )
-                                   ])
-                        )
-                    ]))
-            
-            for attr_name in ['params', 'kwonly_params', 'posonly_params']:
-                if getattr(updated_node.params, attr_name):
-                    new_parameters = []
-                    for parameter in getattr(updated_node.params, attr_name):
-                        new_parameters.append(self._process_parameter(parameter, ann))
-
-                    updated_node = updated_node.with_changes(
-                        params=updated_node.params.with_changes(
-                            **{attr_name: new_parameters}
-                        )
+            # Do existing annotations overlap with typevar args/return ?
+            typevar_overlap = not self.override_annotations and (
+                    (updated_node.returns is not None and ann.retval.is_typevar()) or
+                    any (
+                        par.annotation is not None and
+                        par.name.value in argmap and
+                        argmap[par.name.value].is_typevar()
+                        for par in cstm.findall(updated_node.params, cstm.Param())
                     )
+                )
 
-            for attr_name in ['star_arg', 'star_kwarg']:
-                attr = getattr(updated_node.params, attr_name)
-                if isinstance(attr, cst.Param):
-                    updated_node = updated_node.with_changes(
-                        params=updated_node.params.with_changes(
-                            **{attr_name: self._process_parameter(attr, ann)}
-                        )
-                    )
+            del argmap
+
+            # We don't yet support merging type_parameters
+            if not typevar_overlap and updated_node.type_parameters is None:
+                ann, generics = self._process_generics(ann)
+
+                if self.inline_generics:
+                    our_params = []
+                    for generic in generics.values():
+                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                        our_params.append(cst.TypeParam(param=cst.TypeVar(
+                            name=cst.Name(value=str(generic)),
+                            bound=cst.Tuple(elements=[
+                                cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
+                                for arg in generic.args
+                            ])
+                        )))
+
+                    updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
+                        params=our_params
+                    ))
+
+                else:
+                    for generic in generics.values():
+                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                        pre_function.append(cst.SimpleStatementLine(body=[
+                            cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
+                                       value=cst.Call(func=cst.Name("TypeVar"), args=[
+                                           cst.Arg(value=cst.SimpleString(_quote(str(generic)))),
+                                           *(cst.Arg(value=self._get_annotation_expr(
+                                               typing.cast(TypeInfo, arg)))
+                                             for arg in generic.args
+                                            )
+                                       ])
+                            )
+                        ]))
+
+            class ParamChanger(cst.CSTTransformer):
+                def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
+                    return self._process_parameter(updated_node, ann)
+
+            updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
 
             if updated_node.returns is None or self.override_annotations:
                 annotation = self._try_rename_to_self(ann.retval)
@@ -538,20 +519,21 @@ class UnifiedTransformer(cst.CSTTransformer):
                     body=updated_node.body.with_changes(
                         header=cst.TrailingWhitespace()))
 
+            # FIXME this doesn't capture any non-inline typevars
             self.change_list.append((key.func_name, original_node, updated_node))
 
-        if pre_function:
-            leading_lines = updated_node.leading_lines
-            first_comment = next((
-                    i
-                    for i, el in enumerate(leading_lines)
-                    if isinstance(el, cst.EmptyLine) and el.comment is not None
-                ), None)
-            if first_comment is not None:
-                pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:first_comment])
-                updated_node = updated_node.with_changes(leading_lines=leading_lines[first_comment:])
+            if pre_function:
+                leading_lines = updated_node.leading_lines
+                first_comment = next((
+                        i
+                        for i, el in enumerate(leading_lines)
+                        if isinstance(el, cst.EmptyLine) and el.comment is not None
+                    ), None)
+                if first_comment is not None:
+                    pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:first_comment])
+                    updated_node = updated_node.with_changes(leading_lines=leading_lines[first_comment:])
 
-            return cst.FlattenSentinel([*pre_function, updated_node])
+                return cst.FlattenSentinel([*pre_function, updated_node])
 
         return updated_node
 

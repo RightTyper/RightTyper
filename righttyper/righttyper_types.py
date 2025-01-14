@@ -23,7 +23,7 @@ class FuncInfo:
 
 @dataclass(eq=True, frozen=True)
 class FuncAnnotation:
-    args: list[tuple[ArgumentName, TypeInfo]]
+    args: list[tuple[ArgumentName, TypeInfo]]   # TODO: make me a map?
     retval: TypeInfo
 
 
@@ -45,11 +45,8 @@ class TypeInfo:
 
 
     def __str__(self: Self) -> str:
-        if self.typevar_index:
-            if self.typevar_name:
-                return self.typevar_name
-
-            return f"T{self.typevar_index}"
+        if self.typevar_name:
+            return self.typevar_name
 
         if self.type_obj == types.UnionType:
             return "|".join(str(a) for a in self.args)
@@ -103,6 +100,15 @@ class TypeInfo:
 
     def replace(self, **kwargs) -> "TypeInfo":
         return replace(self, **kwargs)
+
+
+    def is_typevar(self) -> bool:
+        """Returns whether this TypeInfo is (or encloses) a typevar."""
+        return bool(self.typevar_index) or any(
+            a.is_typevar()
+            for a in self.args
+            if isinstance(a, TypeInfo)
+        )
 
 
     class Transformer:

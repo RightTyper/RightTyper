@@ -1197,14 +1197,14 @@ def test_generic_simple(tmp_cwd):
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert 'rt_T0 = TypeVar("rt_T0", int, str)' in output
-    assert "def add(a: rt_T0, b: rt_T0) -> rt_T0" in output
+    assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
+    assert "def add(a: rt_T1, b: rt_T1) -> rt_T1" in output
 
 
 def test_generic_name_conflict(tmp_cwd):
     t = textwrap.dedent("""\
-        rt_T0 = None
         rt_T1 = None
+        rt_T2 = None
 
         def add(a, b):
             return a + b
@@ -1220,8 +1220,8 @@ def test_generic_name_conflict(tmp_cwd):
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert 'rt_T2 = TypeVar("rt_T2", int, str)' in output
-    assert "def add(a: rt_T2, b: rt_T2) -> rt_T2" in output
+    assert 'rt_T3 = TypeVar("rt_T3", int, str)' in output
+    assert "def add(a: rt_T3, b: rt_T3) -> rt_T3" in output
 
 
 def test_generic_yield(tmp_cwd):
@@ -1238,8 +1238,8 @@ def test_generic_yield(tmp_cwd):
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert 'rt_T0 = TypeVar("rt_T0", int, str)' in output
-    assert "def y(a: rt_T0) -> Iterator[rt_T0]" in output
+    assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
+    assert "def y(a: rt_T1) -> Iterator[rt_T1]" in output
 
 
 def test_generic_yield_generator(tmp_cwd):
@@ -1258,9 +1258,9 @@ def test_generic_yield_generator(tmp_cwd):
     output = Path("t.py").read_text()
 
     print(output)
-    assert 'rt_T0 = TypeVar("rt_T0", int, str)' in output
     assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
-    assert "def y(a: rt_T0, b: rt_T1) -> Generator[rt_T0, Any, rt_T1]" in output
+    assert 'rt_T2 = TypeVar("rt_T2", int, str)' in output
+    assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, Any, rt_T2]" in output
 
 
 def test_generic_typevar_location(tmp_cwd):
@@ -1280,9 +1280,9 @@ def test_generic_typevar_location(tmp_cwd):
     output = Path("t.py").read_text()
 
     res = textwrap.dedent("""\
-        rt_T0 = TypeVar("rt_T0", int, str)
+        rt_T1 = TypeVar("rt_T1", int, str)
         # comment and emptyline
-        def add(a: rt_T0, b: rt_T0) -> rt_T0:
+        def add(a: rt_T1, b: rt_T1) -> rt_T1:
         """)
 
     assert res in output
