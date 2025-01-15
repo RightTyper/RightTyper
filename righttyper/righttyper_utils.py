@@ -4,8 +4,7 @@ import os
 import sys
 
 from functools import cache
-from typing import Any, Final, cast, Iterator
-import itertools
+from typing import Any, Final
 from pathlib import Path
 
 from righttyper.righttyper_types import (
@@ -61,73 +60,6 @@ def debug_print(args: Any, *varargs: Any, **kwargs: Any) -> None:
 
 def debug_print_set_level(level: bool) -> None:
     _DEBUG_PRINT = level
-
-
-def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
-    if not typeinfoset:
-        return Typename("None") # Never observed any types.
-
-    if len(typeinfoset) == 1:
-        return Typename(str(next(iter(typeinfoset))))
-
-    if super := find_most_specific_common_superclass_by_name(typeinfoset):
-        return super
-
-    # merge similar generics
-    if any(t.args for t in typeinfoset):
-        typeinfoset = TypeInfoSet({*typeinfoset})   # avoid modifying
-
-        def group_key(t):
-            return t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args)
-        group: Iterator[TypeInfo]|TypeInfoSet
-        for (mod, name, all_info, nargs), group in itertools.groupby(
-            sorted(typeinfoset, key=group_key),
-            group_key
-        ):
-            if all_info:
-                group = set(group)
-                typeinfoset -= group
-                typeinfoset.add(TypeInfo(mod, name, args=tuple(
-                        union_typeset_str(TypeInfoSet({
-                            cast(TypeInfo, member.args[i]) for member in group
-                        }))
-                        for i in range(nargs)
-                    )
-                ))
-
-    # TODO merge jaxtyping annotations by shape
-
-    typeset = {str(t) for t in typeinfoset}
-
-    if "None" in typeset:
-        # "None" at the end is considered to be more readable
-        return Typename(
-            "|".join([*(t for t in sorted(typeset) if t != "None"), "None"])
-        )
-
-    return Typename("|".join(sorted(typeset)))
-
-
-def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> Typename|None:
-    if any(t.type_obj is None for t in typeinfoset):
-        return None
-
-    common_superclasses = set.intersection(
-        *(set(cast(TYPE_OBJ_TYPES, t.type_obj).__mro__) for t in typeinfoset)
-    )
-
-    common_superclasses.discard(object) # not specific enough to be useful
-
-    if not common_superclasses:
-        return None
-
-    specific = max(
-            common_superclasses,
-            key=lambda cls: cls.__mro__.index(object),
-    )
-
-    module = specific.__module__ if specific.__module__ != '__main__' else get_main_module_fqn()
-    return Typename(str(TypeInfo(module, specific.__qualname__, type_obj=specific)))
 
 
 @cache
