@@ -7,7 +7,6 @@ from righttyper.righttyper_types import (
     FuncInfo,
     Filename,
     FunctionName,
-    Typename,
     ArgumentName,
     TypeInfo,
     NoneTypeInfo,

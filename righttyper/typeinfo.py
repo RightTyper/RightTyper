@@ -1,8 +1,10 @@
 import itertools
 from typing import Sequence, Iterator, cast
-from .righttyper_types import TypeInfo, NoneTypeInfo, TypeInfoSet, Typename, TYPE_OBJ_TYPES
+from .righttyper_types import TypeInfo, TypeInfoSet, TYPE_OBJ_TYPES
 from .righttyper_utils import get_main_module_fqn
 
+
+# TODO integrate these into TypeInfo?
 
 def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
     if not typeinfoset:
@@ -17,6 +19,9 @@ def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
     # merge similar generics
     if any(t.args for t in typeinfoset):
         typeinfoset = TypeInfoSet({*typeinfoset})   # avoid modifying
+
+        # TODO group by superclass/protocol when possible, so that these can be merged
+        # e.g.: list[int], Sequence[int]
 
         def group_key(t):
             return t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args)
@@ -42,13 +47,11 @@ def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
     return TypeInfo.from_set(typeinfoset)
 
 
-def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
-    return Typename(str(union_typeset(typeinfoset)))
-
-
 def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> TypeInfo|None:
-    if any(t.type_obj is None for t in typeinfoset):
+    if any(t.type_obj is None for t in typeinfoset):    # we require type_obj for this
         return None
+
+    # TODO do we want to merge by protocol?  search for protocols in collections.abc types?
 
     common_superclasses = set.intersection(
         *(set(cast(TYPE_OBJ_TYPES, t.type_obj).__mro__) for t in typeinfoset)
@@ -72,8 +75,8 @@ def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> Ty
 def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
     """
     Processes a sequence of samples observed for function parameters and return values, looking
-    for patterns that can be replaced with type variables.  If no pattern is detected, the
-    union of those types (per union_typeset_str) is built.
+    for patterns that can be replaced with type variables or, if does not detect a pattern,
+    building type unions.
 
     samples: a sequence of tuples with type information. Each type in a tuple corresponds to
         a parameter (or return) type.
