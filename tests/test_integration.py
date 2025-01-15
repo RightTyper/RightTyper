@@ -859,7 +859,7 @@ def test_discovered_function_type_in_yield(tmp_cwd):
         def bar():
             yield foo
 
-        next(bar())(1)
+        for a in bar(): a(1)
         """
     ))
 
@@ -922,6 +922,22 @@ def test_varargs(tmp_cwd):
     assert 'def foo(x: bool, *args: float|int|str) -> None:' in output
 
 
+def test_varargs_empty(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, *args):
+            pass
+
+        foo(True)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: bool, *args: None) -> None:' in output
+
+
 def test_kwargs(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, **kwargs):
@@ -936,6 +952,22 @@ def test_kwargs(tmp_cwd):
 
     output = Path("t.py").read_text()
     assert 'def foo(x: bool, **kwargs: float|int|str) -> None:' in output
+
+
+def test_kwargs_empty(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, **kwargs):
+            pass
+
+        foo(True)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: bool, **kwargs: None) -> None:' in output
 
 
 def test_none_arg(tmp_cwd):
@@ -1097,3 +1129,370 @@ def test_union_superclass(tmp_cwd, as_module):
                    check=True)
 
     assert "def foo(x: A) -> None:" in Path("t.py").read_text()
+
+
+def test_sampling_overlaps(tmp_cwd):
+    # While sampling, the function is started twice, with the first invocation outlasting
+    # the second.  We'll get a START and YIELD events for the first invocation and then
+    # a RETURN event for the second... if we don't leave the event enabled, we may not
+    # see the first invocation's RETURN.
+    t = textwrap.dedent("""\
+        def gen(more: bool):
+            if more:
+                yield 0
+            yield 1
+
+        a = gen(True)
+        b = gen(False)
+        next(a)
+        next(b)
+        for _ in a:
+            pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def gen(more: bool) -> Iterator[int]:" in output
+
+
+def test_no_return(tmp_cwd):
+    # A function for which we never see a RETURN: can we still type it?
+    t = textwrap.dedent("""\
+        def gen():
+            while True:
+                yield 0
+
+        g = gen()
+        next(g)
+        next(g)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def gen() -> Iterator[int]:" in output
+
+
+def test_generic_simple(tmp_cwd):
+    t = textwrap.dedent(
+        """\
+        def add(a, b):
+            return a + b
+        add(1, 2)
+        add("a", "b")
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
+    assert "def add(a: rt_T1, b: rt_T1) -> rt_T1" in output
+
+
+def test_generic_name_conflict(tmp_cwd):
+    t = textwrap.dedent("""\
+        rt_T1 = None
+        rt_T2 = None
+
+        def add(a, b):
+            return a + b
+
+        add(1, 2)
+        add("a", "b")
+        """
+    )
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert 'rt_T3 = TypeVar("rt_T3", int, str)' in output
+    assert "def add(a: rt_T3, b: rt_T3) -> rt_T3" in output
+
+
+def test_generic_yield(tmp_cwd):
+    t = textwrap.dedent("""\
+        def y(a):
+            yield a
+        for _ in y(1): pass
+        for _ in y("a"): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
+    assert "def y(a: rt_T1) -> Iterator[rt_T1]" in output
+
+
+def test_generic_yield_generator(tmp_cwd):
+    t = textwrap.dedent("""\
+        def y(a, b):
+            yield a
+            return b
+        for _ in y(1, "a"): pass
+        for _ in y("a", 1): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    print(output)
+    assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
+    assert 'rt_T2 = TypeVar("rt_T2", int, str)' in output
+    assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, Any, rt_T2]" in output
+
+
+def test_generic_typevar_location(tmp_cwd):
+    t = textwrap.dedent("""\
+        ...
+        # comment and emptyline
+        def add(a, b):
+            return a + b
+        add(1, 2)
+        add("a", "b")
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    res = textwrap.dedent("""\
+        rt_T1 = TypeVar("rt_T1", int, str)
+        # comment and emptyline
+        def add(a: rt_T1, b: rt_T1) -> rt_T1:
+        """)
+
+    assert res in output
+
+
+def test_generic_and_defaults(tmp_cwd):
+    t = textwrap.dedent("""\
+        def f(a, b=None, c=None):
+            pass
+
+        f(10, 10, 5)
+        f(10.0, 2, 10.0)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '--inline-generics', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    print(output)
+    assert "def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None" in output
+
+
+@pytest.mark.parametrize('superclass, expected', [
+    ("list", "MyContainer[Never]"),
+    ("set", "MyContainer[Never]"),
+    ("dict", "MyContainer[Never, Never]"),
+    ("KeysView", "KeysView[Never]"),
+    ("ValuesView", "ValuesView[Never]"),
+    ("ItemsView", "ItemsView[Never, Never]"),
+    ("tuple", "tuple")
+])
+def test_custom_collection_len_error(tmp_cwd, superclass, expected):
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        from collections.abc import *
+
+        class MyContainer({superclass}):
+            def __init__(self):
+                super()
+
+            def __len__(self):
+                raise Exception("Oops, something went wrong!")
+
+
+        def foo(bar):
+            pass
+
+
+        my_object = MyContainer()
+        foo(my_object)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+
+    assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
+
+
+@pytest.mark.parametrize('superclass, expected', [
+    ("list", "MyContainer[Never]"),
+    ("set", "MyContainer[Never]"),
+    ("dict", "MyContainer[Never, Never]"),
+    ("KeysView", "KeysView[Never]"),
+    ("ValuesView", "ValuesView[Never]"),
+    ("ItemsView", "ItemsView[Never, Never]"),
+    ("tuple", "tuple")
+])
+def test_custom_collection_sample_error(tmp_cwd, superclass, expected):
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        from collections.abc import *
+
+        class MyContainer({superclass}):
+            def __init__(self):
+                super()
+
+            def __len__(self):
+                return 1
+
+            def __getitem__(self, key):
+                raise Exception("Oops, something went wrong!")
+
+            def __contains__(self, key):
+                raise Exception("Oops, something went wrong!")
+
+            def __iter__(self):
+                raise Exception("Oops, something went wrong!")
+
+
+        def foo(bar):
+            pass
+
+
+        my_object = MyContainer()
+        foo(my_object)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+
+    assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
+
+
+def test_class_properties(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x = None
+
+            @property
+            def x(self):
+                return str(self._x)
+
+            @x.setter
+            def x(self, value):
+                self._x = value
+
+            @x.deleter
+            def x(self):
+                del self._x
+
+        c = C()
+        c.x = 10
+        y = c.x
+        del c.x
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+
+    assert "def __init__(self: Self) -> None:" in output
+
+    # TODO parse functions out so that the annotation is included
+    assert "def x(self: Self) -> str:" in output                # getter
+    assert "def x(self: Self, value: int) -> None:" in output   # setter
+    assert "def x(self: Self) -> None:" in output               # deleter
+
+
+def test_class_properties_no_setter(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x = 10
+
+            @property
+            def x(self):
+                return str(self._x)
+
+            @x.deleter
+            def x(self):
+                del self._x
+
+        c = C()
+        y = c.x
+        del c.x
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+
+    assert "def __init__(self: Self) -> None:" in output
+
+    # TODO parse functions out so that the annotation is included
+    assert "def x(self: Self) -> str:" in output                # getter
+    assert "def x(self: Self) -> None:" in output               # deleter
+
+
+def test_class_properties_inner_functions(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x = None
+
+            @property
+            def x(self):
+                def foo():
+                    return str(self._x)
+                return foo()
+
+            @x.setter
+            def x(self, value):
+                def foo(v):
+                    def bar():
+                        pass
+                    bar()
+                    return int(v)
+                self._x = foo(value)
+
+        c = C()
+        c.x = 10.0
+        y = c.x
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+
+    assert "def __init__(self: Self) -> None:" in output
+
+    # TODO parse functions out so that the annotation is included
+    assert "def foo() -> str:" in output            # getter's
+    assert "def foo(v: float) -> int:" in output     # setter's
+
+    # check for inner function's inner function
+    assert "def bar() -> None:" in output

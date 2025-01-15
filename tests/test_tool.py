@@ -1,4 +1,3 @@
-import sys
 from righttyper.righttyper_tool import setup_tool_id, reset_monitoring
 
 

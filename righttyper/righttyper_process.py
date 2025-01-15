@@ -1,26 +1,17 @@
 import logging
-import os
 import pathlib
-from collections import defaultdict
-from typing import Any
 
 import libcst as cst
 
 from righttyper.generate_stubs import PyiTransformer
 from righttyper.righttyper_types import (
-    ArgInfo,
-    ArgumentName,
-    ArgumentType,
     Filename,
     FuncInfo,
     FuncAnnotation,
     FunctionName,
-    Typename,
-    TypeInfoSet,
 )
 from righttyper.righttyper_utils import (
     debug_print,
-    skip_this_file,
     source_to_module_fqn
 )
 from righttyper.unified_transformer import UnifiedTransformer
@@ -93,6 +84,7 @@ def process_file(
     overwrite: bool,
     module_names: list[str],
     ignore_annotations: bool = False,
+    inline_generics: bool = False,
 ) -> SignatureChanges:
     debug_print(f"process_file: {filename}")
     try:
@@ -113,13 +105,13 @@ def process_file(
             raise
 
     transformer = UnifiedTransformer(
-        filename, type_annotations, ignore_annotations,
+        filename, type_annotations, ignore_annotations, inline_generics,
         module_name=source_to_module_fqn(pathlib.Path(filename)),
         module_names=module_names
     )
 
     try:
-        transformed = cst_tree.visit(transformer)
+        transformed = transformer.transform_code(cst_tree)
     except TypeError:
         # This happens when "Mock" is passed around.
         print(f"Failed to transform {filename}.")

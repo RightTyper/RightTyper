@@ -1,5 +1,4 @@
 import inspect
-import os
 import random
 import re
 import sys
@@ -15,13 +14,13 @@ from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
-    ArgumentType,
     Filename,
     FunctionName,
     FuncInfo,
     T,
     TypeInfoSet,
-    TypeInfo
+    TypeInfo,
+    NoneTypeInfo
 )
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 
@@ -72,7 +71,7 @@ def should_skip_function(
     script_dir: str,
     include_all: bool,
     include_files_pattern: str,
-    include_functions_pattern: list[str]
+    include_functions_pattern: tuple[str, ...]
 ) -> bool:
     skip_file = skip_this_file(
         code.co_filename,
@@ -151,6 +150,7 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
     return TypeInfo("typing", "Callable", args=args,
                     func=FuncInfo(
                         Filename(func.__code__.co_filename),
+                        func.__code__.co_firstlineno,
                         FunctionName(func.__qualname__)
                     ),
                     is_bound=isinstance(func, MethodType)
@@ -192,6 +192,18 @@ def in_builtins_import(t: type) -> bool:
     return False
 
 
+def normalize_module_name(module_name: str) -> str:
+    """Applies common substitutions to a type's module's name."""
+    if module_name == "__main__":
+        # "__main__" isn't generally usable for typing, and only unique in this execution
+        return get_main_module_fqn()
+
+    if module_name == "builtins":
+        return ""   # we consider these "well-known" and, for brevity, omit the module name
+
+    return module_name
+
+
 @cache
 def lookup_type_module(t: type) -> str:
     parts = t.__qualname__.split('.')
@@ -206,17 +218,20 @@ def lookup_type_module(t: type) -> str:
 
         return False
 
+    # Is it defined where it claims to be?
     if (m := sys.modules.get(t.__module__)):
         if is_defined_in_module(m.__dict__):
-            return t.__module__
+            return normalize_module_name(t.__module__)
 
+    # Can we find it some submodule?
+    # FIXME this search could be more exhaustive and/or more principled
     module_prefix = f"{t.__module__}."
     for name, mod in sys.modules.items():
         if name.startswith(module_prefix) and is_defined_in_module(mod.__dict__):
-            return name
+            return normalize_module_name(name)
 
-    # it's not in the module, but keep it as a last resort, to facilitate diagnostics
-    return t.__module__
+    # Keep it as a last resort, to facilitate diagnostics
+    return normalize_module_name(t.__module__)
 
 
 RANGE_ITER_TYPE = type(iter(range(1)))
@@ -235,7 +250,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     # "list_iterator", aren't known by any particular name.
     if obj.__module__ == "builtins":
         if obj is NoneType:
-            return TypeInfo("", "None", type_obj=obj)
+            return NoneTypeInfo
         elif in_builtins_import(obj):
             return TypeInfo("", obj.__name__, type_obj=obj) # these are "well known", so no module name needed
         elif (name := from_types_import(obj)):
@@ -275,9 +290,6 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
                 ):
                     return f"{name}.{obj.__name__}"
 
-    if obj.__module__ == "__main__":    # TODO merge this into lookup_type_module
-        return TypeInfo(get_main_module_fqn(), obj.__qualname__, type_obj=obj)
-
     return TypeInfo(lookup_type_module(obj), obj.__qualname__, type_obj=obj)
 
 
@@ -306,48 +318,52 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         return TypeInfo("typing", "Never")
 
     t: type|None
+    args: tuple[TypeInfo, ...]
 
     if isinstance(value, dict):
         t = type(value)
-        if value:
-            el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
-            args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
-        else:
-            args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
-        module = "" if t.__module__ == "builtins" else t.__module__
-        return TypeInfo(module, t.__qualname__, args=args)
+        args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+        try:
+            if value:
+                el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
+                args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
+        except Exception: pass
+        return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
     elif isinstance(value, (list, set)):
         t = type(value)
-        if value:
-            el = sample_from_collection(value)
-            args = (get_full_type(el, depth=depth+1),)
-        else:
-            args = (TypeInfo("typing", "Never"),)
-        module = "" if t.__module__ == "builtins" else t.__module__
-        return TypeInfo(module, t.__qualname__, args=args)
+        args = (TypeInfo("typing", "Never"),)
+        try:
+            if value:
+                el = sample_from_collection(value)
+                args = (get_full_type(el, depth=depth+1),)
+        except Exception: pass
+        return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
     elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
-        if value:
-            el = sample_from_collection(value)
-            args = (get_full_type(el, depth=depth+1),)
-        else:
-            args = (TypeInfo("typing", "Never"),)
+        args = (TypeInfo("typing", "Never"),)
+        try:
+            if value:
+                el = sample_from_collection(value)
+                args = (get_full_type(el, depth=depth+1),)
+        except Exception: pass
         return TypeInfo("typing", t.__qualname__, args=args)
     elif isinstance(value, abc.ItemsView):
-        if value:
-            el = sample_from_collection(value)
-            args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
-        else:
-            args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+        args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+        try:
+            if value:
+                el = sample_from_collection(value)
+                args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
+        except Exception: pass
         return TypeInfo("typing", "ItemsView", args=args)
     elif isinstance(value, tuple):
         if isinstance_namedtuple(value):
             t = type(value)
-            return TypeInfo(t.__module__, t.__qualname__)
+            return TypeInfo(lookup_type_module(t), t.__qualname__)
         else:
-            if value:
-                args = tuple(get_full_type(fld, depth=depth+1) for fld in value)
-            else:
-                args = tuple()
+            args = tuple()
+            try:
+                if value:
+                    args = tuple(get_full_type(fld, depth=depth+1) for fld in value)
+            except Exception: pass
             return TypeInfo("", "tuple", args=args)
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
@@ -385,36 +401,3 @@ def isinstance_namedtuple(obj: object) -> bool:
         and hasattr(obj, "_asdict")
         and hasattr(obj, "_fields")
     )
-
-
-def update_argtypes(
-    argtypes: list[ArgInfo],
-    index: tuple[FuncInfo, ArgumentName],
-    arg_values: Any,
-    argument_name: str,
-    /,
-    is_vararg: bool,
-    is_kwarg: bool,
-    use_jaxtyping: bool
-) -> None:
-
-    def add_arg_info(
-        values: Any,
-    ) -> None:
-        types = TypeInfoSet([
-            get_full_type(val, use_jaxtyping=use_jaxtyping)
-            for val in values
-        ])
-        argtypes.append(
-            ArgInfo(
-                ArgumentName(argument_name),
-                types,
-            )
-        )
-
-    if is_vararg:
-        add_arg_info(arg_values[0])
-    elif is_kwarg:
-        add_arg_info(arg_values[0].values())
-    else:
-        add_arg_info(arg_values)

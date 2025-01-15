@@ -1,18 +1,18 @@
 import typing
 import builtins
 import collections.abc as abc
-import types
 import libcst as cst
 import libcst.matchers as cstm
+from libcst.metadata import MetadataWrapper, PositionProvider
 import re
 
 from righttyper.righttyper_types import (
-    ArgumentName,
     Filename,
     FuncInfo,
     FuncAnnotation,
     FunctionName,
     Typename,
+    TypeInfo,
 )
 
 
@@ -97,11 +97,14 @@ def _quote(s: str) -> str:
 
 
 class UnifiedTransformer(cst.CSTTransformer):
+    METADATA_DEPENDENCIES = (PositionProvider,)
+
     def __init__(
         self,
         filename: str,
         type_annotations: dict[FuncInfo, FuncAnnotation],
         override_annotations: bool,
+        inline_generics: bool,
         module_name: str|None,
         module_names: list[str],
         *,
@@ -110,6 +113,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.filename = filename
         self.type_annotations = type_annotations
         self.override_annotations = override_annotations
+        self.inline_generics = inline_generics
         self.has_future_annotations = False
         self.module_name = module_name
         self.module_names = sorted(module_names, key=lambda name: -name.count('.'))
@@ -127,11 +131,11 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         return '', name
 
-    def _is_valid(self, annotation: str) -> bool:
+    def _is_valid(self, annotation: TypeInfo) -> bool:
         """Returns whether the annotation can be parsed."""
         # local names such as foo.<locals>.Bar yield this exception
         try:
-            cst.parse_expression(annotation)
+            cst.parse_expression(str(annotation))
             return True
         except cst.ParserSyntaxError:
             return False
@@ -202,6 +206,38 @@ class UnifiedTransformer(cst.CSTTransformer):
                 yield t
 
 
+    def _process_generics(self, ann: FuncAnnotation) -> tuple[FuncAnnotation, dict[int, TypeInfo]]:
+        """Transforms an annotation, defining type variables and using them."""
+
+        class RenameGenericsTransformer(TypeInfo.Transformer):
+            def __init__(self):
+                self.generics = {}
+            
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if not node.typevar_index:
+                    return super().visit(node)
+
+                if node.typevar_index not in vself.generics:
+                    if self.inline_generics:
+                        name = f"T{node.typevar_index}"
+                    else:
+                        while (name := f"rt_T{self.module_generic_index}") in self.used_names[-1]:
+                            self.module_generic_index += 1
+                        self.module_generic_index += 1
+
+                    vself.generics[node.typevar_index] = node.replace(typevar_name=name)
+
+                return vself.generics[node.typevar_index]
+
+        tr = RenameGenericsTransformer()
+        updated_ann = FuncAnnotation(
+            [(name, tr.visit(ti)) for name, ti in ann.args],
+            tr.visit(ann.retval)
+        )
+        
+        return (updated_ann, tr.generics)
+                    
+
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
 
@@ -240,6 +276,8 @@ class UnifiedTransformer(cst.CSTTransformer):
                 )
             )
         )
+
+        self.module_generic_index = 1
 
         return True
 
@@ -314,13 +352,36 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         return True
 
-    def _try_rename_to_self(self, annotation: Typename) -> Typename:
+    def _try_rename_to_self(self, annotation: TypeInfo) -> TypeInfo:
         if self.use_self and self.module_name:
             # TODO this doesn't handle composite names, such as "list[Self]"... do we care?
-            if annotation == '.'.join((self.module_name, *self.name_stack)):
-                return Typename("typing.Self")
+            if str(annotation) == '.'.join((self.module_name, *self.name_stack)):
+                return TypeInfo("typing", "Self")
         return annotation
 
+    def _get_annotation_expr(self, annotation: TypeInfo) -> cst.BaseExpression:
+        class FindGenerics(TypeInfo.Transformer):
+            def __init__(self):
+                self.generics = set()
+
+            def visit(self, node: TypeInfo) -> TypeInfo:
+                if node.typevar_name is not None:
+                    self.generics.add(node.typevar_name)
+                return super().visit(node)
+        
+        fr = FindGenerics()
+        fr.visit(annotation)
+
+        annotation_expr: cst.BaseExpression = cst.parse_expression(str(annotation))
+        annotation_expr = self._rename_types(annotation_expr)
+        unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
+        self.unknown_types |= unknown_types - fr.generics
+
+        if not self.has_future_annotations and (unknown_types - fr.generics - _TYPING_TYPES):
+            annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
+
+        return annotation_expr
+    
     def _process_parameter(self, parameter: cst.Param, ann: FuncAnnotation) -> cst.Param:
         """Processes a parameter, either returning an updated parameter or the original one."""
         if (
@@ -339,13 +400,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         if not self._is_valid(annotation):
             return parameter
 
-        annotation_expr: cst.BaseExpression = cst.parse_expression(annotation)
-        annotation_expr = self._rename_types(annotation_expr)
-        unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
-        self.unknown_types |= unknown_types
-
-        if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-            annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
+        annotation_expr = self._get_annotation_expr(annotation)
 
         new_par = parameter.with_changes(
             annotation=cst.Annotation(annotation=annotation_expr)
@@ -375,47 +430,82 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
-    ) -> cst.FunctionDef:
+    ) -> cst.FunctionDef | cst.FlattenSentinel:
         name = ".".join(self.name_stack[:-1])
         self.name_stack.pop()
         self.name_stack.pop()
         self.used_names.pop()
-        key = FuncInfo(Filename(self.filename), FunctionName(name))
 
-        if ann := self.type_annotations.get(key):
-            for attr_name in ['params', 'kwonly_params', 'posonly_params']:
-                if getattr(updated_node.params, attr_name):
-                    new_parameters = []
-                    for parameter in getattr(updated_node.params, attr_name):
-                        new_parameters.append(self._process_parameter(parameter, ann))
+        first_line = min(
+            self.get_metadata(PositionProvider, node).start.line
+            for node in (original_node, *original_node.decorators)
+        )
+        key = FuncInfo(Filename(self.filename), first_line, FunctionName(name))
 
-                    updated_node = updated_node.with_changes(
-                        params=updated_node.params.with_changes(
-                            **{attr_name: new_parameters}
-                        )
+        if ann := typing.cast(FuncAnnotation, self.type_annotations.get(key)):  # cast to make mypy happy
+            pre_function = []
+            argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
+
+            # Do existing annotations overlap with typevar args/return ?
+            typevar_overlap = not self.override_annotations and (
+                    (updated_node.returns is not None and ann.retval.is_typevar()) or
+                    any (
+                        par.annotation is not None and
+                        par.name.value in argmap and
+                        argmap[par.name.value].is_typevar()
+                        for par in typing.cast(typing.Iterator[cst.Param], cstm.findall(updated_node.params, cstm.Param()))
                     )
+                )
 
-            for attr_name in ['star_arg', 'star_kwarg']:
-                attr = getattr(updated_node.params, attr_name)
-                if isinstance(attr, cst.Param):
-                    updated_node = updated_node.with_changes(
-                        params=updated_node.params.with_changes(
-                            **{attr_name: self._process_parameter(attr, ann)}
-                        )
-                    )
+            del argmap
 
-            if ((updated_node.returns is None or self.override_annotations)
-                and ann.retval is not None
-            ):
+            # We don't yet support merging type_parameters
+            if not typevar_overlap and updated_node.type_parameters is None:
+                ann, generics = self._process_generics(ann)
+
+                if self.inline_generics:
+                    our_params = []
+                    for generic in generics.values():
+                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                        our_params.append(cst.TypeParam(param=cst.TypeVar(
+                            name=cst.Name(value=str(generic)),
+                            bound=cst.Tuple(elements=[
+                                cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
+                                for arg in generic.args
+                            ])
+                        )))
+
+                    updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
+                        params=our_params
+                    ))
+
+                else:
+                    for generic in generics.values():
+                        assert generic.typevar_name is not None
+                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                        pre_function.append(cst.SimpleStatementLine(body=[
+                            cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
+                                       value=cst.Call(func=cst.Name("TypeVar"), args=[
+                                           cst.Arg(value=cst.SimpleString(_quote(str(generic)))),
+                                           *(cst.Arg(value=self._get_annotation_expr(
+                                               typing.cast(TypeInfo, arg)))
+                                             for arg in generic.args
+                                            )
+                                       ])
+                            )
+                        ]))
+
+            class ParamChanger(cst.CSTTransformer):
+                def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
+                    return self._process_parameter(updated_node, ann)
+
+            updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
+
+            if updated_node.returns is None or self.override_annotations:
                 annotation = self._try_rename_to_self(ann.retval)
                 if self._is_valid(annotation):
-                    annotation_expr = cst.parse_expression(annotation)
-                    annotation_expr = self._rename_types(annotation_expr)
-                    unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
-                    self.unknown_types |= unknown_types
 
-                    if not self.has_future_annotations and (unknown_types - _TYPING_TYPES):
-                        annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
+                    annotation_expr = self._get_annotation_expr(annotation)
 
                     updated_node = updated_node.with_changes(
                         returns=cst.Annotation(annotation=annotation_expr),
@@ -438,7 +528,21 @@ class UnifiedTransformer(cst.CSTTransformer):
                     body=updated_node.body.with_changes(
                         header=cst.TrailingWhitespace()))
 
+            # FIXME this doesn't capture any non-inline typevar definitions
             self.change_list.append((key.func_name, original_node, updated_node))
+
+            if pre_function:
+                leading_lines = updated_node.leading_lines
+                first_comment = next((
+                        i
+                        for i, el in enumerate(leading_lines)
+                        if isinstance(el, cst.EmptyLine) and el.comment is not None
+                    ), None)
+                if first_comment is not None:
+                    pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:first_comment])
+                    updated_node = updated_node.with_changes(leading_lines=leading_lines[first_comment:])
+
+                return cst.FlattenSentinel([*pre_function, updated_node])
 
         return updated_node
 
@@ -591,6 +695,12 @@ class UnifiedTransformer(cst.CSTTransformer):
         ]
 
 
+    def transform_code(self: typing.Self, code: cst.Module) -> cst.Module:
+        """Applies this transformer to a module."""
+        wrapper = MetadataWrapper(code)
+        return wrapper.visit(self)
+
+
 def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:
     """Extracts all type names included in a type annotation."""
 
@@ -682,11 +792,11 @@ def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
     return names
 
 
-def list_rindex(l: list, item: object) -> int:
+def list_rindex(lst: list, item: object) -> int:
     """Returns either a negative index for the last occurrence of 'item' on the list,
        or 0 if not found."""
     try:
-        return -1 - l[::-1].index(item)
+        return -1 - lst[::-1].index(item)
     except ValueError:
         return 0
 

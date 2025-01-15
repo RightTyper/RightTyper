@@ -1,18 +1,18 @@
-from righttyper.righttyper_types import TypeInfo, TypeInfoSet
-from righttyper.righttyper_utils import union_typeset_str
+from righttyper.righttyper_types import TypeInfo, TypeInfoSet, NoneTypeInfo, Sample
+from righttyper.typeinfo import union_typeset_str
+import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
 from collections import namedtuple
-from typing import Any
+from typing import Any, Callable
 import pytest
 import importlib
+import types
 
 
 def get_full_type(*args, **kwargs) -> str:
-    import righttyper.righttyper_runtime as rt
     return str(rt.get_full_type(*args, **kwargs))
 
 def type_from_annotations(*args, **kwargs) -> str:
-    import righttyper.righttyper_runtime as rt
     return str(rt.type_from_annotations(*args, **kwargs))
 
 
@@ -22,6 +22,8 @@ class IterableClass(Iterable):
 
 
 def test_get_full_type():
+    assert NoneTypeInfo is rt.get_full_type(None)
+
     assert "bool" == get_full_type(True)
     assert "bool" == get_full_type(False)
     assert "int" == get_full_type(10)
@@ -240,6 +242,46 @@ def test_typeinfo():
     assert "int" == str(TypeInfo("", "int"))
     assert "tuple[bool]" == str(TypeInfo("", "tuple", args=('bool',)))
 
+    t = TypeInfo.from_type(type(None))
+    assert t.module == ''
+    assert t.name == 'None'
+    assert t.type_obj is type(None)
+    assert str(t) == "None"
+
+
+def test_typeinfo_from_set():
+    t = TypeInfo.from_set(TypeInfoSet({}))
+    assert t == NoneTypeInfo    # or should this be Never ?
+
+    t = TypeInfo.from_set(TypeInfoSet({
+            TypeInfo.from_type(int)
+        }))
+
+    assert str(t) == 'builtins.int'
+    assert t.name == 'int'
+    assert not t.args
+
+    assert t is not TypeInfo.from_type(int) # should be new object
+    assert t.type_obj is int
+
+    t = TypeInfo.from_set(TypeInfoSet({
+            TypeInfo.from_type(int),
+            TypeInfo.from_type(bool)
+        }))
+
+    assert str(t) == 'builtins.bool|builtins.int'
+
+    t = TypeInfo.from_set(TypeInfoSet({
+            TypeInfo.from_type(int),
+            TypeInfo.from_type(type(None)),
+            TypeInfo.from_type(bool),
+            TypeInfo(module='', name='z')
+        }))
+
+    assert str(t) == 'builtins.bool|builtins.int|z|None'
+    assert isinstance(t.args[-1], TypeInfo)
+    assert t.args[-1].name == 'None'
+
 
 def test_union_typeset():
     assert "None" == union_typeset_str(TypeInfoSet({}))
@@ -253,7 +295,7 @@ def test_union_typeset():
     )
 
     assert "bool|int|None" == union_typeset_str({
-            TypeInfo("", "None"),
+            TypeInfo.from_type(type(None)),
             TypeInfo("", "bool"),
             TypeInfo("", "int"),
         }
@@ -264,7 +306,7 @@ def test_union_typeset_generics():
     assert "list[bool|int]|None" == union_typeset_str({
             TypeInfo("", "list", args=(TypeInfo("", "int"),)),
             TypeInfo("", "list", args=(TypeInfo("", "bool"),)),
-            TypeInfo("", "None")
+            TypeInfo.from_type(type(None))
         }
     )
 
@@ -301,6 +343,7 @@ def test_union_typeset_generics():
 
 
 def test_union_typeset_generics_str_not_merged():
+    # the [...] parameters in Callable are passed as a string, which we don't merge (yet)
     assert "Callable[[], None]|Callable[[int], None]" == union_typeset_str({
             TypeInfo("", "Callable", args=(
                 "[], None",
@@ -355,6 +398,87 @@ def test_union_typeset_generics_superclass():
     assert f"list[{__name__}.{B.__qualname__}]|None" == union_typeset_str({
             TypeInfo("", "list", args=(TypeInfo.from_type(C),)),
             TypeInfo("", "list", args=(TypeInfo.from_type(D),)),
-            TypeInfo("", "None")
+            TypeInfo.from_type(type(None))
         }
     )
+
+str_ti = TypeInfo("", "str", type_obj=str)
+int_ti = TypeInfo("", "int", type_obj=int)
+bool_ti = TypeInfo("", "bool", type_obj=bool)
+any_ti = TypeInfo("typing", "Any")
+generator_ti = lambda *a: TypeInfo("typing", "Generator", tuple(a))
+iterator_ti = lambda *a: TypeInfo("typing", "Iterator", tuple(a))
+union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.UnionType)
+
+def generate_sample(func: Callable, *args) -> Sample:
+    import righttyper.righttyper_runtime as rt
+
+    res = func(*args)
+    sample = Sample(tuple(rt.get_full_type(arg) for arg in args))
+    if type(res).__name__ == "generator":
+        try:
+            while True:
+                nex = next(res) # this can fail
+                sample.yields.add(rt.get_full_type(nex))
+        except StopIteration as e:
+            if e.value is not None:
+                sample.returns = rt.get_full_type(e.value)
+    else:
+        sample.returns = rt.get_full_type(res)
+
+    return sample
+
+
+def test_sample_process_simple():
+    def dog(a):
+        return a
+
+    sample = generate_sample(dog, "hi")
+    assert sample == Sample((str_ti,), returns=str_ti)
+    assert sample.process() == (str_ti, str_ti)
+
+
+def test_sample_process_generator():
+    def dog(a, b):
+        yield a
+        return b
+
+    sample = generate_sample(dog, 1, "hi")
+    assert sample == Sample((int_ti, str_ti,), {int_ti}, str_ti)
+    assert sample.process() == (int_ti, str_ti, generator_ti(int_ti, any_ti, str_ti))
+
+
+def test_sample_process_iterator_union():
+    def dog(a, b):
+        yield a
+        yield b
+
+    sample = generate_sample(dog, 1, "hi")
+    assert sample == Sample((int_ti, str_ti,), yields={int_ti, str_ti})
+    assert sample.process() == (int_ti, str_ti, iterator_ti(union_ti(int_ti, str_ti)))
+
+
+def test_sample_process_iterator():
+    def dog(a):
+        yield a
+
+    sample = generate_sample(dog, "hi")
+    assert sample == Sample((str_ti,), yields={str_ti})
+    assert sample.process() == (str_ti, iterator_ti((str_ti)))
+
+
+def test_sample_process_generator_union():
+    def dog(a, b, c):
+        yield a
+        yield b
+        return c
+
+    sample = generate_sample(dog, 1, "hi", True)
+    assert sample == Sample((int_ti, str_ti, bool_ti,), {int_ti, str_ti}, bool_ti)
+    assert sample.process() == (int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), any_ti, bool_ti))
+
+
+def test_sample_process_asynciterator():
+    # TODO: do with real async test
+    sample = Sample(tuple(), yields={TypeInfo("builtins", "async_generator_wrapped_value")})
+    assert sample.process() == (TypeInfo("typing", "AsyncIterator", (any_ti,)),)
