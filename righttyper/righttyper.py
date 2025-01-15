@@ -186,30 +186,30 @@ class Observations:
                       f"{[tuple(str(t) for t in s) for s in samples]}")
                 return None
 
-            # Annotations are pickled by 'multiprocessing', but types defined
-            # in '__main__' aren't pickleable because they don't exist in the
-            # multiprocessing subprocess' __main__.
+            # Annotations are pickled by 'multiprocessing', but many type objects
+            # (such as local ones, or from __main__) aren't pickleable.
             class RemoveTypeObjTransformer(TypeInfo.Transformer):
                 def visit(vself, node: TypeInfo) -> TypeInfo:
-                    if node.type_obj and node.type_obj.__module__ == "__main__":
+                    if node.type_obj:
                         node = node.replace(type_obj=None)
                     return super().visit(node)
 
             tr = RemoveTypeObjTransformer()
-            signature = list(map(tr.visit, signature))
 
             return FuncAnnotation(
                 args=[
                     (
                         arg.arg_name,
-                        union_typeset(TypeInfoSet((
-                            signature[i],
-                            *((arg.default,) if arg.default is not None else ())
-                        )))
+                        tr.visit(
+                            union_typeset(TypeInfoSet((
+                                signature[i],
+                                *((arg.default,) if arg.default is not None else ())
+                            )))
+                        )
                     )
                     for i, arg in enumerate(args)
                 ],
-                retval=signature[-1]
+                retval=tr.visit(signature[-1])
             )
 
         class T(TypeInfo.Transformer):

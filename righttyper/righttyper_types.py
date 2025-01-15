@@ -46,10 +46,10 @@ class TypeInfo:
 
 
     def __str__(self: Self) -> str:
-        if self.typevar_name:
+        if self.typevar_name: # FIXME subclass?
             return self.typevar_name
 
-        if self.type_obj == types.UnionType:
+        if self.module == "types" and self.name == "UnionType": # FIXME subclass?
             return "|".join(str(a) for a in self.args)
         
         module = self.module + '.' if self.module else ''
@@ -124,6 +124,7 @@ class TypeInfo:
             return node
 
 
+# FIXME make Singleton using __new__
 NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
 
 
