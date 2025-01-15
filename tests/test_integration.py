@@ -1603,3 +1603,45 @@ def test_self_parameter(tmp_cwd):
 
     assert "def foo(self: Self) -> list[Self]" in Path("t.py").read_text()
 
+
+def test_self_yield(tmp_cwd):
+    t = textwrap.dedent("""\
+        class MyClass:
+            def __init__(self):
+                pass
+            def foo(self):
+                yield self
+        
+        for _ in MyClass().foo(): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def foo(self: Self) -> Iterator[Self]" in output
+
+
+def test_self_yield_generator(tmp_cwd):
+    t = textwrap.dedent("""\
+        class MyClass:
+            def __init__(self):
+                pass
+            def foo(self):
+                yield self
+                return self
+        
+        for _ in MyClass().foo(): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    print(output)
+    assert "def foo(self: Self) -> Generator[Self, Any, Self]" in output
+
