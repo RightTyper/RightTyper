@@ -148,15 +148,6 @@ class Observations:
         return False
 
 
-    def record_exception(self, func: FuncInfo, frame_id: int) -> None:
-        """Records an exception."""
-
-        # print(f"record_exception {func}")
-        if (sample := self.pending_samples.get((func, frame_id))):
-            # TODO record anything?
-            del self.pending_samples[(func, frame_id)]
-
-
     def _transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
 
@@ -306,35 +297,6 @@ def call_handler(
             )
 
     return sys.monitoring.DISABLE
-
-
-def exception_handler(
-    code: CodeType,
-    instruction_offset: int,
-    exception: BaseException,
-):
-    if should_skip_function(
-        code,
-        options.script_dir,
-        options.include_all,
-        options.include_files_pattern,
-        options.include_functions_pattern
-    ):
-        return
-
-    frame = inspect.currentframe()
-    if frame and frame.f_back: # FIXME DRY this
-        frame = frame.f_back
-        assert code == frame.f_code
-
-        t = FuncInfo(
-            Filename(code.co_filename),
-            code.co_firstlineno,
-            FunctionName(code.co_qualname),
-        )
-
-        obs.record_exception(t, id(frame))
-        del frame
 
 
 def yield_handler(
@@ -569,7 +531,6 @@ instrumentation_functions_code = set(
         call_handler.__code__,
         process_yield_or_return.__code__,
         restart_sampling.__code__,
-        exception_handler.__code__,
     ]
 )
 
@@ -955,7 +916,6 @@ def main(
             call_handler,
             return_handler,
             yield_handler,
-            exception_handler,
         )
         sys.monitoring.restart_events()
         setup_timer(restart_sampling)
