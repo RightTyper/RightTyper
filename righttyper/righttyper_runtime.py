@@ -237,7 +237,7 @@ def lookup_type_module(t: type) -> str:
 RANGE_ITER_TYPE = type(iter(range(1)))
 
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
-    """Returns a type's name as a string."""
+    """Returns a type's name as a TypeInfo object"""
 
     if depth > 255:
         # We have likely fallen into an infinite recursion.
@@ -376,6 +376,10 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
     elif isinstance(value, abc.Coroutine):
         any = TypeInfo("typing", "Any")
         return TypeInfo("typing", "Coroutine", args=(any, any, any))  # FIXME needs yield / send / return types
+    elif isinstance(value, type):
+        t = type(value)
+        args = (get_type_name(value, depth+1),)
+        return TypeInfo("", "type", args=args)
 
 
     if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):

@@ -30,6 +30,7 @@ from righttyper.righttyper_process import (
 )
 from righttyper.righttyper_runtime import (
     get_full_type,
+    lookup_type_module,
     should_skip_function,
 )
 from righttyper.righttyper_tool import (
@@ -387,6 +388,19 @@ def process_yield_or_return(
     return sys.monitoring.DISABLE if (options.sampling and found) else None
 
 
+def unwrap_method(method: Any) -> Callable | None:
+    """
+    Follows a chain of `__wrapped__` attributes to find the original function
+    """
+    visited_wrapped = set()
+    while hasattr(method, "__wrapped__"):
+        if method in visited_wrapped:
+            return None
+        visited_wrapped.add(method)
+        method = method.__wrapped__
+    return method
+
+
 def process_function_arguments(
     t: FuncInfo,
     frame_id: int,
@@ -405,11 +419,19 @@ def process_function_arguments(
         return None
 
     self_type: TypeInfo | None = None
+    first_arg: Any = None
     if args.args and function_object:
         first_arg = args.locals[args.args[0]]
+        # Check if this is a regular method
         for ancestor in first_arg.__class__.__mro__:
             if ancestor.__dict__.get(function_object.__name__, None) is function_object:
                 self_type = get_type(first_arg)
+        # Check if this is a class method
+        if first_arg.__class__ == type:
+            for ancestor in first_arg.__mro__:
+                print(ancestor.__dict__.get(function_object.__name__, None))
+                if unwrap_method(ancestor.__dict__.get(function_object.__name__, None)) is function_object:
+                    self_type = TypeInfo.from_type(first_arg, lookup_type_module(first_arg))
 
     obs.record_function(
         t, (
@@ -466,7 +488,7 @@ def find_functions(
             return
         visited_classes.add(class_obj)
         for name, obj in class_obj.__dict__.items():
-            if inspect.isfunction(obj):
+            if inspect.isfunction(unwrap_method(obj)):
                 yield from check_function(name, obj)
             elif inspect.isclass(obj):
                 yield from find_in_class(obj)
