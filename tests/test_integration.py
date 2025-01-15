@@ -1583,7 +1583,7 @@ def test_self_optional(tmp_cwd):
                     '--no-sampling', '--no-use-multiprocessing', 't.py'],
                    check=True)
 
-    assert "def foo(self: Self, return_none: bool) -> Self | None:" in Path("t.py").read_text()
+    assert "def foo(self: Self, return_none: bool) -> Self|None:" in Path("t.py").read_text()
 
 
 def test_self_parameter(tmp_cwd):
