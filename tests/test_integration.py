@@ -1384,3 +1384,115 @@ def test_custom_collection_sample_error(tmp_cwd, superclass, expected):
                     '--no-use-multiprocessing', '-m', 't'], check=True)
 
     assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
+
+
+def test_class_properties(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x = None
+
+            @property
+            def x(self):
+                return str(self._x)
+
+            @x.setter
+            def x(self, value):
+                self._x = value
+
+            @x.deleter
+            def x(self):
+                del self._x
+
+        c = C()
+        c.x = 10
+        y = c.x
+        del c.x
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+
+    assert "def __init__(self: Self) -> None:" in output
+
+    # TODO parse functions out so that the annotation is included
+    assert "def x(self: Self) -> str:" in output                # getter
+    assert "def x(self: Self, value: int) -> None:" in output   # setter
+    assert "def x(self: Self) -> None:" in output               # deleter
+
+
+def test_class_properties_no_setter(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x = 10
+
+            @property
+            def x(self):
+                return str(self._x)
+
+            @x.deleter
+            def x(self):
+                del self._x
+
+        c = C()
+        y = c.x
+        del c.x
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+
+    assert "def __init__(self: Self) -> None:" in output
+
+    # TODO parse functions out so that the annotation is included
+    assert "def x(self: Self) -> str:" in output                # getter
+    assert "def x(self: Self) -> None:" in output               # deleter
+
+
+def test_class_properties_inner_functions(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x = None
+
+            @property
+            def x(self):
+                def foo():
+                    return str(self._x)
+                return foo()
+
+            @x.setter
+            def x(self, value):
+                def foo(v):
+                    def bar():
+                        pass
+                    bar()
+                    return int(v)
+                self._x = foo(value)
+
+        c = C()
+        c.x = 10.0
+        y = c.x
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+
+    assert "def __init__(self: Self) -> None:" in output
+
+    # TODO parse functions out so that the annotation is included
+    assert "def foo() -> str:" in output            # getter's
+    assert "def foo(v: float) -> int:" in output     # setter's
+
+    # check for inner function's inner function
+    assert "def bar() -> None:" in output

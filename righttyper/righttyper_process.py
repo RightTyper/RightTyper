@@ -111,7 +111,7 @@ def process_file(
     )
 
     try:
-        transformed = cst_tree.visit(transformer)
+        transformed = transformer.transform_code(cst_tree)
     except TypeError:
         # This happens when "Mock" is passed around.
         print(f"Failed to transform {filename}.")

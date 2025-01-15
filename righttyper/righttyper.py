@@ -262,6 +262,7 @@ def enter_handler(code: CodeType, offset: int) -> Any:
 
         t = FuncInfo(
             Filename(code.co_filename),
+            code.co_firstlineno,
             FunctionName(code.co_qualname),
         )
 
@@ -328,6 +329,7 @@ def exception_handler(
 
         t = FuncInfo(
             Filename(code.co_filename),
+            code.co_firstlineno,
             FunctionName(code.co_qualname),
         )
 
@@ -405,6 +407,7 @@ def process_yield_or_return(
 
         t = FuncInfo(
             Filename(code.co_filename),
+            code.co_firstlineno,
             FunctionName(code.co_qualname),
         )
 

@@ -18,6 +18,7 @@ Typename = NewType("Typename", str)
 @dataclass(eq=True, frozen=True)
 class FuncInfo:
     file_name: Filename
+    first_code_line: int
     func_name: FunctionName
 
 

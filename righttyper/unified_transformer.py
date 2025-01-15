@@ -3,6 +3,7 @@ import builtins
 import collections.abc as abc
 import libcst as cst
 import libcst.matchers as cstm
+from libcst.metadata import MetadataWrapper, PositionProvider
 import re
 
 from righttyper.righttyper_types import (
@@ -96,6 +97,8 @@ def _quote(s: str) -> str:
 
 
 class UnifiedTransformer(cst.CSTTransformer):
+    METADATA_DEPENDENCIES = (PositionProvider,)
+
     def __init__(
         self,
         filename: str,
@@ -432,7 +435,12 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.name_stack.pop()
         self.name_stack.pop()
         self.used_names.pop()
-        key = FuncInfo(Filename(self.filename), FunctionName(name))
+
+        first_line = min(
+            self.get_metadata(PositionProvider, node).start.line
+            for node in (original_node, *original_node.decorators)
+        )
+        key = FuncInfo(Filename(self.filename), first_line, FunctionName(name))
 
         if ann := typing.cast(FuncAnnotation, self.type_annotations.get(key)):  # cast to make mypy happy
             pre_function = []
@@ -685,6 +693,12 @@ class UnifiedTransformer(cst.CSTTransformer):
             )
             if new_sig != old_sig
         ]
+
+
+    def transform_code(self: typing.Self, code: cst.Module) -> cst.Module:
+        """Applies this transformer to a module."""
+        wrapper = MetadataWrapper(code)
+        return wrapper.visit(self)
 
 
 def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:

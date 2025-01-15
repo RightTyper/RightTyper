@@ -150,6 +150,7 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
     return TypeInfo("typing", "Callable", args=args,
                     func=FuncInfo(
                         Filename(func.__code__.co_filename),
+                        func.__code__.co_firstlineno,
                         FunctionName(func.__qualname__)
                     ),
                     is_bound=isinstance(func, MethodType)

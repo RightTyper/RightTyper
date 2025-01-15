@@ -1,5 +1,6 @@
 import libcst as cst
 import libcst.matchers as cstm
+from libcst.metadata import MetadataWrapper, PositionProvider
 import textwrap
 from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation, used_names
 from righttyper.righttyper_types import (
@@ -19,8 +20,10 @@ import pytest
 import re
 
 
-def get_function(m: cst.Module, name: str) -> str|None:
+def find_function(m: cst.Module, name: str) -> tuple[cst.FunctionDef, int]|None:
     class V(cst.CSTVisitor):
+        METADATA_DEPENDENCIES = (PositionProvider,)
+
         def __init__(self):
             self.found = None
             self.name_stack = []
@@ -36,7 +39,12 @@ def get_function(m: cst.Module, name: str) -> str|None:
             qual_name = ".".join(self.name_stack)
             self.name_stack.append("<locals>")
             if qual_name == name:
-                self.found = node
+                first_line = min(
+                    self.get_metadata(PositionProvider, node).start.line
+                    for node in (node, *node.decorators)
+                )
+
+                self.found = (node, first_line)
                 return False # stop here
             return True
 
@@ -44,9 +52,31 @@ def get_function(m: cst.Module, name: str) -> str|None:
             self.name_stack.pop()
             self.name_stack.pop()
 
+    wrapper = MetadataWrapper(m)
     v = V()
-    m.visit(v)
-    return cst.Module([v.found]).code.lstrip('\n') if v.found else None
+    wrapper.visit(v)
+
+    return v.found
+
+
+def get_function(m: cst.Module, funcname: str) -> str|None:
+    """Returns the given function as a string, if found in 'm'"""
+    if (f := find_function(m, funcname)):
+        return cst.Module([f[0]]).code.lstrip('\n')
+
+    return None
+
+
+def get_funcinfo(filename: str, m: cst.Module, funcname: str) -> FuncInfo:
+    """Returns a FuncInfo for the given function, if found in 'm'"""
+    if (f := find_function(m, funcname)):
+        return FuncInfo(
+            Filename(filename),
+            f[1],
+            FunctionName(funcname)
+        )
+
+    raise RuntimeError(f"Unable to find {funcname}")
 
 
 def assert_regex(pattern: str, text: str|None) -> re.Match:
@@ -77,8 +107,8 @@ def test_transform_function():
             return z/2
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
-    baz = FuncInfo(Filename('foo.py'), FunctionName('baz'))
+    foo = get_funcinfo('foo.py', code, 'foo')
+    baz = get_funcinfo('foo.py', code, 'baz')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -101,7 +131,7 @@ def test_transform_function():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: int, y) -> float:
             return (x+y)/2
@@ -150,9 +180,9 @@ def test_transform_method():
                 return z/2
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('C.foo'))
-    bar = FuncInfo(Filename('foo.py'), FunctionName('C.bar'))
-    baz = FuncInfo(Filename('foo.py'), FunctionName('C.baz'))
+    foo = get_funcinfo('foo.py', code, 'C.foo')
+    bar = get_funcinfo('foo.py', code, 'C.bar')
+    baz = get_funcinfo('foo.py', code, 'C.baz')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -181,7 +211,7 @@ def test_transform_method():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'C.foo') == textwrap.dedent("""\
         def foo(self, x: int, y) -> float:
             return (x+y)/2
@@ -229,8 +259,8 @@ def test_transform_local_function():
             return bar(x+y)
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
-    bar = FuncInfo(Filename('foo.py'), FunctionName('foo.<locals>.bar'))
+    foo = get_funcinfo('foo.py', code, 'foo')
+    bar = get_funcinfo('foo.py', code, 'foo.<locals>.bar')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -254,7 +284,7 @@ def test_transform_local_function():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: int, y: float) -> float:
             def bar(z: int) -> float:
@@ -275,8 +305,8 @@ def test_override_annotations():
                 return x/2
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
-    bar = FuncInfo(Filename('foo.py'), FunctionName('C.bar'))
+    foo = get_funcinfo('foo.py', code, 'foo')
+    bar = get_funcinfo('foo.py', code, 'C.bar')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -300,7 +330,7 @@ def test_override_annotations():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: float) -> float:
             return x/2
@@ -317,7 +347,7 @@ def test_transform_adds_typing_import_for_typing_names():
         def foo(x): ...
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -337,7 +367,7 @@ def test_transform_adds_typing_import_for_typing_names():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: Optional[int]) -> list[Never]: ...
     """)
@@ -354,7 +384,7 @@ def test_transform_unknown_type_as_string():
             return x/2
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -379,7 +409,7 @@ def test_transform_unknown_type_as_string():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: int, y: "x.y.Something[\\"quoted\\"]|None") -> "x.z.FloatingPointNumber":
             return x/2
@@ -400,7 +430,7 @@ def test_transform_unknown_type_with_import_annotations():
             return x/2
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -425,7 +455,7 @@ def test_transform_unknown_type_with_import_annotations():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: int, y: x.y.WholeNumber|None) -> x.z.FloatingPointNumber:
             return x/2
@@ -450,7 +480,7 @@ def test_transform_deletes_type_hint_comments_in_header():
             pass
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -470,7 +500,7 @@ def test_transform_deletes_type_hint_comments_in_header():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: int, y: int) -> None:
             return (x+y)/2
@@ -500,7 +530,7 @@ def test_transform_deletes_type_hint_comments_in_parameters():
             pass
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -520,7 +550,7 @@ def test_transform_deletes_type_hint_comments_in_parameters():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(
             x: int,
@@ -556,7 +586,7 @@ def test_transform_deletes_type_hint_comments_for_retval():
             pass
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -574,7 +604,7 @@ def test_transform_deletes_type_hint_comments_for_retval():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(
             x,  # type: int
@@ -610,9 +640,9 @@ def test_transform_locally_defined_types():
             return F((x+y)/2)
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
-    f_foo = FuncInfo(Filename('foo.py'), FunctionName('F.foo'))
-    bar = FuncInfo(Filename('foo.py'), FunctionName('bar'))
+    foo = get_funcinfo('foo.py', code, 'foo')
+    f_foo = get_funcinfo('foo.py', code, 'F.foo')
+    bar = get_funcinfo('foo.py', code, 'bar')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -646,7 +676,7 @@ def test_transform_locally_defined_types():
             use_self = False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: int, y: int) -> "F":
             return F((x+y)/2)
@@ -678,7 +708,7 @@ def test_uses_imported_aliases():
         import r    # imported after 'def foo', so can't be used in annotation
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -705,7 +735,7 @@ def test_uses_imported_aliases():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: zed, y: T, z: A.c.T) -> "r.t.T": ...
     """)
@@ -730,7 +760,7 @@ def test_uses_imported_domains():
         import r    # imported after 'def foo', so can't be used in annotation
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -754,7 +784,7 @@ def test_uses_imported_domains():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: x.y.z, y: a.T) -> "r.t.T": ...
     """)
@@ -773,7 +803,7 @@ def test_imports_subdomain_if_needed():
         def foo(x): ...
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -797,7 +827,7 @@ def test_imports_subdomain_if_needed():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: "x.y.z") -> a.b: ...
     """)
@@ -822,7 +852,7 @@ def test_existing_typing_imports():
 
     import ast
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -844,7 +874,7 @@ def test_existing_typing_imports():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: "ast.If") -> Any: ...
     """)
@@ -878,7 +908,7 @@ def test_inserts_imports_after_docstring_and_space():
 
     import ast
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -899,7 +929,7 @@ def test_inserts_imports_after_docstring_and_space():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: ast.If) -> Any: ...
     """)
@@ -934,7 +964,7 @@ def test_relative_import():
         def foo(x, y, z): ...
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -958,7 +988,7 @@ def test_relative_import():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: b.T, y: c.T, z: X) -> None: ...
     """)
@@ -983,10 +1013,10 @@ def test_uses_local_imports():
         def f(a, b): ...
     """))
 
-    foobar = FuncInfo(Filename('foo.py'), FunctionName('foo.<locals>.bar'))
-    Cfoo = FuncInfo(Filename('foo.py'), FunctionName('C.foo'))
-    Dfoo = FuncInfo(Filename('foo.py'), FunctionName('C.D.foo'))
-    f = FuncInfo(Filename('foo.py'), FunctionName('f'))
+    foobar = get_funcinfo('foo.py', code, 'foo.<locals>.bar')
+    Cfoo = get_funcinfo('foo.py', code, 'C.foo')
+    Dfoo = get_funcinfo('foo.py', code, 'C.D.foo')
+    f = get_funcinfo('foo.py', code, 'f')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1026,7 +1056,7 @@ def test_uses_local_imports():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo.<locals>.bar') == textwrap.dedent("""\
         def bar(x: m.n.T): ...
     """)
@@ -1060,8 +1090,8 @@ def test_nonglobal_imported_modules_are_ignored():
             pass
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
-    bar = FuncInfo(Filename('foo.py'), FunctionName('bar'))
+    foo = get_funcinfo('foo.py', code, 'foo')
+    bar = get_funcinfo('foo.py', code, 'bar')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1091,7 +1121,7 @@ def test_nonglobal_imported_modules_are_ignored():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: "a.T", y: "a.b.T") -> "a.c.T":
             import a.b
@@ -1125,8 +1155,8 @@ def test_nonglobal_assignments_are_ignored():
             pass
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
-    bar = FuncInfo(Filename('foo.py'), FunctionName('bar'))
+    foo = get_funcinfo('foo.py', code, 'foo')
+    bar = get_funcinfo('foo.py', code, 'bar')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1153,7 +1183,7 @@ def test_nonglobal_assignments_are_ignored():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: "a.T") -> None:
             a = Any
@@ -1179,7 +1209,7 @@ def test_if_type_checking_insertion():
         def foo(x): ...
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1201,7 +1231,7 @@ def test_if_type_checking_insertion():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     assert str(code.code).startswith(textwrap.dedent("""\
         from typing import TYPE_CHECKING, Any
@@ -1218,7 +1248,7 @@ def test_import_conflicts_with_import():
         def foo(x, y): ...
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1242,7 +1272,7 @@ def test_import_conflicts_with_import():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\) -> None: ...', get_function(code, 'foo'))
     m1, t1 = _split(m.group(1))
@@ -1273,7 +1303,7 @@ def test_import_conflicts_with_definitions():
         def foo(x, y): ...
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1297,7 +1327,7 @@ def test_import_conflicts_with_definitions():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\) -> None: ...', get_function(code, 'foo'))
     m1, t1 = _split(m.group(1))
@@ -1329,7 +1359,7 @@ def test_import_conflicts_with_assignments():
         c: int = 10
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1353,7 +1383,7 @@ def test_import_conflicts_with_assignments():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     m = assert_regex(r'def foo\(x: "(.*?)", y: "(.*?)"\) -> None: ...', get_function(code, 'foo'))
     m1, t1 = _split(m.group(1))
@@ -1384,7 +1414,7 @@ def test_import_conflicts_with_with():
         def foo(x): ...
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1404,7 +1434,7 @@ def test_import_conflicts_with_with():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     m = assert_regex(r'def foo\(x: "(.*?)"\) -> None: ...', get_function(code, 'foo'))
     m1, t1 = _split(m.group(1))
@@ -1427,7 +1457,7 @@ def test_import_conflicts_alias_for_module():
         def foo(x): ...
     """))
 
-    foo = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    foo = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1447,7 +1477,7 @@ def test_import_conflicts_alias_for_module():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     m = assert_regex(r'def foo\(x: "(.*?)"\) -> None: ...', get_function(code, 'foo'))
     m1, t1 = _split(m.group(1))
@@ -1477,7 +1507,7 @@ def test_builtin_name_conflicts():
             pass
     """))
 
-    f = FuncInfo(Filename('foo.py'), FunctionName('C.f'))
+    f = get_funcinfo('foo.py', code, 'C.f')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1496,7 +1526,7 @@ def test_builtin_name_conflicts():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     assert get_function(code, 'C.f') == textwrap.dedent("""\
         def f(self) -> "builtins.tuple[builtins.int, float]":
@@ -1521,7 +1551,7 @@ def test_class_names_dont_affect_body_of_methods():
                 pass
     """))
 
-    g = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.g'))
+    g = get_funcinfo('foo.py', code, 'C.f.<locals>.g')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1540,7 +1570,7 @@ def test_class_names_dont_affect_body_of_methods():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     assert get_function(code, 'C.f.<locals>.g') == textwrap.dedent("""\
         def g(x) -> "builtins.tuple[int]":
@@ -1573,10 +1603,10 @@ def test_inner_function():
                         pass
     """))
 
-    g = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.g'))
-    h = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.g.<locals>.h'))
-    i = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.D.i'))
-    j = FuncInfo(Filename('foo.py'), FunctionName('C.f.<locals>.D.i.<locals>.j'))
+    g = get_funcinfo('foo.py', code, 'C.f.<locals>.g')
+    h = get_funcinfo('foo.py', code, 'C.f.<locals>.g.<locals>.h')
+    i = get_funcinfo('foo.py', code, 'C.f.<locals>.D.i')
+    j = get_funcinfo('foo.py', code, 'C.f.<locals>.D.i.<locals>.j')
     tuple_int_float = TypeInfo.from_type(tuple, args=(
         TypeInfo.from_type(int, module=''),
         TypeInfo.from_type(float, module='')
@@ -1598,7 +1628,7 @@ def test_inner_function():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     assert get_function(code, 'C.f.<locals>.g') == textwrap.dedent("""\
         def g(x) -> "builtins.tuple[builtins.int, float]":
@@ -1634,7 +1664,7 @@ def test_builtin_name_conflicts_even_module_name():
             pass
     """))
 
-    f = FuncInfo(Filename('foo.py'), FunctionName('C.f'))
+    f = get_funcinfo('foo.py', code, 'C.f')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1656,7 +1686,7 @@ def test_builtin_name_conflicts_even_module_name():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     m = assert_regex(r'def f\(self\) -> \"(.*?)\":', get_function(code, 'C.f'))
     types = types_in_annotation(cst.parse_expression(m.group(1)))
@@ -1744,7 +1774,7 @@ def test_generics_inline_simple():
     """))
 
     T1 = make_typevar([str, int], 1)
-    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
+    f = get_funcinfo('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1762,7 +1792,7 @@ def test_generics_inline_simple():
             inline_generics=True
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     assert get_function(code, 'add') == textwrap.dedent("""\
         def add[T1: (int, str)](a: T1, b: T1) -> T1:
@@ -1778,7 +1808,7 @@ def test_generics_arg_already_annotated(override):
     """))
 
     T1 = make_typevar([str, int], 1)
-    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
+    f = get_funcinfo('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1796,7 +1826,7 @@ def test_generics_arg_already_annotated(override):
             inline_generics=True
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     if override:
         assert get_function(code, 'add') == textwrap.dedent("""\
@@ -1818,7 +1848,7 @@ def test_generics_ret_already_annotated(override):
     """))
 
     T1 = make_typevar([str, int], 1)
-    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
+    f = get_funcinfo('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1836,7 +1866,7 @@ def test_generics_ret_already_annotated(override):
             inline_generics=True
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     if override:
         assert get_function(code, 'add') == textwrap.dedent("""\
@@ -1857,7 +1887,7 @@ def test_generics_already_annotated_no_overlap():
     """))
 
     T1 = make_typevar([str, int], 1)
-    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
+    f = get_funcinfo('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1874,7 +1904,7 @@ def test_generics_already_annotated_no_overlap():
             inline_generics=True
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     assert get_function(code, 'add') == textwrap.dedent("""\
         def add[T1: (int, str)](a: T1, b: bool) -> T1:
@@ -1890,7 +1920,7 @@ def test_generics_existing_generics():
     """))
 
     T1 = make_typevar([str, int], 1)
-    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
+    f = get_funcinfo('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1907,7 +1937,7 @@ def test_generics_existing_generics():
             inline_generics=True
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     assert get_function(code, 'add') == textwrap.dedent("""\
         def add[X: (int, bool)](a: int|str, b: X) -> int|str:
@@ -1923,7 +1953,7 @@ def test_generics_inline_multiple():
 
     T1 = make_typevar([int, str], 1)
     T2 = make_typevar([int, str], 2)
-    f = FuncInfo(Filename('foo.py'), FunctionName('foo'))
+    f = get_funcinfo('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1943,7 +1973,7 @@ def test_generics_inline_multiple():
             inline_generics=True
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo[T1: (int, str), T2: (int, str)](a: T1, b: T1, c: T2, d: T2) -> None:
@@ -1958,7 +1988,7 @@ def test_generics_inline_nested():
     """))
 
     T1 = make_typevar([int, str], 1)
-    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
+    f = get_funcinfo('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1976,7 +2006,7 @@ def test_generics_inline_nested():
             inline_generics=True
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     assert get_function(code, 'add') == textwrap.dedent("""\
         def add[T1: (int, str)](a: T1, b: list[T1]) -> list[T1]:
@@ -1991,7 +2021,7 @@ def test_generics_defined_simple():
     """))
 
     T1 = make_typevar([int, str], 1)
-    f = FuncInfo(Filename('foo.py'), FunctionName('add'))
+    f = get_funcinfo('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -2009,7 +2039,7 @@ def test_generics_defined_simple():
             inline_generics=False
         )
 
-    code = code.visit(t)
+    code = t.transform_code(code)
 
     assert 'rt_T1 = TypeVar("rt_T1", int, str)' in code.code
         
