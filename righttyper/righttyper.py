@@ -45,7 +45,6 @@ from righttyper.righttyper_types import (
     FuncInfo,
     FuncAnnotation,
     FunctionName,
-    Typename,
     TypeInfo,
     TypeInfoSet,
     Sample,
@@ -57,7 +56,6 @@ from righttyper.typeinfo import (
 from righttyper.righttyper_utils import (
     TOOL_ID,
     TOOL_NAME,
-    debug_print,
     debug_print_set_level,
     skip_this_file,
     get_main_module_fqn

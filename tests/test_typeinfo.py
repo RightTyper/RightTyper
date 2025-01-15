@@ -1,5 +1,4 @@
 from righttyper.righttyper_types import TypeInfo, TypeInfoSet
-from righttyper.typeinfo import union_typeset_str
 import righttyper.typeinfo
 
 
@@ -167,8 +166,8 @@ def test_generic_with_string():
 
 
 def test_is_typevar():
-    assert False == TypeInfo.from_type(int).is_typevar()
-    assert False == TypeInfo.from_set(TypeInfoSet((
+    assert not TypeInfo.from_type(int).is_typevar()
+    assert not TypeInfo.from_set(TypeInfoSet((
         TypeInfo("", "list", args=(
             TypeInfo.from_type(int),
         )),
@@ -176,7 +175,7 @@ def test_is_typevar():
         TypeInfo.from_type(bool),
     ))).is_typevar()
 
-    assert True == TypeInfo.from_set(
+    assert TypeInfo.from_set(
         TypeInfoSet((
             TypeInfo.from_type(int),
             TypeInfo.from_type(bool),
@@ -184,7 +183,7 @@ def test_is_typevar():
         typevar_index=1
     ).is_typevar()
 
-    assert True == TypeInfo("", "list", args=(
+    assert TypeInfo("", "list", args=(
         TypeInfo.from_set(
             TypeInfoSet((
                 TypeInfo.from_type(int),
