@@ -65,7 +65,7 @@ test-hints.py:
 barnacle
 
 - def barnacle(x):
-+ def barnacle(x: jaxtyping.Float64[np.ndarray, "10 dim0"]) -> jaxtyping.Float64[np.ndarray, "dim0"]:
++ def barnacle(x: jaxtyping.Float64[np.ndarray, "10 D1"]) -> jaxtyping.Float64[np.ndarray, "D1"]:
 
 fooq
 
