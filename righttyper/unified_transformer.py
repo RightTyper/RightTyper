@@ -528,7 +528,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                     body=updated_node.body.with_changes(
                         header=cst.TrailingWhitespace()))
 
-            # FIXME this doesn't capture any non-inline typevars
+            # FIXME this doesn't capture any non-inline typevar definitions
             self.change_list.append((key.func_name, original_node, updated_node))
 
             if pre_function:
