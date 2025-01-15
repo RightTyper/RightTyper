@@ -117,11 +117,11 @@ class Observations:
             )
 
 
-    def record_start(self, func: FuncInfo, frame_id: int, arg_types: tuple[TypeInfo, ...]) -> None:
+    def record_start(self, func: FuncInfo, frame_id: int, arg_types: tuple[TypeInfo, ...], self_type: TypeInfo | None) -> None:
         """Records a function start."""
 
         # print(f"record_start {func}")
-        self.pending_samples[(func, frame_id)] = Sample(arg_types)
+        self.pending_samples[(func, frame_id)] = Sample(arg_types, self_type=self_type)
 
 
     def record_yield(self, func: FuncInfo, frame_id: int, yield_type: TypeInfo) -> bool:
@@ -267,7 +267,7 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         else:
             defaults = {}
 
-        process_function_arguments(t, id(frame), inspect.getargvalues(frame), defaults)
+        process_function_arguments(t, id(frame), inspect.getargvalues(frame), defaults, function)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -391,7 +391,8 @@ def process_function_arguments(
     t: FuncInfo,
     frame_id: int,
     args: inspect.ArgInfo,
-    defaults: dict[str, tuple[Any]]
+    defaults: dict[str, tuple[Any]],
+    function_object: Callable | None
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
@@ -402,6 +403,13 @@ def process_function_arguments(
             return get_type(*def_value)
 
         return None
+
+    self_type: TypeInfo | None = None
+    if args.args and function_object:
+        first_arg = args.locals[args.args[0]]
+        for ancestor in first_arg.__class__.__mro__:
+            if ancestor.__dict__.get(function_object.__name__, None) is function_object:
+                self_type = get_type(first_arg)
 
     obs.record_function(
         t, (
@@ -430,7 +438,7 @@ def process_function_arguments(
         )
     )
 
-    obs.record_start(t, frame_id, arg_values)
+    obs.record_start(t, frame_id, arg_values, self_type)
 
 
 def find_functions(

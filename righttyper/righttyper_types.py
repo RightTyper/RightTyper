@@ -142,7 +142,7 @@ class Sample:
     args: tuple[TypeInfo, ...]
     yields: TypeInfoSet = field(default_factory=TypeInfoSet)
     returns: TypeInfo = NoneTypeInfo
-
+    self_type: TypeInfo | None = None
 
     def process(self) -> tuple[TypeInfo, ...]:
         retval = self.returns
@@ -168,4 +168,16 @@ class Sample:
             else:
                 retval = TypeInfo("typing", "Generator", (y, TypeInfo("typing", "Any"), self.returns))
 
-        return (*self.args, retval)
+        # This is an aggressive algorithm for transforming types
+        def convert(type: TypeInfo):
+            if self.self_type and self.self_type.type_obj and type.type_obj and type.type_obj in self.self_type.type_obj.__mro__:
+                return TypeInfo("typing", "Self")
+            if self.self_type and str(self.self_type) == str(type):
+                return TypeInfo("typing", "Self")
+            return type
+
+        type_data = (*self.args, retval)
+        if self.self_type:
+            type_data = (*(convert(arg) for arg in type_data),)
+
+        return type_data
