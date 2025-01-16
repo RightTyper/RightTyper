@@ -426,12 +426,14 @@ def process_function_arguments(
         for ancestor in first_arg.__class__.__mro__:
             if ancestor.__dict__.get(function_object.__name__, None) is function_object:
                 self_type = get_type(first_arg)
+                break
         # Check if this is a class method
-        if first_arg.__class__ == type:
+        if first_arg.__class__ == type and self_type is None:
             for ancestor in first_arg.__mro__:
                 print(ancestor.__dict__.get(function_object.__name__, None))
                 if unwrap_method(ancestor.__dict__.get(function_object.__name__, None)) is function_object:
                     self_type = TypeInfo.from_type(first_arg, lookup_type_module(first_arg))
+                    break
 
     obs.record_function(
         t, (
