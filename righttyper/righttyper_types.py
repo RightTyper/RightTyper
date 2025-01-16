@@ -137,6 +137,20 @@ class ArgInfo:
     default: TypeInfo|None
 
 
+class SelfTransformer(TypeInfo.Transformer):
+    """Converts types to include self.
+    """
+    def __init__(self, self_type: TypeInfo):
+        self.self_type = self_type
+
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        if self.self_type and self.self_type.type_obj and node.type_obj and node.type_obj in self.self_type.type_obj.__mro__:
+            return TypeInfo("typing", "Self")
+        if self.self_type and str(self.self_type) == str(node):
+            return TypeInfo("typing", "Self")
+        return super().visit(node)
+
+
 @dataclass
 class Sample:
     args: tuple[TypeInfo, ...]
@@ -168,26 +182,10 @@ class Sample:
             else:
                 retval = TypeInfo("typing", "Generator", (y, TypeInfo("typing", "Any"), self.returns))
 
-        # This is an aggressive algorithm for transforming types
-        def convert(type: TypeInfo | str):
-            if isinstance(type, str):
-                return type
-            type = TypeInfo(
-                type.module,
-                type.name,
-                (*(convert(arg) for arg in type.args),),
-                type.func,
-                type.is_bound,
-                type.type_obj
-            )
-            if self.self_type and self.self_type.type_obj and type.type_obj and type.type_obj in self.self_type.type_obj.__mro__:
-                return TypeInfo("typing", "Self")
-            if self.self_type and str(self.self_type) == str(type):
-                return TypeInfo("typing", "Self")
-            return type
-
         type_data = (*self.args, retval)
+
         if self.self_type:
-            type_data = (*(convert(arg) for arg in type_data),)
+            self_transformer = SelfTransformer(self.self_type)
+            type_data = (*(self_transformer.visit(arg) for arg in type_data),)
 
         return type_data
