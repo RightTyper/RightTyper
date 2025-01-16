@@ -58,7 +58,7 @@ def test_builtins(tmp_cwd):
     assert "def func(s: slice) -> range" in output
 
     assert "import type" not in output
-    assert "def func2(t: type) -> str" in output
+    assert "def func2(t: type[str]) -> str" in output
 
     assert "import super" not in output
     assert "def func3(t: super) -> None" in output

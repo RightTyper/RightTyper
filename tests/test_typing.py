@@ -141,7 +141,7 @@ def test_get_full_type():
     assert "super" == get_full_type(super(IterableClass))
 
     assert "slice" == get_full_type(slice(0, 5, 1))
-    assert "type" == get_full_type(type(str))
+    assert "type[str]" == get_full_type(type(str))
     assert "super" == get_full_type(super(str))
 
     async def async_range(start):
