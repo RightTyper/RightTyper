@@ -30,7 +30,7 @@ from righttyper.righttyper_process import (
 )
 from righttyper.righttyper_runtime import (
     get_full_type,
-    lookup_type_module,
+    get_type_name,
     should_skip_function,
 )
 from righttyper.righttyper_tool import (
@@ -479,7 +479,7 @@ def process_function_arguments(
                 for ancestor in first_arg_class.__mro__:
                     if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
                         if first_arg is first_arg_class:
-                            return TypeInfo.from_type(first_arg, lookup_type_module(first_arg))
+                            return get_type_name(first_arg)
 
                         # normal method
                         return get_type(first_arg)
