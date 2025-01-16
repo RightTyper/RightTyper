@@ -2083,3 +2083,21 @@ def test_instrument_pytest():
                    '-m' 'pytest', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def f() -> Generator[int, int, None]" in output
+
+
+def test_numeric_subtypes(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x):
+            print(x)
+        
+        foo(1)
+        foo(0.5)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+
+    assert "def easy_merge(x: float) -> None:" in output
