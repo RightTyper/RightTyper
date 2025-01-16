@@ -176,17 +176,14 @@ class Sample:
                 """Converts self_type to "typing.Self"."""
 
                 def visit(vself, node: TypeInfo) -> TypeInfo:
-#                    if (
-#                        self.self_type and
-#                        self.self_type.type_obj and
-#                        node.type_obj and
-#                        node.type_obj in self.self_type.type_obj.__mro__
-#                    ):
-#                        return TypeInfo("typing", "Self")
+                    if (
+                        self.self_type and
+                        node.type_obj and
+                        self.self_type.type_obj in node.type_obj.__mro__
+                    ):
+                        return TypeInfo("typing", "Self")
 
-#                    if self.self_type and str(self.self_type) == str(node):
                     if node == self.self_type:
-                        print(f"self_type={self.self_type}")
                         return TypeInfo("typing", "Self")
 
                     return super().visit(node)

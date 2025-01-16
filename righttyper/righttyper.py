@@ -429,7 +429,7 @@ def process_function_arguments(
                 self_type = get_type(first_arg)
                 break
         # Check if this is a class method
-        if first_arg.__class__ == type and self_type is None:
+        if first_arg.__class__ is type and self_type is None:
             for ancestor in first_arg.__mro__:
                 if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
                     self_type = TypeInfo.from_type(first_arg, lookup_type_module(first_arg))

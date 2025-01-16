@@ -68,7 +68,6 @@ def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> Ty
     return TypeInfo(module, specific.__qualname__, type_obj=specific)
 
 
-
 def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
     """
     Processes a sequence of samples observed for function parameters and return values, looking

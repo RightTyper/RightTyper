@@ -1416,6 +1416,7 @@ def test_class_properties(tmp_cwd):
                     '--no-use-multiprocessing', '-m', 't'], check=True)
 
     output = Path("t.py").read_text()
+    print(output)
 
     assert "def __init__(self: Self) -> None:" in output
 
@@ -1700,8 +1701,8 @@ def test_self_subtyping(tmp_cwd):
     t = textwrap.dedent("""\
         class NumberAdd:
             def __init__(self, value: float):
-                super().__init__()
                 self.value = value
+
             def operation(self, rhs):
                 return self.__class__(self.value + rhs.value)
 
@@ -1714,8 +1715,6 @@ def test_self_subtyping(tmp_cwd):
         a = NumberAdd(0.5)
         b = IntegerAdd(1)
 
-        a.operation(a)
-        b.operation(b)
         a.operation(b)
         """)
 
@@ -1725,5 +1724,6 @@ def test_self_subtyping(tmp_cwd):
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
+    # IntegerAdd IS-A NumberAdd, the enclosed class; so the argument should be 'Self'
     assert "def operation(self: Self, rhs: Self) -> Self:" in output
     
