@@ -258,17 +258,8 @@ def enter_handler(code: CodeType, offset: int) -> Any:
             FunctionName(code.co_qualname),
         )
 
-        if function := next(find_functions(frame, code), None):
-            defaults = {
-                # use tuple to differentiate a None default from no default
-                param_name: (param.default,)
-                for param_name, param in inspect.signature(function).parameters.items()
-                if param.default != inspect._empty
-            }
-        else:
-            defaults = {}
-
-        process_function_arguments(t, id(frame), inspect.getargvalues(frame), defaults, code, function)
+        function = next(find_functions(frame, code), None)
+        process_function_arguments(t, id(frame), inspect.getargvalues(frame), code, function)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -406,13 +397,21 @@ def process_function_arguments(
     t: FuncInfo,
     frame_id: int,
     args: inspect.ArgInfo,
-    defaults: dict[str, tuple[Any]],
     code: CodeType,
     function: Callable|None
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
         return get_full_type(v, use_jaxtyping=options.infer_shapes)
+
+
+    defaults: dict[str, tuple[Any]] = {} if not function else {
+        # use tuple to differentiate a None default from no default
+        param_name: (param.default,)
+        for param_name, param in inspect.signature(function).parameters.items()
+        if param.default != inspect._empty
+    }
+
 
     def get_default_type(name: str) -> TypeInfo|None:
         if (def_value := defaults.get(name)):
@@ -425,25 +424,26 @@ def process_function_arguments(
             isinstance(attr, property)
         )
 
-    self_type: TypeInfo|None = None
-    if args.args:
-        first_arg = args.locals[args.args[0]]
+    def get_self_type() -> TypeInfo|None:
+        if args.args:
+            first_arg = args.locals[args.args[0]]
 
-        if isinstance(getattr(type(first_arg), code.co_name, None), property):
-            self_type = get_type(first_arg)
+            # @property?
+            if isinstance(getattr(type(first_arg), code.co_name, None), property):
+                return get_type(first_arg)
 
-        elif function:
-            # Check if this is a regular method
-            for ancestor in first_arg.__class__.__mro__:
-                if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
-                    self_type = get_type(first_arg)
-                    break
-            # Check if this is a class method
-            if first_arg.__class__ is type and self_type is None:
-                for ancestor in first_arg.__mro__:
+            if function:
+                # if type(first_arg) is type, we may have a @classmethod
+                first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
+
+                for ancestor in first_arg_class.__mro__:
                     if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
-                        self_type = TypeInfo.from_type(first_arg, lookup_type_module(first_arg))
-                        break
+                        if first_arg is first_arg_class:
+                            return TypeInfo.from_type(first_arg, lookup_type_module(first_arg))
+
+                        # normal method
+                        return get_type(first_arg)
+        return None
 
     obs.record_function(
         t, (
@@ -472,7 +472,7 @@ def process_function_arguments(
         )
     )
 
-    obs.record_start(t, frame_id, arg_values, self_type)
+    obs.record_start(t, frame_id, arg_values, get_self_type())
 
 
 def find_functions(
