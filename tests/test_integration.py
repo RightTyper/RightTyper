@@ -1694,3 +1694,36 @@ def test_self_yield_generator(tmp_cwd):
 
     print(output)
     assert "def foo(self: Self) -> Generator[Self, Any, Self]" in output
+
+
+def test_self_subtyping(tmp_cwd):
+    t = textwrap.dedent("""\
+        class NumberAdd:
+            def __init__(self, value: float):
+                super().__init__()
+                self.value = value
+            def operation(self, rhs):
+                return self.__class__(self.value + rhs.value)
+
+        class IntegerAdd(NumberAdd):
+            def __init__(self, value: int):
+                if value != round(value):
+                    raise ValueError()
+                super().__init__(value)
+
+        a = NumberAdd(0.5)
+        b = IntegerAdd(1)
+
+        a.operation(a)
+        b.operation(b)
+        a.operation(b)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def operation(self: Self, rhs: Self) -> Self:" in output
+    
