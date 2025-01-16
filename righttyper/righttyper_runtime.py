@@ -377,7 +377,6 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         any = TypeInfo("typing", "Any")
         return TypeInfo("typing", "Coroutine", args=(any, any, any))  # FIXME needs yield / send / return types
     elif isinstance(value, type):
-        t = type(value)
         args = (get_type_name(value, depth+1),)
         return TypeInfo("", "type", args=args)
 
