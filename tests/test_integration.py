@@ -1386,7 +1386,6 @@ def test_custom_collection_sample_error(tmp_cwd, superclass, expected):
     assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
 
 
-@pytest.mark.xfail(reason="temporarily broken")
 def test_class_properties(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
@@ -1426,7 +1425,6 @@ def test_class_properties(tmp_cwd):
     assert "def x(self: Self) -> None:" in output               # deleter
 
 
-@pytest.mark.xfail(reason="temporarily broken")
 def test_class_properties_no_setter(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         class C:

@@ -268,7 +268,7 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         else:
             defaults = {}
 
-        process_function_arguments(t, id(frame), inspect.getargvalues(frame), defaults, function)
+        process_function_arguments(t, id(frame), inspect.getargvalues(frame), defaults, code, function)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -407,7 +407,8 @@ def process_function_arguments(
     frame_id: int,
     args: inspect.ArgInfo,
     defaults: dict[str, tuple[Any]],
-    function: Callable | None
+    code: CodeType,
+    function: Callable|None
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
@@ -419,21 +420,30 @@ def process_function_arguments(
 
         return None
 
-    self_type: TypeInfo | None = None
-    first_arg: Any = None
-    if args.args and function:
+        is_property: bool = (
+            (attr := getattr(type(args.locals[args.args[0]]), code.co_name, None)) and
+            isinstance(attr, property)
+        )
+
+    self_type: TypeInfo|None = None
+    if args.args:
         first_arg = args.locals[args.args[0]]
-        # Check if this is a regular method
-        for ancestor in first_arg.__class__.__mro__:
-            if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
-                self_type = get_type(first_arg)
-                break
-        # Check if this is a class method
-        if first_arg.__class__ is type and self_type is None:
-            for ancestor in first_arg.__mro__:
+
+        if isinstance(getattr(type(first_arg), code.co_name, None), property):
+            self_type = get_type(first_arg)
+
+        elif function:
+            # Check if this is a regular method
+            for ancestor in first_arg.__class__.__mro__:
                 if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
-                    self_type = TypeInfo.from_type(first_arg, lookup_type_module(first_arg))
+                    self_type = get_type(first_arg)
                     break
+            # Check if this is a class method
+            if first_arg.__class__ is type and self_type is None:
+                for ancestor in first_arg.__mro__:
+                    if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
+                        self_type = TypeInfo.from_type(first_arg, lookup_type_module(first_arg))
+                        break
 
     obs.record_function(
         t, (
