@@ -29,7 +29,7 @@ from righttyper.righttyper_process import (
     SignatureChanges
 )
 from righttyper.righttyper_runtime import (
-    get_full_type,
+    get_value_type,
     get_type_name,
     should_skip_function,
 )
@@ -365,7 +365,7 @@ def process_yield_or_return(
             FunctionName(code.co_qualname),
         )
 
-        typeinfo = get_full_type(return_value, use_jaxtyping=options.infer_shapes)
+        typeinfo = get_value_type(return_value, use_jaxtyping=options.infer_shapes)
 
         if event_type == sys.monitoring.events.PY_YIELD:
             found = obs.record_yield(t, id(frame), typeinfo)
@@ -442,7 +442,7 @@ def process_function_arguments(
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
-        return get_full_type(v, use_jaxtyping=options.infer_shapes)
+        return get_value_type(v, use_jaxtyping=options.infer_shapes)
 
 
     defaults: dict[str, tuple[Any]] = {} if not function else {

@@ -302,9 +302,9 @@ def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
     return None
 
 
-def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
+def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
     """
-    get_full_type takes a value (an instance) as input and returns a string representing its type.
+    get_value_type takes a value (an instance) as input and returns a string representing its type.
 
     If the value is a collection, it randomly selects an element (or key-value pair) and determines their types.
     If the value is a tuple, it determines the types of all elements in the tuple.
@@ -326,7 +326,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         try:
             if value:
                 el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
-                args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
+                args = tuple(get_value_type(fld, depth=depth+1) for fld in el)
         except Exception: pass
         return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
     elif isinstance(value, (list, set)):
@@ -335,7 +335,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         try:
             if value:
                 el = sample_from_collection(value)
-                args = (get_full_type(el, depth=depth+1),)
+                args = (get_value_type(el, depth=depth+1),)
         except Exception: pass
         return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
     elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
@@ -343,7 +343,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         try:
             if value:
                 el = sample_from_collection(value)
-                args = (get_full_type(el, depth=depth+1),)
+                args = (get_value_type(el, depth=depth+1),)
         except Exception: pass
         return TypeInfo("typing", t.__qualname__, args=args)
     elif isinstance(value, abc.ItemsView):
@@ -351,7 +351,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
         try:
             if value:
                 el = sample_from_collection(value)
-                args = tuple(get_full_type(fld, depth=depth+1) for fld in el)
+                args = tuple(get_value_type(fld, depth=depth+1) for fld in el)
         except Exception: pass
         return TypeInfo("typing", "ItemsView", args=args)
     elif isinstance(value, tuple):
@@ -362,7 +362,7 @@ def get_full_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) ->
             args = tuple()
             try:
                 if value:
-                    args = tuple(get_full_type(fld, depth=depth+1) for fld in value)
+                    args = tuple(get_value_type(fld, depth=depth+1) for fld in value)
             except Exception: pass
             return TypeInfo("", "tuple", args=args)
     elif isinstance(value, (FunctionType, MethodType)):
