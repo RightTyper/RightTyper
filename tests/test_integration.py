@@ -1501,14 +1501,10 @@ def test_class_properties_inner_functions(tmp_cwd):
 def test_self_subtype(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         class MyClass:
-            def __init__(self):
-                pass
             def foo(self):
                 pass
         class MySubClass(MyClass):
-            def __init__(self):
-                super()
-                pass
+            pass
         
         a = MySubClass()
         a.foo()
@@ -1524,8 +1520,6 @@ def test_self_subtype(tmp_cwd):
 def test_self_subtype_returns(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         class MyClass:
-            def __init__(self):
-                pass
             def foo(self):
                 return self
 
@@ -1548,9 +1542,6 @@ def test_self_subtype_returns(tmp_cwd):
 def test_self_classmethod(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         class MyClass:
-            def __init__(self):
-                pass
-
             @classmethod
             def static_initializer(cls):
                 return cls()
@@ -1567,8 +1558,6 @@ def test_self_classmethod(tmp_cwd):
 def test_self_optional(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         class MyClass:
-            def __init__(self):
-                pass
             def foo(self, return_none):
                 if(return_none):
                     return None
@@ -1589,8 +1578,6 @@ def test_self_optional(tmp_cwd):
 def test_self_parameter(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         class MyClass:
-            def __init__(self):
-                pass
             def foo(self):
                 return [self, self]
         a = MyClass()
@@ -1607,8 +1594,6 @@ def test_self_parameter(tmp_cwd):
 def test_self_yield(tmp_cwd):
     t = textwrap.dedent("""\
         class MyClass:
-            def __init__(self):
-                pass
             def foo(self):
                 yield self
         
@@ -1627,8 +1612,6 @@ def test_self_yield(tmp_cwd):
 def test_self_yield_generator(tmp_cwd):
     t = textwrap.dedent("""\
         class MyClass:
-            def __init__(self):
-                pass
             def foo(self):
                 yield self
                 return self
