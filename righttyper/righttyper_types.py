@@ -137,26 +137,13 @@ class ArgInfo:
     default: TypeInfo|None
 
 
-class SelfTransformer(TypeInfo.Transformer):
-    """Converts types to include self.
-    """
-    def __init__(self, self_type: TypeInfo):
-        self.self_type = self_type
-
-    def visit(self, node: TypeInfo) -> TypeInfo:
-        if self.self_type and self.self_type.type_obj and node.type_obj and node.type_obj in self.self_type.type_obj.__mro__:
-            return TypeInfo("typing", "Self")
-        if self.self_type and str(self.self_type) == str(node):
-            return TypeInfo("typing", "Self")
-        return super().visit(node)
-
-
 @dataclass
 class Sample:
     args: tuple[TypeInfo, ...]
     yields: TypeInfoSet = field(default_factory=TypeInfoSet)
     returns: TypeInfo = NoneTypeInfo
     self_type: TypeInfo | None = None
+
 
     def process(self) -> tuple[TypeInfo, ...]:
         retval = self.returns
@@ -185,7 +172,27 @@ class Sample:
         type_data = (*self.args, retval)
 
         if self.self_type:
-            self_transformer = SelfTransformer(self.self_type)
-            type_data = (*(self_transformer.visit(arg) for arg in type_data),)
+            class SelfTransformer(TypeInfo.Transformer):
+                """Converts self_type to "typing.Self"."""
+
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+#                    if (
+#                        self.self_type and
+#                        self.self_type.type_obj and
+#                        node.type_obj and
+#                        node.type_obj in self.self_type.type_obj.__mro__
+#                    ):
+#                        return TypeInfo("typing", "Self")
+
+#                    if self.self_type and str(self.self_type) == str(node):
+                    if node == self.self_type:
+                        print(f"self_type={self.self_type}")
+                        return TypeInfo("typing", "Self")
+
+                    return super().visit(node)
+
+
+            tr = SelfTransformer()
+            type_data = (*(tr.visit(arg) for arg in type_data),)
 
         return type_data

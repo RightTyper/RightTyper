@@ -388,16 +388,17 @@ def process_yield_or_return(
     return sys.monitoring.DISABLE if (options.sampling and found) else None
 
 
-def unwrap_method(method: Any) -> Callable | None:
-    """
-    Follows a chain of `__wrapped__` attributes to find the original function
-    """
-    visited_wrapped = set()
+def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
+    """Follows a chain of `__wrapped__` attributes to find the original function."""
+
+    visited = set()         # there shouldn't be a loop, but just in case...
     while hasattr(method, "__wrapped__"):
-        if method in visited_wrapped:
+        if method in visited:
             return None
-        visited_wrapped.add(method)
-        method = method.__wrapped__
+        visited.add(method)
+
+        method = getattr(method, "__wrapped__")
+
     return method
 
 
@@ -406,7 +407,7 @@ def process_function_arguments(
     frame_id: int,
     args: inspect.ArgInfo,
     defaults: dict[str, tuple[Any]],
-    function_object: Callable | None
+    function: Callable | None
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
@@ -420,18 +421,17 @@ def process_function_arguments(
 
     self_type: TypeInfo | None = None
     first_arg: Any = None
-    if args.args and function_object:
+    if args.args and function:
         first_arg = args.locals[args.args[0]]
         # Check if this is a regular method
         for ancestor in first_arg.__class__.__mro__:
-            if ancestor.__dict__.get(function_object.__name__, None) is function_object:
+            if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
                 self_type = get_type(first_arg)
                 break
         # Check if this is a class method
         if first_arg.__class__ == type and self_type is None:
             for ancestor in first_arg.__mro__:
-                print(ancestor.__dict__.get(function_object.__name__, None))
-                if unwrap_method(ancestor.__dict__.get(function_object.__name__, None)) is function_object:
+                if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
                     self_type = TypeInfo.from_type(first_arg, lookup_type_module(first_arg))
                     break
 
@@ -473,35 +473,28 @@ def find_functions(
     Attempts to map back from a code object to the functions that use it.
     """
 
-    visited_wrapped = set()
-    visited_classes = set()
-
-    def check_function(name: str, obj: abc.Callable) -> abc.Iterator[abc.Callable]:
-        while hasattr(obj, "__wrapped__"):
-            if obj in visited_wrapped:
-                break
-            visited_wrapped.add(obj)
-            obj = obj.__wrapped__
-        if hasattr(obj, "__code__") and obj.__code__ is code:
-            yield obj
+    visited = set()
 
     def find_in_class(class_obj: object) -> abc.Iterator[abc.Callable]:
-        if class_obj in visited_classes:
+        if class_obj in visited:
             return
-        visited_classes.add(class_obj)
-        for name, obj in class_obj.__dict__.items():
-            if inspect.isfunction(unwrap_method(obj)):
-                yield from check_function(name, obj)
+        visited.add(class_obj)
+
+        for obj in class_obj.__dict__.values():
+            if isinstance(obj, (FunctionType, classmethod)):
+                if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
+                    yield obj
             elif inspect.isclass(obj):
                 yield from find_in_class(obj)
 
-    dicts: abc.Iterable[tuple[str, Any]] = caller_frame.f_globals.items()
+    dicts: abc.Iterable[Any] = caller_frame.f_globals.values()
     if caller_frame.f_back:
-        dicts = itertools.chain(caller_frame.f_back.f_locals.items(), dicts)
+        dicts = itertools.chain(caller_frame.f_back.f_locals.values(), dicts)
 
-    for name, obj in dicts:
-        if inspect.isfunction(obj):
-            yield from check_function(name, obj)
+    for obj in dicts:
+        if isinstance(obj, FunctionType):
+            if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
+                yield obj
         elif inspect.isclass(obj):
             yield from find_in_class(obj)
 
