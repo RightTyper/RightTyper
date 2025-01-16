@@ -118,7 +118,13 @@ class Observations:
             )
 
 
-    def record_start(self, func: FuncInfo, frame_id: int, arg_types: tuple[TypeInfo, ...], self_type: TypeInfo | None) -> None:
+    def record_start(
+        self,
+        func: FuncInfo,
+        frame_id: int,
+        arg_types: tuple[TypeInfo, ...],
+        self_type: TypeInfo|None
+    ) -> None:
         """Records a function start."""
 
         # print(f"record_start {func}")
