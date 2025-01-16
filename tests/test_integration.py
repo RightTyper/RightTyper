@@ -1724,4 +1724,32 @@ def test_self_subtyping(tmp_cwd):
 
     # IntegerAdd IS-A NumberAdd, the enclosed class; so the argument should be 'Self'
     assert "def operation(self: Self, rhs: Self) -> Self:" in output
-    
+
+
+def test_self_subtyping_reversed(tmp_cwd):
+    t = textwrap.dedent("""\
+        class NumberAdd:
+            def __init__(self, value: float):
+                self.value = value
+
+            def operation(self, rhs):
+                return self.__class__(self.value + rhs.value)
+
+        class IntegerAdd(NumberAdd):
+            def __init__(self, value: int):
+                super().__init__(round(value))
+
+        a = NumberAdd(0.5)
+        b = IntegerAdd(1)
+
+        b.operation(a)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    # The argument isn't Self as (NumberAdd IS-A IntegerAdd) doesn't hold
+    assert "def operation(self: Self, rhs: \"NumberAdd\") -> Self:" in output
