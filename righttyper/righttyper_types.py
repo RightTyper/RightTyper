@@ -140,6 +140,7 @@ class Sample:
     args: tuple[TypeInfo, ...]
     yields: TypeInfoSet = field(default_factory=TypeInfoSet)
     returns: TypeInfo = NoneTypeInfo
+    self_type: TypeInfo | None = None
 
 
     def process(self) -> tuple[TypeInfo, ...]:
@@ -166,4 +167,27 @@ class Sample:
             else:
                 retval = TypeInfo("typing", "Generator", (y, TypeInfo("typing", "Any"), self.returns))
 
-        return (*self.args, retval)
+        type_data = (*self.args, retval)
+
+        if self.self_type:
+            class SelfTransformer(TypeInfo.Transformer):
+                """Converts self_type to "typing.Self"."""
+
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    if (
+                        self.self_type and
+                        node.type_obj and
+                        self.self_type.type_obj in node.type_obj.__mro__
+                    ):
+                        return TypeInfo("typing", "Self")
+
+                    if node == self.self_type:
+                        return TypeInfo("typing", "Self")
+
+                    return super().visit(node)
+
+
+            tr = SelfTransformer()
+            type_data = (*(tr.visit(arg) for arg in type_data),)
+
+        return type_data

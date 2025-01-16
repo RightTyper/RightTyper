@@ -29,7 +29,8 @@ from righttyper.righttyper_process import (
     SignatureChanges
 )
 from righttyper.righttyper_runtime import (
-    get_full_type,
+    get_value_type,
+    get_type_name,
     should_skip_function,
 )
 from righttyper.righttyper_tool import (
@@ -115,11 +116,17 @@ class Observations:
             )
 
 
-    def record_start(self, func: FuncInfo, frame_id: int, arg_types: tuple[TypeInfo, ...]) -> None:
+    def record_start(
+        self,
+        func: FuncInfo,
+        frame_id: int,
+        arg_types: tuple[TypeInfo, ...],
+        self_type: TypeInfo|None
+    ) -> None:
         """Records a function start."""
 
         # print(f"record_start {func}")
-        self.pending_samples[(func, frame_id)] = Sample(arg_types)
+        self.pending_samples[(func, frame_id)] = Sample(arg_types, self_type=self_type)
 
 
     def record_yield(self, func: FuncInfo, frame_id: int, yield_type: TypeInfo) -> bool:
@@ -255,17 +262,8 @@ def enter_handler(code: CodeType, offset: int) -> Any:
             FunctionName(code.co_qualname),
         )
 
-        if function := next(find_functions(frame, code), None):
-            defaults = {
-                # use tuple to differentiate a None default from no default
-                param_name: (param.default,)
-                for param_name, param in inspect.signature(function).parameters.items()
-                if param.default != inspect._empty
-            }
-        else:
-            defaults = {}
-
-        process_function_arguments(t, id(frame), inspect.getargvalues(frame), defaults)
+        function = find_function(frame, code)
+        process_function_arguments(t, id(frame), inspect.getargvalues(frame), code, function)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -371,7 +369,7 @@ def process_yield_or_return(
             FunctionName(code.co_qualname),
         )
 
-        typeinfo = get_full_type(return_value, use_jaxtyping=options.infer_shapes)
+        typeinfo = get_value_type(return_value, use_jaxtyping=options.infer_shapes)
 
         if event_type == sys.monitoring.events.PY_YIELD:
             found = obs.record_yield(t, id(frame), typeinfo)
@@ -385,20 +383,110 @@ def process_yield_or_return(
     return sys.monitoring.DISABLE if (options.sampling and found) else None
 
 
+def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
+    """Follows a chain of `__wrapped__` attributes to find the original function."""
+
+    visited = set()         # there shouldn't be a loop, but just in case...
+    while hasattr(method, "__wrapped__"):
+        if method in visited:
+            return None
+        visited.add(method)
+
+        method = getattr(method, "__wrapped__")
+
+    return method
+
+
+def find_function(
+    caller_frame: FrameType,
+    code: CodeType
+) -> abc.Callable|None:
+    """Attempts to map back from a code object to the function that uses it."""
+
+    visited = set()
+
+    def find_in_class(class_obj: object) -> abc.Callable|None:
+        if class_obj in visited:
+            return None
+        visited.add(class_obj)
+
+        for obj in class_obj.__dict__.values():
+            if isinstance(obj, (FunctionType, classmethod)):
+                if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
+                    return obj
+
+            elif inspect.isclass(obj):
+                if (f := find_in_class(obj)):
+                    return f
+
+        return None
+
+    dicts: abc.Iterable[Any] = caller_frame.f_globals.values()
+    if caller_frame.f_back:
+        dicts = itertools.chain(caller_frame.f_back.f_locals.values(), dicts)
+
+    for obj in dicts:
+        if isinstance(obj, FunctionType):
+            if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
+                return obj
+
+        elif inspect.isclass(obj):
+            if (f := find_in_class(obj)):
+                return f
+
+    return None
+
+
 def process_function_arguments(
     t: FuncInfo,
     frame_id: int,
     args: inspect.ArgInfo,
-    defaults: dict[str, tuple[Any]]
+    code: CodeType,
+    function: Callable|None
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
-        return get_full_type(v, use_jaxtyping=options.infer_shapes)
+        return get_value_type(v, use_jaxtyping=options.infer_shapes)
+
+
+    defaults: dict[str, tuple[Any]] = {} if not function else {
+        # use tuple to differentiate a None default from no default
+        param_name: (param.default,)
+        for param_name, param in inspect.signature(function).parameters.items()
+        if param.default != inspect._empty
+    }
+
 
     def get_default_type(name: str) -> TypeInfo|None:
         if (def_value := defaults.get(name)):
             return get_type(*def_value)
 
+        return None
+
+        is_property: bool = (
+            (attr := getattr(type(args.locals[args.args[0]]), code.co_name, None)) and
+            isinstance(attr, property)
+        )
+
+    def get_self_type() -> TypeInfo|None:
+        if args.args:
+            first_arg = args.locals[args.args[0]]
+
+            # @property?
+            if isinstance(getattr(type(first_arg), code.co_name, None), property):
+                return get_type(first_arg)
+
+            if function:
+                # if type(first_arg) is type, we may have a @classmethod
+                first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
+
+                for ancestor in first_arg_class.__mro__:
+                    if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
+                        if first_arg is first_arg_class:
+                            return get_type_name(first_arg)
+
+                        # normal method
+                        return get_type(first_arg)
         return None
 
     obs.record_function(
@@ -428,48 +516,7 @@ def process_function_arguments(
         )
     )
 
-    obs.record_start(t, frame_id, arg_values)
-
-
-def find_functions(
-    caller_frame: FrameType,
-    code: CodeType
-) -> abc.Iterator[abc.Callable]:
-    """
-    Attempts to map back from a code object to the functions that use it.
-    """
-
-    visited_wrapped = set()
-    visited_classes = set()
-
-    def check_function(name: str, obj: abc.Callable) -> abc.Iterator[abc.Callable]:
-        while hasattr(obj, "__wrapped__"):
-            if obj in visited_wrapped:
-                break
-            visited_wrapped.add(obj)
-            obj = obj.__wrapped__
-        if hasattr(obj, "__code__") and obj.__code__ is code:
-            yield obj
-
-    def find_in_class(class_obj: object) -> abc.Iterator[abc.Callable]:
-        if class_obj in visited_classes:
-            return
-        visited_classes.add(class_obj)
-        for name, obj in class_obj.__dict__.items():
-            if inspect.isfunction(obj):
-                yield from check_function(name, obj)
-            elif inspect.isclass(obj):
-                yield from find_in_class(obj)
-
-    dicts: abc.Iterable[tuple[str, Any]] = caller_frame.f_globals.items()
-    if caller_frame.f_back:
-        dicts = itertools.chain(caller_frame.f_back.f_locals.items(), dicts)
-
-    for name, obj in dicts:
-        if inspect.isfunction(obj):
-            yield from check_function(name, obj)
-        elif inspect.isclass(obj):
-            yield from find_in_class(obj)
+    obs.record_start(t, frame_id, arg_values, get_self_type())
 
 
 def in_instrumentation_code(frame: FrameType) -> bool:
