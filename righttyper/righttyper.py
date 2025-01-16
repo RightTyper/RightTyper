@@ -258,7 +258,7 @@ def enter_handler(code: CodeType, offset: int) -> Any:
             FunctionName(code.co_qualname),
         )
 
-        function = next(find_functions(frame, code), None)
+        function = find_function(frame, code)
         process_function_arguments(t, id(frame), inspect.getargvalues(frame), code, function)
         del frame
 
@@ -393,6 +393,46 @@ def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
     return method
 
 
+def find_function(
+    caller_frame: FrameType,
+    code: CodeType
+) -> abc.Callable|None:
+    """Attempts to map back from a code object to the function that uses it."""
+
+    visited = set()
+
+    def find_in_class(class_obj: object) -> abc.Callable|None:
+        if class_obj in visited:
+            return None
+        visited.add(class_obj)
+
+        for obj in class_obj.__dict__.values():
+            if isinstance(obj, (FunctionType, classmethod)):
+                if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
+                    return obj
+
+            elif inspect.isclass(obj):
+                if (f := find_in_class(obj)):
+                    return f
+
+        return None
+
+    dicts: abc.Iterable[Any] = caller_frame.f_globals.values()
+    if caller_frame.f_back:
+        dicts = itertools.chain(caller_frame.f_back.f_locals.values(), dicts)
+
+    for obj in dicts:
+        if isinstance(obj, FunctionType):
+            if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
+                return obj
+
+        elif inspect.isclass(obj):
+            if (f := find_in_class(obj)):
+                return f
+
+    return None
+
+
 def process_function_arguments(
     t: FuncInfo,
     frame_id: int,
@@ -473,40 +513,6 @@ def process_function_arguments(
     )
 
     obs.record_start(t, frame_id, arg_values, get_self_type())
-
-
-def find_functions(
-    caller_frame: FrameType,
-    code: CodeType
-) -> abc.Iterator[abc.Callable]:
-    """
-    Attempts to map back from a code object to the functions that use it.
-    """
-
-    visited = set()
-
-    def find_in_class(class_obj: object) -> abc.Iterator[abc.Callable]:
-        if class_obj in visited:
-            return
-        visited.add(class_obj)
-
-        for obj in class_obj.__dict__.values():
-            if isinstance(obj, (FunctionType, classmethod)):
-                if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
-                    yield obj
-            elif inspect.isclass(obj):
-                yield from find_in_class(obj)
-
-    dicts: abc.Iterable[Any] = caller_frame.f_globals.values()
-    if caller_frame.f_back:
-        dicts = itertools.chain(caller_frame.f_back.f_locals.values(), dicts)
-
-    for obj in dicts:
-        if isinstance(obj, FunctionType):
-            if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
-                yield obj
-        elif inspect.isclass(obj):
-            yield from find_in_class(obj)
 
 
 def in_instrumentation_code(frame: FrameType) -> bool:
