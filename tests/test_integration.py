@@ -3899,4 +3899,4 @@ def test_numeric_subtypes(tmp_cwd):
 
     output = Path("t.py").read_text()
 
-    assert "def easy_merge(x: float) -> None:" in output
+    assert "def foo(x: float) -> None:" in output
