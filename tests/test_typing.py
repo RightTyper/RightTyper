@@ -13,7 +13,7 @@ def union_typeset_str(typeinfoset: TypeInfoSet) -> str:
     return str(union_typeset(typeinfoset))
 
 def get_value_type(*args, **kwargs) -> str:
-    return str(rt.get_full_type(*args, **kwargs))
+    return str(rt.get_value_type(*args, **kwargs))
 
 def type_from_annotations(*args, **kwargs) -> str:
     return str(rt.type_from_annotations(*args, **kwargs))
