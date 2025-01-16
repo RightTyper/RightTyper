@@ -40,7 +40,7 @@ def test_builtins(tmp_cwd):
         def func2(t):
             return t.__name__
 
-        print(func2(type(str)))
+        print(func2(str))
 
         def func3(t):
             pass
