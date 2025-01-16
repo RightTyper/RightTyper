@@ -1,6 +1,6 @@
 from righttyper.righttyper_types import TypeInfo, TypeInfoSet
-from righttyper.typeinfo import union_typeset_str
 import righttyper.typeinfo
+from typing import Any
 
 
 def ti(name: str, **kwargs) -> TypeInfo:
@@ -25,16 +25,17 @@ def generalize(samples):
     return result
 
 
-def test_empty():
+def test_generalize_empty():
     assert generalize([]) == []
     assert generalize([tuple()]) == []
 
 
-def test_single_sample():
+def test_generalize_single_sample():
     assert generalize([(ti('int'), ti('float'), ti('str'))]) == ['int', 'float', 'str']
+    assert generalize([(ti('int'), ti('int'), ti('int'))]) == ['int', 'int', 'int']
 
 
-def test_varied_length_samples():
+def test_generalize_varied_length_samples():
     samples = [
         (ti('int'), ti('int')),
         (ti('int'), ti('int'), ti('int')),
@@ -43,7 +44,7 @@ def test_varied_length_samples():
     assert generalize(samples) is None
 
 
-def test_uniform_single_type():
+def test_generalize_uniform_single_type():
     samples = [
         (ti('int'), ti('int'), ti('int')),
         (ti('bool'), ti('bool'), ti('bool')),
@@ -52,7 +53,7 @@ def test_uniform_single_type():
     assert generalize(samples) == ['T1', 'T1', 'T1']
 
 
-def test_uniform_single_type_with_generic():
+def test_generalize_uniform_single_type_with_generic():
     samples = [
         (ti('int'), ti('int')),
         (ti('bool'), ti('bool')),
@@ -62,7 +63,7 @@ def test_uniform_single_type_with_generic():
     assert generalize(samples) == ['T1', 'T1']
 
 
-def test_first_same_then_different():
+def test_generalize_first_same_then_different():
     samples = [
         (ti('int'), ti('int')),
         (ti('bool'), ti('bool')),
@@ -71,7 +72,7 @@ def test_first_same_then_different():
     assert generalize(samples) == ['bool|int', 'bool|int']
 
 
-def test_mixed_with_constant_types():
+def test_generalize_mixed_with_constant_types():
     samples = [
         (ti('int'), ti('str'), ti('int')),
         (ti('bool'), ti('str'), ti('float')),
@@ -80,7 +81,7 @@ def test_mixed_with_constant_types():
     assert generalize(samples) == ['bool|float|int', 'str', 'bool|float|int']
 
 
-def test_shared_variability():
+def test_generalize_shared_variability():
     samples = [
         (ti('int'), ti('int'), ti('bool'), ti('int')),
         (ti('float'), ti('float'), ti('bool'), ti('float'))
@@ -88,7 +89,7 @@ def test_shared_variability():
     assert generalize(samples) == ['T1', 'T1', 'bool', 'T1']
 
 
-def test_all_distinct_types():
+def test_generalize_all_distinct_types():
     samples = [
         (ti('int'), ti('str'), ti('float'), ti('bool')),
         (ti('float'), ti('str'), ti('bool'), ti('int'))
@@ -96,7 +97,7 @@ def test_all_distinct_types():
     assert generalize(samples) == ['float|int', 'str', 'bool|float', 'bool|int']
 
 
-def test_generic():
+def test_generalize_generic():
     samples = [
         (ti('int'), ti('list', args=(ti('int'),))),
         (ti('float'), ti('list', args=(ti('float'),))),
@@ -104,7 +105,7 @@ def test_generic():
     assert generalize(samples) == ['T1', 'list[T1]']
 
 
-def test_generic_not_generalizable():
+def test_generalize_generic_not_generalizable():
     samples = [
         (ti('int'), ti('list', args=(ti('int'),))),
         (ti('float'), ti('list', args=(ti('float'),))),
@@ -127,7 +128,7 @@ def test_generic_not_generalizable():
     assert generalize(samples) == ['bool|float|int', 'tuple[bool, int]|tuple[float|int]']
 
 
-def test_generic_among_options():
+def test_generalize_generic_among_options():
     samples = [
         (ti('int'), ti('list', args=(ti('int'),))),
         (ti('X', args=(ti('foo'),)), ti('list', args=(ti('X', args=(ti('foo'),)),))),
@@ -135,7 +136,7 @@ def test_generic_among_options():
     assert generalize(samples) == ['T1', 'list[T1]']
 
 
-def test_generic_within_args():
+def test_generalize_generic_within_args():
     samples = [
         (ti('tuple', args=(ti('int'),)), ti('list', args=(ti('int'),))),
         (ti('tuple', args=(ti('float'),)), ti('list', args=(ti('float'),))),
@@ -143,9 +144,7 @@ def test_generic_within_args():
     assert generalize(samples) == ['tuple[T1]', 'list[T1]']
 
 
-def test_generic_with_string():
-    from typing import Any
-
+def test_generalize_generic_with_string():
     samples: Any = [
         (ti('int'), ti('X', args=(ti('int'), '"foo"'))),
         (ti('bool'), ti('X', args=(ti('bool'), '"bar"'))),
@@ -166,9 +165,64 @@ def test_generic_with_string():
     assert generalize(samples) == ['X[bool, "bar"]|X[int, "foo"]']
 
 
+def test_generalize_jaxtyping_dimensions():
+    samples = [
+        (
+            TypeInfo('', 'int'),
+            TypeInfo('jaxtyping', 'Float64', args=(
+                    TypeInfo('np', 'ndarray'),
+                    '"10 20"'
+                )
+            ),
+            TypeInfo('jaxtyping', 'Float64', args=(
+                    TypeInfo('np', 'ndarray'),
+                    '"20"'
+                )
+            )
+        ),
+        (
+            TypeInfo('', 'int'),
+            TypeInfo('jaxtyping', 'Float64', args=(
+                    TypeInfo('np', 'ndarray'),
+                    '"10 10"'
+                )
+            ),
+            TypeInfo('jaxtyping', 'Float64', args=(
+                    TypeInfo('np', 'ndarray'),
+                    '"10"'
+                )
+            )
+        )
+    ]
+    assert generalize(samples) == [
+        'int', 'jaxtyping.Float64[np.ndarray, "10 D1"]', 'jaxtyping.Float64[np.ndarray, "D1"]'
+    ]
+
+
+def test_generalize_jaxtyping_single_sample():
+    samples = [
+        (
+            TypeInfo('', 'int'),
+            TypeInfo('jaxtyping', 'Float64', args=(
+                    TypeInfo('np', 'ndarray'),
+                    '"10 20"'
+                )
+            ),
+            TypeInfo('jaxtyping', 'Float64', args=(
+                    TypeInfo('np', 'ndarray'),
+                    '"20"'
+                )
+            )
+        ),
+    ]
+    assert generalize(samples) == [
+        'int', 'jaxtyping.Float64[np.ndarray, "10 20"]', 'jaxtyping.Float64[np.ndarray, "20"]'
+    ]
+
+
 def test_is_typevar():
-    assert False == TypeInfo.from_type(int).is_typevar()
-    assert False == TypeInfo.from_set(TypeInfoSet((
+    assert not TypeInfo.from_type(int).is_typevar()
+    assert not TypeInfo.from_set(TypeInfoSet((
         TypeInfo("", "list", args=(
             TypeInfo.from_type(int),
         )),
@@ -176,7 +230,7 @@ def test_is_typevar():
         TypeInfo.from_type(bool),
     ))).is_typevar()
 
-    assert True == TypeInfo.from_set(
+    assert TypeInfo.from_set(
         TypeInfoSet((
             TypeInfo.from_type(int),
             TypeInfo.from_type(bool),
@@ -184,7 +238,7 @@ def test_is_typevar():
         typevar_index=1
     ).is_typevar()
 
-    assert True == TypeInfo("", "list", args=(
+    assert TypeInfo("", "list", args=(
         TypeInfo.from_set(
             TypeInfoSet((
                 TypeInfo.from_type(int),

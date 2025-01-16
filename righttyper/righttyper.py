@@ -46,7 +46,6 @@ from righttyper.righttyper_types import (
     FuncInfo,
     FuncAnnotation,
     FunctionName,
-    Typename,
     TypeInfo,
     TypeInfoSet,
     Sample,
@@ -58,7 +57,6 @@ from righttyper.typeinfo import (
 from righttyper.righttyper_utils import (
     TOOL_ID,
     TOOL_NAME,
-    debug_print,
     debug_print_set_level,
     skip_this_file,
     get_main_module_fqn
@@ -818,21 +816,6 @@ class CheckModule(click.ParamType):
     help="Generate stub files (.pyi).",
     default=False,
 )
-@click.option(
-    "--type-coverage-by-directory",
-    type=click.Path(exists=True, file_okay=True),
-    help="Report per-directory type annotation coverage for a single file or all Python files in a directory and its children.",
-)
-@click.option(
-    "--type-coverage-by-file",
-    type=click.Path(exists=True, file_okay=True),
-    help="Report per-file type annotation coverage for a single file or all Python files in a directory and its children.",
-)
-@click.option(
-    "--type-coverage-summary",
-    type=click.Path(exists=True, file_okay=True),
-    help="Report uncovered and partially covered files and functions when performing type annotation coverage analysis.",
-)  # Note: should only be available if coverage-by-directory or coverage-by-file are specified
 @click.version_option(
     version=importlib.metadata.version(TOOL_NAME),
     prog_name=TOOL_NAME,
@@ -852,13 +835,22 @@ class CheckModule(click.ParamType):
 @click.option(
     "--sampling/--no-sampling",
     default=options.sampling,
-    hidden=True,
-    help="Whether to sample calls and types or to use every one seen.",
+    help=f"Whether to sample calls and types or to use every one seen.",
+    show_default=True,
 )
 @click.option(
     "--inline-generics",
     is_flag=True,
-    help="Whether generics should be declared as a seperate variable or inline"
+    help="Declare type variables inline for generics rather than separately."
+)
+@click.option(
+    "--type-coverage",
+    nargs=2,
+    type=(
+        click.Choice(["by-directory", "by-file", "summary"]),
+        click.Path(exists=True, file_okay=True),
+    ),
+    help="Rather than run a script or module, report a choice of 'by-directory', 'by-file' or 'summary' type annotation coverage for the given path.",
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
@@ -868,9 +860,6 @@ def main(
     all_files: bool,
     include_files: str,
     include_functions: tuple[str, ...],
-    type_coverage_by_directory: str,
-    type_coverage_by_file: str,
-    type_coverage_summary: str,
     verbose: bool,
     overwrite: bool,
     output_files: bool,
@@ -881,8 +870,24 @@ def main(
     target_overhead: float,
     use_multiprocessing: bool,
     sampling: bool,
-    inline_generics: bool
+    inline_generics: bool,
+    type_coverage: tuple[str, str]
 ) -> None:
+
+    if type_coverage:
+        from . import annotation_coverage as cov
+        cov_type, path = type_coverage
+
+        cache = cov.analyze_all_directories(path)
+
+        if cov_type == "by-directory":
+            cov.print_directory_summary(cache)
+        elif cov_type == "by-file":
+            cov.print_file_summary(cache)
+        else:
+            cov.print_annotation_summary()
+
+        return
 
     if module:
         args = [*((script,) if script else ()), *args]  # script, if any, is really the 1st module arg
@@ -909,36 +914,6 @@ def main(
                 if not found_package[package]:
                     print(f" * {package}")
             sys.exit(1)
-
-    if (
-        type_coverage_by_directory or type_coverage_by_file
-    ) and type_coverage_summary:
-        raise click.UsageError(
-            'The "--type-coverage-summary" option can only be specified when "--type-coverage-by-directory" or "--type-coverage-by-file" are NOT specified.'
-        )
-
-    from . import annotation_coverage
-
-    if type_coverage_summary:
-        directory_summary = annotation_coverage.analyze_all_directories(
-            type_coverage_summary
-        )
-        annotation_coverage.print_annotation_summary()
-        return
-
-    if type_coverage_by_directory:
-        directory_summary = annotation_coverage.analyze_all_directories(
-            type_coverage_by_directory
-        )
-        annotation_coverage.print_directory_summary(directory_summary)
-        return
-
-    if type_coverage_by_file:
-        file_summary = annotation_coverage.analyze_all_directories(
-            type_coverage_by_file
-        )
-        annotation_coverage.print_file_summary(file_summary)
-        return
 
     debug_print_set_level(verbose)
     options.script_dir = os.path.dirname(os.path.realpath(script))

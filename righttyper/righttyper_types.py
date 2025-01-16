@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace, field
-from enum import Enum
 from typing import NewType, TypeVar, Self, TypeAlias
 import types
 
@@ -11,8 +10,6 @@ ArgumentName = NewType("ArgumentName", str)
 
 Filename = NewType("Filename", str)
 FunctionName = NewType("FunctionName", str)
-
-Typename = NewType("Typename", str)
 
 
 @dataclass(eq=True, frozen=True)
@@ -36,7 +33,7 @@ TYPE_OBJ_TYPES: TypeAlias = type
 class TypeInfo:
     module: str
     name: str
-    args: "tuple[TypeInfo|str, ...]" = tuple()    # arguments within [] in the Typename
+    args: "tuple[TypeInfo|str, ...]" = tuple()    # arguments within []
 
     func: FuncInfo|None = None              # if a callable, the FuncInfo
     is_bound: bool = False                  # if a callable, whether bound
@@ -71,7 +68,8 @@ class TypeInfo:
 
     @staticmethod
     def from_type(t: TYPE_OBJ_TYPES, module: str|None = None, **kwargs) -> "TypeInfo":
-        if t == types.NoneType: return NoneTypeInfo
+        if t == types.NoneType:
+            return NoneTypeInfo
 
         return TypeInfo(
             name=t.__qualname__,

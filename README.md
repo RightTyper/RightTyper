@@ -62,19 +62,15 @@ annotations for NumPy/JAX/PyTorch tensors. Below is an example:
 test-hints.py:
 ==============
 
-def barnacle(x: numpy.ndarray) -> numpy.ndarray: ...
+barnacle
 
 - def barnacle(x):
-+ def barnacle(x: numpy.ndarray) -> numpy.ndarray:
++ def barnacle(x: jaxtyping.Float64[np.ndarray, "10 D1"]) -> jaxtyping.Float64[np.ndarray, "D1"]:
 
-# Shape annotations
-@beartype
-def barnacle(x: Float[numpy.ndarray, "10 dim0"]) -> Float[numpy.ndarray, "dim0"]: ...
-
-def fooq(x: int, y: str) -> bool: ...
+fooq
 
 - def fooq(x: int, y) -> bool:
-+ def fooq(x: int, y: str) -> bool:
++ def fooq(x: int, y: int) -> bool:
 ?                   +++++
 ```
 
@@ -87,7 +83,7 @@ python3 -m righttyper --output-files --overwrite your_script.py [args...]
 To do the same with `pytest`:
 
 ```bash
-python3 -m righttyper --output-files --overwrite -m pytest your_directory
+python3 -m righttyper --output-files --overwrite -m pytest [pytest-args...]
 ```
 
 Below is the full list of options:
@@ -95,14 +91,14 @@ Below is the full list of options:
 ```
 Usage: python -m righttyper [OPTIONS] [SCRIPT] [ARGS]...
 
-  RightTyper efficiently generates types for your function arguments and
-  return values.
-
 Options:
+  -m, --module MODULE             Run the given module instead of a script.
   --all-files                     Process any files encountered, including in
                                   libraries (except for those specified in
                                   --include-files)
-  --include-files TEXT            Include only files matching the given regex
+  --include-files TEXT            Include only files matching the given
+                                  pattern.
+  --include-functions TEXT        Only annotate functions matching the given
                                   pattern.
   --infer-shapes                  Produce tensor shape annotations (compatible
                                   with jaxtyping).
@@ -115,23 +111,19 @@ Options:
                                   output-files]
   --ignore-annotations            Ignore existing annotations and overwrite
                                   with type information.
-  -m, --module                    Run the script as a module.
   --verbose                       Print diagnostic information.
   --generate-stubs                Generate stub files (.pyi).
-  --type-coverage-by-directory DIRECTORY
-                                  Report per-directory type annotation
-                                  coverage for all Python files in a directory
-                                  and its children.
-  --type-coverage-by-file DIRECTORY
-                                  Report per-file type annotation coverage for
-                                  all Python files in a directory or its
-                                  children.
-  --type-coverage-summary DIRECTORY
-                                  Report uncovered and partially covered files
-                                  and functions when performing type
-                                  annotation coverage analysis.
   --version                       Show the version and exit.
   --target-overhead FLOAT         Target overhead, as a percentage (e.g., 5).
+  --sampling / --no-sampling      Whether to sample calls and types or to use
+                                  every one seen.  [default: sampling]
+  --inline-generics               Declare type variables inline for generics
+                                  rather than separately.
+  --type-coverage <CHOICE PATH>...
+                                  Rather than run a script or module, report a
+                                  choice of 'by-directory', 'by-file' or
+                                  'summary' type annotation coverage for the
+                                  given path.
   --help                          Show this message and exit.
 ```
 

@@ -11,7 +11,6 @@ from righttyper.righttyper_types import (
     FuncInfo,
     FuncAnnotation,
     FunctionName,
-    Typename,
     TypeInfo,
 )
 

@@ -1,5 +1,5 @@
 from righttyper.righttyper_types import TypeInfo, TypeInfoSet, NoneTypeInfo, Sample
-from righttyper.typeinfo import union_typeset_str
+from righttyper.typeinfo import union_typeset
 import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
 from collections import namedtuple
@@ -9,8 +9,11 @@ import importlib
 import types
 
 
+def union_typeset_str(typeinfoset: TypeInfoSet) -> str:
+    return str(union_typeset(typeinfoset))
+
 def get_value_type(*args, **kwargs) -> str:
-    return str(rt.get_value_type(*args, **kwargs))
+    return str(rt.get_full_type(*args, **kwargs))
 
 def type_from_annotations(*args, **kwargs) -> str:
     return str(rt.type_from_annotations(*args, **kwargs))

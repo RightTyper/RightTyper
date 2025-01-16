@@ -7,12 +7,6 @@ from functools import cache
 from typing import Any, Final
 from pathlib import Path
 
-from righttyper.righttyper_types import (
-    Typename,
-    TypeInfo,
-    TypeInfoSet,
-    TYPE_OBJ_TYPES
-)
 
 TOOL_ID: int = 3
 TOOL_NAME: Final[str] = "righttyper"

@@ -1,8 +1,11 @@
 import itertools
 from typing import Sequence, Iterator, cast
-from .righttyper_types import TypeInfo, NoneTypeInfo, TypeInfoSet, Typename, TYPE_OBJ_TYPES
+from .righttyper_types import TypeInfo, TypeInfoSet, TYPE_OBJ_TYPES
 from .righttyper_utils import get_main_module_fqn
+from collections import Counter
 
+
+# TODO integrate these into TypeInfo?
 
 def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
     if not typeinfoset:
@@ -17,6 +20,9 @@ def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
     # merge similar generics
     if any(t.args for t in typeinfoset):
         typeinfoset = TypeInfoSet({*typeinfoset})   # avoid modifying
+
+        # TODO group by superclass/protocol when possible, so that these can be merged
+        # e.g.: list[int], Sequence[int]
 
         def group_key(t):
             return t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args)
@@ -37,18 +43,14 @@ def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
                     )
                 ))
 
-    # TODO merge jaxtyping annotations by shape
-
     return TypeInfo.from_set(typeinfoset)
 
 
-def union_typeset_str(typeinfoset: TypeInfoSet) -> Typename:
-    return Typename(str(union_typeset(typeinfoset)))
-
-
 def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> TypeInfo|None:
-    if any(t.type_obj is None for t in typeinfoset):
+    if any(t.type_obj is None for t in typeinfoset):    # we require type_obj for this
         return None
+
+    # TODO do we want to merge by protocol?  search for protocols in collections.abc types?
 
     common_superclasses = set.intersection(
         *(set(cast(TYPE_OBJ_TYPES, t.type_obj).__mro__) for t in typeinfoset)
@@ -68,11 +70,76 @@ def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> Ty
     return TypeInfo(module, specific.__qualname__, type_obj=specific)
 
 
+def generalize_jaxtyping(samples: Sequence[tuple[TypeInfo, ...]]) -> Sequence[tuple[TypeInfo, ...]]:
+    # Ensure all samples are consistent (the same number of arguments)
+    if any(len(t) != len(samples[0]) for t in samples[1:]):
+        return samples
+
+    # With a single sample we don't try to infer dimension variables:
+    # any matches could easily be coincidence.
+    if len(samples) < 2:
+        return samples
+
+    # Transpose to get parameters together
+    transposed = list(zip(*samples))
+
+    def is_jaxtyping_array(t: TypeInfo) -> bool:
+        return (
+            t.module == 'jaxtyping' and
+            len(t.args) == 2 and
+            t.args[1][0] in ('"', "'") and t.args[1][-1] == t.args[1][0]
+        )
+
+    def get_dims(t: TypeInfo) -> Sequence[str]:
+        return t.args[1][1:-1].split()  # space separated dimensions within quotes
+
+    # Get the set of dimensions seen for each consistent jaxtyping array
+    dimensions = {
+        argno: list(zip(*(get_dims(t) for t in arg)))
+        for argno, arg in enumerate(transposed)
+        if all(is_jaxtyping_array(t) for t in arg)
+        if len(set(len(get_dims(t)) for t in arg)) == 1 # consistent no. of dimensions
+    }
+
+    if not dimensions:
+        return samples
+
+    occurrences = Counter(dims for argdims in dimensions.values() for dims in argdims)
+
+    # Assign names to common dimensions
+    names: dict[tuple, str] = {}
+    for argdims in dimensions.values():
+        for i, dims in enumerate(argdims):
+            if dims in names:
+                argdims[i] = names[dims]
+            elif occurrences[dims] > 1:
+                argdims[i] = names[dims] = (f"D{len(names)+1}",) * len(dims)
+
+    # Replace args where needed
+    results = []
+    for argno in range(len(samples[0])):
+        if argno in dimensions:
+            tdims = list(zip(*dimensions[argno]))
+            results.append([
+                s[argno].replace(args=(
+                        s[argno].args[0],
+                        f"\"{' '.join(dims)}\""
+                    )
+                )
+                for s, dims in zip(samples, tdims)
+            ])
+        else:
+            results.append([s[argno] for s in samples])
+
+    # Transpose once more to finish up
+    return list(tuple(t) for t in zip(*results))
+
+
 def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
     """
     Processes a sequence of samples observed for function parameters and return values, looking
-    for patterns that can be replaced with type variables.  If no pattern is detected, the
-    union of those types (per union_typeset_str) is built.
+    for patterns that can be replaced with type variables or, if does not detect a pattern,
+    building type unions.
 
     samples: a sequence of tuples with type information. Each type in a tuple corresponds to
         a parameter (or return) type.
@@ -83,6 +150,8 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
     # Ensure all samples are consistent (the same number of arguments)
     if any(len(t) != len(samples[0]) for t in samples[1:]):
         return None
+
+    samples = generalize_jaxtyping(samples)
 
     # By transposing the per-argument types, we obtain tuples with all the
     # various types seen for each argument.
@@ -110,9 +179,6 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
                 for t in types[1:]
             )
         )
-
-    from collections import Counter
-    from typing import Iterator
 
     def expand_generics(types: tuple[TypeInfo, ...]) -> Iterator[tuple[TypeInfo, ...]]:
         yield types

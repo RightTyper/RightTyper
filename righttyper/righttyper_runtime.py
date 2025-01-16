@@ -12,13 +12,10 @@ from pathlib import Path
 
 from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
-    ArgInfo,
-    ArgumentName,
     Filename,
     FunctionName,
     FuncInfo,
     T,
-    TypeInfoSet,
     TypeInfo,
     NoneTypeInfo
 )
@@ -327,7 +324,8 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
             if value:
                 el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
                 args = tuple(get_value_type(fld, depth=depth+1) for fld in el)
-        except Exception: pass
+        except Exception:
+            pass
         return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
     elif isinstance(value, (list, set)):
         t = type(value)
@@ -336,7 +334,8 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
             if value:
                 el = sample_from_collection(value)
                 args = (get_value_type(el, depth=depth+1),)
-        except Exception: pass
+        except Exception:
+            pass
         return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
     elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
         args = (TypeInfo("typing", "Never"),)
@@ -344,7 +343,8 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
             if value:
                 el = sample_from_collection(value)
                 args = (get_value_type(el, depth=depth+1),)
-        except Exception: pass
+        except Exception:
+            pass
         return TypeInfo("typing", t.__qualname__, args=args)
     elif isinstance(value, abc.ItemsView):
         args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
@@ -352,7 +352,8 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
             if value:
                 el = sample_from_collection(value)
                 args = tuple(get_value_type(fld, depth=depth+1) for fld in el)
-        except Exception: pass
+        except Exception:
+            pass
         return TypeInfo("typing", "ItemsView", args=args)
     elif isinstance(value, tuple):
         if isinstance_namedtuple(value):
@@ -363,7 +364,8 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
             try:
                 if value:
                     args = tuple(get_value_type(fld, depth=depth+1) for fld in value)
-            except Exception: pass
+            except Exception:
+                pass
             return TypeInfo("", "tuple", args=args)
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
