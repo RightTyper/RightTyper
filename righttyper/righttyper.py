@@ -788,13 +788,13 @@ class CheckModule(click.ParamType):
 @click.option(
     "--sampling/--no-sampling",
     default=options.sampling,
-    hidden=True,
-    help="Whether to sample calls and types or to use every one seen.",
+    help=f"Whether to sample calls and types or to use every one seen.",
+    show_default=True,
 )
 @click.option(
     "--inline-generics",
     is_flag=True,
-    help="Whether generics should be declared as a seperate variable or inline"
+    help="Declare type variables inline for generics rather than separately."
 )
 @click.option(
     "--type-coverage",

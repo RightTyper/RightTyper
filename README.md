@@ -65,7 +65,7 @@ test-hints.py:
 barnacle
 
 - def barnacle(x):
-+ def barnacle(x: jaxtyping.Float64[np.ndarray, "10 dim0"]) -> jaxtyping.Float64[np.ndarray, "dim0"]:
++ def barnacle(x: jaxtyping.Float64[np.ndarray, "10 D1"]) -> jaxtyping.Float64[np.ndarray, "D1"]:
 
 fooq
 
@@ -115,8 +115,10 @@ Options:
   --generate-stubs                Generate stub files (.pyi).
   --version                       Show the version and exit.
   --target-overhead FLOAT         Target overhead, as a percentage (e.g., 5).
-  --inline-generics               Whether generics should be declared as a
-                                  seperate variable or inline
+  --sampling / --no-sampling      Whether to sample calls and types or to use
+                                  every one seen.  [default: sampling]
+  --inline-generics               Declare type variables inline for generics
+                                  rather than separately.
   --type-coverage <CHOICE PATH>...
                                   Rather than run a script or module, report a
                                   choice of 'by-directory', 'by-file' or
