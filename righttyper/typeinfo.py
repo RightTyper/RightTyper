@@ -87,11 +87,13 @@ def generalize_jaxtyping(samples: Sequence[tuple[TypeInfo, ...]]) -> Sequence[tu
         return (
             t.module == 'jaxtyping' and
             len(t.args) == 2 and
+            isinstance(t.args[1], str) and
             t.args[1][0] in ('"', "'") and t.args[1][-1] == t.args[1][0]
         )
 
     def get_dims(t: TypeInfo) -> Sequence[str]:
-        return t.args[1][1:-1].split()  # space separated dimensions within quotes
+        # str type already checked by is_jaxtyping_array
+        return cast(str, t.args[1])[1:-1].split()  # space separated dimensions within quotes
 
     # Get the set of dimensions seen for each consistent jaxtyping array
     dimensions = {
@@ -107,7 +109,7 @@ def generalize_jaxtyping(samples: Sequence[tuple[TypeInfo, ...]]) -> Sequence[tu
     occurrences = Counter(dims for argdims in dimensions.values() for dims in argdims)
 
     # Assign names to common dimensions
-    names: dict[tuple, str] = {}
+    names: dict[tuple, tuple[str, ...]] = {}
     for argdims in dimensions.values():
         for i, dims in enumerate(argdims):
             if dims in names:
