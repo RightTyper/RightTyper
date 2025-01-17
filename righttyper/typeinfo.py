@@ -1,13 +1,13 @@
 import itertools
 from typing import Sequence, Iterator, cast
-from .righttyper_types import TypeInfo, TypeInfoSet, TYPE_OBJ_TYPES
+from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES
 from .righttyper_utils import get_main_module_fqn
 from collections import Counter
 
 
 # TODO integrate these into TypeInfo?
 
-def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
+def union_typeset(typeinfoset: set[TypeInfo]) -> TypeInfo:
     if not typeinfoset:
         return TypeInfo.from_type(type(None)) # Never observed any types.
 
@@ -19,14 +19,14 @@ def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
 
     # merge similar generics
     if any(t.args for t in typeinfoset):
-        typeinfoset = TypeInfoSet({*typeinfoset})   # avoid modifying
+        typeinfoset = set(typeinfoset)   # avoid modifying
 
         # TODO group by superclass/protocol when possible, so that these can be merged
         # e.g.: list[int], Sequence[int]
 
         def group_key(t):
             return t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args)
-        group: Iterator[TypeInfo]|TypeInfoSet
+        group: Iterator[TypeInfo]|set[TypeInfo]
         for (mod, name, all_info, nargs), group in itertools.groupby(
             sorted(typeinfoset, key=group_key),
             group_key
@@ -36,9 +36,9 @@ def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
                 first = next(iter(group))
                 typeinfoset -= group
                 typeinfoset.add(first.replace(args=tuple(
-                        union_typeset(TypeInfoSet({
+                        union_typeset({
                             cast(TypeInfo, member.args[i]) for member in group
-                        }))
+                        })
                         for i in range(nargs)
                     )
                 ))
@@ -46,7 +46,7 @@ def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
     return TypeInfo.from_set(typeinfoset)
 
 
-def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> TypeInfo|None:
+def find_most_specific_common_superclass_by_name(typeinfoset: set[TypeInfo]) -> TypeInfo|None:
     if any(t.type_obj is None for t in typeinfoset):    # we require type_obj for this
         return None
 
@@ -211,11 +211,11 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
         if occurrences[types] > 1:
             if types not in typevars:
                 typevars[types] = TypeInfo.from_set(
-                    TypeInfoSet(types),
+                    set(types),
                     typevar_index = len(typevars)+1
                 )
             return typevars[types]
 
-        return union_typeset(TypeInfoSet(types))
+        return union_typeset(set(types))
 
     return [rebuild(types) for types in transposed]

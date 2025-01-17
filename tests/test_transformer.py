@@ -10,7 +10,6 @@ from righttyper.righttyper_types import (
     ArgumentName,
     TypeInfo,
     NoneTypeInfo,
-    TypeInfoSet,
     FuncAnnotation
 )
 from righttyper.righttyper_runtime import get_type_name
@@ -390,10 +389,10 @@ def test_transform_unknown_type_as_string():
                 foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), TypeInfo.from_type(int, module='')),
-                        (ArgumentName('y'), TypeInfo.from_set(TypeInfoSet((
+                        (ArgumentName('y'), TypeInfo.from_set({
                             TypeInfo(module='x.y', name='Something', args=('"quoted"',)),
                             NoneTypeInfo
-                        ))))
+                        }))
                     ],
                     TypeInfo(module='x.z', name='FloatingPointNumber')
                 )
@@ -436,10 +435,10 @@ def test_transform_unknown_type_with_import_annotations():
                 foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), TypeInfo.from_type(int, module='')),
-                        (ArgumentName('y'), TypeInfo.from_set(TypeInfoSet((
+                        (ArgumentName('y'), TypeInfo.from_set({
                             TypeInfo(module='x.y', name='WholeNumber'),
                             NoneTypeInfo
-                        ))))
+                        }))
                     ],
                     TypeInfo(module='x.z', name='FloatingPointNumber')
                 )
@@ -1761,7 +1760,7 @@ def test_types_in_annotation():
 
 def make_typevar(args: list, i: int) -> TypeInfo:
     return TypeInfo.from_set(
-        TypeInfoSet(get_type_name(arg) for arg in args),
+        {get_type_name(arg) for arg in args},
         typevar_index=i
     )
 

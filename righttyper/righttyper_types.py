@@ -80,7 +80,7 @@ class TypeInfo:
 
 
     @staticmethod
-    def from_set(s: "TypeInfoSet", **kwargs) -> "TypeInfo":
+    def from_set(s: "set[TypeInfo]", **kwargs) -> "TypeInfo":
         if not s:
             return NoneTypeInfo
 
@@ -126,9 +126,6 @@ class TypeInfo:
 NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
 
 
-TypeInfoSet: TypeAlias = set[TypeInfo]
-
-
 @dataclass
 class ArgInfo:
     arg_name: ArgumentName
@@ -138,7 +135,7 @@ class ArgInfo:
 @dataclass
 class Sample:
     args: tuple[TypeInfo, ...]
-    yields: TypeInfoSet = field(default_factory=TypeInfoSet)
+    yields: set[TypeInfo] = field(default_factory=set)
     returns: TypeInfo = NoneTypeInfo
     self_type: TypeInfo | None = None
 

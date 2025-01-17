@@ -1,4 +1,4 @@
-from righttyper.righttyper_types import TypeInfo, TypeInfoSet, NoneTypeInfo, Sample
+from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, Sample
 from righttyper.typeinfo import union_typeset
 import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
@@ -9,7 +9,7 @@ import importlib
 import types
 
 
-def union_typeset_str(typeinfoset: TypeInfoSet) -> str:
+def union_typeset_str(typeinfoset: set[TypeInfo]) -> str:
     return str(union_typeset(typeinfoset))
 
 def get_value_type(*args, **kwargs) -> str:
@@ -254,12 +254,10 @@ def test_typeinfo():
 
 
 def test_typeinfo_from_set():
-    t = TypeInfo.from_set(TypeInfoSet({}))
+    t = TypeInfo.from_set(set())
     assert t == NoneTypeInfo    # or should this be Never ?
 
-    t = TypeInfo.from_set(TypeInfoSet({
-            TypeInfo.from_type(int)
-        }))
+    t = TypeInfo.from_set({TypeInfo.from_type(int)})
 
     assert str(t) == 'builtins.int'
     assert t.name == 'int'
@@ -268,19 +266,19 @@ def test_typeinfo_from_set():
     assert t is not TypeInfo.from_type(int) # should be new object
     assert t.type_obj is int
 
-    t = TypeInfo.from_set(TypeInfoSet({
+    t = TypeInfo.from_set({
             TypeInfo.from_type(int),
             TypeInfo.from_type(bool)
-        }))
+        })
 
     assert str(t) == 'builtins.bool|builtins.int'
 
-    t = TypeInfo.from_set(TypeInfoSet({
+    t = TypeInfo.from_set({
             TypeInfo.from_type(int),
             TypeInfo.from_type(type(None)),
             TypeInfo.from_type(bool),
             TypeInfo(module='', name='z')
-        }))
+        })
 
     assert str(t) == 'builtins.bool|builtins.int|z|None'
     assert isinstance(t.args[-1], TypeInfo)
@@ -288,7 +286,7 @@ def test_typeinfo_from_set():
 
 
 def test_union_typeset():
-    assert "None" == union_typeset_str(TypeInfoSet({}))
+    assert "None" == union_typeset_str(set())
     assert "bool" == union_typeset_str({TypeInfo("", "bool")})
 
     assert "bool|int|zoo.bar" == union_typeset_str({
