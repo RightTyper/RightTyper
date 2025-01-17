@@ -50,7 +50,7 @@ from righttyper.righttyper_types import (
     Sample,
 )
 from righttyper.typeinfo import (
-    union_typeset,
+    merged_types,
     generalize,
 )
 from righttyper.righttyper_utils import (
@@ -196,7 +196,7 @@ class Observations:
                     (
                         arg.arg_name,
                         tr.visit(
-                            union_typeset({
+                            merged_types({
                                 signature[i],
                                 *((arg.default,) if arg.default is not None else ())
                             })

@@ -1,5 +1,5 @@
 from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, Sample
-from righttyper.typeinfo import union_typeset
+from righttyper.typeinfo import merged_types
 import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
 from collections import namedtuple
@@ -8,9 +8,6 @@ import pytest
 import importlib
 import types
 
-
-def union_typeset_str(typeinfoset: set[TypeInfo]) -> str:
-    return str(union_typeset(typeinfoset))
 
 def get_value_type(*args, **kwargs) -> str:
     return str(rt.get_value_type(*args, **kwargs))
@@ -285,34 +282,34 @@ def test_typeinfo_from_set():
     assert t.args[-1].name == 'None'
 
 
-def test_union_typeset():
-    assert "None" == union_typeset_str(set())
-    assert "bool" == union_typeset_str({TypeInfo("", "bool")})
+def test_merged_types():
+    assert "None" == str(merged_types(set()))
+    assert "bool" == str(merged_types({TypeInfo("", "bool")}))
 
-    assert "bool|int|zoo.bar" == union_typeset_str({
+    assert "bool|int|zoo.bar" == str(merged_types({
             TypeInfo("", "bool"),
             TypeInfo("", "int"),
             TypeInfo("zoo", "bar"),
         }
-    )
+    ))
 
-    assert "bool|int|None" == union_typeset_str({
+    assert "bool|int|None" == str(merged_types({
             TypeInfo.from_type(type(None)),
             TypeInfo("", "bool"),
             TypeInfo("", "int"),
         }
-    )
+    ))
 
 
-def test_union_typeset_generics():
-    assert "list[bool|int]|None" == union_typeset_str({
+def test_merged_types_generics():
+    assert "list[bool|int]|None" == str(merged_types({
             TypeInfo("", "list", args=(TypeInfo("", "int"),)),
             TypeInfo("", "list", args=(TypeInfo("", "bool"),)),
             TypeInfo.from_type(type(None))
         }
-    )
+    ))
 
-    assert "list[tuple[bool|int, float]]" == union_typeset_str({
+    assert "list[tuple[bool|int, float]]" == str(merged_types({
             TypeInfo("", "list", args=(
                 TypeInfo("", "tuple", args=(
                     TypeInfo("", "bool"),
@@ -326,9 +323,9 @@ def test_union_typeset_generics():
                 )),
             )),
         }
-    )
+    ))
 
-    assert "list[tuple[bool, float]|tuple[float]]" == union_typeset_str({
+    assert "list[tuple[bool, float]|tuple[float]]" == str(merged_types({
             TypeInfo("", "list", args=(
                 TypeInfo("", "tuple", args=(
                     TypeInfo("", "bool"),
@@ -341,12 +338,12 @@ def test_union_typeset_generics():
                 )),
             )),
         }
-    )
+    ))
 
 
-def test_union_typeset_generics_str_not_merged():
+def test_merged_types_generics_str_not_merged():
     # the [...] parameters in Callable are passed as a string, which we don't merge (yet)
-    assert "Callable[[], None]|Callable[[int], None]" == union_typeset_str({
+    assert "Callable[[], None]|Callable[[int], None]" == str(merged_types({
             TypeInfo("", "Callable", args=(
                 "[], None",
             )),
@@ -354,55 +351,55 @@ def test_union_typeset_generics_str_not_merged():
                 "[int], None",
             )),
         }
-    )
+    ))
 
 
-def test_union_typeset_superclass():
+def test_merged_types_superclass():
     class A: pass
     class B(A): pass
     class C(B): pass
     class D(B): pass
 
-    assert f"{__name__}.{B.__qualname__}" == union_typeset_str({
+    assert f"{__name__}.{B.__qualname__}" == str(merged_types({
             TypeInfo.from_type(C),
             TypeInfo.from_type(D)
         }
-    )
+    ))
 
-    assert f"{__name__}.{B.__qualname__}" == union_typeset_str({
+    assert f"{__name__}.{B.__qualname__}" == str(merged_types({
             TypeInfo.from_type(B),
             TypeInfo.from_type(D)
         }
-    )
+    ))
 
-    assert f"{__name__}.{A.__qualname__}" == union_typeset_str({
+    assert f"{__name__}.{A.__qualname__}" == str(merged_types({
             TypeInfo.from_type(A),
             TypeInfo.from_type(D)
         }
-    )
+    ))
 
 
-def test_union_typeset_superclass_bare_type():
+def test_merged_types_superclass_bare_type():
     # invoking type.mro() raises an exception
-    assert "builtins.int|builtins.type" == union_typeset_str({
+    assert "builtins.int|builtins.type" == str(merged_types({
             TypeInfo.from_type(int),
             TypeInfo.from_type(type)
         }
-    )
+    ))
 
 
-def test_union_typeset_generics_superclass():
+def test_merged_types_generics_superclass():
     class A: pass
     class B(A): pass
     class C(B): pass
     class D(B): pass
 
-    assert f"list[{__name__}.{B.__qualname__}]|None" == union_typeset_str({
+    assert f"list[{__name__}.{B.__qualname__}]|None" == str(merged_types({
             TypeInfo("", "list", args=(TypeInfo.from_type(C),)),
             TypeInfo("", "list", args=(TypeInfo.from_type(D),)),
             TypeInfo.from_type(type(None))
         }
-    )
+    ))
 
 str_ti = TypeInfo("", "str", type_obj=str)
 int_ti = TypeInfo("", "int", type_obj=int)
