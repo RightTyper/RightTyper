@@ -1,56 +1,54 @@
 import itertools
 from typing import Sequence, Iterator, cast
-from .righttyper_types import TypeInfo, TypeInfoSet, TYPE_OBJ_TYPES
+from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES
 from .righttyper_utils import get_main_module_fqn
 from collections import Counter
 
 
 # TODO integrate these into TypeInfo?
 
-def union_typeset(typeinfoset: TypeInfoSet) -> TypeInfo:
-    if not typeinfoset:
-        return TypeInfo.from_type(type(None)) # Never observed any types.
+def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
+    """Attempts to merge types in a set before forming their union."""
 
-    if len(typeinfoset) == 1:
-        return next(iter(typeinfoset))
+    if len(typeinfoset) > 1:
+        if sclass := find_most_specific_common_superclass(typeinfoset):
+            return sclass
 
-    if super := find_most_specific_common_superclass_by_name(typeinfoset):
-        return super
+        # merge similar generics
+        if any(t.args for t in typeinfoset):
+            typeinfoset = set(typeinfoset)   # avoid modifying argument
 
-    # merge similar generics
-    if any(t.args for t in typeinfoset):
-        typeinfoset = TypeInfoSet({*typeinfoset})   # avoid modifying
+            # TODO group by superclass/protocol when possible, so that these can be merged
+            # e.g.: list[int], Sequence[int]
 
-        # TODO group by superclass/protocol when possible, so that these can be merged
-        # e.g.: list[int], Sequence[int]
-
-        def group_key(t):
-            return t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args)
-        group: Iterator[TypeInfo]|TypeInfoSet
-        for (mod, name, all_info, nargs), group in itertools.groupby(
-            sorted(typeinfoset, key=group_key),
-            group_key
-        ):
-            if all_info:
-                group = set(group)
-                first = next(iter(group))
-                typeinfoset -= group
-                typeinfoset.add(first.replace(args=tuple(
-                        union_typeset(TypeInfoSet({
-                            cast(TypeInfo, member.args[i]) for member in group
-                        }))
-                        for i in range(nargs)
-                    )
-                ))
+            def group_key(t):
+                return t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args)
+            group: Iterator[TypeInfo]|set[TypeInfo]
+            for (mod, name, all_info, nargs), group in itertools.groupby(
+                sorted(typeinfoset, key=group_key),
+                group_key
+            ):
+                if all_info:
+                    group = set(group)
+                    first = next(iter(group))
+                    typeinfoset -= group
+                    typeinfoset.add(first.replace(args=tuple(
+                            merged_types({
+                                cast(TypeInfo, member.args[i]) for member in group
+                            })
+                            for i in range(nargs)
+                        )
+                    ))
 
     return TypeInfo.from_set(typeinfoset)
 
 
-def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> TypeInfo|None:
+def find_most_specific_common_superclass(typeinfoset: set[TypeInfo]) -> TypeInfo|None:
     if any(t.type_obj is None for t in typeinfoset):    # we require type_obj for this
         return None
 
     # TODO do we want to merge by protocol?  search for protocols in collections.abc types?
+    # TODO we could also merge on portions of the set
 
     common_superclasses = set.intersection(
         *(set(cast(TYPE_OBJ_TYPES, t.type_obj).__mro__) for t in typeinfoset)
@@ -62,8 +60,8 @@ def find_most_specific_common_superclass_by_name(typeinfoset: TypeInfoSet) -> Ty
         return None
 
     specific = max(
-            common_superclasses,
-            key=lambda cls: cls.__mro__.index(object),
+        common_superclasses,
+        key=lambda cls: cls.__mro__.index(object),
     )
 
     module = specific.__module__ if specific.__module__ != '__main__' else get_main_module_fqn()
@@ -87,11 +85,13 @@ def generalize_jaxtyping(samples: Sequence[tuple[TypeInfo, ...]]) -> Sequence[tu
         return (
             t.module == 'jaxtyping' and
             len(t.args) == 2 and
+            isinstance(t.args[1], str) and
             t.args[1][0] in ('"', "'") and t.args[1][-1] == t.args[1][0]
         )
 
     def get_dims(t: TypeInfo) -> Sequence[str]:
-        return t.args[1][1:-1].split()  # space separated dimensions within quotes
+        # str type already checked by is_jaxtyping_array
+        return cast(str, t.args[1])[1:-1].split()  # space separated dimensions within quotes
 
     # Get the set of dimensions seen for each consistent jaxtyping array
     dimensions = {
@@ -107,7 +107,7 @@ def generalize_jaxtyping(samples: Sequence[tuple[TypeInfo, ...]]) -> Sequence[tu
     occurrences = Counter(dims for argdims in dimensions.values() for dims in argdims)
 
     # Assign names to common dimensions
-    names: dict[tuple, str] = {}
+    names: dict[tuple, tuple[str, ...]] = {}
     for argdims in dimensions.values():
         for i, dims in enumerate(argdims):
             if dims in names:
@@ -209,11 +209,11 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
         if occurrences[types] > 1:
             if types not in typevars:
                 typevars[types] = TypeInfo.from_set(
-                    TypeInfoSet(types),
+                    set(types),
                     typevar_index = len(typevars)+1
                 )
             return typevars[types]
 
-        return union_typeset(TypeInfoSet(types))
+        return merged_types(set(types))
 
     return [rebuild(types) for types in transposed]

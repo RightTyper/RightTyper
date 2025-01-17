@@ -47,11 +47,10 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     FunctionName,
     TypeInfo,
-    TypeInfoSet,
     Sample,
 )
 from righttyper.typeinfo import (
-    union_typeset,
+    merged_types,
     generalize,
 )
 from righttyper.righttyper_utils import (
@@ -197,10 +196,10 @@ class Observations:
                     (
                         arg.arg_name,
                         tr.visit(
-                            union_typeset(TypeInfoSet((
+                            merged_types({
                                 signature[i],
                                 *((arg.default,) if arg.default is not None else ())
-                            )))
+                            })
                         )
                     )
                     for i, arg in enumerate(args)
@@ -501,18 +500,16 @@ def process_function_arguments(
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
         *(
-            (TypeInfo.from_set(
-                TypeInfoSet(
-                    get_type(val) for val in args.locals[args.varargs]
-                )
-            ),) if args.varargs else ()
+            (TypeInfo.from_set({
+                get_type(val) for val in args.locals[args.varargs]
+            }),)
+            if args.varargs else ()
         ),
         *(
-            (TypeInfo.from_set(
-                TypeInfoSet(
-                    get_type(val) for val in args.locals[args.keywords].values()
-                )
-            ),) if args.keywords else ()
+            (TypeInfo.from_set({
+                get_type(val) for val in args.locals[args.keywords].values()
+            }),)
+            if args.keywords else ()
         )
     )
 
@@ -570,14 +567,12 @@ def restart_sampling(_signum: int, frame: FrameType|None) -> None:
     )
 
 
-instrumentation_functions_code = set(
-    [
-        enter_handler.__code__,
-        call_handler.__code__,
-        process_yield_or_return.__code__,
-        restart_sampling.__code__,
-    ]
-)
+instrumentation_functions_code = {
+    enter_handler.__code__,
+    call_handler.__code__,
+    process_yield_or_return.__code__,
+    restart_sampling.__code__,
+}
 
 
 def execute_script_or_module(

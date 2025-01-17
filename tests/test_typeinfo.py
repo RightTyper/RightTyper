@@ -1,4 +1,4 @@
-from righttyper.righttyper_types import TypeInfo, TypeInfoSet
+from righttyper.righttyper_types import TypeInfo
 import righttyper.typeinfo
 from typing import Any
 
@@ -222,7 +222,7 @@ def test_generalize_jaxtyping_single_sample():
 
 def test_is_typevar():
     assert not TypeInfo.from_type(int).is_typevar()
-    assert not TypeInfo.from_set(TypeInfoSet((
+    assert not TypeInfo.from_set(set((
         TypeInfo("", "list", args=(
             TypeInfo.from_type(int),
         )),
@@ -231,7 +231,7 @@ def test_is_typevar():
     ))).is_typevar()
 
     assert TypeInfo.from_set(
-        TypeInfoSet((
+        set((
             TypeInfo.from_type(int),
             TypeInfo.from_type(bool),
         )),
@@ -240,7 +240,7 @@ def test_is_typevar():
 
     assert TypeInfo("", "list", args=(
         TypeInfo.from_set(
-            TypeInfoSet((
+            set((
                 TypeInfo.from_type(int),
                 TypeInfo.from_type(bool),
             )),
