@@ -5,6 +5,7 @@ import inspect
 import itertools
 import logging
 import os
+import platform
 import runpy
 import signal
 import sys
@@ -564,10 +565,11 @@ def restart_sampling(_signum: int, frame: FrameType|None) -> None:
     else:
         pass
     # Set a timer for the next round of sampling.
-    signal.setitimer(
-        signal.ITIMER_REAL,
-        0.01,
-    )
+    if platform.system() != 'Windows':
+        signal.setitimer(
+            signal.ITIMER_REAL,
+            0.01,
+        )
 
 
 instrumentation_functions_code = set(
@@ -597,6 +599,7 @@ def execute_script_or_module(
             runpy.run_path(script, run_name="__main__")
 
     except SystemExit as e:
+        #if platform.system() != 'Windows':
         if e.code not in (None, 0):
             raise
 
@@ -940,9 +943,9 @@ def main(
             yield_handler,
         )
         sys.monitoring.restart_events()
-        setup_timer(restart_sampling)
+        timer_thread, stop_event = setup_timer(restart_sampling)
         # replace_dicts.replace_dicts()
         execute_script_or_module(script, bool(module), args)
     finally:
-        reset_monitoring()
+        reset_monitoring(timer_thread, stop_event)
         post_process()

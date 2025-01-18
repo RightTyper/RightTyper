@@ -1,3 +1,5 @@
+import threading
+import inspect
 import signal
 import sys
 from types import CodeType, FrameType
@@ -44,7 +46,7 @@ def register_monitoring_callbacks(
         )
 
 
-def reset_monitoring() -> None:
+def reset_monitoring(timer: threading.Timer, stop_event) -> None:
     """Clear all monitoring of events."""
     for event in _EVENTS:
         sys.monitoring.register_callback(TOOL_ID, event, None)
@@ -53,19 +55,25 @@ def reset_monitoring() -> None:
         sys.monitoring.set_events(TOOL_ID, sys.monitoring.events.NO_EVENTS)
     except ValueError:
         pass
-
-    signal.signal(signal.SIGALRM, signal.SIG_IGN)
-    signal.setitimer(signal.ITIMER_REAL, 0)
-
-
+    if timer is not None:
+        stop_event.set()
+        timer.join()
+    
 def setup_timer(
     func: Callable[[int, FrameType|None], None],
-) -> None:
-    signal.signal(signal.SIGALRM, func)
-    signal.setitimer(
-        signal.ITIMER_REAL,
-        0.01,
-    )
+) -> tuple[threading.Timer, threading.Event]:
+    def wrapper():
+        while not stop_event.is_set():
+            # Use 0 as a placeholder if SIGALRM is not available
+            _signum = signal.SIGALRM if hasattr(signal, 'SIGALRM') else 0  
+            frame = inspect.currentframe()
+            func(_signum, frame)
+            stop_event.wait(0.01)  # Wait for 0.01 seconds or until the stop_event is set
+    
+    stop_event = threading.Event()
+    timer_thread = threading.Thread(target=wrapper)
+    timer_thread.start()
+    return timer_thread, stop_event
 
 
 def setup_tool_id() -> None:
