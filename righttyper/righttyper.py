@@ -2,7 +2,6 @@ import concurrent.futures
 import importlib.metadata
 import importlib.util
 import inspect
-import itertools
 import logging
 import os
 import runpy
@@ -29,6 +28,8 @@ from righttyper.righttyper_process import (
     SignatureChanges
 )
 from righttyper.righttyper_runtime import (
+    find_function,
+    unwrap,
     get_value_type,
     get_type_name,
     should_skip_function,
@@ -47,6 +48,8 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     FunctionName,
     TypeInfo,
+    NoneTypeInfo,
+    AnyTypeInfo,
     Sample,
 )
 from righttyper.typeinfo import (
@@ -211,14 +214,18 @@ class Observations:
             """Updates Callable type declarations based on observations."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 # if 'args' is there, the function is already annotated
-                # FIXME make overriding dependent upon ignore_annotations
-                if node.func and not node.args and node.func in self.samples:
+                if node.func and (options.ignore_annotations or not node.args) and node.func in self.samples:
                     if (ann := mk_annotation(node.func)):
-                        # TODO: fix callable arguments being strings
-                        return TypeInfo('typing', 'Callable', args=(
-                            f"[{", ".join(map(lambda a: str(a[1]), ann.args[int(node.is_bound):]))}]",
-                            ann.retval
-                        ))
+                        if node.name == 'Callable':
+                            # TODO: fix callable arguments being strings
+                            return TypeInfo('typing', 'Callable', args=(
+                                f"[{", ".join(map(lambda a: str(a[1]), ann.args[int(node.is_bound):]))}]",
+                                ann.retval
+                            ))
+                        elif node.name in ('Generator', 'AsyncGenerator'):
+                            return ann.retval
+                        elif node.name == 'Coroutine':
+                            return node.replace(args=(NoneTypeInfo, AnyTypeInfo, ann.retval))
 
                 return super().visit(node)
 
@@ -380,60 +387,6 @@ def process_yield_or_return(
     # If the frame wasn't found, keep the event enabled, as this event may be from another
     # invocation whose start we missed.
     return sys.monitoring.DISABLE if (options.sampling and found) else None
-
-
-def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
-    """Follows a chain of `__wrapped__` attributes to find the original function."""
-
-    visited = set()         # there shouldn't be a loop, but just in case...
-    while hasattr(method, "__wrapped__"):
-        if method in visited:
-            return None
-        visited.add(method)
-
-        method = getattr(method, "__wrapped__")
-
-    return method
-
-
-def find_function(
-    caller_frame: FrameType,
-    code: CodeType
-) -> abc.Callable|None:
-    """Attempts to map back from a code object to the function that uses it."""
-
-    visited = set()
-
-    def find_in_class(class_obj: object) -> abc.Callable|None:
-        if class_obj in visited:
-            return None
-        visited.add(class_obj)
-
-        for obj in class_obj.__dict__.values():
-            if isinstance(obj, (FunctionType, classmethod)):
-                if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
-                    return obj
-
-            elif inspect.isclass(obj):
-                if (f := find_in_class(obj)):
-                    return f
-
-        return None
-
-    dicts: abc.Iterable[Any] = caller_frame.f_globals.values()
-    if caller_frame.f_back:
-        dicts = itertools.chain(caller_frame.f_back.f_locals.values(), dicts)
-
-    for obj in dicts:
-        if isinstance(obj, FunctionType):
-            if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
-                return obj
-
-        elif inspect.isclass(obj):
-            if (f := find_in_class(obj)):
-                return f
-
-    return None
 
 
 def process_function_arguments(

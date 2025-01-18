@@ -122,8 +122,8 @@ class TypeInfo:
             return node
 
 
-# FIXME make Singleton using __new__
-NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
+NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)    # FIXME make Singleton using __new__
+AnyTypeInfo = TypeInfo("typing", "Any")
 
 
 @dataclass
@@ -142,27 +142,22 @@ class Sample:
 
     def process(self) -> tuple[TypeInfo, ...]:
         retval = self.returns
-        if len(self.yields):
-            y = TypeInfo.from_set(self.yields)
-            is_async = False
-
-            # FIXME capture send type and switch to Generator/AsyncGenerator if any sent
-
-            if len(self.yields) == 1:
-                y = next(iter(self.yields))
-                if str(y) == "builtins.async_generator_wrapped_value":
-                    y = TypeInfo("typing", "Any")  # FIXME how to unwrap the value without waiting on it?
-                    is_async = True
-
-            if self.returns is NoneTypeInfo:
-                # Note that we are unable to differentiate between an implicit "None"
-                # return and an explicit "return None".
-                # FIXME return value doesn't matter for AsyncIterator
-                iter_type = "AsyncIterator" if is_async else "Iterator"
-                retval = TypeInfo("typing", iter_type, (y,))
-
+        if self.yields:
+            if any(str(t) == "builtins.async_generator_wrapped_value" for t in self.yields):
+                # FIXME how to unwrap the y without waiting on it?
+                # FIXME need send type
+                y = s = AnyTypeInfo
+                retval = TypeInfo("typing", "AsyncGenerator", (y, s))
             else:
-                retval = TypeInfo("typing", "Generator", (y, TypeInfo("typing", "Any"), self.returns))
+                y = TypeInfo.from_set(self.yields)
+
+                if self.returns is NoneTypeInfo:
+                    # Note that we are unable to differentiate between an implicit "None"
+                    # return and an explicit "return None".
+                    retval = TypeInfo("typing", "Iterator", (y,))
+                else:
+                    s = AnyTypeInfo # FIXME need send type
+                    retval = TypeInfo("typing", "Generator", (y, s, self.returns))
 
         type_data = (*self.args, retval)
 
