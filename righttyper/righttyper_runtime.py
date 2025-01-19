@@ -91,8 +91,7 @@ def should_skip_function(
         all([not re.search(pattern, code.co_name) \
              for pattern in include_functions_pattern])
     if (
-        code.co_name.startswith("<")
-        or skip_file
+        skip_file
         or included_in_pattern
         or "righttyper_" in code.co_filename
     ):

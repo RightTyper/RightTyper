@@ -942,7 +942,6 @@ def test_discovered_generator(tmp_cwd):
     assert "def f(x: Iterator[int]) -> None:" in output
 
 
-@pytest.mark.skip(reason="We don't currently process events for <genexpr>")
 def test_discovered_genexpr(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def f(x):
@@ -958,6 +957,26 @@ def test_discovered_genexpr(tmp_cwd):
 
     output = Path("t.py").read_text()
     assert "def f(x: Iterator[int]) -> None:" in output
+
+
+def test_discovered_genexpr_two_in_same_line(tmp_cwd):
+    # TODO this is a bit risky: we identify the functions (and genexpr) by filename,
+    # first code line and name.  These two genexpr have thus the same name!
+    # We could add the first code column...
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f(x):
+            for _ in x:
+                pass
+
+        f((i for i in range(10))); f((s for s in ['a', 'b']))
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def f(x: Iterator[int|str]) -> None:" in output
 
 
 def test_module_list_not_lost_with_multiprocessing(tmp_cwd):
