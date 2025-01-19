@@ -524,7 +524,8 @@ def in_instrumentation_code(frame: FrameType) -> bool:
     f: FrameType|None = frame
     countdown = 10
     while f and countdown > 0:
-        if f.f_code in instrumentation_functions_code:
+        # using torch dynamo, f_code can apparently be a dict...
+        if isinstance(f.f_code, CodeType) and f.f_code in instrumentation_functions_code:
             # In instrumentation code
             return True
             break
