@@ -11,9 +11,12 @@ ArgumentName = NewType("ArgumentName", str)
 Filename = NewType("Filename", str)
 FunctionName = NewType("FunctionName", str)
 
+CodeId = NewType("CodeId", int)     # obtained from id(code) where code is-a CodeType
+FrameId = NewType("FrameId", int)   # similarly from id(frame)
+
 
 @dataclass(eq=True, frozen=True)
-class FuncInfo:
+class FuncId:
     file_name: Filename
     first_code_line: int
     func_name: FunctionName
@@ -35,8 +38,8 @@ class TypeInfo:
     name: str
     args: "tuple[TypeInfo|str, ...]" = tuple()    # arguments within []
 
-    func: FuncInfo|None = None              # if a callable, the FuncInfo
-    is_bound: bool = False                  # if a callable, whether bound
+    code_id: CodeId = CodeId(0)     # if a callable, generator or coroutine, the CodeId
+    is_bound: bool = False          # if a callable, whether bound
     type_obj: TYPE_OBJ_TYPES|None = None
     typevar_index: int = 0
     typevar_name: str|None = None   # TODO delete me?
@@ -130,6 +133,13 @@ AnyTypeInfo = TypeInfo("typing", "Any")
 class ArgInfo:
     arg_name: ArgumentName
     default: TypeInfo|None
+
+
+@dataclass(eq=True, frozen=True)
+class FuncInfo:
+    func_id: FuncId
+    args: tuple[ArgInfo, ...]
+
 
 
 @dataclass

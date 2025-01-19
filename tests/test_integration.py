@@ -965,10 +965,12 @@ def test_discovered_genexpr_two_in_same_line(tmp_cwd):
     # We could add the first code column...
     Path("t.py").write_text(textwrap.dedent("""\
         def f(x):
-            for _ in x:
-                pass
+            return sum(1 for _ in x)
 
-        f((i for i in range(10))); f((s for s in ['a', 'b']))
+        def g(x):
+            return sum(1 for _ in x)
+
+        f((i for i in range(10))) + g((s for s in ['a', 'b']))
         """
     ))
 
@@ -976,7 +978,8 @@ def test_discovered_genexpr_two_in_same_line(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
 
     output = Path("t.py").read_text()
-    assert "def f(x: Iterator[int|str]) -> None:" in output
+    assert "def f(x: Iterator[int]) -> int:" in output
+    assert "def g(x: Iterator[str]) -> int:" in output
 
 
 def test_module_list_not_lost_with_multiprocessing(tmp_cwd):

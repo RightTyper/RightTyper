@@ -6,7 +6,7 @@ import libcst as cst
 from righttyper.generate_stubs import PyiTransformer
 from righttyper.righttyper_types import (
     Filename,
-    FuncInfo,
+    FuncId,
     FuncAnnotation,
     FunctionName,
 )
@@ -80,7 +80,7 @@ def process_file(
     filename: Filename,
     output_files: bool,
     generate_stubs: bool,
-    type_annotations: dict[FuncInfo, FuncAnnotation],
+    type_annotations: dict[FuncId, FuncAnnotation],
     overwrite: bool,
     module_names: list[str],
     ignore_annotations: bool = False,

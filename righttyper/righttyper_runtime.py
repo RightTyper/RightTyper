@@ -22,9 +22,10 @@ from pathlib import Path
 
 from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
+    CodeId,
     Filename,
     FunctionName,
-    FuncInfo,
+    FuncId,
     T,
     TypeInfo,
     NoneTypeInfo,
@@ -154,13 +155,10 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
         args = tuple()
 
     # Construct the Callable type string
-    return TypeInfo("typing", "Callable", args=args,
-                    func=FuncInfo(
-                        Filename(func.__code__.co_filename),
-                        func.__code__.co_firstlineno,
-                        FunctionName(func.__qualname__)
-                    ),
-                    is_bound=isinstance(func, MethodType)
+    return TypeInfo("typing", "Callable",
+        args=args,
+        code_id=CodeId(id(func.__code__)),
+        is_bound=isinstance(func, MethodType)
     )
 
 
@@ -394,13 +392,7 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         #    ann = type_from_annotations(f)
         #    (now use ann_type.args[-1], the return value)
 
-        return TypeInfo("typing", name,
-            func=FuncInfo(
-                Filename(code.co_filename),
-                code.co_firstlineno,
-                FunctionName(obj.__qualname__)
-            )
-        )
+        return TypeInfo("typing", name, code_id=CodeId(id(code)))
 
 
     def recurse(v: Any) -> TypeInfo:

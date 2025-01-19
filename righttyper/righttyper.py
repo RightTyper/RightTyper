@@ -43,8 +43,11 @@ from righttyper.righttyper_tool import (
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
+    CodeId,
     Filename,
+    FuncId,
     FuncInfo,
+    FrameId,
     FuncAnnotation,
     FunctionName,
     TypeInfo,
@@ -93,64 +96,77 @@ logger = logging.getLogger("righttyper")
 
 @dataclass
 class Observations:
-    # Visited functions' argument names and their defaults' types, if any
-    functions_visited: dict[FuncInfo, tuple[ArgInfo, ...]] = field(default_factory=dict)
+    # Visited functions' and information about them
+    functions_visited: dict[CodeId, FuncInfo] = field(default_factory=dict)
 
-    # Started, but not completed samples by (function, frame ID)
-    pending_samples: dict[tuple[FuncInfo, int], Sample] = field(default_factory=dict)
+    # Started, but not (yet) completed samples
+    pending_samples: dict[tuple[CodeId, FrameId], Sample] = field(default_factory=dict)
 
-    # Completed samples by function
-    samples: dict[FuncInfo, set[tuple[TypeInfo, ...]]] = field(default_factory=lambda: defaultdict(set))
+    # Completed samples
+    samples: dict[CodeId, set[tuple[TypeInfo, ...]]] = field(default_factory=lambda: defaultdict(set))
 
 
     def record_function(
         self,
-        func: FuncInfo,
+        code: CodeType,
         arg_names: tuple[str, ...],
         get_default_type: Callable[[str], TypeInfo|None]
     ) -> None:
-        """Records that a function was visited, along with its argument names and any defaults."""
+        """Records that a function was visited, along with some details about it."""
 
-        if func not in self.functions_visited:
-            self.functions_visited[func] = tuple(
-                ArgInfo(ArgumentName(name), get_default_type(name))
-                for name in arg_names
+        code_id = CodeId(id(code))
+        if code_id not in self.functions_visited:
+            self.functions_visited[code_id] = FuncInfo(
+                FuncId(
+                    Filename(code.co_filename),
+                    code.co_firstlineno,
+                    FunctionName(code.co_qualname),
+                ),
+                tuple(
+                    ArgInfo(ArgumentName(name), get_default_type(name))
+                    for name in arg_names
+                )
             )
 
 
     def record_start(
         self,
-        func: FuncInfo,
-        frame_id: int,
+        code: CodeType,
+        frame_id: FrameId,
         arg_types: tuple[TypeInfo, ...],
-        self_type: TypeInfo|None,
-        is_async: bool
+        self_type: TypeInfo|None
     ) -> None:
         """Records a function start."""
 
-        # print(f"record_start {func}")
-        self.pending_samples[(func, frame_id)] = Sample(arg_types, self_type=self_type, is_async=is_async)
+        # print(f"record_start {code.co_qualname} {arg_types}")
+        self.pending_samples[(CodeId(id(code)), frame_id)] = Sample(
+            arg_types,
+            self_type=self_type,
+            is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR|inspect.CO_COROUTINE))
+        )
 
 
-    def record_yield(self, func: FuncInfo, frame_id: int, yield_type: TypeInfo) -> bool:
+    def record_yield(self, code: CodeType, frame_id: FrameId, yield_type: TypeInfo) -> bool:
         """Records a yield."""
 
-        # print(f"record_yield {func}")
-        if (sample := self.pending_samples.get((func, frame_id))):
+        # print(f"record_yield {code.co_qualname}")
+        if (sample := self.pending_samples.get((CodeId(id(code)), frame_id))):
             sample.yields.add(yield_type)
             return True
 
         return False
 
 
-    def record_return(self, func: FuncInfo, frame_id: int, return_type: TypeInfo) -> bool:
+    def record_return(self, code: CodeType, frame_id: FrameId, return_type: TypeInfo) -> bool:
         """Records a return."""
 
-        # print(f"record_return {func}")
-        if (sample := self.pending_samples.get((func, frame_id))):
+        # print(f"record_return {code.co_qualname}")
+
+        code_id = CodeId(id(code))
+        if (sample := self.pending_samples.get((code_id, frame_id))):
             sample.returns = return_type
-            self.samples[func].add(sample.process())
-            del self.pending_samples[(func, frame_id)]
+            self.samples[code_id].add(sample.process())
+            del self.pending_samples[(code_id, frame_id)]
             return True
 
         return False
@@ -167,21 +183,21 @@ class Observations:
                     sample_set.add(sprime)
 
 
-    def collect_annotations(self: Self) -> dict[FuncInfo, FuncAnnotation]:
+    def collect_annotations(self: Self) -> dict[FuncId, FuncAnnotation]:
         """Collects function type annotations from the observed types."""
 
         # Finish samples for any generators that are still unfinished
         # TODO are there other cases we should handle?
-        for (func, _), sample in self.pending_samples.items():
+        for (code_id, _), sample in self.pending_samples.items():
             if sample.yields:
-                self.samples[func].add(sample.process())
+                self.samples[code_id].add(sample.process())
 
-        def mk_annotation(t: FuncInfo) -> FuncAnnotation|None:
-            args = self.functions_visited[t]
-            samples = self.samples[t]
+        def mk_annotation(code_id: CodeId) -> FuncAnnotation|None:
+            func_info = self.functions_visited[code_id]
+            samples = self.samples[code_id]
 
             if (signature := generalize(list(samples))) is None:
-                print(f"Error generalizing {t}: inconsistent samples.\n" +
+                print(f"Error generalizing {func_info.func_id}: inconsistent samples.\n" +
                       f"{[tuple(str(t) for t in s) for s in samples]}")
                 return None
 
@@ -206,7 +222,7 @@ class Observations:
                             })
                         )
                     )
-                    for i, arg in enumerate(args)
+                    for i, arg in enumerate(func_info.args)
                 ],
                 retval=tr.visit(signature[-1])
             )
@@ -215,8 +231,8 @@ class Observations:
             """Updates Callable type declarations based on observations."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 # if 'args' is there, the function is already annotated
-                if node.func and (options.ignore_annotations or not node.args) and node.func in self.samples:
-                    if (ann := mk_annotation(node.func)):
+                if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.samples:
+                    if (ann := mk_annotation(node.code_id)):
                         if node.name == 'Callable':
                             # TODO: fix callable arguments being strings
                             return TypeInfo('typing', 'Callable', args=(
@@ -233,9 +249,9 @@ class Observations:
         self._transform_types(T())
 
         return {
-            t: annotation
-            for t in self.samples
-            if (annotation := mk_annotation(t)) is not None
+            self.functions_visited[code_id].func_id: annotation
+            for code_id in self.samples
+            if (annotation := mk_annotation(code_id)) is not None
         }
 
 
@@ -263,14 +279,8 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         frame = frame.f_back
         assert code == frame.f_code
 
-        t = FuncInfo(
-            Filename(code.co_filename),
-            code.co_firstlineno,
-            FunctionName(code.co_qualname),
-        )
-
         function = find_function(frame, code)
-        process_function_arguments(t, id(frame), inspect.getargvalues(frame), code, function)
+        process_function_arguments(code, FrameId(id(frame)), inspect.getargvalues(frame), function)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -370,18 +380,12 @@ def process_yield_or_return(
         frame = frame.f_back.f_back
         assert code == frame.f_code
 
-        t = FuncInfo(
-            Filename(code.co_filename),
-            code.co_firstlineno,
-            FunctionName(code.co_qualname),
-        )
-
         typeinfo = get_value_type(return_value, use_jaxtyping=options.infer_shapes)
 
         if event_type == sys.monitoring.events.PY_YIELD:
-            found = obs.record_yield(t, id(frame), typeinfo)
+            found = obs.record_yield(code, FrameId(id(frame)), typeinfo)
         else:
-            found = obs.record_return(t, id(frame), typeinfo)
+            found = obs.record_return(code, FrameId(id(frame)), typeinfo)
 
         del frame
 
@@ -391,10 +395,9 @@ def process_yield_or_return(
 
 
 def process_function_arguments(
-    t: FuncInfo,
-    frame_id: int,
-    args: inspect.ArgInfo,
     code: CodeType,
+    frame_id: FrameId,
+    args: inspect.ArgInfo,
     function: Callable|None
 ) -> None:
 
@@ -443,7 +446,8 @@ def process_function_arguments(
         return None
 
     obs.record_function(
-        t, (
+        code,
+        (
             *(a for a in args.args),
             *((args.varargs,) if args.varargs else ()),
             *((args.keywords,) if args.keywords else ())
@@ -468,11 +472,10 @@ def process_function_arguments(
     )
 
     obs.record_start(
-        t,
+        code,
         frame_id,
         arg_values,
-        get_self_type(),
-        is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR|inspect.CO_COROUTINE))
+        get_self_type()
     )
 
 
@@ -598,10 +601,10 @@ def process_file_wrapper(args) -> SignatureChanges|BaseException:
 
 def process_all_files() -> list[SignatureChanges]:
     fnames = set(
-        t.file_name
-        for t in obs.functions_visited
+        t.func_id.file_name
+        for t in obs.functions_visited.values()
         if not skip_this_file(
-            t.file_name,
+            t.func_id.file_name,
             options.script_dir,
             options.include_all,
             options.include_files_pattern

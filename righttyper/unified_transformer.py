@@ -8,7 +8,7 @@ import re
 
 from righttyper.righttyper_types import (
     Filename,
-    FuncInfo,
+    FuncId,
     FuncAnnotation,
     FunctionName,
     TypeInfo,
@@ -101,7 +101,7 @@ class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
         self,
         filename: str,
-        type_annotations: dict[FuncInfo, FuncAnnotation],
+        type_annotations: dict[FuncId, FuncAnnotation],
         override_annotations: bool,
         inline_generics: bool,
         module_name: str|None,
@@ -430,7 +430,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.get_metadata(PositionProvider, node).start.line
             for node in (original_node, *original_node.decorators)
         )
-        key = FuncInfo(Filename(self.filename), first_line, FunctionName(name))
+        key = FuncId(Filename(self.filename), first_line, FunctionName(name))
 
         if ann := typing.cast(FuncAnnotation, self.type_annotations.get(key)):  # cast to make mypy happy
             pre_function = []
