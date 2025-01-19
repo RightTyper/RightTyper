@@ -636,8 +636,8 @@ def test_async_generator(tmp_cwd):
     output = Path("t.py").read_text()
 
     # FIXME should be AsyncGenerator[int, None] or AsyncIterator[int]
-    assert "def gen() -> AsyncGenerator[Any, Any]:" in output
-    assert "def g(f: AsyncGenerator[Any, Any]) -> None" in output
+    assert "def gen() -> AsyncGenerator[int, Any]:" in output
+    assert "def g(f: AsyncGenerator[int, Any]) -> None" in output
 
 
 def test_coroutine(tmp_cwd):

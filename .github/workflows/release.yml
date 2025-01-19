@@ -4,12 +4,22 @@ on:
   release:
     types: [published]
 
+  workflow_dispatch:
+
 permissions:
   contents: read
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      matrix:
+        python_version: '3.12'
+        os: ['ubuntu-latest', 'macos-13']
+        include:
+          - os: ubuntu-latest
+            container: quay.io/pypa/manylinux_2_28_x86_64 # https://github.com/pypa/manylinux
 
     steps:
     - uses: actions/checkout@v4
@@ -17,7 +27,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.x'
+        python-version: ${{ matrix.python_version }}
 
     - name: Install dependencies
       run: |
@@ -27,7 +37,16 @@ jobs:
     - name: Build package
       run: python -m build
 
+    - name: Upload test package
+      if: github.event_name != 'release'
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        user: __token__
+        password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+        repository-url: https://test.pypi.org/legacy/
+
     - name: Publish package
+      if: github.event_name == 'release'
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         user: __token__

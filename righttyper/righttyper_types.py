@@ -137,16 +137,17 @@ class Sample:
     args: tuple[TypeInfo, ...]
     yields: set[TypeInfo] = field(default_factory=set)
     returns: TypeInfo = NoneTypeInfo
+    is_async: bool = False
     self_type: TypeInfo | None = None
 
 
     def process(self) -> tuple[TypeInfo, ...]:
         retval = self.returns
         if self.yields:
-            if any(str(t) == "builtins.async_generator_wrapped_value" for t in self.yields):
-                # FIXME how to unwrap the y without waiting on it?
+            y = TypeInfo.from_set(self.yields)
+            if self.is_async:
                 # FIXME need send type
-                y = s = AnyTypeInfo
+                s = AnyTypeInfo
                 retval = TypeInfo("typing", "AsyncGenerator", (y, s))
             else:
                 y = TypeInfo.from_set(self.yields)

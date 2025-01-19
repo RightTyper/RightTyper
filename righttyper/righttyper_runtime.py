@@ -464,6 +464,10 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
         return type_for_generator(value, value.cr_frame, value.cr_code, "Coroutine")
     elif isinstance(value, type) and value is not type:
         return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
+    elif type(value).__name__ == 'async_generator_wrapped_value' and type(value).__module__ == 'builtins':
+        import righttyper.traverse as tr
+        if (v := tr.traverse(value)):
+            return get_value_type(v[0], depth+1)
 
 
     if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):
