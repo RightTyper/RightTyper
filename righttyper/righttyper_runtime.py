@@ -363,7 +363,7 @@ def find_function(
     return None
 
 
-def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
+def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
     """
     get_value_type takes a value (an instance) as input and returns a string representing its type.
 
@@ -403,13 +403,17 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
         )
 
 
+    def recurse(v: Any) -> TypeInfo:
+        return get_value_type(v, use_jaxtyping=use_jaxtyping, depth=depth+1)
+
+
     if isinstance(value, dict):
         t = type(value)
         args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
         try:
             if value:
                 el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
-                args = tuple(get_value_type(fld, depth=depth+1) for fld in el)
+                args = tuple(recurse(fld) for fld in el)
         except Exception:
             pass
         return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
@@ -419,7 +423,7 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
         try:
             if value:
                 el = sample_from_collection(value)
-                args = (get_value_type(el, depth=depth+1),)
+                args = (recurse(el),)
         except Exception:
             pass
         return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
@@ -428,7 +432,7 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
         try:
             if value:
                 el = sample_from_collection(value)
-                args = (get_value_type(el, depth=depth+1),)
+                args = (recurse(el),)
         except Exception:
             pass
         return TypeInfo("typing", t.__qualname__, args=args)
@@ -437,7 +441,7 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
         try:
             if value:
                 el = sample_from_collection(value)
-                args = tuple(get_value_type(fld, depth=depth+1) for fld in el)
+                args = tuple(recurse(fld) for fld in el)
         except Exception:
             pass
         return TypeInfo("typing", "ItemsView", args=args)
@@ -449,7 +453,7 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
             args = tuple()
             try:
                 if value:
-                    args = tuple(get_value_type(fld, depth=depth+1) for fld in value)
+                    args = tuple(recurse(fld) for fld in value)
             except Exception:
                 pass
             return TypeInfo("", "tuple", args=args)
@@ -465,8 +469,11 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
         return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
     elif type(value).__name__ == 'async_generator_wrapped_value' and type(value).__module__ == 'builtins':
         import righttyper.traverse as tr
-        if (v := tr.traverse(value)):
-            return get_value_type(v[0], depth+1)
+        if (len(v := tr.traverse(value)) == 1):
+            return recurse(v[0])
+        else:
+            # something went wrong with the 'traverse' workaround
+            return AnyTypeInfo
 
 
     if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):
