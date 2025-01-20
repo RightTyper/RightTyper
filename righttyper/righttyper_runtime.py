@@ -481,7 +481,7 @@ def src2module(src: str) -> ModuleType|None:
 def find_function(
     caller_frame: FrameType,
     code: CodeType
-) -> abc.Callable|None:
+) -> FunctionType|None:
     """Attempts to map back from a code object to the function that uses it."""
 
     parts = code.co_qualname.split('.')
