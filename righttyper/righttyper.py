@@ -139,11 +139,13 @@ class Observations:
         """Records a function start."""
 
         # print(f"record_start {code.co_qualname} {arg_types}")
+        is_async = bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE))
         self.pending_samples[(CodeId(id(code)), frame_id)] = Sample(
             arg_types,
             self_type=self_type,
-            is_async_generator=bool(code.co_flags & inspect.CO_ASYNC_GENERATOR),
-            is_generator=bool(code.co_flags & inspect.CO_GENERATOR)
+            is_async=is_async,
+            is_generator=bool(code.co_flags & inspect.CO_GENERATOR) \
+                or (is_async and (code.co_flags & inspect.CO_ASYNC_GENERATOR))
         )
 
 

@@ -147,7 +147,7 @@ class Sample:
     args: tuple[TypeInfo, ...]
     yields: set[TypeInfo] = field(default_factory=set)
     returns: TypeInfo = NoneTypeInfo
-    is_async_generator: bool = False
+    is_async: bool = False
     is_generator: bool = False
     self_type: TypeInfo | None = None
 
@@ -155,13 +155,13 @@ class Sample:
     def process(self) -> tuple[TypeInfo, ...]:
         retval = self.returns
 
-        if self.is_async_generator:
+        if self.is_async and self.is_generator:
             # FIXME need send type
             y = TypeInfo.from_set(self.yields)
             s = AnyTypeInfo
             retval = TypeInfo("typing", "AsyncGenerator", (y, s))
 
-        if self.is_generator:
+        elif self.is_generator:
 
             y = TypeInfo.from_set(self.yields)
 
