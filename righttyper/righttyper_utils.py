@@ -86,19 +86,24 @@ def skip_this_file(
 
 def _source_relative_to_pkg(file: Path) -> Path|None:
     """Returns a Python source file's path relative to its package"""
-    if not file.is_absolute():
-        file = file.resolve()
+    try:
+        if not file.is_absolute():
+            file = file.resolve()
 
-    parents = list(file.parents)
+        parents = list(file.parents)
 
-    for d in sys.path:
-        path = Path(d)
-        if not path.is_absolute():
-            path = path.resolve()
+        for d in sys.path:
+            path = Path(d)
+            if not path.is_absolute():
+                path = path.resolve()
 
-        for p in parents:
-            if p == path:
-                return file.relative_to(p)
+            for p in parents:
+                if p == path:
+                    return file.relative_to(p)
+    except:
+        # file.resolve() may throw in case of symlink loops;
+        # Also, torch._dynamo seems to throw Unsupported (see issue 93)
+        pass
 
     return None
 
