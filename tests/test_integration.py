@@ -552,6 +552,37 @@ def test_generator(tmp_cwd):
     assert "def g(f: Iterator[float|int]) -> None" in output
 
 
+@pytest.mark.xfail(reason="Doesn't work yet")
+def test_generator_send(tmp_cwd):
+    t = textwrap.dedent("""\
+        def gen():
+            sum = 0.0
+            while True:
+                value = yield sum
+                if value is not None:
+                    sum += value
+
+        def f(g):
+            print([
+                g.send(10),
+                g.send(5)
+            ])
+
+        g = gen()
+        next(g) # prime generator
+        f(g)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def gen() -> Generator[float, int, None]:" in output
+    assert "def f(f: Generator[float, int, None]) -> None" in output
+
+
 def test_generator_with_return(tmp_cwd):
     t = textwrap.dedent("""\
         def gen():
