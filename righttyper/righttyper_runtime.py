@@ -5,19 +5,31 @@ import sys
 
 import collections.abc as abc
 from functools import cache
-from itertools import islice
-from types import CodeType, FrameType, NoneType, FunctionType, MethodType, GenericAlias
+import itertools
+from types import (
+    CodeType,
+    FrameType,
+    NoneType,
+    FunctionType,
+    MethodType,
+    GeneratorType,
+    AsyncGeneratorType,
+    CoroutineType,
+    GenericAlias
+)
 from typing import Any, cast, TypeAlias
 from pathlib import Path
 
 from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
+    CodeId,
     Filename,
     FunctionName,
-    FuncInfo,
+    FuncId,
     T,
     TypeInfo,
-    NoneTypeInfo
+    NoneTypeInfo,
+    AnyTypeInfo
 )
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 
@@ -28,10 +40,10 @@ def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) 
 
     if isinstance(value, abc.Collection):
         n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
-        return next(islice(value, n, n + 1))
+        return next(itertools.islice(value, n, n + 1))
 
     n = random.randint(1, MAX_ELEMENTS)
-    return list(islice(value, n))[-1]
+    return list(itertools.islice(value, n))[-1]
 
 
 JX_DTYPES = None
@@ -80,8 +92,7 @@ def should_skip_function(
         all([not re.search(pattern, code.co_name) \
              for pattern in include_functions_pattern])
     if (
-        code.co_name.startswith("<")
-        or skip_file
+        skip_file
         or included_in_pattern
         or "righttyper_" in code.co_filename
     ):
@@ -144,13 +155,10 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
         args = tuple()
 
     # Construct the Callable type string
-    return TypeInfo("typing", "Callable", args=args,
-                    func=FuncInfo(
-                        Filename(func.__code__.co_filename),
-                        func.__code__.co_firstlineno,
-                        FunctionName(func.__qualname__)
-                    ),
-                    is_bound=isinstance(func, MethodType)
+    return TypeInfo("typing", "Callable",
+        args=args,
+        code_id=CodeId(id(func.__code__)),
+        is_bound=isinstance(func, MethodType)
     )
 
 
@@ -256,7 +264,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
             return TypeInfo("typing", "Iterator", args=(TypeInfo("", "int", type_obj=int),))
         # TODO match other ABC from collections.abc based on interface
         elif issubclass(obj, abc.Iterator):
-            return TypeInfo("typing", "Iterator", args=(TypeInfo("typing", "Any"),))
+            return TypeInfo("typing", "Iterator", args=(AnyTypeInfo,))
         else:
             # fall back to its name, just so we can tell where it came from.
             return TypeInfo.from_type(obj)
@@ -299,7 +307,61 @@ def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
     return None
 
 
-def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
+def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
+    """Follows a chain of `__wrapped__` attributes to find the original function."""
+
+    visited = set()         # there shouldn't be a loop, but just in case...
+    while hasattr(method, "__wrapped__"):
+        if method in visited:
+            return None
+        visited.add(method)
+
+        method = getattr(method, "__wrapped__")
+
+    return method
+
+
+def find_function(
+    caller_frame: FrameType,
+    code: CodeType
+) -> abc.Callable|None:
+    """Attempts to map back from a code object to the function that uses it."""
+
+    visited = set()
+
+    def find_in_class(class_obj: object) -> abc.Callable|None:
+        if class_obj in visited:
+            return None
+        visited.add(class_obj)
+
+        for obj in class_obj.__dict__.values():
+            if isinstance(obj, (FunctionType, classmethod)):
+                if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
+                    return obj
+
+            elif inspect.isclass(obj):
+                if (f := find_in_class(obj)):
+                    return f
+
+        return None
+
+    dicts: abc.Iterable[Any] = caller_frame.f_globals.values()
+    if caller_frame.f_back:
+        dicts = itertools.chain(caller_frame.f_back.f_locals.values(), dicts)
+
+    for obj in dicts:
+        if isinstance(obj, FunctionType):
+            if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
+                return obj
+
+        elif inspect.isclass(obj):
+            if (f := find_in_class(obj)):
+                return f
+
+    return None
+
+
+def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
     """
     get_value_type takes a value (an instance) as input and returns a string representing its type.
 
@@ -317,13 +379,33 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
     t: type|None
     args: tuple[TypeInfo, ...]
 
+
+    def type_for_generator(
+        obj: GeneratorType|AsyncGeneratorType|CoroutineType,
+        frame: FrameType|None,
+        code: CodeType,
+        name: str
+    ) -> TypeInfo:
+        # FIXME We can't yet retrieve types from annotations because all Callable
+        # arguments returned by type_from_annotations are strings
+        #if (f := find_function(frame, code)):
+        #    ann = type_from_annotations(f)
+        #    (now use ann_type.args[-1], the return value)
+
+        return TypeInfo("typing", name, code_id=CodeId(id(code)))
+
+
+    def recurse(v: Any) -> TypeInfo:
+        return get_value_type(v, use_jaxtyping=use_jaxtyping, depth=depth+1)
+
+
     if isinstance(value, dict):
         t = type(value)
         args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
         try:
             if value:
                 el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
-                args = tuple(get_value_type(fld, depth=depth+1) for fld in el)
+                args = tuple(recurse(fld) for fld in el)
         except Exception:
             pass
         return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
@@ -333,7 +415,7 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
         try:
             if value:
                 el = sample_from_collection(value)
-                args = (get_value_type(el, depth=depth+1),)
+                args = (recurse(el),)
         except Exception:
             pass
         return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
@@ -342,7 +424,7 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
         try:
             if value:
                 el = sample_from_collection(value)
-                args = (get_value_type(el, depth=depth+1),)
+                args = (recurse(el),)
         except Exception:
             pass
         return TypeInfo("typing", t.__qualname__, args=args)
@@ -351,7 +433,7 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
         try:
             if value:
                 el = sample_from_collection(value)
-                args = tuple(get_value_type(fld, depth=depth+1) for fld in el)
+                args = tuple(recurse(fld) for fld in el)
         except Exception:
             pass
         return TypeInfo("typing", "ItemsView", args=args)
@@ -363,23 +445,27 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
             args = tuple()
             try:
                 if value:
-                    args = tuple(get_value_type(fld, depth=depth+1) for fld in value)
+                    args = tuple(recurse(fld) for fld in value)
             except Exception:
                 pass
             return TypeInfo("", "tuple", args=args)
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
-    elif isinstance(value, abc.Generator):
-        any = TypeInfo("typing", "Any")
-        return TypeInfo("typing", "Generator", args=(any, any, any))  # FIXME needs yield / send / return types
-    elif isinstance(value, abc.AsyncGenerator):
-        any = TypeInfo("typing", "Any")
-        return TypeInfo("typing", "AsyncGenerator", args=(any, any))  # FIXME needs yield / send types
-    elif isinstance(value, abc.Coroutine):
-        any = TypeInfo("typing", "Any")
-        return TypeInfo("typing", "Coroutine", args=(any, any, any))  # FIXME needs yield / send / return types
+    elif isinstance(value, GeneratorType):
+        return type_for_generator(value, value.gi_frame, value.gi_code, "Generator")
+    elif isinstance(value, AsyncGeneratorType):
+        return type_for_generator(value, value.ag_frame, value.ag_code, "AsyncGenerator")
+    elif isinstance(value, CoroutineType):
+        return type_for_generator(value, value.cr_frame, value.cr_code, "Coroutine")
     elif isinstance(value, type) and value is not type:
         return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
+    elif type(value).__name__ == 'async_generator_wrapped_value' and type(value).__module__ == 'builtins':
+        import righttyper.traverse as tr
+        if (len(v := tr.traverse(value)) == 1):
+            return recurse(v[0])
+        else:
+            # something went wrong with the 'traverse' workaround
+            return AnyTypeInfo
 
 
     if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):
@@ -392,7 +478,7 @@ def get_value_type(value: Any, /, use_jaxtyping: bool = False, depth: int = 0) -
 
     if (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':
         return TypeInfo("numpy", "ndarray", args=(
-            TypeInfo("typing", "Any"),
+            AnyTypeInfo,
             get_type_name(type(value.dtype), depth+1)
         ))
 

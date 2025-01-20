@@ -29,7 +29,7 @@ jobs:
     - name: install dependencies
       run: |
         python3 -m pip install pytest pytest-asyncio pytest-mock hypothesis ml_dtypes mypy
-        python3 -m pip install .
+        python3 -m pip install -e .
 
     - name: run tests
       run: |

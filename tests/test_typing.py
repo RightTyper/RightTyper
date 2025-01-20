@@ -1,4 +1,4 @@
-from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, Sample
+from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample
 from righttyper.typeinfo import merged_types
 import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
@@ -131,7 +131,7 @@ def test_get_value_type():
     assert 0 == next(o), "changed state"
 
     o = (i for i in range(10))
-    assert "typing.Generator[typing.Any, typing.Any, typing.Any]" == get_value_type(o)
+    assert "typing.Generator" == get_value_type(o)
     assert 0 == next(o), "changed state"
 
     Point = namedtuple('Point', ['x', 'y'])
@@ -149,8 +149,8 @@ def test_get_value_type():
         for i in range(start):
             yield i
 
-    assert "typing.AsyncGenerator[typing.Any, typing.Any]" == get_value_type(async_range(10))
-    assert "typing.AsyncGenerator[typing.Any, typing.Any]" == get_value_type(aiter(async_range(10)))
+    assert "typing.AsyncGenerator" == get_value_type(async_range(10))
+    assert "typing.AsyncGenerator" == get_value_type(aiter(async_range(10)))
 
 
 @pytest.mark.filterwarnings("ignore:coroutine .* never awaited")
@@ -159,7 +159,7 @@ def test_get_value_type_coro():
         import asyncio
         await asyncio.sleep(1)
 
-    assert "typing.Coroutine[typing.Any, typing.Any, typing.Any]" == get_value_type(coro())
+    assert "typing.Coroutine" == get_value_type(coro())
 
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
@@ -404,7 +404,7 @@ def test_merged_types_generics_superclass():
 str_ti = TypeInfo("", "str", type_obj=str)
 int_ti = TypeInfo("", "int", type_obj=int)
 bool_ti = TypeInfo("", "bool", type_obj=bool)
-any_ti = TypeInfo("typing", "Any")
+any_ti = AnyTypeInfo
 generator_ti = lambda *a: TypeInfo("typing", "Generator", tuple(a))
 iterator_ti = lambda *a: TypeInfo("typing", "Iterator", tuple(a))
 union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.UnionType)
@@ -475,9 +475,3 @@ def test_sample_process_generator_union():
     sample = generate_sample(dog, 1, "hi", True)
     assert sample == Sample((int_ti, str_ti, bool_ti,), {int_ti, str_ti}, bool_ti)
     assert sample.process() == (int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), any_ti, bool_ti))
-
-
-def test_sample_process_asynciterator():
-    # TODO: do with real async test
-    sample = Sample(tuple(), yields={TypeInfo("builtins", "async_generator_wrapped_value")})
-    assert sample.process() == (TypeInfo("typing", "AsyncIterator", (any_ti,)),)

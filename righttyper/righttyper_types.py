@@ -11,9 +11,12 @@ ArgumentName = NewType("ArgumentName", str)
 Filename = NewType("Filename", str)
 FunctionName = NewType("FunctionName", str)
 
+CodeId = NewType("CodeId", int)     # obtained from id(code) where code is-a CodeType
+FrameId = NewType("FrameId", int)   # similarly from id(frame)
+
 
 @dataclass(eq=True, frozen=True)
-class FuncInfo:
+class FuncId:
     file_name: Filename
     first_code_line: int
     func_name: FunctionName
@@ -35,8 +38,8 @@ class TypeInfo:
     name: str
     args: "tuple[TypeInfo|str, ...]" = tuple()    # arguments within []
 
-    func: FuncInfo|None = None              # if a callable, the FuncInfo
-    is_bound: bool = False                  # if a callable, whether bound
+    code_id: CodeId = CodeId(0)     # if a callable, generator or coroutine, the CodeId
+    is_bound: bool = False          # if a callable, whether bound
     type_obj: TYPE_OBJ_TYPES|None = None
     typevar_index: int = 0
     typevar_name: str|None = None   # TODO delete me?
@@ -122,8 +125,8 @@ class TypeInfo:
             return node
 
 
-# FIXME make Singleton using __new__
-NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
+NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)    # FIXME make Singleton using __new__
+AnyTypeInfo = TypeInfo("typing", "Any")
 
 
 @dataclass
@@ -132,37 +135,40 @@ class ArgInfo:
     default: TypeInfo|None
 
 
+@dataclass(eq=True, frozen=True)
+class FuncInfo:
+    func_id: FuncId
+    args: tuple[ArgInfo, ...]
+
+
+
 @dataclass
 class Sample:
     args: tuple[TypeInfo, ...]
     yields: set[TypeInfo] = field(default_factory=set)
     returns: TypeInfo = NoneTypeInfo
+    is_async: bool = False
     self_type: TypeInfo | None = None
 
 
     def process(self) -> tuple[TypeInfo, ...]:
         retval = self.returns
-        if len(self.yields):
+        if self.yields:
             y = TypeInfo.from_set(self.yields)
-            is_async = False
-
-            # FIXME capture send type and switch to Generator/AsyncGenerator if any sent
-
-            if len(self.yields) == 1:
-                y = next(iter(self.yields))
-                if str(y) == "builtins.async_generator_wrapped_value":
-                    y = TypeInfo("typing", "Any")  # FIXME how to unwrap the value without waiting on it?
-                    is_async = True
-
-            if self.returns is NoneTypeInfo:
-                # Note that we are unable to differentiate between an implicit "None"
-                # return and an explicit "return None".
-                # FIXME return value doesn't matter for AsyncIterator
-                iter_type = "AsyncIterator" if is_async else "Iterator"
-                retval = TypeInfo("typing", iter_type, (y,))
-
+            if self.is_async:
+                # FIXME need send type
+                s = AnyTypeInfo
+                retval = TypeInfo("typing", "AsyncGenerator", (y, s))
             else:
-                retval = TypeInfo("typing", "Generator", (y, TypeInfo("typing", "Any"), self.returns))
+                y = TypeInfo.from_set(self.yields)
+
+                if self.returns is NoneTypeInfo:
+                    # Note that we are unable to differentiate between an implicit "None"
+                    # return and an explicit "return None".
+                    retval = TypeInfo("typing", "Iterator", (y,))
+                else:
+                    s = AnyTypeInfo # FIXME need send type
+                    retval = TypeInfo("typing", "Generator", (y, s, self.returns))
 
         type_data = (*self.args, retval)
 

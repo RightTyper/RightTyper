@@ -549,12 +549,10 @@ def test_generator(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "def gen() -> Iterator[float|int]:" in output
-
-    # FIXME this should be the same Iterator as above
-    assert "def g(f: Generator[Any, Any, Any]) -> None" in output
+    assert "def g(f: Iterator[float|int]) -> None" in output
 
 
-def test_generator_return(tmp_cwd):
+def test_generator_with_return(tmp_cwd):
     t = textwrap.dedent("""\
         def gen():
             yield 10
@@ -582,9 +580,35 @@ def test_generator_return(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "def gen() -> Generator[int, Any, str]:" in output
+    assert "def g(f: Generator[int, Any, str]) -> None" in output
 
-    # FIXME this should be the same Generator as above
-    assert "def g(f: Generator[Any, Any, Any]) -> None" in output
+
+@pytest.mark.xfail(reason="Doesn't currently work")
+def test_generator_from_annotation(tmp_cwd):
+    t = textwrap.dedent("""\
+        from typing import Generator
+
+        def gen() -> Generator[int|str, None, None]:
+            yield ""
+
+        def main():
+            for _ in gen():
+                pass
+
+        def g(f):
+            pass
+
+        main()
+        g(gen())
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def g(f: Generator[int|str, None, None]) -> None" in output
 
 
 def test_async_generator(tmp_cwd):
@@ -611,11 +635,31 @@ def test_async_generator(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    # FIXME should be AsyncGenerator[int] or AsyncIterator[int]
-    assert "def gen() -> AsyncIterator[Any]:" in output
+    # FIXME should be AsyncGenerator[int, None] or AsyncIterator[int]
+    assert "def gen() -> AsyncGenerator[int, Any]:" in output
+    assert "def g(f: AsyncGenerator[int, Any]) -> None" in output
 
-    # FIXME this should be the same Iterator as above
-    assert "def g(f: AsyncGenerator[Any, Any]) -> None" in output
+
+def test_coroutine(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        import asyncio
+
+        def foo():
+            async def coro():
+                return "did it"
+
+            return coro()
+
+        asyncio.run(foo())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    # FIXME should be Coroutine[None, None, str]
+    assert "def foo() -> Coroutine[None, Any, str]:" in output
 
 
 def test_generate_stubs(tmp_cwd):
@@ -688,25 +732,6 @@ def test_type_from_main(tmp_cwd):
     assert "def f(x: \"t.C\") -> str:" in output
 
     subprocess.run([sys.executable, '-m', 'mypy', 'm.py', 't.py'], check=True)
-
-
-def test_coroutine_type(tmp_cwd):
-    Path("t.py").write_text(textwrap.dedent("""\
-        def foo():
-            async def coro():
-                import asyncio
-                await asyncio.sleep(1)
-            return coro()
-
-        foo()
-        """
-    ))
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', 't.py'], check=True)
-
-    output = Path("t.py").read_text()
-    assert "def foo() -> Coroutine[Any, Any, Any]:" in output
 
 
 def test_module_type(tmp_cwd):
@@ -869,6 +894,92 @@ def test_discovered_function_type_in_yield(tmp_cwd):
     output = Path("t.py").read_text()
     assert "def foo(x: int) -> float:" in output
     assert "def bar() -> Iterator[Callable[[int], float]]:" in output
+
+
+@pytest.mark.parametrize('ignore_ann', [False, True])
+def test_discovered_function_annotated(tmp_cwd, ignore_ann):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x: int | float) -> float:
+            return x/2
+
+        def bar(f, x):
+            return f(x)
+
+        bar(foo, 1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing',
+                    *(('--ignore-annotations',) if ignore_ann else()),
+                    't.py'], check=True)
+
+    output = Path("t.py").read_text()
+
+    if ignore_ann:
+        assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
+    else:
+        assert "def bar(f: Callable[[int | float], float], x: int) -> float:" in output
+
+
+def test_discovered_generator(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def g(x):
+            yield from range(x)
+
+        def f(x):
+            for _ in x:
+                pass
+
+        f(g(10))
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def f(x: Iterator[int]) -> None:" in output
+
+
+def test_discovered_genexpr(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f(x):
+            for _ in x:
+                pass
+
+        f((i for i in range(10)))
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def f(x: Iterator[int]) -> None:" in output
+
+
+def test_discovered_genexpr_two_in_same_line(tmp_cwd):
+    # TODO this is a bit risky: we identify the functions (and genexpr) by filename,
+    # first code line and name.  These two genexpr have thus the same name!
+    # We could add the first code column...
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f(x):
+            return sum(1 for _ in x)
+
+        def g(x):
+            return sum(1 for _ in x)
+
+        f((i for i in range(10))) + g((s for s in ['a', 'b']))
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def f(x: Iterator[int]) -> int:" in output
+    assert "def g(x: Iterator[str]) -> int:" in output
 
 
 def test_module_list_not_lost_with_multiprocessing(tmp_cwd):
