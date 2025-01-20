@@ -145,7 +145,6 @@ class Observations:
             is_async_generator=bool(code.co_flags & inspect.CO_ASYNC_GENERATOR),
             is_generator=bool(code.co_flags & inspect.CO_GENERATOR)
         )
-        print(self.pending_samples[(CodeId(id(code)), frame_id)])
 
 
     def record_yield(self, code: CodeType, frame_id: FrameId, yield_type: TypeInfo) -> bool:
