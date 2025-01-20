@@ -1,11 +1,24 @@
 import itertools
 from typing import Sequence, Iterator, cast
-from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES
+from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo, AnyTypeInfo
 from .righttyper_utils import get_main_module_fqn
 from collections import Counter
 
 
 # TODO integrate these into TypeInfo?
+
+class SimplifyGeneratorsTransformer(TypeInfo.Transformer):
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        if node.module == "typing" \
+            and node.name == "Generator" \
+            and len(node.args) == 3 \
+            and node.args[1] == AnyTypeInfo \
+            and node.args[2] == NoneTypeInfo:
+
+            node = TypeInfo("typing", "Iterator", (node.args[0],))
+        
+        return super().visit(node)
+
 
 def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     """Attempts to merge types in a set before forming their union."""
@@ -40,6 +53,9 @@ def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
                         )
                     ))
 
+    tr = SimplifyGeneratorsTransformer()
+    typeinfoset = set(map(tr.visit, typeinfoset))
+    
     return TypeInfo.from_set(typeinfoset)
 
 
@@ -204,7 +220,9 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
                 for i in range(len(types[0].args))
             )
 
-            return types[0].replace(args=args)
+            homogenized = types[0].replace(args=args)
+            tr = SimplifyGeneratorsTransformer()
+            return tr.visit(homogenized)
 
         if occurrences[types] > 1:
             if types not in typevars:
@@ -215,5 +233,6 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
             return typevars[types]
 
         return merged_types(set(types))
+
 
     return [rebuild(types) for types in transposed]

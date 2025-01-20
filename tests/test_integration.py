@@ -1864,3 +1864,43 @@ def test_self_subtyping_reversed(tmp_cwd):
 
     # The argument isn't Self as (NumberAdd IS-A IntegerAdd) doesn't hold
     assert "def operation(self: Self, rhs: \"NumberAdd\") -> Self:" in output
+
+def test_returns_or_yields_generator():
+    t = textwrap.dedent("""\
+        def test(a):
+            if a < 5:
+                return "too small :("
+            else:
+                for i in range(a):
+                    yield a
+
+        for _ in test(3): pass
+        for _ in test(10): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def test(a: int) -> Generator[int|None, Any, str|None]" in output
+
+def test_generators_merge_into_iterator():
+    t = textwrap.dedent("""\
+        def test(a):
+            if a < 5:
+                yield "too small"
+            else:
+                yield a
+
+        for _ in test(3): pass
+        for _ in test(10): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def test(a: int) -> Iterator[int|str]" in output
+

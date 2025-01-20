@@ -1,5 +1,5 @@
 from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample
-from righttyper.typeinfo import merged_types
+from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
 from collections import namedtuple
@@ -435,7 +435,7 @@ def test_sample_process_simple():
 
     sample = generate_sample(dog, "hi")
     assert sample == Sample((str_ti,), returns=str_ti)
-    assert sample.process() == (str_ti, str_ti)
+    assert generalize([sample.process()]) == [str_ti, str_ti]
 
 
 def test_sample_process_generator():
@@ -445,7 +445,7 @@ def test_sample_process_generator():
 
     sample = generate_sample(dog, 1, "hi")
     assert sample == Sample((int_ti, str_ti,), {int_ti}, str_ti, is_generator=True)
-    assert sample.process() == (int_ti, str_ti, generator_ti(int_ti, any_ti, str_ti))
+    assert generalize([sample.process()]) == [int_ti, str_ti, generator_ti(int_ti, any_ti, str_ti)]
 
 def test_sample_process_generator_noyield():
     def dog(a, b):
@@ -454,7 +454,7 @@ def test_sample_process_generator_noyield():
 
     sample = generate_sample(dog, 1, "hi")
     assert sample == Sample((int_ti, str_ti,), returns=str_ti, is_generator=True)
-    assert sample.process() == (int_ti, str_ti, generator_ti(NoneTypeInfo, any_ti, str_ti))
+    assert generalize([sample.process()]) == [int_ti, str_ti, generator_ti(NoneTypeInfo, any_ti, str_ti)]
 
 
 def test_sample_process_iterator_union():
@@ -464,7 +464,7 @@ def test_sample_process_iterator_union():
 
     sample = generate_sample(dog, 1, "hi")
     assert sample == Sample((int_ti, str_ti,), yields={int_ti, str_ti}, is_generator=True)
-    assert sample.process() == (int_ti, str_ti, iterator_ti(union_ti(int_ti, str_ti)))
+    assert generalize([sample.process()]) == [int_ti, str_ti, iterator_ti(union_ti(int_ti, str_ti))]
 
 
 def test_sample_process_iterator():
@@ -473,7 +473,7 @@ def test_sample_process_iterator():
 
     sample = generate_sample(dog, "hi")
     assert sample == Sample((str_ti,), yields={str_ti}, is_generator=True)
-    assert sample.process() == (str_ti, iterator_ti((str_ti)))
+    assert generalize([sample.process()]) == [str_ti, iterator_ti((str_ti))]
 
 
 def test_sample_process_generator_union():
@@ -484,4 +484,4 @@ def test_sample_process_generator_union():
 
     sample = generate_sample(dog, 1, "hi", True)
     assert sample == Sample((int_ti, str_ti, bool_ti,), {int_ti, str_ti}, bool_ti, is_generator=True)
-    assert sample.process() == (int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), any_ti, bool_ti))
+    assert generalize([sample.process()]) == [int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), any_ti, bool_ti)]
