@@ -9,6 +9,7 @@ import os
 import runpy
 import signal
 import sys
+import platform
 
 import collections.abc as abc
 from collections import defaultdict
@@ -845,6 +846,7 @@ class CheckModule(click.ParamType):
     default=options.sampling,
     help=f"Whether to sample calls and types or to use every one seen.",
     show_default=True,
+    hidden=platform.system() == "Windows"
 )
 @click.option(
     "--inline-generics",
@@ -923,6 +925,8 @@ def main(
                     print(f" * {package}")
             sys.exit(1)
 
+    is_windows = platform.system() == "Windows"
+
     debug_print_set_level(verbose)
     options.script_dir = os.path.dirname(os.path.realpath(script))
     options.include_files_pattern = include_files
@@ -936,7 +940,7 @@ def main(
     options.generate_stubs = generate_stubs
     options.srcdir = srcdir
     options.use_multiprocessing = use_multiprocessing
-    options.sampling = sampling
+    options.sampling = sampling and not is_windows
     options.inline_generics = inline_generics
 
     try:
@@ -948,9 +952,11 @@ def main(
             yield_handler,
         )
         sys.monitoring.restart_events()
-        setup_timer(restart_sampling)
+        if options.sampling:
+            setup_timer(restart_sampling)
         # replace_dicts.replace_dicts()
         execute_script_or_module(script, bool(module), args)
     finally:
-        reset_monitoring()
+        if options.sampling:
+            reset_monitoring()
         post_process()
