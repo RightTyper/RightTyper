@@ -147,29 +147,32 @@ class Sample:
     args: tuple[TypeInfo, ...]
     yields: set[TypeInfo] = field(default_factory=set)
     returns: TypeInfo = NoneTypeInfo
-    is_async: bool = False
+    is_async_generator: bool = False
+    is_generator: bool = False
     self_type: TypeInfo | None = None
 
 
     def process(self) -> tuple[TypeInfo, ...]:
         retval = self.returns
-        if self.yields:
+
+        if self.is_async_generator:
+            # FIXME need send type
             y = TypeInfo.from_set(self.yields)
-            if self.is_async:
-                # FIXME need send type
-                s = AnyTypeInfo
-                retval = TypeInfo("typing", "AsyncGenerator", (y, s))
+            s = AnyTypeInfo
+            retval = TypeInfo("typing", "AsyncGenerator", (y, s))
+
+        if self.is_generator:
+
+            y = TypeInfo.from_set(self.yields)
+
+            if self.returns is NoneTypeInfo:
+                # Note that we are unable to differentiate between an implicit "None"
+                # return and an explicit "return None".
+                retval = TypeInfo("typing", "Iterator", (y,))
             else:
-                y = TypeInfo.from_set(self.yields)
-
-                if self.returns is NoneTypeInfo:
-                    # Note that we are unable to differentiate between an implicit "None"
-                    # return and an explicit "return None".
-                    retval = TypeInfo("typing", "Iterator", (y,))
-                else:
-                    s = AnyTypeInfo # FIXME need send type
-                    retval = TypeInfo("typing", "Generator", (y, s, self.returns))
-
+                s = AnyTypeInfo # FIXME need send type
+                retval = TypeInfo("typing", "Generator", (y, s, self.returns))
+            
         type_data = (*self.args, retval)
 
         if self.self_type:

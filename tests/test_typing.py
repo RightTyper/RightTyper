@@ -415,6 +415,7 @@ def generate_sample(func: Callable, *args) -> Sample:
     res = func(*args)
     sample = Sample(tuple(rt.get_value_type(arg) for arg in args))
     if type(res).__name__ == "generator":
+        sample.is_generator = True
         try:
             while True:
                 nex = next(res) # this can fail
@@ -443,8 +444,17 @@ def test_sample_process_generator():
         return b
 
     sample = generate_sample(dog, 1, "hi")
-    assert sample == Sample((int_ti, str_ti,), {int_ti}, str_ti)
+    assert sample == Sample((int_ti, str_ti,), {int_ti}, str_ti, is_generator=True)
     assert sample.process() == (int_ti, str_ti, generator_ti(int_ti, any_ti, str_ti))
+
+def test_sample_process_generator_noyield():
+    def dog(a, b):
+        return b
+        yield a
+
+    sample = generate_sample(dog, 1, "hi")
+    assert sample == Sample((int_ti, str_ti,), returns=str_ti, is_generator=True)
+    assert sample.process() == (int_ti, str_ti, generator_ti(NoneTypeInfo, any_ti, str_ti))
 
 
 def test_sample_process_iterator_union():
@@ -453,7 +463,7 @@ def test_sample_process_iterator_union():
         yield b
 
     sample = generate_sample(dog, 1, "hi")
-    assert sample == Sample((int_ti, str_ti,), yields={int_ti, str_ti})
+    assert sample == Sample((int_ti, str_ti,), yields={int_ti, str_ti}, is_generator=True)
     assert sample.process() == (int_ti, str_ti, iterator_ti(union_ti(int_ti, str_ti)))
 
 
@@ -462,7 +472,7 @@ def test_sample_process_iterator():
         yield a
 
     sample = generate_sample(dog, "hi")
-    assert sample == Sample((str_ti,), yields={str_ti})
+    assert sample == Sample((str_ti,), yields={str_ti}, is_generator=True)
     assert sample.process() == (str_ti, iterator_ti((str_ti)))
 
 
@@ -473,5 +483,5 @@ def test_sample_process_generator_union():
         return c
 
     sample = generate_sample(dog, 1, "hi", True)
-    assert sample == Sample((int_ti, str_ti, bool_ti,), {int_ti, str_ti}, bool_ti)
+    assert sample == Sample((int_ti, str_ti, bool_ti,), {int_ti, str_ti}, bool_ti, is_generator=True)
     assert sample.process() == (int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), any_ti, bool_ti))
