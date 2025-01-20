@@ -326,12 +326,12 @@ def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
 def find_function(
     caller_frame: FrameType,
     code: CodeType
-) -> abc.Callable|None:
+) -> FunctionType|None:
     """Attempts to map back from a code object to the function that uses it."""
 
     visited = set()
 
-    def find_in_class(class_obj: object) -> abc.Callable|None:
+    def find_in_class(class_obj: object) -> FunctionType|None:
         if class_obj in visited:
             return None
         visited.add(class_obj)
