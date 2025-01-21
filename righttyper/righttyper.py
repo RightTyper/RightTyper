@@ -142,7 +142,8 @@ class Observations:
         self.pending_samples[(CodeId(id(code)), frame_id)] = Sample(
             arg_types,
             self_type=self_type,
-            is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR|inspect.CO_COROUTINE))
+            is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
+            is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
         )
 
 
