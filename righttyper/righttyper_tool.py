@@ -54,19 +54,6 @@ def reset_monitoring() -> None:
     except ValueError:
         pass
 
-    signal.signal(signal.SIGALRM, signal.SIG_IGN)
-    signal.setitimer(signal.ITIMER_REAL, 0)
-
-
-def setup_timer(
-    func: Callable[[int, FrameType|None], None],
-) -> None:
-    signal.signal(signal.SIGALRM, func)
-    signal.setitimer(
-        signal.ITIMER_REAL,
-        0.01,
-    )
-
 
 def setup_tool_id() -> None:
     global TOOL_ID

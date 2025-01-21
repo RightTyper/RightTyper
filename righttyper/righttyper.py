@@ -42,7 +42,6 @@ from righttyper.righttyper_runtime import (
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
     reset_monitoring,
-    setup_timer,
     setup_tool_id,
 )
 from righttyper.righttyper_types import (
@@ -72,7 +71,10 @@ from righttyper.righttyper_utils import (
     get_main_module_fqn
 )
 import righttyper.loader as loader
-
+from righttyper.righttyper_alarm import (
+    SignalAlarm,
+    ThreadAlarm,
+)
 
 @dataclass
 class Options:
@@ -527,25 +529,27 @@ def process_function_arguments(
     )
 
 
-def in_instrumentation_code(frame: FrameType) -> bool:
-    # We stop walking the stack after a given number of frames to
-    # limit overhead. The instrumentation code should be fairly
-    # shallow, so this heuristic should have no impact on accuracy
-    # while improving performance.
-    f: FrameType|None = frame
-    countdown = 10
-    while f and countdown > 0:
-        # using torch dynamo, f_code can apparently be a dict...
-        if isinstance(f.f_code, CodeType) and f.f_code in instrumentation_functions_code:
-            # In instrumentation code
-            return True
-            break
-        f = f.f_back
-        countdown -= 1
+def in_instrumentation_code() -> bool:
+    for frame in sys._current_frames().values():
+        
+        # We stop walking the stack after a given number of frames to
+        # limit overhead. The instrumentation code should be fairly
+        # shallow, so this heuristic should have no impact on accuracy
+        # while improving performance.
+        f: FrameType|None = frame
+        countdown = 10
+        while f and countdown > 0:
+            # using torch dynamo, f_code can apparently be a dict...
+            if isinstance(f.f_code, CodeType) and f.f_code in instrumentation_functions_code:
+                # In instrumentation code
+                return True
+                break
+            f = f.f_back
+            countdown -= 1
     return False
 
 
-def restart_sampling(_signum: int, frame: FrameType|None) -> None:
+def restart_sampling() -> None:
     """
     This function handles the task of clearing the seen functions.
     Called when a timer signal is received.
@@ -560,8 +564,7 @@ def restart_sampling(_signum: int, frame: FrameType|None) -> None:
     global sample_count_instrumentation, sample_count_total
     global instrumentation_overhead
     sample_count_total += 1.0
-    assert frame is not None
-    if in_instrumentation_code(frame):
+    if in_instrumentation_code():
         sample_count_instrumentation += 1.0
     instrumentation_overhead = (
         sample_count_instrumentation / sample_count_total
@@ -572,11 +575,6 @@ def restart_sampling(_signum: int, frame: FrameType|None) -> None:
         sys.monitoring.restart_events()
     else:
         pass
-    # Set a timer for the next round of sampling.
-    signal.setitimer(
-        signal.ITIMER_REAL,
-        0.01,
-    )
 
 
 instrumentation_functions_code = {
@@ -846,7 +844,6 @@ class CheckModule(click.ParamType):
     default=options.sampling,
     help=f"Whether to sample calls and types or to use every one seen.",
     show_default=True,
-    hidden=platform.system() == "Windows"
 )
 @click.option(
     "--inline-generics",
@@ -861,6 +858,12 @@ class CheckModule(click.ParamType):
         click.Path(exists=True, file_okay=True),
     ),
     help="Rather than run a script or module, report a choice of 'by-directory', 'by-file' or 'summary' type annotation coverage for the given path.",
+)
+@click.option(
+    "--signal-wakeup/--thread-wakeup",
+    default=not platform.system() == "Windows",
+    hidden=platform.system() == "Windows",
+    help="Whether to use signal-based wakeups or thead-based wakeups"
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
@@ -881,7 +884,8 @@ def main(
     use_multiprocessing: bool,
     sampling: bool,
     inline_generics: bool,
-    type_coverage: tuple[str, str]
+    type_coverage: tuple[str, str],
+    signal_wakeup: bool
 ) -> None:
 
     if type_coverage:
@@ -925,8 +929,6 @@ def main(
                     print(f" * {package}")
             sys.exit(1)
 
-    is_windows = platform.system() == "Windows"
-
     debug_print_set_level(verbose)
     options.script_dir = os.path.dirname(os.path.realpath(script))
     options.include_files_pattern = include_files
@@ -940,9 +942,12 @@ def main(
     options.generate_stubs = generate_stubs
     options.srcdir = srcdir
     options.use_multiprocessing = use_multiprocessing
-    options.sampling = sampling and not is_windows
+    options.sampling = sampling
     options.inline_generics = inline_generics
 
+    alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
+    alarm = alarm_cls(restart_sampling, 0.01)
+    
     try:
         setup_tool_id()
         register_monitoring_callbacks(
@@ -952,11 +957,10 @@ def main(
             yield_handler,
         )
         sys.monitoring.restart_events()
-        if options.sampling:
-            setup_timer(restart_sampling)
+        alarm.start()
         # replace_dicts.replace_dicts()
         execute_script_or_module(script, bool(module), args)
     finally:
-        if options.sampling:
-            reset_monitoring()
+        reset_monitoring()
+        alarm.stop()
         post_process()
