@@ -580,7 +580,7 @@ instrumentation_functions_code = {
 
 def wrap_runpy_to_instrument() -> None:
     """Monkey patches runpy to allow us to instrument the code."""
-    orig_get_code_from_file = runpy._get_code_from_file # type: ignore
+    orig_get_code_from_file = runpy._get_code_from_file # type: ignore[attr-defined]
 
     def rt_get_code_from_file(*args, **kwargs):
         orig_result = orig_get_code_from_file(*args, **kwargs)
@@ -604,7 +604,7 @@ def wrap_runpy_to_instrument() -> None:
 
     # FIXME this is brittle... can we improve on it??
 
-    runpy._get_code_from_file = rt_get_code_from_file # type: ignore
+    runpy._get_code_from_file = rt_get_code_from_file # type: ignore[attr-defined]
 
 
 def execute_script_or_module(

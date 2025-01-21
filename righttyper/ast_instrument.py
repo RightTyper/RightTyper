@@ -36,13 +36,9 @@ class GeneratorSendTransformer(ast.NodeTransformer):
                     level=0
                 )
 
+                ast.fix_missing_locations(new_import)
+
                 index = self.after_from_future(node)
-
-                for n in ast.walk(new_import):
-                    if "lineno" in n._attributes:
-                        n.lineno = n.end_lineno = 0         # type: ignore
-                        n.col_offset = n.end_col_offset = 0 # type: ignore
-
                 node.body[index:index] = [new_import]
 
         return node
@@ -62,13 +58,8 @@ class GeneratorSendTransformer(ast.NodeTransformer):
                 keywords=node.keywords
             )
 
-            for n in ast.walk(new_node):
-                if "lineno" in n._attributes:
-                    n.lineno = node.lineno          # type: ignore
-                    n.end_lineno = node.end_lineno  # type: ignore
-                    n.col_offset = node.col_offset  # type: ignore
-                    n.end_col_offset = node.end_col_offset # type: ignore
-
+            ast.copy_location(new_node, node)
+            ast.fix_missing_locations(new_node)
             return new_node
 
         return node
