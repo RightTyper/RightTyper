@@ -715,6 +715,68 @@ def test_send_async_generator(tmp_cwd, as_module):
     assert "def f(g: AsyncGenerator[float, int]) -> list[float]" in output
 
 
+def test_send_not_generator(tmp_cwd):
+    t = textwrap.dedent("""\
+        class C:
+            def send(self, x):
+                return str(x)
+
+            def asend(self, x):
+                return str(x)
+
+        print(C().send(10))
+        print(C().asend(10.0))
+        """)
+
+    Path("t.py").write_text(t)
+
+    p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                       '--no-use-multiprocessing', 't.py'],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    assert '10\n10.0\n' in str(p.stdout, 'utf-8')
+
+    output = Path("t.py").read_text()
+
+    assert "def send(self: Self, x: int) -> str:" in output
+    assert "def asend(self: Self, x: float) -> str:" in output
+
+
+@pytest.mark.xfail(reason="Doesn't work yet. Any good ideas?")
+def test_send_bound(tmp_cwd):
+    t = textwrap.dedent("""\
+        def gen():
+            sum = 0.0
+            while True:
+                value = yield sum
+                if value is not None:
+                    sum += value
+
+        def f(s):
+            return [
+                s(10),
+                s(5)
+            ]
+
+        g = gen()
+        next(g) # prime generator
+        print(f(g.send))
+        """)
+
+    Path("t.py").write_text(t)
+
+    p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                       '--no-use-multiprocessing', 't.py'],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    assert '[10.0, 15.0]' in str(p.stdout, 'utf-8')
+
+    output = Path("t.py").read_text()
+
+    assert "def gen() -> Generator[float, int, None]:" in output
+    assert "def f(g: Generator[float, int, None]) -> list[float]" in output
+
+
 def test_coroutine(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         import asyncio
