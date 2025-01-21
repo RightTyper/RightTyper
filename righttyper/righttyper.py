@@ -11,7 +11,7 @@ import sys
 import collections.abc as abc
 from collections import defaultdict
 from dataclasses import dataclass, field
-from types import CodeType, FrameType, FunctionType
+from types import CodeType, FrameType, FunctionType, GeneratorType, AsyncGeneratorType
 from typing import (
     Any,
     TextIO,
@@ -66,6 +66,8 @@ from righttyper.righttyper_utils import (
     skip_this_file,
     get_main_module_fqn
 )
+import righttyper.loader as loader
+
 
 @dataclass
 class Options:
@@ -153,6 +155,17 @@ class Observations:
         # print(f"record_yield {code.co_qualname}")
         if (sample := self.pending_samples.get((CodeId(id(code)), frame_id))):
             sample.yields.add(yield_type)
+            return True
+
+        return False
+
+
+    def record_send(self, code: CodeType, frame_id: FrameId, send_type: TypeInfo) -> bool:
+        """Records a send."""
+
+        # print(f"record_send {code.co_qualname}")
+        if (sample := self.pending_samples.get((CodeId(id(code)), frame_id))):
+            sample.sends.add(send_type)
             return True
 
         return False
@@ -257,6 +270,28 @@ class Observations:
 
 
 obs = Observations()
+
+
+def send_handler(obj: object, *args, **kwargs) -> Any:
+    if isinstance(obj, GeneratorType) and len(args) == 1:
+        obs.record_send(
+            obj.gi_code,
+            id(obj.gi_frame),
+            get_value_type(args[0], use_jaxtyping=options.infer_shapes)
+        )
+
+    return obj.send(*args, **kwargs)
+
+
+def asend_handler(obj: object, *args, **kwargs) -> Any:
+    if isinstance(obj, AsyncGeneratorType) and len(args) == 1:
+        obs.record_send(
+            obj.ag_code,
+            id(obj.ag_frame),
+            get_value_type(args[0], use_jaxtyping=options.infer_shapes)
+        )
+
+    return obj.asend(*args, **kwargs)
 
 
 def enter_handler(code: CodeType, offset: int) -> Any:
@@ -902,7 +937,8 @@ def main(
         sys.monitoring.restart_events()
         setup_timer(restart_sampling)
         # replace_dicts.replace_dicts()
-        execute_script_or_module(script, bool(module), args)
+        with loader.ImportManager():
+            execute_script_or_module(script, bool(module), args)
     finally:
         reset_monitoring()
         post_process()

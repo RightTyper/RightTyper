@@ -404,7 +404,6 @@ def test_merged_types_generics_superclass():
 str_ti = TypeInfo("", "str", type_obj=str)
 int_ti = TypeInfo("", "int", type_obj=int)
 bool_ti = TypeInfo("", "bool", type_obj=bool)
-any_ti = AnyTypeInfo
 generator_ti = lambda *a: TypeInfo("typing", "Generator", tuple(a))
 iterator_ti = lambda *a: TypeInfo("typing", "Iterator", tuple(a))
 union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.UnionType)
@@ -444,17 +443,18 @@ def test_sample_process_generator():
         return b
 
     sample = generate_sample(dog, 1, "hi")
-    assert sample == Sample((int_ti, str_ti,), {int_ti}, str_ti, is_generator=True)
-    assert generalize([sample.process()]) == [int_ti, str_ti, generator_ti(int_ti, any_ti, str_ti)]
+    assert sample == Sample((int_ti, str_ti,), {int_ti}, returns=str_ti, is_generator=True)
+    assert generalize([sample.process()]) == [int_ti, str_ti, generator_ti(int_ti, NoneTypeInfo, str_ti)]
+
 
 def test_sample_process_generator_noyield():
     def dog(a, b):
         return b
-        yield a
+        yield 
 
     sample = generate_sample(dog, 1, "hi")
     assert sample == Sample((int_ti, str_ti,), returns=str_ti, is_generator=True)
-    assert generalize([sample.process()]) == [int_ti, str_ti, generator_ti(NoneTypeInfo, any_ti, str_ti)]
+    assert generalize([sample.process()]) == [int_ti, str_ti, generator_ti(NoneTypeInfo, NoneTypeInfo, str_ti)]
 
 
 def test_sample_process_iterator_union():
@@ -483,5 +483,5 @@ def test_sample_process_generator_union():
         return c
 
     sample = generate_sample(dog, 1, "hi", True)
-    assert sample == Sample((int_ti, str_ti, bool_ti,), {int_ti, str_ti}, bool_ti, is_generator=True)
-    assert generalize([sample.process()]) == [int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), any_ti, bool_ti)]
+    assert sample == Sample((int_ti, str_ti, bool_ti,), yields={int_ti, str_ti}, returns=bool_ti, is_generator=True)
+    assert generalize([sample.process()]) == [int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), NoneTypeInfo, bool_ti)]

@@ -146,6 +146,7 @@ class FuncInfo:
 class Sample:
     args: tuple[TypeInfo, ...]
     yields: set[TypeInfo] = field(default_factory=set)
+    sends: set[TypeInfo] = field(default_factory=set)
     returns: TypeInfo = NoneTypeInfo
     is_async: bool = False
     is_generator: bool = False
@@ -156,9 +157,8 @@ class Sample:
         retval = self.returns
 
         if self.is_generator:
-            # FIXME need send type
             y = TypeInfo.from_set(self.yields)
-            s = AnyTypeInfo
+            s = TypeInfo.from_set(self.sends)
 
             if self.is_async:
                 retval = TypeInfo("typing", "AsyncGenerator", (y, s))

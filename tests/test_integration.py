@@ -552,37 +552,6 @@ def test_generator(tmp_cwd):
     assert "def g(f: Iterator[float|int]) -> None" in output
 
 
-@pytest.mark.xfail(reason="Doesn't work yet")
-def test_generator_send(tmp_cwd):
-    t = textwrap.dedent("""\
-        def gen():
-            sum = 0.0
-            while True:
-                value = yield sum
-                if value is not None:
-                    sum += value
-
-        def f(g):
-            print([
-                g.send(10),
-                g.send(5)
-            ])
-
-        g = gen()
-        next(g) # prime generator
-        f(g)
-        """)
-
-    Path("t.py").write_text(t)
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', 't.py'], check=True)
-    output = Path("t.py").read_text()
-
-    assert "def gen() -> Generator[float, int, None]:" in output
-    assert "def f(f: Generator[float, int, None]) -> None" in output
-
-
 def test_generator_with_return(tmp_cwd):
     t = textwrap.dedent("""\
         def gen():
@@ -610,8 +579,8 @@ def test_generator_with_return(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert "def gen() -> Generator[int, Any, str]:" in output
-    assert "def g(f: Generator[int, Any, str]) -> None" in output
+    assert "def gen() -> Generator[int, None, str]:" in output
+    assert "def g(f: Generator[int, None, str]) -> None" in output
 
 
 @pytest.mark.xfail(reason="Doesn't currently work")
@@ -666,9 +635,81 @@ def test_async_generator(tmp_cwd):
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    # FIXME should be AsyncGenerator[int, None] or AsyncIterator[int]
-    assert "def gen() -> AsyncGenerator[int, Any]:" in output
-    assert "def g(f: AsyncGenerator[int, Any]) -> None" in output
+    assert "def gen() -> AsyncGenerator[int, None]:" in output
+    assert "def g(f: AsyncGenerator[int, None]) -> None" in output
+
+
+def test_send_generator(tmp_cwd):
+    t = textwrap.dedent("""\
+        def gen():
+            sum = 0.0
+            while True:
+                value = yield sum
+                if value is not None:
+                    sum += value
+
+        def f(g):
+            return [
+                g.send(10),
+                g.send(5)
+            ]
+
+        g = gen()
+        next(g) # prime generator
+        print(f(g))
+        """)
+
+    Path("t.py").write_text(t)
+
+    p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                       '--no-use-multiprocessing', '-m', 't'],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    assert '[10.0, 15.0]' in str(p.stdout, 'utf-8')
+
+    output = Path("t.py").read_text()
+
+    assert "def gen() -> Generator[float, int, None]:" in output
+    assert "def f(g: Generator[float, int, None]) -> list[float]" in output
+
+
+def test_send_async_generator(tmp_cwd):
+    t = textwrap.dedent("""\
+        import asyncio
+
+        async def gen():
+            sum = 0.0
+            while True:
+                value = yield sum
+                if value is not None:
+                    sum += value
+
+        async def f(g):
+            return [
+                await g.asend(10),
+                await g.asend(5)
+            ]
+
+        async def main():
+            g = gen()
+            await anext(g)
+            print(await f(g))
+
+        asyncio.run(main())
+        """)
+
+    Path("t.py").write_text(t)
+
+    p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                       '--no-use-multiprocessing', '-m', 't'],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    assert '[10.0, 15.0]' in str(p.stdout, 'utf-8')
+
+    output = Path("t.py").read_text()
+
+    assert "def gen() -> AsyncGenerator[float, int]:" in output
+    assert "def f(g: AsyncGenerator[float, int]) -> list[float]" in output
 
 
 def test_coroutine(tmp_cwd):
@@ -1400,7 +1441,7 @@ def test_generic_yield_generator(tmp_cwd):
     print(output)
     assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
     assert 'rt_T2 = TypeVar("rt_T2", int, str)' in output
-    assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, Any, rt_T2]" in output
+    assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, None, rt_T2]" in output
 
 
 def test_generic_typevar_location(tmp_cwd):
@@ -1834,7 +1875,7 @@ def test_self_yield_generator(tmp_cwd):
     output = Path("t.py").read_text()
 
     print(output)
-    assert "def foo(self: Self) -> Generator[Self, Any, Self]" in output
+    assert "def foo(self: Self) -> Generator[Self, None, Self]" in output
 
 
 def test_self_subtyping(tmp_cwd):
@@ -1915,7 +1956,7 @@ def test_returns_or_yields_generator():
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
-    assert "def test(a: int) -> Generator[int|None, Any, str|None]" in output
+    assert "def test(a: int) -> Generator[int|None, None, str|None]" in output
 
 
 def test_generators_merge_into_iterator():
