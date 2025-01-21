@@ -1205,6 +1205,26 @@ def test_self(tmp_cwd):
     assert 'def baz(me: Self) -> Self:' in output
 
 
+@pytest.mark.xfail(reason="Doesn't currently work")
+def test_self_with_wrapped_method(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        class C:
+            @functools.cache
+            def foo(self, x):
+                return self
+
+        C().foo(1)
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(self: Self, x: int) -> Self:' in output
+
+
 def test_rich_is_messed_up(tmp_cwd):
     # running rich's test suite leaves it unusable... simulate that situation.
     Path("t.py").write_text(textwrap.dedent("""\
