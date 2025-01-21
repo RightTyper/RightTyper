@@ -275,22 +275,22 @@ class Observations:
 obs = Observations()
 
 
-def send_handler(obj: object, *args, **kwargs) -> Any:
+def send_handler(obj: Any, *args, **kwargs) -> Any:
     if isinstance(obj, GeneratorType) and len(args) == 1:
         obs.record_send(
             obj.gi_code,
-            id(obj.gi_frame),
+            FrameId(id(obj.gi_frame)),
             get_value_type(args[0], use_jaxtyping=options.infer_shapes)
         )
 
     return obj.send(*args, **kwargs)
 
 
-def asend_handler(obj: object, *args, **kwargs) -> Any:
+def asend_handler(obj: Any, *args, **kwargs) -> Any:
     if isinstance(obj, AsyncGeneratorType) and len(args) == 1:
         obs.record_send(
             obj.ag_code,
-            id(obj.ag_frame),
+            FrameId(id(obj.ag_frame)),
             get_value_type(args[0], use_jaxtyping=options.infer_shapes)
         )
 
@@ -580,7 +580,7 @@ instrumentation_functions_code = {
 
 def wrap_runpy_to_instrument() -> None:
     """Monkey patches runpy to allow us to instrument the code."""
-    orig_get_code_from_file = runpy._get_code_from_file
+    orig_get_code_from_file = runpy._get_code_from_file # type: ignore
 
     def rt_get_code_from_file(*args, **kwargs):
         orig_result = orig_get_code_from_file(*args, **kwargs)
@@ -604,7 +604,7 @@ def wrap_runpy_to_instrument() -> None:
 
     # FIXME this is brittle... can we improve on it??
 
-    runpy._get_code_from_file = rt_get_code_from_file
+    runpy._get_code_from_file = rt_get_code_from_file # type: ignore
 
 
 def execute_script_or_module(

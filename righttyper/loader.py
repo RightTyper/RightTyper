@@ -1,6 +1,3 @@
-from typing import TYPE_CHECKING, Self
-if TYPE_CHECKING:
-    import _frozen_importlib
 import ast
 from importlib.abc import MetaPathFinder, Loader
 from importlib import machinery
@@ -9,6 +6,7 @@ import functools
 from pathlib import Path
 import sys
 import sysconfig
+import types
 import typing
 
 from righttyper.ast_instrument import instrument
@@ -37,7 +35,7 @@ class RightTyperLoader(Loader):
 
 
 class RightTyperMetaPathFinder(MetaPathFinder):
-    def __init__(self: Self) -> None:
+    def __init__(self: typing.Self) -> None:
         self._pylib_paths = (
             Path(sysconfig.get_path("stdlib")).resolve(),
             Path(sysconfig.get_path("purelib")).resolve(),
@@ -45,33 +43,38 @@ class RightTyperMetaPathFinder(MetaPathFinder):
 
 
     @functools.cache
-    def _in_python_libs(self: "RightTyperMetaPathFinder", filename: Path) -> bool:
+    def _in_python_libs(self: typing.Self, filename: Path) -> bool:
         if any(filename.is_relative_to(p) for p in self._pylib_paths):
             return True
 
         return False
 
 
-    def find_spec(self: Self, fullname: str, path: None, target: None=None) -> "_frozen_importlib.ModuleSpec":
+    def find_spec(
+        self: typing.Self,
+        fullname: str,
+        path: typing.Sequence[str]|None,
+        target: types.ModuleType|None = None
+    ) -> machinery.ModuleSpec | None:
+        # Enlist the help of other loaders to get a spec
         for f in sys.meta_path:
-            if isinstance(f, __class__) or not hasattr(f, "find_spec"):
-                continue
-
-            spec = f.find_spec(fullname, path, target)
-            if spec is None or spec.loader is None:
-                continue
-
-            # We need a python file to be able to instrument
-            # TODO we could check for isinstance(spec.loader, machinery.SourceFileLoader)
-            # but what about cached bytecode loaders?
             if (
-                not spec.origin or spec.origin == 'built-in' or
-                isinstance(spec.loader, machinery.ExtensionFileLoader)
+                isinstance(f, self.__class__) or
+                not hasattr(f, "find_spec") or
+                (spec := f.find_spec(fullname, path, target)) is None or
+                spec.loader is None
             ):
-                return None
+                # this loader can't help us, try another
+                continue
 
-            filename = Path(spec.origin)
-            if filename.exists() and not self._in_python_libs(filename):
+            if (
+                spec.origin and
+                spec.origin != 'built-in' and
+                not isinstance(spec.loader, machinery.ExtensionFileLoader) and
+                (filename := Path(spec.origin)).exists() and
+                not self._in_python_libs(filename)
+            ):
+                # For those that look like we can load, insert our loader
                 spec.loader = RightTyperLoader(spec.loader, filename)
 
             return spec
@@ -82,16 +85,16 @@ class RightTyperMetaPathFinder(MetaPathFinder):
 class ImportManager:
     """A context manager that enables instrumentation while active."""
 
-    def __init__(self: Self) -> None:
+    def __init__(self) -> None:
         self.mpf = RightTyperMetaPathFinder()
 
 
-    def __enter__(self: Self) -> "ImportManager":
+    def __enter__(self) -> typing.Self:
         sys.meta_path.insert(0, self.mpf)
         return self
 
 
-    def __exit__(self: Self, *args: typing.Any) -> None:
+    def __exit__(self, *args) -> None:
         i = 0
         while i < len(sys.meta_path):
             if sys.meta_path[i] is self.mpf:

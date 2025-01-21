@@ -1,4 +1,4 @@
-from typing import Self
+from typing import Self, cast
 import ast
 
 
@@ -19,7 +19,7 @@ class GeneratorSendTransformer(ast.NodeTransformer):
 
 
     def visit_Module(self: Self, node: ast.Module) -> ast.Module:
-        node = self.generic_visit(node)
+        node = cast(ast.Module, self.generic_visit(node))
 
         for wrapper, handler in ((SEND_WRAPPER, SEND_HANDLER), (ASEND_WRAPPER, ASEND_HANDLER)):
             if any(
@@ -39,8 +39,9 @@ class GeneratorSendTransformer(ast.NodeTransformer):
                 index = self.after_from_future(node)
 
                 for n in ast.walk(new_import):
-                    n.lineno = n.end_lineno = 0
-                    n.col_offset = n.end_col_offset = 0
+                    if "lineno" in n._attributes:
+                        n.lineno = n.end_lineno = 0         # type: ignore
+                        n.col_offset = n.end_col_offset = 0 # type: ignore
 
                 node.body[index:index] = [new_import]
 
@@ -48,7 +49,8 @@ class GeneratorSendTransformer(ast.NodeTransformer):
 
 
     def visit_Call(self: Self, node: ast.Call) -> ast.Call:
-        self.generic_visit(node)
+        node = cast(ast.Call, self.generic_visit(node))
+
         if isinstance(node.func, ast.Attribute) and node.func.attr in ("send", "asend"):
             is_sync = (node.func.attr == "send")
             new_node = ast.Call(
@@ -61,10 +63,11 @@ class GeneratorSendTransformer(ast.NodeTransformer):
             )
 
             for n in ast.walk(new_node):
-                n.lineno = node.lineno
-                n.end_lineno = node.end_lineno
-                n.col_offset = node.col_offset
-                n.end_col_offset = node.end_col_offset
+                if "lineno" in n._attributes:
+                    n.lineno = node.lineno          # type: ignore
+                    n.end_lineno = node.end_lineno  # type: ignore
+                    n.col_offset = node.col_offset  # type: ignore
+                    n.end_col_offset = node.end_col_offset # type: ignore
 
             return new_node
 

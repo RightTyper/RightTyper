@@ -59,6 +59,7 @@ def debug_print_set_level(level: bool) -> None:
 def _get_righttyper_path() -> str:
     import importlib.util
     spec = importlib.util.find_spec(__package__)
+    assert spec is not None and spec.origin is not None
     return str(Path(spec.origin).parent)
 
 RIGHTTYPER_PATH = _get_righttyper_path()

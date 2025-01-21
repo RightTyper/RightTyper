@@ -9,11 +9,11 @@ from righttyper.ast_instrument import (
 )
 
 
-def parse(s: str) -> ast.AST:
+def parse(s: str) -> ast.Module:
     return ast.parse(textwrap.dedent(s))
 
 
-def unparse(t: ast.AST) -> str:
+def unparse(t: ast.Module) -> str:
     return ast.unparse(t) + "\n"
 
 
