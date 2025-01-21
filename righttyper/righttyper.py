@@ -578,35 +578,6 @@ instrumentation_functions_code = {
 }
 
 
-def wrap_runpy_to_instrument() -> None:
-    """Monkey patches runpy to allow us to instrument the code."""
-    orig_get_code_from_file = runpy._get_code_from_file # type: ignore[attr-defined]
-
-    def rt_get_code_from_file(*args, **kwargs):
-        orig_result = orig_get_code_from_file(*args, **kwargs)
-
-        def load_and_instrument(filename: str) -> CodeType:
-            tree = ast.parse(Path(filename).read_bytes())
-            tree = loader.instrument(tree)
-            return compile(tree, filename, "exec")
-
-        # There are at least two versions of runpy._get_code_from_file around; one
-        # returns just the code, where the other returns the code and a filename;
-        # replace just the code.
-        if isinstance(orig_result, Sequence):
-            return tuple(
-                load_and_instrument(it.co_filename) if isinstance(it, CodeType) else it
-                for it in orig_result
-            )
-
-        assert isinstance(orig_result, CodeType)
-        return load_and_instrument(orig_result.co_filename)
-
-    # FIXME this is brittle... can we improve on it??
-
-    runpy._get_code_from_file = rt_get_code_from_file # type: ignore[attr-defined]
-
-
 def execute_script_or_module(
     script: str,
     is_module: bool,
@@ -971,7 +942,6 @@ def main(
         sys.monitoring.restart_events()
         setup_timer(restart_sampling)
         # replace_dicts.replace_dicts()
-        wrap_runpy_to_instrument()
         execute_script_or_module(script, bool(module), args)
     finally:
         reset_monitoring()
