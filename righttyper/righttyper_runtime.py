@@ -94,7 +94,6 @@ def should_skip_function(
     if (
         skip_file
         or included_in_pattern
-        or "righttyper_" in code.co_filename
     ):
         return True
     if not (code.co_flags & 0x2):
