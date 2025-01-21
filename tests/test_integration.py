@@ -1865,6 +1865,7 @@ def test_self_subtyping_reversed(tmp_cwd):
     # The argument isn't Self as (NumberAdd IS-A IntegerAdd) doesn't hold
     assert "def operation(self: Self, rhs: \"NumberAdd\") -> Self:" in output
 
+
 def test_returns_or_yields_generator():
     t = textwrap.dedent("""\
         def test(a):
@@ -1885,6 +1886,7 @@ def test_returns_or_yields_generator():
     output = Path("t.py").read_text()
     assert "def test(a: int) -> Generator[int|None, Any, str|None]" in output
 
+
 def test_generators_merge_into_iterator():
     t = textwrap.dedent("""\
         def test(a):
@@ -1903,4 +1905,3 @@ def test_generators_merge_into_iterator():
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def test(a: int) -> Iterator[int|str]" in output
-
