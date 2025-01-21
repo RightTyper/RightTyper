@@ -742,7 +742,6 @@ def test_send_not_generator(tmp_cwd):
     assert "def asend(self: Self, x: float) -> str:" in output
 
 
-@pytest.mark.xfail(reason="Doesn't work yet. Any good ideas?")
 def test_send_bound(tmp_cwd):
     t = textwrap.dedent("""\
         def gen():
@@ -774,7 +773,8 @@ def test_send_bound(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "def gen() -> Generator[float, int, None]:" in output
-    assert "def f(g: Generator[float, int, None]) -> list[float]" in output
+    # TODO the Callable here is our wrapper for the 'g.send' method... can we do better?
+    assert "def f(s: Callable) -> list[float]" in output
 
 
 def test_coroutine(tmp_cwd):

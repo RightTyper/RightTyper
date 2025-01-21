@@ -2,10 +2,8 @@ from typing import Self, cast
 import ast
 
 
-SEND_HANDLER = "send_handler"
-SEND_WRAPPER = "rt___wrap_send"
-ASEND_HANDLER = "asend_handler"
-ASEND_WRAPPER = "rt___wrap_asend"
+WRAPPER_NAME = "wrap_send"
+WRAPPER_ASNAME = "rt___wrap_send"
 
 
 class GeneratorSendTransformer(ast.NodeTransformer):
@@ -21,41 +19,36 @@ class GeneratorSendTransformer(ast.NodeTransformer):
     def visit_Module(self: Self, node: ast.Module) -> ast.Module:
         node = cast(ast.Module, self.generic_visit(node))
 
-        for wrapper, handler in ((SEND_WRAPPER, SEND_HANDLER), (ASEND_WRAPPER, ASEND_HANDLER)):
-            if any(
-                isinstance(n, ast.Call) and
-                isinstance(n.func, ast.Name) and
-                n.func.id == wrapper
-                for n in ast.walk(node)
-            ):
-                new_import = ast.ImportFrom(
-                    module="righttyper.righttyper",
-                    names=[
-                        ast.alias(name=handler, asname=wrapper)
-                    ],
-                    level=0
-                )
+        if any(
+            isinstance(n, ast.Call) and
+            isinstance(n.func, ast.Name) and
+            n.func.id == WRAPPER_ASNAME
+            for n in ast.walk(node)
+        ):
+            new_import = ast.ImportFrom(
+                module="righttyper.righttyper",
+                names=[
+                    ast.alias(name=WRAPPER_NAME, asname=WRAPPER_ASNAME)
+                ],
+                level=0
+            )
 
-                ast.fix_missing_locations(new_import)
+            ast.fix_missing_locations(new_import)
 
-                index = self.after_from_future(node)
-                node.body[index:index] = [new_import]
+            index = self.after_from_future(node)
+            node.body[index:index] = [new_import]
 
         return node
 
 
-    def visit_Call(self: Self, node: ast.Call) -> ast.Call:
-        node = cast(ast.Call, self.generic_visit(node))
+    def visit_Attribute(self: Self, node: ast.Attribute) -> ast.Attribute|ast.Call:
+        node = cast(ast.Attribute, self.generic_visit(node))
 
-        if isinstance(node.func, ast.Attribute) and node.func.attr in ("send", "asend"):
-            is_sync = (node.func.attr == "send")
+        if type(node.ctx) is ast.Load and node.attr in ("send", "asend"):
             new_node = ast.Call(
-                func=ast.Name(id=SEND_WRAPPER if is_sync else ASEND_WRAPPER, ctx=ast.Load()),
-                args=[
-                    node.func.value,
-                    *node.args
-                ],
-                keywords=node.keywords
+                func=ast.Name(id=WRAPPER_ASNAME, ctx=ast.Load()),
+                args=[node],
+                keywords=[]
             )
 
             ast.copy_location(new_node, node)

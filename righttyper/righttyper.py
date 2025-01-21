@@ -3,6 +3,7 @@ import concurrent.futures
 import importlib.metadata
 import importlib.util
 import inspect
+import functools
 import logging
 import os
 import runpy
@@ -275,26 +276,35 @@ class Observations:
 obs = Observations()
 
 
-def send_handler(obj: Any, *args, **kwargs) -> Any:
-    if isinstance(obj, GeneratorType) and len(args) == 1:
-        obs.record_send(
-            obj.gi_code,
-            FrameId(id(obj.gi_frame)),
-            get_value_type(args[0], use_jaxtyping=options.infer_shapes)
-        )
+def wrap_send(obj: Any) -> Any:
+    if (
+        (self := getattr(obj, "__self__", None)) and
+        isinstance(self, (GeneratorType, AsyncGeneratorType))
+    ):
+        if isinstance(self, GeneratorType):
+            @functools.wraps(obj)
+            def wrapper(*args, **kwargs):
+                obs.record_send(
+                    self.gi_code,
+                    FrameId(id(self.gi_frame)),
+                    get_value_type(args[0], use_jaxtyping=options.infer_shapes)
+                )
+                return obj(*args, **kwargs)
 
-    return obj.send(*args, **kwargs)
+            return wrapper
+        else:
+            @functools.wraps(obj)
+            def wrapper(*args, **kwargs):
+                obs.record_send(
+                    self.ag_code,
+                    FrameId(id(self.ag_frame)),
+                    get_value_type(args[0], use_jaxtyping=options.infer_shapes)
+                )
+                return obj(*args, **kwargs)
 
+            return wrapper
 
-def asend_handler(obj: Any, *args, **kwargs) -> Any:
-    if isinstance(obj, AsyncGeneratorType) and len(args) == 1:
-        obs.record_send(
-            obj.ag_code,
-            FrameId(id(obj.ag_frame)),
-            get_value_type(args[0], use_jaxtyping=options.infer_shapes)
-        )
-
-    return obj.asend(*args, **kwargs)
+    return obj
 
 
 def enter_handler(code: CodeType, offset: int) -> Any:

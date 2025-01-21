@@ -2,10 +2,8 @@ import ast
 import textwrap
 from righttyper.ast_instrument import (
     instrument,
-    SEND_HANDLER,
-    SEND_WRAPPER,
-    ASEND_HANDLER,
-    ASEND_WRAPPER
+    WRAPPER_NAME,
+    WRAPPER_ASNAME,
 )
 
 
@@ -26,10 +24,10 @@ def test_wrap_send():
     t = instrument(t)
 
     assert unparse(t) == textwrap.dedent(f"""\
-        from righttyper.righttyper import {SEND_HANDLER} as {SEND_WRAPPER}
+        from righttyper.righttyper import {WRAPPER_NAME} as {WRAPPER_ASNAME}
 
         def f(x):
-            return {SEND_WRAPPER}(x.y.g, 10)
+            return {WRAPPER_ASNAME}(x.y.g.send)(10)
     """)
 
     compile(t, 'tp.py', 'exec') # ensure it doesn't throw
@@ -44,10 +42,10 @@ def test_wrap_asend():
     t = instrument(t)
 
     assert unparse(t) == textwrap.dedent(f"""\
-        from righttyper.righttyper import {ASEND_HANDLER} as {ASEND_WRAPPER}
+        from righttyper.righttyper import {WRAPPER_NAME} as {WRAPPER_ASNAME}
 
         async def f(x):
-            return await {ASEND_WRAPPER}(x.y.g, 10)
+            return await {WRAPPER_ASNAME}(x.y.g.asend)(10)
     """)
 
     compile(t, 'tp.py', 'exec') # ensure it doesn't throw
@@ -82,11 +80,33 @@ def test_import_after_from_future():
 
     assert unparse(t) == textwrap.dedent(f"""\
         from __future__ import annotations
-        from righttyper.righttyper import {SEND_HANDLER} as {SEND_WRAPPER}
+        from righttyper.righttyper import {WRAPPER_NAME} as {WRAPPER_ASNAME}
         import sys
 
         def f(x):
-            return {SEND_WRAPPER}(x, 10)
+            return {WRAPPER_ASNAME}(x.send)(10)
+    """)
+
+    compile(t, 'tp.py', 'exec') # ensure it doesn't throw
+
+
+def test_assignment_context():
+    t = parse("""\
+        class C:
+
+            def __init__(self):
+                self.send = 10
+                self.asend, x = (1, 2)
+        """)
+
+    t = instrument(t)
+
+    assert unparse(t) == textwrap.dedent(f"""\
+        class C:
+
+            def __init__(self):
+                self.send = 10
+                self.asend, x = (1, 2)
     """)
 
     compile(t, 'tp.py', 'exec') # ensure it doesn't throw
