@@ -56,6 +56,28 @@ def debug_print_set_level(level: bool) -> None:
     _DEBUG_PRINT = level
 
 
+def _get_righttyper_path() -> str:
+    import importlib.util
+    spec = importlib.util.find_spec(__package__)
+    assert spec is not None and spec.origin is not None
+    return str(Path(spec.origin).parent)
+
+RIGHTTYPER_PATH = _get_righttyper_path()
+
+
+def _get_python_libs() -> tuple[str, ...]:
+    import sysconfig
+
+    return tuple(
+        set(
+            sysconfig.get_path(p)
+            for p in ('stdlib', 'platstdlib', 'purelib', 'platlib')
+        )
+    )
+
+PYTHON_LIBS = _get_python_libs()
+
+
 @cache
 def skip_this_file(
     filename: str,
@@ -71,10 +93,9 @@ def skip_this_file(
     else:
         should_skip = (
             filename.startswith("<")
-            or filename.startswith("/Library")
-            or filename.startswith("/opt/homebrew/")
-            or os.sep + "site-packages" + os.sep in filename
-            or "righttyper.py" in filename
+            # FIXME how about packages installed with 'pip install -e' (editable)?
+            or any(filename.startswith(p) for p in PYTHON_LIBS)
+            or filename.startswith(RIGHTTYPER_PATH)
             or script_dir not in os.path.abspath(filename)
         )
     if include_files_pattern:

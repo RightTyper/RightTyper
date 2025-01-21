@@ -1,7 +1,9 @@
+import ast
 import concurrent.futures
 import importlib.metadata
 import importlib.util
 import inspect
+import functools
 import logging
 import os
 import runpy
@@ -11,12 +13,14 @@ import sys
 import collections.abc as abc
 from collections import defaultdict
 from dataclasses import dataclass, field
-from types import CodeType, FrameType, FunctionType
+from pathlib import Path
+from types import CodeType, FrameType, FunctionType, GeneratorType, AsyncGeneratorType
 from typing import (
     Any,
     TextIO,
     Self,
-    Callable
+    Callable,
+    Sequence
 )
 
 import click
@@ -66,6 +70,8 @@ from righttyper.righttyper_utils import (
     skip_this_file,
     get_main_module_fqn
 )
+import righttyper.loader as loader
+
 
 @dataclass
 class Options:
@@ -153,6 +159,17 @@ class Observations:
         # print(f"record_yield {code.co_qualname}")
         if (sample := self.pending_samples.get((CodeId(id(code)), frame_id))):
             sample.yields.add(yield_type)
+            return True
+
+        return False
+
+
+    def record_send(self, code: CodeType, frame_id: FrameId, send_type: TypeInfo) -> bool:
+        """Records a send."""
+
+        # print(f"record_send {code.co_qualname}")
+        if (sample := self.pending_samples.get((CodeId(id(code)), frame_id))):
+            sample.sends.add(send_type)
             return True
 
         return False
@@ -259,6 +276,37 @@ class Observations:
 obs = Observations()
 
 
+def wrap_send(obj: Any) -> Any:
+    if (
+        (self := getattr(obj, "__self__", None)) and
+        isinstance(self, (GeneratorType, AsyncGeneratorType))
+    ):
+        if isinstance(self, GeneratorType):
+            @functools.wraps(obj)
+            def wrapper(*args, **kwargs):
+                obs.record_send(
+                    self.gi_code,
+                    FrameId(id(self.gi_frame)),
+                    get_value_type(args[0], use_jaxtyping=options.infer_shapes)
+                )
+                return obj(*args, **kwargs)
+
+            return wrapper
+        else:
+            @functools.wraps(obj)
+            def wrapper(*args, **kwargs):
+                obs.record_send(
+                    self.ag_code,
+                    FrameId(id(self.ag_frame)),
+                    get_value_type(args[0], use_jaxtyping=options.infer_shapes)
+                )
+                return obj(*args, **kwargs)
+
+            return wrapper
+
+    return obj
+
+
 def enter_handler(code: CodeType, offset: int) -> Any:
     """
     Process the function entry point, perform monitoring related operations,
@@ -274,12 +322,10 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
-    if frame and frame.f_back: # FIXME DRY this
-        # NOTE: this backtracking logic is brittle and must be
-        # adjusted if the call chain changes length.
+    while frame and frame.f_code is not code:
         frame = frame.f_back
-        assert code == frame.f_code
 
+    if frame:
         function = find_function(frame, code)
         process_function_arguments(code, FrameId(id(frame)), inspect.getargvalues(frame), function)
         del frame
@@ -377,10 +423,10 @@ def process_yield_or_return(
     found = False
 
     frame = inspect.currentframe()
-    if frame and frame.f_back and frame.f_back.f_back: # FIXME DRY this
-        frame = frame.f_back.f_back
-        assert code == frame.f_code
+    while frame and frame.f_code is not code:
+        frame = frame.f_back
 
+    if frame:
         typeinfo = get_value_type(return_value, use_jaxtyping=options.infer_shapes)
 
         if event_type == sys.monitoring.events.PY_YIELD:
@@ -542,19 +588,21 @@ instrumentation_functions_code = {
 
 def execute_script_or_module(
     script: str,
-    module: bool,
+    is_module: bool,
     args: list[str],
 ) -> None:
     try:
         sys.argv = [script, *args]
-        if module:
-            runpy.run_module(
-                script,
-                run_name="__main__",
-                alter_sys=True,
-            )
+        if is_module:
+            with loader.ImportManager():
+                runpy.run_module(
+                    script,
+                    run_name="__main__",
+                    alter_sys=True,
+                )
         else:
-            runpy.run_path(script, run_name="__main__")
+            with loader.ImportManager():
+                runpy.run_path(script, run_name="__main__")
 
     except SystemExit as e:
         if e.code not in (None, 0):

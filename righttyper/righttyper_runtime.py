@@ -94,7 +94,6 @@ def should_skip_function(
     if (
         skip_file
         or included_in_pattern
-        or "righttyper_" in code.co_filename
     ):
         return True
     if not (code.co_flags & 0x2):
@@ -106,16 +105,19 @@ def should_skip_function(
 
 
 def type_from_annotations(func: abc.Callable) -> TypeInfo:
-    # Get the signature of the function
-    signature = inspect.signature(func)
-    #print(f"{func=} {signature=}")
+    try:
+        signature = inspect.signature(func)
+    except ValueError:
+        signature = None
 
     args: tuple
 
     # Do we have an annotation?
     if (
-        any(p.annotation is not p.empty for p in signature.parameters.values())
-        or signature.return_annotation is not inspect.Signature.empty
+        signature and (
+            any(p.annotation is not p.empty for p in signature.parameters.values())
+            or signature.return_annotation is not inspect.Signature.empty
+        )
     ):
         # Extract argument types, default to Any if no annotation provided
         arg_types = [

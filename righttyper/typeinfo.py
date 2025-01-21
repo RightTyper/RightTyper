@@ -1,6 +1,6 @@
 import itertools
 from typing import Sequence, Iterator, cast
-from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo, AnyTypeInfo
+from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo
 from .righttyper_utils import get_main_module_fqn
 from collections import Counter
 
@@ -13,7 +13,7 @@ class SimplifyGeneratorsTransformer(TypeInfo.Transformer):
             node.module == "typing"
             and node.name == "Generator"
             and len(node.args) == 3
-            and node.args[1] == AnyTypeInfo
+            and node.args[1] == NoneTypeInfo
             and node.args[2] == NoneTypeInfo
         ):
             return TypeInfo("typing", "Iterator", (node.args[0],))
