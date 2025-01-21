@@ -312,12 +312,10 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
-    if frame and frame.f_back: # FIXME DRY this
-        # NOTE: this backtracking logic is brittle and must be
-        # adjusted if the call chain changes length.
+    while frame and frame.f_code is not code:
         frame = frame.f_back
-        assert code == frame.f_code
 
+    if frame:
         function = find_function(frame, code)
         process_function_arguments(code, FrameId(id(frame)), inspect.getargvalues(frame), function)
         del frame
@@ -415,10 +413,10 @@ def process_yield_or_return(
     found = False
 
     frame = inspect.currentframe()
-    if frame and frame.f_back and frame.f_back.f_back: # FIXME DRY this
-        frame = frame.f_back.f_back
-        assert code == frame.f_code
+    while frame and frame.f_code is not code:
+        frame = frame.f_back
 
+    if frame:
         typeinfo = get_value_type(return_value, use_jaxtyping=options.infer_shapes)
 
         if event_type == sys.monitoring.events.PY_YIELD:
