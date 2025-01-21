@@ -11,7 +11,7 @@ import sys
 import sysconfig
 import typing
 
-from righttyper.ast_instrument import GeneratorSendTransformer
+from righttyper.ast_instrument import instrument
 
 class RightTyperLoader(Loader):
     def __init__(self, orig_loader: Loader, filename: Path):
@@ -29,7 +29,7 @@ class RightTyperLoader(Loader):
 
     def get_code(self, name=None):   # expected by pyrun
         tree = ast.parse(self.filename.read_bytes())
-        tree = GeneratorSendTransformer().visit(tree)
+        tree = instrument(tree)
         return compile(tree, str(self.filename), "exec")
 
     def exec_module(self, module):

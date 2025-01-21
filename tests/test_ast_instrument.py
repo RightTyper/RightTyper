@@ -1,7 +1,7 @@
 import ast
 import textwrap
 from righttyper.ast_instrument import (
-    GeneratorSendTransformer,
+    instrument,
     SEND_HANDLER,
     SEND_WRAPPER,
     ASEND_HANDLER,
@@ -23,8 +23,7 @@ def test_wrap_send():
             return x.y.g.send(10)
         """)
 
-    tr = GeneratorSendTransformer()
-    t = tr.visit(t)
+    t = instrument(t)
 
     assert unparse(t) == textwrap.dedent(f"""\
         from righttyper.righttyper import {SEND_HANDLER} as {SEND_WRAPPER}
@@ -42,8 +41,7 @@ def test_wrap_asend():
             return await x.y.g.asend(10)
         """)
 
-    tr = GeneratorSendTransformer()
-    t = tr.visit(t)
+    t = instrument(t)
 
     assert unparse(t) == textwrap.dedent(f"""\
         from righttyper.righttyper import {ASEND_HANDLER} as {ASEND_WRAPPER}
@@ -61,8 +59,7 @@ def test_nothing_to_wrap():
             return x/2
         """)
 
-    tr = GeneratorSendTransformer()
-    t = tr.visit(t)
+    t = instrument(t)
 
     assert unparse(t) == textwrap.dedent(f"""\
         def f(x):
@@ -81,8 +78,7 @@ def test_import_after_from_future():
             return x.send(10)
         """)
 
-    tr = GeneratorSendTransformer()
-    t = tr.visit(t)
+    t = instrument(t)
 
     assert unparse(t) == textwrap.dedent(f"""\
         from __future__ import annotations

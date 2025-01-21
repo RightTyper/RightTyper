@@ -639,7 +639,8 @@ def test_async_generator(tmp_cwd):
     assert "def g(f: AsyncGenerator[int, None]) -> None" in output
 
 
-def test_send_generator(tmp_cwd):
+@pytest.mark.parametrize('as_module', [False, True])
+def test_send_generator(tmp_cwd, as_module):
     t = textwrap.dedent("""\
         def gen():
             sum = 0.0
@@ -662,7 +663,8 @@ def test_send_generator(tmp_cwd):
     Path("t.py").write_text(t)
 
     p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                       '--no-use-multiprocessing', '-m', 't'],
+                       '--no-use-multiprocessing',
+                       *(('-m', 't') if as_module else ('t.py',))],
                        check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     assert '[10.0, 15.0]' in str(p.stdout, 'utf-8')
@@ -673,7 +675,8 @@ def test_send_generator(tmp_cwd):
     assert "def f(g: Generator[float, int, None]) -> list[float]" in output
 
 
-def test_send_async_generator(tmp_cwd):
+@pytest.mark.parametrize('as_module', [False, True])
+def test_send_async_generator(tmp_cwd, as_module):
     t = textwrap.dedent("""\
         import asyncio
 
@@ -701,7 +704,7 @@ def test_send_async_generator(tmp_cwd):
     Path("t.py").write_text(t)
 
     p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                       '--no-use-multiprocessing', '-m', 't'],
+                       *(('-m', 't') if as_module else ('t.py',))],
                        check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     assert '[10.0, 15.0]' in str(p.stdout, 'utf-8')

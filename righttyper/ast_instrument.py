@@ -1,3 +1,4 @@
+from typing import Self
 import ast
 
 
@@ -17,7 +18,7 @@ class GeneratorSendTransformer(ast.NodeTransformer):
         ]), 0)
 
 
-    def visit_Module(self, node):
+    def visit_Module(self: Self, node: ast.Module) -> ast.Module:
         node = self.generic_visit(node)
 
         for wrapper, handler in ((SEND_WRAPPER, SEND_HANDLER), (ASEND_WRAPPER, ASEND_HANDLER)):
@@ -46,7 +47,7 @@ class GeneratorSendTransformer(ast.NodeTransformer):
         return node
 
 
-    def visit_Call(self, node):
+    def visit_Call(self: Self, node: ast.Call) -> ast.Call:
         self.generic_visit(node)
         if isinstance(node.func, ast.Attribute) and node.func.attr in ("send", "asend"):
             is_sync = node.func.attr == "send"
@@ -68,3 +69,7 @@ class GeneratorSendTransformer(ast.NodeTransformer):
             return new_node
 
         return node
+
+
+def instrument(m: ast.Module) -> ast.Module:
+    return GeneratorSendTransformer().visit(m)

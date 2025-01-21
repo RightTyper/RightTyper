@@ -1,3 +1,4 @@
+import ast
 import concurrent.futures
 import importlib.metadata
 import importlib.util
@@ -11,12 +12,14 @@ import sys
 import collections.abc as abc
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import CodeType, FrameType, FunctionType, GeneratorType, AsyncGeneratorType
 from typing import (
     Any,
     TextIO,
     Self,
-    Callable
+    Callable,
+    Sequence
 )
 
 import click
@@ -575,21 +578,52 @@ instrumentation_functions_code = {
 }
 
 
+def wrap_runpy_to_instrument() -> None:
+    """Monkey patches runpy to allow us to instrument the code."""
+    orig_get_code_from_file = runpy._get_code_from_file
+
+    def rt_get_code_from_file(*args, **kwargs):
+        orig_result = orig_get_code_from_file(*args, **kwargs)
+
+        def load_and_instrument(filename: str) -> CodeType:
+            tree = ast.parse(Path(filename).read_bytes())
+            tree = loader.instrument(tree)
+            return compile(tree, filename, "exec")
+
+        # There are at least two versions of runpy._get_code_from_file around; one
+        # returns just the code, where the other returns the code and a filename;
+        # replace just the code.
+        if isinstance(orig_result, Sequence):
+            return tuple(
+                load_and_instrument(it.co_filename) if isinstance(it, CodeType) else it
+                for it in orig_result
+            )
+
+        assert isinstance(orig_result, CodeType)
+        return load_and_instrument(orig_result.co_filename)
+
+    # FIXME this is brittle... can we improve on it??
+
+    runpy._get_code_from_file = rt_get_code_from_file
+
+
 def execute_script_or_module(
     script: str,
-    module: bool,
+    is_module: bool,
     args: list[str],
 ) -> None:
     try:
         sys.argv = [script, *args]
-        if module:
-            runpy.run_module(
-                script,
-                run_name="__main__",
-                alter_sys=True,
-            )
+        if is_module:
+            with loader.ImportManager():
+                runpy.run_module(
+                    script,
+                    run_name="__main__",
+                    alter_sys=True,
+                )
         else:
-            runpy.run_path(script, run_name="__main__")
+            with loader.ImportManager():
+                runpy.run_path(script, run_name="__main__")
 
     except SystemExit as e:
         if e.code not in (None, 0):
@@ -937,8 +971,8 @@ def main(
         sys.monitoring.restart_events()
         setup_timer(restart_sampling)
         # replace_dicts.replace_dicts()
-        with loader.ImportManager():
-            execute_script_or_module(script, bool(module), args)
+        wrap_runpy_to_instrument()
+        execute_script_or_module(script, bool(module), args)
     finally:
         reset_monitoring()
         post_process()
