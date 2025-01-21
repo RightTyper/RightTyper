@@ -35,6 +35,7 @@ from righttyper.righttyper_process import (
 )
 from righttyper.righttyper_runtime import (
     find_function,
+    get_override_contexts,
     unwrap,
     get_value_type,
     get_type_name,
@@ -211,34 +212,36 @@ class Observations:
         code: CodeType,
         args: inspect.ArgInfo,
         get_defaults: abc.Callable[[], dict[str, TypeInfo]],
-        overrides: FunctionType|FunctionDescriptor|None
+        overrides: FunctionType|FunctionDescriptor|None,
+        function_object: FunctionType | None
     ) -> None:
         """Records that a function was visited, along with some details about it."""
 
-        code_id = CodeId(id(code))
-        if code_id not in self.functions_visited:
-            arg_names = (
-                *(a for a in args.args),
-                *((args.varargs,) if args.varargs else ()),
-                *((args.keywords,) if args.keywords else ())
-            )
+        for override_code in get_override_contexts(function_object, code):
+            code_id = CodeId(id(override_code))
+            if code_id not in self.functions_visited:
+                arg_names = (
+                    *(a for a in args.args),
+                    *((args.varargs,) if args.varargs else ()),
+                    *((args.keywords,) if args.keywords else ())
+                )
 
-            defaults = get_defaults()
+                defaults = get_defaults()
 
-            self.functions_visited[code_id] = FuncInfo(
-                FuncId(
-                    Filename(code.co_filename),
-                    code.co_firstlineno,
-                    FunctionName(code.co_qualname),
-                ),
-                tuple(
-                    ArgInfo(ArgumentName(name), defaults.get(name))
-                    for name in arg_names
-                ),
-                ArgumentName(args.varargs) if args.varargs else None,
-                ArgumentName(args.keywords) if args.keywords else None,
-                overrides
-            )
+                self.functions_visited[code_id] = FuncInfo(
+                    FuncId(
+                        Filename(code.co_filename),
+                        code.co_firstlineno,
+                        FunctionName(code.co_qualname),
+                    ),
+                    tuple(
+                        ArgInfo(ArgumentName(name), defaults.get(name))
+                        for name in arg_names
+                    ),
+                    ArgumentName(args.varargs) if args.varargs else None,
+                    ArgumentName(args.keywords) if args.keywords else None,
+                    overrides
+                )
 
 
     def record_start(
@@ -248,6 +251,7 @@ class Observations:
         arg_types: tuple[TypeInfo, ...],
         self_type: TypeInfo|None,
         self_replacement: TypeInfo|None,
+        function_object: FunctionType | None,
     ) -> None:
         """Records a function start."""
 
@@ -258,6 +262,7 @@ class Observations:
             self_replacement=self_replacement,
             is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
             is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
+            function_object=function_object,
         )
 
 
@@ -293,7 +298,11 @@ class Observations:
             sample.returns = return_type
             if code_id not in self.samples:
                 self.samples[code_id] = set()
-            self.samples[code_id].add(sample.process())
+            print(type(sample.function_object))
+            # MyPy labels function_object as a MethodType instance since it think that this is a method access
+            for overridden_code in get_override_contexts(sample.function_object, code): # type: ignore
+                overridden_code_id = CodeId(id(overridden_code))
+                self.samples[overridden_code_id].add(sample.process())
             del self.pending_samples[(code_id, frame_id)]
             return True
 
@@ -780,7 +789,8 @@ def process_function_call(
     # TODO self_type, like overrides, could just be saved in record_function,
     # and computed only when first recording a function.
     self_type, self_replacement, overrides = get_self_type()
-    obs.record_function(code, args, get_defaults, overrides)
+    function_obj = find_function(frame, code)
+    obs.record_function(code, args, get_defaults, overrides, function_obj)
 
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
@@ -803,7 +813,8 @@ def process_function_call(
         FrameId(id(frame)),
         arg_values,
         self_type,
-        self_replacement
+        self_replacement,
+        function_obj
     )
 
 
