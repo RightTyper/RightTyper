@@ -298,7 +298,6 @@ class Observations:
             sample.returns = return_type
             if code_id not in self.samples:
                 self.samples[code_id] = set()
-            print(type(sample.function_object))
             # MyPy labels function_object as a MethodType instance since it think that this is a method access
             for overridden_code in get_override_contexts(sample.function_object, code): # type: ignore
                 overridden_code_id = CodeId(id(overridden_code))
