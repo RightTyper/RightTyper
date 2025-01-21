@@ -3,9 +3,9 @@ import ast
 
 
 SEND_HANDLER = "send_handler"
-SEND_WRAPPER = "___rt_wrap_send"
+SEND_WRAPPER = "rt___wrap_send"
 ASEND_HANDLER = "asend_handler"
-ASEND_WRAPPER = "___rt_wrap_asend"
+ASEND_WRAPPER = "rt___wrap_asend"
 
 
 class GeneratorSendTransformer(ast.NodeTransformer):
@@ -50,7 +50,7 @@ class GeneratorSendTransformer(ast.NodeTransformer):
     def visit_Call(self: Self, node: ast.Call) -> ast.Call:
         self.generic_visit(node)
         if isinstance(node.func, ast.Attribute) and node.func.attr in ("send", "asend"):
-            is_sync = node.func.attr == "send"
+            is_sync = (node.func.attr == "send")
             new_node = ast.Call(
                 func=ast.Name(id=SEND_WRAPPER if is_sync else ASEND_WRAPPER, ctx=ast.Load()),
                 args=[
