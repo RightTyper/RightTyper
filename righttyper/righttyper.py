@@ -34,6 +34,7 @@ from righttyper.righttyper_process import (
 )
 from righttyper.righttyper_runtime import (
     find_function,
+    get_override_contexts,
     unwrap,
     get_value_type,
     get_type_name,
@@ -114,23 +115,24 @@ class Observations:
         self,
         code: CodeType,
         arg_names: tuple[str, ...],
-        get_default_type: Callable[[str], TypeInfo|None]
+        get_default_type: Callable[[str], TypeInfo|None],
+        function_object: FunctionType | None
     ) -> None:
         """Records that a function was visited, along with some details about it."""
-
-        code_id = CodeId(id(code))
-        if code_id not in self.functions_visited:
-            self.functions_visited[code_id] = FuncInfo(
-                FuncId(
-                    Filename(code.co_filename),
-                    code.co_firstlineno,
-                    FunctionName(code.co_qualname),
-                ),
-                tuple(
-                    ArgInfo(ArgumentName(name), get_default_type(name))
-                    for name in arg_names
+        for override_code in get_override_contexts(function_object, code):
+            code_id = CodeId(id(override_code))
+            if code_id not in self.functions_visited:
+                self.functions_visited[code_id] = FuncInfo(
+                    FuncId(
+                        Filename(override_code.co_filename),
+                        override_code.co_firstlineno,
+                        FunctionName(override_code.co_qualname),
+                    ),
+                    tuple(
+                        ArgInfo(ArgumentName(name), get_default_type(name))
+                        for name in arg_names
+                    )
                 )
-            )
 
 
     def record_start(
@@ -138,7 +140,8 @@ class Observations:
         code: CodeType,
         frame_id: FrameId,
         arg_types: tuple[TypeInfo, ...],
-        self_type: TypeInfo|None
+        self_type: TypeInfo|None,
+        function_object: FunctionType | None,
     ) -> None:
         """Records a function start."""
 
@@ -148,6 +151,7 @@ class Observations:
             self_type=self_type,
             is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
             is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
+            function_object=function_object,
         )
 
 
@@ -181,7 +185,11 @@ class Observations:
         code_id = CodeId(id(code))
         if (sample := self.pending_samples.get((code_id, frame_id))):
             sample.returns = return_type
-            self.samples[code_id].add(sample.process())
+            print(type(sample.function_object))
+            # MyPy labels function_object as a MethodType instance since it think that this is a method access
+            for overridden_code in get_override_contexts(sample.function_object, code): # type: ignore
+                overridden_code_id = CodeId(id(overridden_code))
+                self.samples[overridden_code_id].add(sample.process())
             del self.pending_samples[(code_id, frame_id)]
             return True
 
@@ -445,7 +453,7 @@ def process_function_arguments(
     code: CodeType,
     frame_id: FrameId,
     args: inspect.ArgInfo,
-    function: Callable|None
+    function: FunctionType|None
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
@@ -499,7 +507,8 @@ def process_function_arguments(
             *((args.varargs,) if args.varargs else ()),
             *((args.keywords,) if args.keywords else ())
         ),
-        get_default_type
+        get_default_type,
+        function
     )
 
     arg_values = (
@@ -522,7 +531,8 @@ def process_function_arguments(
         code,
         frame_id,
         arg_values,
-        get_self_type()
+        get_self_type(),
+        function
     )
 
 

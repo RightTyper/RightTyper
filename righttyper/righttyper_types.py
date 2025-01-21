@@ -151,6 +151,7 @@ class Sample:
     is_async: bool = False
     is_generator: bool = False
     self_type: TypeInfo | None = None
+    function_object: types.FunctionType | None = None
 
 
     def process(self) -> tuple[TypeInfo, ...]:

@@ -17,7 +17,7 @@ from types import (
     CoroutineType,
     GenericAlias
 )
-from typing import Any, cast, TypeAlias
+from typing import Any, Iterator, cast, TypeAlias
 from pathlib import Path
 
 from righttyper.random_dict import RandomDict
@@ -31,6 +31,7 @@ from righttyper.righttyper_types import (
     NoneTypeInfo,
     AnyTypeInfo
 )
+from righttyper.righttyper_types import types
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 
 
@@ -298,6 +299,34 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
                     return f"{name}.{obj.__name__}"
 
     return TypeInfo(lookup_type_module(obj), obj.__qualname__, type_obj=obj)
+
+
+def get_overrides(callable: types.FunctionType|classmethod|None) -> Iterator[FunctionType]:
+    func = unwrap(callable)
+    if func is None:
+        return
+    qualname_parts = func.__qualname__.split(".")[:-1]
+
+    # Follow qualname down
+    current_object: Any = inspect.getmodule(func)
+    for key in qualname_parts:
+        if not hasattr(current_object, key):
+            return None
+        current_object = getattr(current_object, key)
+    
+    if not isinstance(current_object, type):
+        yield func
+        return
+    for ancestor in current_object.__mro__:
+        super_func = getattr(ancestor, func.__name__, None)
+        if super_func: super_func = unwrap(super_func)
+        if inspect.isfunction(super_func): yield super_func
+
+
+def get_override_contexts(callable: FunctionType|classmethod|None, code: CodeType) -> Iterator[CodeType]:
+    yield code
+    for override in get_overrides(callable):
+        yield override.__code__
 
 
 def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
