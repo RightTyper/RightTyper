@@ -402,7 +402,7 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
 
 
     if isinstance(value, dict):
-        t = type(value)
+        t = dict if isinstance(value, RandomDict) else type(value)
         args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
         try:
             if value:

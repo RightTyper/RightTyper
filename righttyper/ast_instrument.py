@@ -1,9 +1,10 @@
 from typing import Self, cast
 import ast
+from .replace_dicts import DictTransformer, RANDOM_DICT_NAME, RANDOM_DICT_ASNAME
 
 
-WRAPPER_NAME = "wrap_send"
-WRAPPER_ASNAME = "rt___wrap_send"
+SEND_WRAPPER_NAME = "wrap_send"
+SEND_WRAPPER_ASNAME = "rt___wrap_send"
 
 
 class GeneratorSendTransformer(ast.NodeTransformer):
@@ -22,13 +23,13 @@ class GeneratorSendTransformer(ast.NodeTransformer):
         if any(
             isinstance(n, ast.Call) and
             isinstance(n.func, ast.Name) and
-            n.func.id == WRAPPER_ASNAME
+            n.func.id == SEND_WRAPPER_ASNAME
             for n in ast.walk(node)
         ):
             new_import = ast.ImportFrom(
                 module="righttyper.righttyper",
                 names=[
-                    ast.alias(name=WRAPPER_NAME, asname=WRAPPER_ASNAME)
+                    ast.alias(name=SEND_WRAPPER_NAME, asname=SEND_WRAPPER_ASNAME)
                 ],
                 level=0
             )
@@ -46,7 +47,7 @@ class GeneratorSendTransformer(ast.NodeTransformer):
 
         if type(node.ctx) is ast.Load and node.attr in ("send", "asend"):
             new_node = ast.Call(
-                func=ast.Name(id=WRAPPER_ASNAME, ctx=ast.Load()),
+                func=ast.Name(id=SEND_WRAPPER_ASNAME, ctx=ast.Load()),
                 args=[node],
                 keywords=[]
             )
@@ -59,4 +60,6 @@ class GeneratorSendTransformer(ast.NodeTransformer):
 
 
 def instrument(m: ast.Module) -> ast.Module:
-    return GeneratorSendTransformer().visit(m)
+    m = GeneratorSendTransformer().visit(m)
+    m = DictTransformer().visit(m)
+    return m

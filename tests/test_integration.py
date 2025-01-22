@@ -2062,3 +2062,38 @@ def test_generators_merge_into_iterator():
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def test(a: int) -> Iterator[int|str]" in output
+
+
+def test_random_dict():
+    t = textwrap.dedent("""\
+        def f(x):
+            return len(x)
+
+        d = {'a': {'b': 2}}
+        f(d)
+
+        from righttyper.random_dict import RandomDict
+        assert isinstance(d, RandomDict)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f(x: dict[str, dict[str, int]]) -> int" in output
+
+
+@pytest.mark.xfail(reason="Doesn't work yet")
+def test_instrument_test():
+    t = textwrap.dedent("""\
+        def test_foo():
+            d = {'a': {'b': 2}}
+
+            from righttyper.random_dict import RandomDict
+            assert isinstance(d, RandomDict)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '-m' 'pytest', 't.py'], check=True)

@@ -949,7 +949,6 @@ def main(
         )
         sys.monitoring.restart_events()
         setup_timer(restart_sampling)
-        # replace_dicts.replace_dicts()
         execute_script_or_module(script, bool(module), args)
     finally:
         reset_monitoring()
