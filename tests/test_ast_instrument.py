@@ -1,4 +1,5 @@
 import ast
+import pytest
 import textwrap
 from righttyper.ast_instrument import (
     instrument,
@@ -112,6 +113,7 @@ def test_send_assignment_context():
     compile(t, 'tp.py', 'exec') # ensure it doesn't throw
 
 
+@pytest.mark.xfail(reason="Temporarily disabled: RandomDict causes issues with rich")
 def test_dict_literal():
     t = parse("""\
         x = {'a': 0, 'b': 1}
@@ -129,6 +131,7 @@ def test_dict_literal():
     compile(t, 'tp.py', 'exec') # ensure it doesn't throw
 
 
+@pytest.mark.xfail(reason="Temporarily disabled: RandomDict causes issues with rich")
 def test_dict_comprehension():
     t = parse("""\
         x = {i: i + 1 for i in range(10)}
@@ -144,6 +147,7 @@ def test_dict_comprehension():
     compile(t, 'tp.py', 'exec') # ensure it doesn't throw
 
 
+@pytest.mark.xfail(reason="Temporarily disabled: RandomDict causes issues with rich")
 def test_dict_call():
     t = parse("""\
         x = dict([('a', 1), ('b', 2)])
@@ -159,6 +163,7 @@ def test_dict_call():
     compile(t, 'tp.py', 'exec') # ensure it doesn't throw
 
 
+@pytest.mark.xfail(reason="Temporarily disabled: RandomDict causes issues with rich")
 def test_dict_import_after_from_future():
     t = parse("""\
         from __future__ import annotations

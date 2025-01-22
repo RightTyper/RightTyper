@@ -61,5 +61,5 @@ class GeneratorSendTransformer(ast.NodeTransformer):
 
 def instrument(m: ast.Module) -> ast.Module:
     m = GeneratorSendTransformer().visit(m)
-    m = DictTransformer().visit(m)
+#    m = DictTransformer().visit(m)
     return m
