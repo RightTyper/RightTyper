@@ -2023,7 +2023,7 @@ def test_self_subtyping_reversed(tmp_cwd):
     assert "def operation(self: Self, rhs: \"NumberAdd\") -> Self:" in output
 
 
-def test_returns_or_yields_generator():
+def test_returns_or_yields_generator(tmp_cwd):
     t = textwrap.dedent("""\
         def test(a):
             if a < 5:
@@ -2044,7 +2044,7 @@ def test_returns_or_yields_generator():
     assert "def test(a: int) -> Generator[int|None, None, str|None]" in output
 
 
-def test_generators_merge_into_iterator():
+def test_generators_merge_into_iterator(tmp_cwd):
     t = textwrap.dedent("""\
         def test(a):
             if a < 5:
