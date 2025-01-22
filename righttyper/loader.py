@@ -116,6 +116,49 @@ def path_entry_hook(filename: str) -> PathEntryFinder:
     raise ImportError()
 
 
+def pytest_patcher():
+    """Patches pytest to allow instrumentation."""
+
+    orig_rewrite_asserts: typing.Any = None
+    orig_read_pyc: typing.Any = None
+    orig_write_pyc: typing.Any = None
+
+    try:
+        import _pytest.assertion.rewrite as pyrewrite
+
+        orig_rewrite_asserts = pyrewrite.rewrite_asserts
+        orig_read_pyc = pyrewrite._read_pyc
+        orig_write_pyc = pyrewrite._write_pyc
+    except ModuleNotFoundError:
+        pass
+
+    def rewrite_asserts(mod: ast.Module, *args, **kwargs):
+        # wrap assertion rewriter to do our own instrumentation on the AST
+        assert isinstance(mod, ast.Module)
+        return orig_rewrite_asserts(instrument(mod), *args, **kwargs)
+
+    def read_pyc(*args, **kwargs):
+        # don't read any cached pyc, forcing it to go to source
+        return None 
+
+    def write_pyc(*args, **kwargs):
+        # don't save our patched bytecode... this might be slow
+        pass
+
+    if orig_rewrite_asserts:
+        pyrewrite.rewrite_asserts = rewrite_asserts
+        pyrewrite._read_pyc = read_pyc
+        pyrewrite._write_pyc = write_pyc
+
+    yield   # return control a la pytest fixture
+
+    if orig_rewrite_asserts:
+        # now clean up
+        pyrewrite.rewrite_asserts = orig_rewrite_asserts
+        pyrewrite._read_pyc = orig_read_pyc
+        pyrewrite._write_pyc = orig_write_pyc
+
+
 class ImportManager:
     """A context manager that enables instrumentation while active."""
 
@@ -126,9 +169,12 @@ class ImportManager:
     def __enter__(self) -> typing.Self:
         sys.meta_path.insert(0, self.mpf)
         sys.path_hooks.insert(0, path_entry_hook)
+        self.pytest_patcher = pytest_patcher()
+        next(self.pytest_patcher)
         return self
 
 
     def __exit__(self, *args) -> None:
-        sys.meta_path.remove(self.mpf)
+        next(self.pytest_patcher, None)
         sys.path_hooks.remove(path_entry_hook)
+        sys.meta_path.remove(self.mpf)

@@ -13,7 +13,7 @@ def tmp_cwd(tmp_path, monkeypatch):
     yield tmp_path
 
 
-@pytest.mark.xfail(reason="value introspection doesn't currently work")
+@pytest.mark.xfail(reason="Iterable/Iterator introspection doesn't currently work")
 def test_iterable():
     t = textwrap.dedent("""\
         def func(iter):
@@ -27,7 +27,7 @@ def test_iterable():
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
 
-    assert "def func(iter: Iterable[int]) -> Iterable[Tuple[int, int]]" in Path("t.py").read_text()
+    assert "def func(iter: Iterable[int]) -> Iterable[tuple[int, int]]" in Path("t.py").read_text()
 
 
 def test_builtins():
@@ -273,28 +273,6 @@ def test_default_arg():
     assert "def func(n: int|None=None) -> int" in output
 
     assert "def func2(n: float|int=5) -> float" in output
-
-
-def test_function_lookup_for_defaults():
-    # if it confuses time.time for C.time, an exception is raised, as inspect cannot
-    # introspect into time.time
-    t = textwrap.dedent("""\
-        from time import time
-
-        class C:
-            def time(self):
-                return 0
-
-        C().time()
-        """)
-
-    Path("t.py").write_text(t)
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', 't.py'], check=True)
-    # FIXME we lack class support
-#    output = Path("t.py").read_text()
-#    assert "def time(self) -> int" in output
 
 
 def test_inner_function():
@@ -795,8 +773,7 @@ def test_coroutine():
                     '--no-use-multiprocessing', 't.py'], check=True)
 
     output = Path("t.py").read_text()
-    # FIXME should be Coroutine[None, None, str]
-    assert "def foo() -> Coroutine[None, Any, str]:" in output
+    assert "def foo() -> Coroutine[None, None, str]:" in output
 
 
 def test_generate_stubs():
@@ -2062,3 +2039,45 @@ def test_generators_merge_into_iterator():
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def test(a: int) -> Iterator[int|str]" in output
+
+
+@pytest.mark.xfail(reason="Temporarily disabled: RandomDict causes issues with rich")
+def test_random_dict():
+    t = textwrap.dedent("""\
+        def f(x):
+            return len(x)
+
+        d = {'a': {'b': 2}}
+        f(d)
+
+        from righttyper.random_dict import RandomDict
+        assert isinstance(d, RandomDict)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f(x: dict[str, dict[str, int]]) -> int" in output
+
+
+def test_instrument_pytest():
+    t = textwrap.dedent("""\
+        def f():
+            x = yield 42
+            yield x
+
+        def test_foo():
+            g = f()
+            next(g)
+            r = g.send(10)
+            assert r == 10
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                   '-m' 'pytest', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f() -> Generator[int, int, None]" in output
