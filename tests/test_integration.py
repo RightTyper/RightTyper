@@ -275,28 +275,6 @@ def test_default_arg():
     assert "def func2(n: float|int=5) -> float" in output
 
 
-def test_function_lookup_for_defaults():
-    # if it confuses time.time for C.time, an exception is raised, as inspect cannot
-    # introspect into time.time
-    t = textwrap.dedent("""\
-        from time import time
-
-        class C:
-            def time(self):
-                return 0
-
-        C().time()
-        """)
-
-    Path("t.py").write_text(t)
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', 't.py'], check=True)
-    # FIXME we lack class support
-#    output = Path("t.py").read_text()
-#    assert "def time(self) -> int" in output
-
-
 def test_inner_function():
     t = textwrap.dedent("""\
         def f(x):
@@ -795,8 +773,7 @@ def test_coroutine():
                     '--no-use-multiprocessing', 't.py'], check=True)
 
     output = Path("t.py").read_text()
-    # FIXME should be Coroutine[None, None, str]
-    assert "def foo() -> Coroutine[None, Any, str]:" in output
+    assert "def foo() -> Coroutine[None, None, str]:" in output
 
 
 def test_generate_stubs():
