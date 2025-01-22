@@ -2062,7 +2062,7 @@ def test_random_dict():
     assert "def f(x: dict[str, dict[str, int]]) -> int" in output
 
 
-def test_instrument_test():
+def test_instrument_pytest():
     t = textwrap.dedent("""\
         def f():
             x = yield 42
