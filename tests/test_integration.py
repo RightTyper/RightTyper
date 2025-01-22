@@ -2084,16 +2084,22 @@ def test_random_dict():
     assert "def f(x: dict[str, dict[str, int]]) -> int" in output
 
 
-@pytest.mark.xfail(reason="Doesn't work yet")
 def test_instrument_test():
     t = textwrap.dedent("""\
-        def test_foo():
-            d = {'a': {'b': 2}}
+        def f():
+            x = yield 42
+            yield x
 
-            from righttyper.random_dict import RandomDict
-            assert isinstance(d, RandomDict)
+        def test_foo():
+            g = f()
+            next(g)
+            r = g.send(10)
+            assert r == 10
         """)
 
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '-m' 'pytest', 't.py'], check=True)
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                   '-m' 'pytest', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f() -> Generator[int, int, None]" in output
