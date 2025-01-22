@@ -7,14 +7,14 @@ import importlib.util
 import re
 
 
-@pytest.fixture
+@pytest.fixture(scope='function', autouse=True)
 def tmp_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     yield tmp_path
 
 
 @pytest.mark.xfail(reason="value introspection doesn't currently work")
-def test_iterable(tmp_cwd):
+def test_iterable():
     t = textwrap.dedent("""\
         def func(iter):
             return enumerate(iter)
@@ -30,7 +30,7 @@ def test_iterable(tmp_cwd):
     assert "def func(iter: Iterable[int]) -> Iterable[Tuple[int, int]]" in Path("t.py").read_text()
 
 
-def test_builtins(tmp_cwd):
+def test_builtins():
     t = textwrap.dedent("""\
         def func(s):
             return range(s.start, s.stop)
@@ -64,7 +64,7 @@ def test_builtins(tmp_cwd):
     assert "def func3(t: super) -> None" in output
 
 
-def test_type_from_generic_alias_annotation(tmp_cwd):
+def test_type_from_generic_alias_annotation():
     t = textwrap.dedent("""\
         def f() -> list[int]: ...   # list[int] is a GenericAlias
 
@@ -83,7 +83,7 @@ def test_type_from_generic_alias_annotation(tmp_cwd):
     assert "def g() -> Callable[[], list[int]]:" in output
 
 
-def test_type_from_annotation_none_return(tmp_cwd):
+def test_type_from_annotation_none_return():
     t = textwrap.dedent("""\
         def f() -> None: ...
 
@@ -105,7 +105,7 @@ def test_type_from_annotation_none_return(tmp_cwd):
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-def test_numpy_type_name(tmp_cwd):
+def test_numpy_type_name():
     t = textwrap.dedent("""\
         import numpy as np
         import ml_dtypes
@@ -129,7 +129,7 @@ def test_numpy_type_name(tmp_cwd):
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-def test_numpy_ndarray_dtype_name(tmp_cwd):
+def test_numpy_ndarray_dtype_name():
     t = textwrap.dedent("""\
         import numpy as np
         import ml_dtypes
@@ -154,7 +154,7 @@ def test_numpy_ndarray_dtype_name(tmp_cwd):
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-def test_annotation_with_numpy_dtype_name(tmp_cwd):
+def test_annotation_with_numpy_dtype_name():
     t = textwrap.dedent("""\
         from typing import Any
         import numpy as np
@@ -179,7 +179,7 @@ def test_annotation_with_numpy_dtype_name(tmp_cwd):
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None,
                     reason='missing module numpy')
-def test_internal_numpy_type(tmp_cwd):
+def test_internal_numpy_type():
     t = textwrap.dedent("""\
         import numpy as np
         from numpy.core.overrides import array_function_dispatch
@@ -215,7 +215,7 @@ def test_internal_numpy_type(tmp_cwd):
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-def test_jaxtyping_annotation(tmp_cwd):
+def test_jaxtyping_annotation():
     t = textwrap.dedent("""\
         import numpy as np
 
@@ -235,7 +235,7 @@ def test_jaxtyping_annotation(tmp_cwd):
            '-> "jaxtyping.Int64[np.ndarray, \\"2 1\\"]"' in output
 
 
-def test_call_with_none_default(tmp_cwd):
+def test_call_with_none_default():
     t = textwrap.dedent("""\
         def func(n=None):
             return n+1 if n is not None else 0
@@ -252,7 +252,7 @@ def test_call_with_none_default(tmp_cwd):
     assert "def func(n: None=None) -> int" in output
 
 
-def test_default_arg(tmp_cwd):
+def test_default_arg():
     t = textwrap.dedent("""\
         def func(n=None):
             return n+1 if n is not None else 0
@@ -275,7 +275,7 @@ def test_default_arg(tmp_cwd):
     assert "def func2(n: float|int=5) -> float" in output
 
 
-def test_function_lookup_for_defaults(tmp_cwd):
+def test_function_lookup_for_defaults():
     # if it confuses time.time for C.time, an exception is raised, as inspect cannot
     # introspect into time.time
     t = textwrap.dedent("""\
@@ -297,7 +297,7 @@ def test_function_lookup_for_defaults(tmp_cwd):
 #    assert "def time(self) -> int" in output
 
 
-def test_inner_function(tmp_cwd):
+def test_inner_function():
     t = textwrap.dedent("""\
         def f(x):
             def g(y):
@@ -317,7 +317,7 @@ def test_inner_function(tmp_cwd):
     assert "def g(y: int) -> int" in output
 
 
-def test_class_method(tmp_cwd):
+def test_class_method():
     t = textwrap.dedent("""\
         class C:
             def f(self, n):
@@ -346,7 +346,7 @@ def test_class_method(tmp_cwd):
     assert "def h(self: Self, x: int) -> float" in output
 
 
-def test_class_method_imported(tmp_cwd):
+def test_class_method_imported():
     Path("m.py").write_text(textwrap.dedent("""\
         class C:
             def f(self, n):
@@ -382,7 +382,7 @@ def test_class_method_imported(tmp_cwd):
     assert "import gC" not in output
 
 
-def test_class_name_imported(tmp_cwd):
+def test_class_name_imported():
     Path("m.py").write_text(textwrap.dedent("""\
         class C:
             pass
@@ -433,7 +433,7 @@ def test_class_name_in_test(tmp_cwd):
 
 @pytest.mark.xfail(reason="Doesn't work yet")
 def test_local_class_name(tmp_cwd):
-    (tmp_cwd / "t.py").write_text(textwrap.dedent("""\
+    Path("t.py").write_text(textwrap.dedent("""\
         def f():
             class C:
                 pass
@@ -454,7 +454,7 @@ def test_local_class_name(tmp_cwd):
     assert "def g(x: C) -> int" in output
 
 
-def test_return_private_class(tmp_cwd):
+def test_return_private_class():
     Path("t.py").write_text(textwrap.dedent("""\
         def f():
             class fC:
@@ -478,7 +478,7 @@ def test_return_private_class(tmp_cwd):
     assert "def g(x) -> None:" in output # FIXME what is a good way to express the type?
 
 
-def test_default_inner_function(tmp_cwd):
+def test_default_inner_function():
     t = textwrap.dedent("""\
         def f(x):
             def g(y=None):
@@ -498,7 +498,7 @@ def test_default_inner_function(tmp_cwd):
     assert "def g(y: int|None=None) -> int" in output
 
 
-def test_default_class_method(tmp_cwd):
+def test_default_class_method():
     t = textwrap.dedent("""\
         class C:
             def f(self, n=5):
@@ -525,7 +525,7 @@ def test_default_class_method(tmp_cwd):
     assert "def h(self: Self, x: int=1) -> float" in output
 
 
-def test_generator(tmp_cwd):
+def test_generator():
     t = textwrap.dedent("""\
         def gen():
             yield 10
@@ -552,7 +552,7 @@ def test_generator(tmp_cwd):
     assert "def g(f: Iterator[float|int]) -> None" in output
 
 
-def test_generator_with_return(tmp_cwd):
+def test_generator_with_return():
     t = textwrap.dedent("""\
         def gen():
             yield 10
@@ -584,7 +584,7 @@ def test_generator_with_return(tmp_cwd):
 
 
 @pytest.mark.xfail(reason="Doesn't currently work")
-def test_generator_from_annotation(tmp_cwd):
+def test_generator_from_annotation():
     t = textwrap.dedent("""\
         from typing import Generator
 
@@ -611,7 +611,7 @@ def test_generator_from_annotation(tmp_cwd):
     assert "def g(f: Generator[int|str, None, None]) -> None" in output
 
 
-def test_async_generator(tmp_cwd):
+def test_async_generator():
     t = textwrap.dedent("""\
         import asyncio
 
@@ -640,7 +640,7 @@ def test_async_generator(tmp_cwd):
 
 
 @pytest.mark.parametrize('as_module', [False, True])
-def test_send_generator(tmp_cwd, as_module):
+def test_send_generator(as_module):
     t = textwrap.dedent("""\
         def gen():
             sum = 0.0
@@ -676,7 +676,7 @@ def test_send_generator(tmp_cwd, as_module):
 
 
 @pytest.mark.parametrize('as_module', [False, True])
-def test_send_async_generator(tmp_cwd, as_module):
+def test_send_async_generator(as_module):
     t = textwrap.dedent("""\
         import asyncio
 
@@ -715,7 +715,7 @@ def test_send_async_generator(tmp_cwd, as_module):
     assert "def f(g: AsyncGenerator[float, int]) -> list[float]" in output
 
 
-def test_send_not_generator(tmp_cwd):
+def test_send_not_generator():
     t = textwrap.dedent("""\
         class C:
             def send(self, x):
@@ -742,7 +742,7 @@ def test_send_not_generator(tmp_cwd):
     assert "def asend(self: Self, x: float) -> str:" in output
 
 
-def test_send_bound(tmp_cwd):
+def test_send_bound():
     t = textwrap.dedent("""\
         def gen():
             sum = 0.0
@@ -777,7 +777,7 @@ def test_send_bound(tmp_cwd):
     assert "def f(s: Callable) -> list[float]" in output
 
 
-def test_coroutine(tmp_cwd):
+def test_coroutine():
     Path("t.py").write_text(textwrap.dedent("""\
         import asyncio
 
@@ -799,7 +799,7 @@ def test_coroutine(tmp_cwd):
     assert "def foo() -> Coroutine[None, Any, str]:" in output
 
 
-def test_generate_stubs(tmp_cwd):
+def test_generate_stubs():
     Path("m.py").write_text(textwrap.dedent("""\
         import sys
 
@@ -845,7 +845,7 @@ def test_generate_stubs(tmp_cwd):
         """)
 
 
-def test_type_from_main(tmp_cwd):
+def test_type_from_main():
     Path("m.py").write_text(textwrap.dedent("""\
         def f(x):
             return str(x)
@@ -871,7 +871,7 @@ def test_type_from_main(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'mypy', 'm.py', 't.py'], check=True)
 
 
-def test_module_type(tmp_cwd):
+def test_module_type():
     Path("t.py").write_text(textwrap.dedent("""\
         import sys
 
@@ -890,7 +890,7 @@ def test_module_type(tmp_cwd):
     assert "import types" in output
 
 
-def test_function_type(tmp_cwd):
+def test_function_type():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x: int) -> float:
             return x/2
@@ -918,7 +918,7 @@ def test_function_type(tmp_cwd):
     assert 'def baz(h: Callable[[int], float], x: int) -> float:' in output # bound method
 
 
-def test_function_type_future_annotations(tmp_cwd):
+def test_function_type_future_annotations():
     Path("t.py").write_text(textwrap.dedent("""\
         from __future__ import annotations
 
@@ -948,7 +948,7 @@ def test_function_type_future_annotations(tmp_cwd):
     assert 'def baz(h: Callable[[int], int], x: int) -> int:' in output # bound method
 
 
-def test_function_type_in_annotation(tmp_cwd):
+def test_function_type_in_annotation():
     Path("t.py").write_text(textwrap.dedent("""\
         from types import FunctionType
 
@@ -973,7 +973,7 @@ def test_function_type_in_annotation(tmp_cwd):
     assert 'def baz(f: Callable[[FunctionType, Any], Any], g: Callable[[int], float], x: int) -> float:' in output
 
 
-def test_discovered_function_type_in_args(tmp_cwd):
+def test_discovered_function_type_in_args():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             return x/2
@@ -993,7 +993,7 @@ def test_discovered_function_type_in_args(tmp_cwd):
     assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
 
 
-def test_discovered_function_type_in_return(tmp_cwd):
+def test_discovered_function_type_in_return():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             return x/2
@@ -1013,7 +1013,7 @@ def test_discovered_function_type_in_return(tmp_cwd):
     assert "def bar(f: Callable[[int], float]) -> Callable[[int], float]:" in output
 
 
-def test_discovered_function_type_in_yield(tmp_cwd):
+def test_discovered_function_type_in_yield():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             return x/2
@@ -1034,7 +1034,7 @@ def test_discovered_function_type_in_yield(tmp_cwd):
 
 
 @pytest.mark.parametrize('ignore_ann', [False, True])
-def test_discovered_function_annotated(tmp_cwd, ignore_ann):
+def test_discovered_function_annotated(ignore_ann):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x: int | float) -> float:
             return x/2
@@ -1059,7 +1059,7 @@ def test_discovered_function_annotated(tmp_cwd, ignore_ann):
         assert "def bar(f: Callable[[int | float], float], x: int) -> float:" in output
 
 
-def test_discovered_generator(tmp_cwd):
+def test_discovered_generator():
     Path("t.py").write_text(textwrap.dedent("""\
         def g(x):
             yield from range(x)
@@ -1079,7 +1079,7 @@ def test_discovered_generator(tmp_cwd):
     assert "def f(x: Iterator[int]) -> None:" in output
 
 
-def test_discovered_genexpr(tmp_cwd):
+def test_discovered_genexpr():
     Path("t.py").write_text(textwrap.dedent("""\
         def f(x):
             for _ in x:
@@ -1096,7 +1096,7 @@ def test_discovered_genexpr(tmp_cwd):
     assert "def f(x: Iterator[int]) -> None:" in output
 
 
-def test_discovered_genexpr_two_in_same_line(tmp_cwd):
+def test_discovered_genexpr_two_in_same_line():
     # TODO this is a bit risky: we identify the functions (and genexpr) by filename,
     # first code line and name.  These two genexpr have thus the same name!
     # We could add the first code column...
@@ -1119,7 +1119,7 @@ def test_discovered_genexpr_two_in_same_line(tmp_cwd):
     assert "def g(x: Iterator[str]) -> int:" in output
 
 
-def test_module_list_not_lost_with_multiprocessing(tmp_cwd):
+def test_module_list_not_lost_with_multiprocessing():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(t):
             pass
@@ -1138,7 +1138,7 @@ def test_module_list_not_lost_with_multiprocessing(tmp_cwd):
     assert 'import xml.dom.minidom\n' in output
 
 
-def test_posonly_and_kwonly(tmp_cwd):
+def test_posonly_and_kwonly():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, /, *, y):
             pass
@@ -1154,7 +1154,7 @@ def test_posonly_and_kwonly(tmp_cwd):
     assert 'def foo(x: int, /, *, y: float) -> None:' in output
 
 
-def test_varargs(tmp_cwd):
+def test_varargs():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, *args):
             pass
@@ -1170,7 +1170,7 @@ def test_varargs(tmp_cwd):
     assert 'def foo(x: bool, *args: float|int|str) -> None:' in output
 
 
-def test_varargs_empty(tmp_cwd):
+def test_varargs_empty():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, *args):
             pass
@@ -1186,7 +1186,7 @@ def test_varargs_empty(tmp_cwd):
     assert 'def foo(x: bool, *args: None) -> None:' in output
 
 
-def test_kwargs(tmp_cwd):
+def test_kwargs():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, **kwargs):
             pass
@@ -1202,7 +1202,7 @@ def test_kwargs(tmp_cwd):
     assert 'def foo(x: bool, **kwargs: float|int|str) -> None:' in output
 
 
-def test_kwargs_empty(tmp_cwd):
+def test_kwargs_empty():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, **kwargs):
             pass
@@ -1218,7 +1218,7 @@ def test_kwargs_empty(tmp_cwd):
     assert 'def foo(x: bool, **kwargs: None) -> None:' in output
 
 
-def test_none_arg(tmp_cwd):
+def test_none_arg():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             pass
@@ -1234,7 +1234,7 @@ def test_none_arg(tmp_cwd):
     assert 'def foo(x: None) -> None:' in output
 
 
-def test_self(tmp_cwd):
+def test_self():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(self):
             return self/2
@@ -1268,7 +1268,7 @@ def test_self(tmp_cwd):
 
 
 @pytest.mark.xfail(reason="Doesn't currently work")
-def test_self_with_wrapped_method(tmp_cwd):
+def test_self_with_wrapped_method():
     Path("t.py").write_text(textwrap.dedent("""\
         import functools
 
@@ -1287,7 +1287,7 @@ def test_self_with_wrapped_method(tmp_cwd):
     assert 'def foo(self: Self, x: int) -> Self:' in output
 
 
-def test_rich_is_messed_up(tmp_cwd):
+def test_rich_is_messed_up():
     # running rich's test suite leaves it unusable... simulate that situation.
     Path("t.py").write_text(textwrap.dedent("""\
         import sys
@@ -1305,7 +1305,7 @@ def test_rich_is_messed_up(tmp_cwd):
 
 @pytest.mark.parametrize('as_module', [False, True])
 @pytest.mark.parametrize('use_mp', [False, True])
-def test_nonzero_SystemExit(tmp_cwd, as_module, use_mp):
+def test_nonzero_SystemExit(as_module, use_mp):
     Path("t.py").write_text(textwrap.dedent("""\
         raise SystemExit("something")
     """))
@@ -1319,7 +1319,7 @@ def test_nonzero_SystemExit(tmp_cwd, as_module, use_mp):
 
 @pytest.mark.parametrize('as_module', [False, True])
 @pytest.mark.parametrize('use_mp', [False, True])
-def test_zero_SystemExit(tmp_cwd, as_module, use_mp):
+def test_zero_SystemExit(as_module, use_mp):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             return x
@@ -1360,7 +1360,7 @@ def test_arg_parsing(tmp_cwd):
     assert ['t.py', 'a', '-m'] == test_args('t.py', '--', 'a', '-m')
 
 
-def test_mocked_function(tmp_cwd):
+def test_mocked_function():
     Path("t.py").write_text(textwrap.dedent("""\
         from unittest.mock import create_autospec
 
@@ -1379,7 +1379,7 @@ def test_mocked_function(tmp_cwd):
 
 
 @pytest.mark.parametrize('as_module', [False, True])
-def test_union_superclass(tmp_cwd, as_module):
+def test_union_superclass(as_module):
     Path("t.py").write_text(textwrap.dedent("""\
         class A: pass
         class B(A): pass
@@ -1399,7 +1399,7 @@ def test_union_superclass(tmp_cwd, as_module):
     assert "def foo(x: A) -> None:" in Path("t.py").read_text()
 
 
-def test_sampling_overlaps(tmp_cwd):
+def test_sampling_overlaps():
     # While sampling, the function is started twice, with the first invocation outlasting
     # the second.  We'll get a START and YIELD events for the first invocation and then
     # a RETURN event for the second... if we don't leave the event enabled, we may not
@@ -1427,7 +1427,7 @@ def test_sampling_overlaps(tmp_cwd):
     assert "def gen(more: bool) -> Iterator[int]:" in output
 
 
-def test_no_return(tmp_cwd):
+def test_no_return():
     # A function for which we never see a RETURN: can we still type it?
     t = textwrap.dedent("""\
         def gen():
@@ -1448,7 +1448,7 @@ def test_no_return(tmp_cwd):
     assert "def gen() -> Iterator[int]:" in output
 
 
-def test_generic_simple(tmp_cwd):
+def test_generic_simple():
     t = textwrap.dedent(
         """\
         def add(a, b):
@@ -1467,7 +1467,7 @@ def test_generic_simple(tmp_cwd):
     assert "def add(a: rt_T1, b: rt_T1) -> rt_T1" in output
 
 
-def test_generic_name_conflict(tmp_cwd):
+def test_generic_name_conflict():
     t = textwrap.dedent("""\
         rt_T1 = None
         rt_T2 = None
@@ -1490,7 +1490,7 @@ def test_generic_name_conflict(tmp_cwd):
     assert "def add(a: rt_T3, b: rt_T3) -> rt_T3" in output
 
 
-def test_generic_yield(tmp_cwd):
+def test_generic_yield():
     t = textwrap.dedent("""\
         def y(a):
             yield a
@@ -1508,7 +1508,7 @@ def test_generic_yield(tmp_cwd):
     assert "def y(a: rt_T1) -> Iterator[rt_T1]" in output
 
 
-def test_generic_yield_generator(tmp_cwd):
+def test_generic_yield_generator():
     t = textwrap.dedent("""\
         def y(a, b):
             yield a
@@ -1529,7 +1529,7 @@ def test_generic_yield_generator(tmp_cwd):
     assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, None, rt_T2]" in output
 
 
-def test_generic_typevar_location(tmp_cwd):
+def test_generic_typevar_location():
     t = textwrap.dedent("""\
         ...
         # comment and emptyline
@@ -1554,7 +1554,7 @@ def test_generic_typevar_location(tmp_cwd):
     assert res in output
 
 
-def test_generic_and_defaults(tmp_cwd):
+def test_generic_and_defaults():
     t = textwrap.dedent("""\
         def f(a, b=None, c=None):
             pass
@@ -1582,7 +1582,7 @@ def test_generic_and_defaults(tmp_cwd):
     ("ItemsView", "ItemsView[Never, Never]"),
     ("tuple", "tuple")
 ])
-def test_custom_collection_len_error(tmp_cwd, superclass, expected):
+def test_custom_collection_len_error(superclass, expected):
     Path("t.py").write_text(textwrap.dedent(f"""\
         from collections.abc import *
 
@@ -1618,7 +1618,7 @@ def test_custom_collection_len_error(tmp_cwd, superclass, expected):
     ("ItemsView", "ItemsView[Never, Never]"),
     ("tuple", "tuple")
 ])
-def test_custom_collection_sample_error(tmp_cwd, superclass, expected):
+def test_custom_collection_sample_error(superclass, expected):
     Path("t.py").write_text(textwrap.dedent(f"""\
         from collections.abc import *
 
@@ -1654,7 +1654,7 @@ def test_custom_collection_sample_error(tmp_cwd, superclass, expected):
     assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
 
 
-def test_class_properties(tmp_cwd):
+def test_class_properties():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
             def __init__(self):
@@ -1693,7 +1693,7 @@ def test_class_properties(tmp_cwd):
     assert "def x(self: Self) -> None:" in output               # deleter
 
 
-def test_class_properties_no_setter(tmp_cwd):
+def test_class_properties_no_setter():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
             def __init__(self):
@@ -1725,7 +1725,7 @@ def test_class_properties_no_setter(tmp_cwd):
     assert "def x(self: Self) -> None:" in output               # deleter
 
 
-def test_class_properties_inner_functions(tmp_cwd):
+def test_class_properties_inner_functions():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
             def __init__(self):
@@ -1767,7 +1767,7 @@ def test_class_properties_inner_functions(tmp_cwd):
     assert "def bar() -> None:" in output
 
 
-def test_self_simple(tmp_cwd):
+def test_self_simple():
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             def foo(self):
@@ -1784,7 +1784,7 @@ def test_self_simple(tmp_cwd):
     assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
 
 
-def test_self_wrapped_method(tmp_cwd):
+def test_self_wrapped_method():
     Path("t.py").write_text(textwrap.dedent("""\
         import functools
 
@@ -1811,7 +1811,7 @@ def test_self_wrapped_method(tmp_cwd):
     assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
 
 
-def test_self_bound_method(tmp_cwd):
+def test_self_bound_method():
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             def foo(self, x):
@@ -1828,7 +1828,7 @@ def test_self_bound_method(tmp_cwd):
     assert "def foo(self: Self, x: int) -> Self:" in Path("t.py").read_text()
 
 
-def test_self_inherited_method(tmp_cwd):
+def test_self_inherited_method():
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             def foo(self):
@@ -1848,7 +1848,7 @@ def test_self_inherited_method(tmp_cwd):
     assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
 
 
-def test_self_inherited_method_called_indirectly(tmp_cwd):
+def test_self_inherited_method_called_indirectly():
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             def foo(self):
@@ -1869,7 +1869,7 @@ def test_self_inherited_method_called_indirectly(tmp_cwd):
     assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
 
 
-def test_self_inherited_method_returns_non_self(tmp_cwd):
+def test_self_inherited_method_returns_non_self():
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             def foo(self):
@@ -1889,7 +1889,7 @@ def test_self_inherited_method_returns_non_self(tmp_cwd):
     assert "def foo(self: Self) -> \"A\":" in Path("t.py").read_text()
 
 
-def test_self_classmethod(tmp_cwd):
+def test_self_classmethod():
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             @classmethod
@@ -1906,7 +1906,7 @@ def test_self_classmethod(tmp_cwd):
     assert "def static_initializer(cls: type[Self]) -> Self:" in Path("t.py").read_text()
 
 
-def test_self_inherited_classmethod(tmp_cwd):
+def test_self_inherited_classmethod():
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             @classmethod
@@ -1926,7 +1926,7 @@ def test_self_inherited_classmethod(tmp_cwd):
     assert "def static_initializer(cls: type[Self]) -> Self:" in Path("t.py").read_text()
 
 
-def test_self_within_other_types(tmp_cwd):
+def test_self_within_other_types():
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             def foo(self):
@@ -1943,7 +1943,7 @@ def test_self_within_other_types(tmp_cwd):
     assert "def foo(self: Self) -> list[Self]" in Path("t.py").read_text()
 
 
-def test_self_yield_generator(tmp_cwd):
+def test_self_yield_generator():
     t = textwrap.dedent("""\
         class A:
             def foo(self):
@@ -1963,7 +1963,7 @@ def test_self_yield_generator(tmp_cwd):
     assert "def foo(self: Self) -> Generator[Self, None, Self]" in output
 
 
-def test_self_subtyping(tmp_cwd):
+def test_self_subtyping():
     t = textwrap.dedent("""\
         class NumberAdd:
             def __init__(self, value: float):
@@ -1994,7 +1994,7 @@ def test_self_subtyping(tmp_cwd):
     assert "def operation(self: Self, rhs: Self) -> Self:" in output
 
 
-def test_self_subtyping_reversed(tmp_cwd):
+def test_self_subtyping_reversed():
     t = textwrap.dedent("""\
         class NumberAdd:
             def __init__(self, value: float):
