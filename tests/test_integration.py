@@ -13,7 +13,7 @@ def tmp_cwd(tmp_path, monkeypatch):
     yield tmp_path
 
 
-@pytest.mark.xfail(reason="value introspection doesn't currently work")
+@pytest.mark.xfail(reason="Iterable/Iterator introspection doesn't currently work")
 def test_iterable():
     t = textwrap.dedent("""\
         def func(iter):
@@ -27,7 +27,7 @@ def test_iterable():
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
 
-    assert "def func(iter: Iterable[int]) -> Iterable[Tuple[int, int]]" in Path("t.py").read_text()
+    assert "def func(iter: Iterable[int]) -> Iterable[tuple[int, int]]" in Path("t.py").read_text()
 
 
 def test_builtins():
