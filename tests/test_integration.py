@@ -7,14 +7,14 @@ import importlib.util
 import re
 
 
-@pytest.fixture
+@pytest.fixture(scope='function', autouse=True)
 def tmp_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     yield tmp_path
 
 
-@pytest.mark.xfail(reason="value introspection doesn't currently work")
-def test_iterable(tmp_cwd):
+@pytest.mark.xfail(reason="Iterable/Iterator introspection doesn't currently work")
+def test_iterable():
     t = textwrap.dedent("""\
         def func(iter):
             return enumerate(iter)
@@ -26,11 +26,11 @@ def test_iterable(tmp_cwd):
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
-    
-    assert "def func(iter: Iterable[int]) -> Iterable[Tuple[int, int]]" in Path("t.py").read_text()
+
+    assert "def func(iter: Iterable[int]) -> Iterable[tuple[int, int]]" in Path("t.py").read_text()
 
 
-def test_builtins(tmp_cwd):
+def test_builtins():
     t = textwrap.dedent("""\
         def func(s):
             return range(s.start, s.stop)
@@ -40,7 +40,7 @@ def test_builtins(tmp_cwd):
         def func2(t):
             return t.__name__
 
-        print(func2(type(str)))
+        print(func2(str))
 
         def func3(t):
             pass
@@ -53,18 +53,18 @@ def test_builtins(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
-    
+
     assert "import slice" not in output
     assert "def func(s: slice) -> range" in output
 
     assert "import type" not in output
-    assert "def func2(t: type) -> str" in output
+    assert "def func2(t: type[str]) -> str" in output
 
     assert "import super" not in output
     assert "def func3(t: super) -> None" in output
 
 
-def test_type_from_generic_alias_annotation(tmp_cwd):
+def test_type_from_generic_alias_annotation():
     t = textwrap.dedent("""\
         def f() -> list[int]: ...   # list[int] is a GenericAlias
 
@@ -83,7 +83,7 @@ def test_type_from_generic_alias_annotation(tmp_cwd):
     assert "def g() -> Callable[[], list[int]]:" in output
 
 
-def test_type_from_annotation_none_return(tmp_cwd):
+def test_type_from_annotation_none_return():
     t = textwrap.dedent("""\
         def f() -> None: ...
 
@@ -105,7 +105,7 @@ def test_type_from_annotation_none_return(tmp_cwd):
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-def test_numpy_type_name(tmp_cwd):
+def test_numpy_type_name():
     t = textwrap.dedent("""\
         import numpy as np
         import ml_dtypes
@@ -129,7 +129,7 @@ def test_numpy_type_name(tmp_cwd):
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-def test_numpy_ndarray_dtype_name(tmp_cwd):
+def test_numpy_ndarray_dtype_name():
     t = textwrap.dedent("""\
         import numpy as np
         import ml_dtypes
@@ -154,7 +154,7 @@ def test_numpy_ndarray_dtype_name(tmp_cwd):
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-def test_annotation_with_numpy_dtype_name(tmp_cwd):
+def test_annotation_with_numpy_dtype_name():
     t = textwrap.dedent("""\
         from typing import Any
         import numpy as np
@@ -179,7 +179,7 @@ def test_annotation_with_numpy_dtype_name(tmp_cwd):
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None,
                     reason='missing module numpy')
-def test_internal_numpy_type(tmp_cwd):
+def test_internal_numpy_type():
     t = textwrap.dedent("""\
         import numpy as np
         from numpy.core.overrides import array_function_dispatch
@@ -215,7 +215,7 @@ def test_internal_numpy_type(tmp_cwd):
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-def test_jaxtyping_annotation(tmp_cwd):
+def test_jaxtyping_annotation():
     t = textwrap.dedent("""\
         import numpy as np
 
@@ -235,7 +235,7 @@ def test_jaxtyping_annotation(tmp_cwd):
            '-> "jaxtyping.Int64[np.ndarray, \\"2 1\\"]"' in output
 
 
-def test_call_with_none_default(tmp_cwd):
+def test_call_with_none_default():
     t = textwrap.dedent("""\
         def func(n=None):
             return n+1 if n is not None else 0
@@ -248,11 +248,11 @@ def test_call_with_none_default(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
-    
+
     assert "def func(n: None=None) -> int" in output
 
 
-def test_default_arg(tmp_cwd):
+def test_default_arg():
     t = textwrap.dedent("""\
         def func(n=None):
             return n+1 if n is not None else 0
@@ -269,35 +269,13 @@ def test_default_arg(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
-    
+
     assert "def func(n: int|None=None) -> int" in output
 
     assert "def func2(n: float|int=5) -> float" in output
 
 
-def test_function_lookup_for_defaults(tmp_cwd):
-    # if it confuses time.time for C.time, an exception is raised, as inspect cannot
-    # introspect into time.time
-    t = textwrap.dedent("""\
-        from time import time
-
-        class C:
-            def time(self):
-                return 0
-
-        C().time()
-        """)
-
-    Path("t.py").write_text(t)
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', 't.py'], check=True)
-    # FIXME we lack class support
-#    output = Path("t.py").read_text()
-#    assert "def time(self) -> int" in output
-
-
-def test_inner_function(tmp_cwd):
+def test_inner_function():
     t = textwrap.dedent("""\
         def f(x):
             def g(y):
@@ -313,11 +291,11 @@ def test_inner_function(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
-    
+
     assert "def g(y: int) -> int" in output
 
 
-def test_class_method(tmp_cwd):
+def test_class_method():
     t = textwrap.dedent("""\
         class C:
             def f(self, n):
@@ -339,14 +317,14 @@ def test_class_method(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
-    
+
     assert "def f(self: Self, n: int) -> int" in output
     assert "\nimport Self" not in output
 
     assert "def h(self: Self, x: int) -> float" in output
 
 
-def test_class_method_imported(tmp_cwd):
+def test_class_method_imported():
     Path("m.py").write_text(textwrap.dedent("""\
         class C:
             def f(self, n):
@@ -371,7 +349,7 @@ def test_class_method_imported(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("m.py").read_text()
-    
+
     assert "\nimport Self" not in output
 
     assert "def f(self: Self, n: int) -> int" in output
@@ -382,7 +360,7 @@ def test_class_method_imported(tmp_cwd):
     assert "import gC" not in output
 
 
-def test_class_name_imported(tmp_cwd):
+def test_class_name_imported():
     Path("m.py").write_text(textwrap.dedent("""\
         class C:
             pass
@@ -404,7 +382,7 @@ def test_class_name_imported(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("m.py").read_text()
-    
+
     assert "def f(x: C) -> None" in output
     assert "import C" not in output
 
@@ -426,14 +404,14 @@ def test_class_name_in_test(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', '-m', 'pytest', '-s', 'tests'], check=True)
     output = (tmp_cwd / "tests" / "test_foo.py").read_text()
-    
+
     assert "def f(x: C) -> None" in output
     assert "import test_foo" not in output
 
 
 @pytest.mark.xfail(reason="Doesn't work yet")
 def test_local_class_name(tmp_cwd):
-    (tmp_cwd / "t.py").write_text(textwrap.dedent("""\
+    Path("t.py").write_text(textwrap.dedent("""\
         def f():
             class C:
                 pass
@@ -450,11 +428,11 @@ def test_local_class_name(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = (tmp_cwd / "t.py").read_text()
-    
+
     assert "def g(x: C) -> int" in output
 
 
-def test_return_private_class(tmp_cwd):
+def test_return_private_class():
     Path("t.py").write_text(textwrap.dedent("""\
         def f():
             class fC:
@@ -471,14 +449,14 @@ def test_return_private_class(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
-    
+
     # that local class name is "f.<locals>.fC"; this yields a CST ParserSyntaxError
     assert "import fC" not in output
     assert "def f():" in output # FIXME what is a good way to express the return type?
     assert "def g(x) -> None:" in output # FIXME what is a good way to express the type?
 
 
-def test_default_inner_function(tmp_cwd):
+def test_default_inner_function():
     t = textwrap.dedent("""\
         def f(x):
             def g(y=None):
@@ -494,11 +472,11 @@ def test_default_inner_function(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
-    
+
     assert "def g(y: int|None=None) -> int" in output
 
 
-def test_default_class_method(tmp_cwd):
+def test_default_class_method():
     t = textwrap.dedent("""\
         class C:
             def f(self, n=5):
@@ -520,12 +498,12 @@ def test_default_class_method(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
-    
+
     assert "def f(self: Self, n: int=5) -> int" in output
     assert "def h(self: Self, x: int=1) -> float" in output
 
 
-def test_generator(tmp_cwd):
+def test_generator():
     t = textwrap.dedent("""\
         def gen():
             yield 10
@@ -547,14 +525,12 @@ def test_generator(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
-    
+
     assert "def gen() -> Iterator[float|int]:" in output
-
-    # FIXME this should be the same Iterator as above
-    assert "def g(f: Generator[Any, Any, Any]) -> None" in output
+    assert "def g(f: Iterator[float|int]) -> None" in output
 
 
-def test_generator_return(tmp_cwd):
+def test_generator_with_return():
     t = textwrap.dedent("""\
         def gen():
             yield 10
@@ -580,14 +556,40 @@ def test_generator_return(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
-    
-    assert "def gen() -> Generator[int, Any, str]:" in output
 
-    # FIXME this should be the same Generator as above
-    assert "def g(f: Generator[Any, Any, Any]) -> None" in output
+    assert "def gen() -> Generator[int, None, str]:" in output
+    assert "def g(f: Generator[int, None, str]) -> None" in output
 
 
-def test_async_generator(tmp_cwd):
+@pytest.mark.xfail(reason="Doesn't currently work")
+def test_generator_from_annotation():
+    t = textwrap.dedent("""\
+        from typing import Generator
+
+        def gen() -> Generator[int|str, None, None]:
+            yield ""
+
+        def main():
+            for _ in gen():
+                pass
+
+        def g(f):
+            pass
+
+        main()
+        g(gen())
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def g(f: Generator[int|str, None, None]) -> None" in output
+
+
+def test_async_generator():
     t = textwrap.dedent("""\
         import asyncio
 
@@ -610,15 +612,171 @@ def test_async_generator(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
-    
-    # FIXME should be AsyncGenerator[int] or AsyncIterator[int]
-    assert "def gen() -> AsyncIterator[Any]:" in output
 
-    # FIXME this should be the same Iterator as above
-    assert "def g(f: AsyncGenerator[Any, Any]) -> None" in output
+    assert "def gen() -> AsyncGenerator[int, None]:" in output
+    assert "def g(f: AsyncGenerator[int, None]) -> None" in output
 
 
-def test_generate_stubs(tmp_cwd):
+@pytest.mark.parametrize('as_module', [False, True])
+def test_send_generator(as_module):
+    t = textwrap.dedent("""\
+        def gen():
+            sum = 0.0
+            while True:
+                value = yield sum
+                if value is not None:
+                    sum += value
+
+        def f(g):
+            return [
+                g.send(10),
+                g.send(5)
+            ]
+
+        g = gen()
+        next(g) # prime generator
+        print(f(g))
+        """)
+
+    Path("t.py").write_text(t)
+
+    p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                       '--no-use-multiprocessing',
+                       *(('-m', 't') if as_module else ('t.py',))],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    assert '[10.0, 15.0]' in str(p.stdout, 'utf-8')
+
+    output = Path("t.py").read_text()
+
+    assert "def gen() -> Generator[float, int, None]:" in output
+    assert "def f(g: Generator[float, int, None]) -> list[float]" in output
+
+
+@pytest.mark.parametrize('as_module', [False, True])
+def test_send_async_generator(as_module):
+    t = textwrap.dedent("""\
+        import asyncio
+
+        async def gen():
+            sum = 0.0
+            while True:
+                value = yield sum
+                if value is not None:
+                    sum += value
+
+        async def f(g):
+            return [
+                await g.asend(10),
+                await g.asend(5)
+            ]
+
+        async def main():
+            g = gen()
+            await anext(g)
+            print(await f(g))
+
+        asyncio.run(main())
+        """)
+
+    Path("t.py").write_text(t)
+
+    p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                       *(('-m', 't') if as_module else ('t.py',))],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    assert '[10.0, 15.0]' in str(p.stdout, 'utf-8')
+
+    output = Path("t.py").read_text()
+
+    assert "def gen() -> AsyncGenerator[float, int]:" in output
+    assert "def f(g: AsyncGenerator[float, int]) -> list[float]" in output
+
+
+def test_send_not_generator():
+    t = textwrap.dedent("""\
+        class C:
+            def send(self, x):
+                return str(x)
+
+            def asend(self, x):
+                return str(x)
+
+        print(C().send(10))
+        print(C().asend(10.0))
+        """)
+
+    Path("t.py").write_text(t)
+
+    p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                       '--no-use-multiprocessing', 't.py'],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    assert '10\n10.0\n' in str(p.stdout, 'utf-8')
+
+    output = Path("t.py").read_text()
+
+    assert "def send(self: Self, x: int) -> str:" in output
+    assert "def asend(self: Self, x: float) -> str:" in output
+
+
+def test_send_bound():
+    t = textwrap.dedent("""\
+        def gen():
+            sum = 0.0
+            while True:
+                value = yield sum
+                if value is not None:
+                    sum += value
+
+        def f(s):
+            return [
+                s(10),
+                s(5)
+            ]
+
+        g = gen()
+        next(g) # prime generator
+        print(f(g.send))
+        """)
+
+    Path("t.py").write_text(t)
+
+    p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                       '--no-use-multiprocessing', 't.py'],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    assert '[10.0, 15.0]' in str(p.stdout, 'utf-8')
+
+    output = Path("t.py").read_text()
+
+    assert "def gen() -> Generator[float, int, None]:" in output
+    # TODO the Callable here is our wrapper for the 'g.send' method... can we do better?
+    assert "def f(s: Callable) -> list[float]" in output
+
+
+def test_coroutine():
+    Path("t.py").write_text(textwrap.dedent("""\
+        import asyncio
+
+        def foo():
+            async def coro():
+                return "did it"
+
+            return coro()
+
+        asyncio.run(foo())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def foo() -> Coroutine[None, None, str]:" in output
+
+
+def test_generate_stubs():
     Path("m.py").write_text(textwrap.dedent("""\
         import sys
 
@@ -664,7 +822,7 @@ def test_generate_stubs(tmp_cwd):
         """)
 
 
-def test_type_from_main(tmp_cwd):
+def test_type_from_main():
     Path("m.py").write_text(textwrap.dedent("""\
         def f(x):
             return str(x)
@@ -690,26 +848,7 @@ def test_type_from_main(tmp_cwd):
     subprocess.run([sys.executable, '-m', 'mypy', 'm.py', 't.py'], check=True)
 
 
-def test_coroutine_type(tmp_cwd):
-    Path("t.py").write_text(textwrap.dedent("""\
-        def foo():
-            async def coro():
-                import asyncio
-                await asyncio.sleep(1)
-            return coro()
-
-        foo()
-        """
-    ))
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', 't.py'], check=True)
-
-    output = Path("t.py").read_text()
-    assert "def foo() -> Coroutine[Any, Any, Any]:" in output
-
-
-def test_module_type(tmp_cwd):
+def test_module_type():
     Path("t.py").write_text(textwrap.dedent("""\
         import sys
 
@@ -728,7 +867,7 @@ def test_module_type(tmp_cwd):
     assert "import types" in output
 
 
-def test_function_type(tmp_cwd):
+def test_function_type():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x: int) -> float:
             return x/2
@@ -756,7 +895,7 @@ def test_function_type(tmp_cwd):
     assert 'def baz(h: Callable[[int], float], x: int) -> float:' in output # bound method
 
 
-def test_function_type_future_annotations(tmp_cwd):
+def test_function_type_future_annotations():
     Path("t.py").write_text(textwrap.dedent("""\
         from __future__ import annotations
 
@@ -786,7 +925,7 @@ def test_function_type_future_annotations(tmp_cwd):
     assert 'def baz(h: Callable[[int], int], x: int) -> int:' in output # bound method
 
 
-def test_function_type_in_annotation(tmp_cwd):
+def test_function_type_in_annotation():
     Path("t.py").write_text(textwrap.dedent("""\
         from types import FunctionType
 
@@ -811,7 +950,7 @@ def test_function_type_in_annotation(tmp_cwd):
     assert 'def baz(f: Callable[[FunctionType, Any], Any], g: Callable[[int], float], x: int) -> float:' in output
 
 
-def test_discovered_function_type_in_args(tmp_cwd):
+def test_discovered_function_type_in_args():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             return x/2
@@ -831,7 +970,7 @@ def test_discovered_function_type_in_args(tmp_cwd):
     assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
 
 
-def test_discovered_function_type_in_return(tmp_cwd):
+def test_discovered_function_type_in_return():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             return x/2
@@ -851,7 +990,7 @@ def test_discovered_function_type_in_return(tmp_cwd):
     assert "def bar(f: Callable[[int], float]) -> Callable[[int], float]:" in output
 
 
-def test_discovered_function_type_in_yield(tmp_cwd):
+def test_discovered_function_type_in_yield():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             return x/2
@@ -871,7 +1010,93 @@ def test_discovered_function_type_in_yield(tmp_cwd):
     assert "def bar() -> Iterator[Callable[[int], float]]:" in output
 
 
-def test_module_list_not_lost_with_multiprocessing(tmp_cwd):
+@pytest.mark.parametrize('ignore_ann', [False, True])
+def test_discovered_function_annotated(ignore_ann):
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x: int | float) -> float:
+            return x/2
+
+        def bar(f, x):
+            return f(x)
+
+        bar(foo, 1)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing',
+                    *(('--ignore-annotations',) if ignore_ann else()),
+                    't.py'], check=True)
+
+    output = Path("t.py").read_text()
+
+    if ignore_ann:
+        assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
+    else:
+        assert "def bar(f: Callable[[int | float], float], x: int) -> float:" in output
+
+
+def test_discovered_generator():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def g(x):
+            yield from range(x)
+
+        def f(x):
+            for _ in x:
+                pass
+
+        f(g(10))
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def f(x: Iterator[int]) -> None:" in output
+
+
+def test_discovered_genexpr():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f(x):
+            for _ in x:
+                pass
+
+        f((i for i in range(10)))
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def f(x: Iterator[int]) -> None:" in output
+
+
+def test_discovered_genexpr_two_in_same_line():
+    # TODO this is a bit risky: we identify the functions (and genexpr) by filename,
+    # first code line and name.  These two genexpr have thus the same name!
+    # We could add the first code column...
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f(x):
+            return sum(1 for _ in x)
+
+        def g(x):
+            return sum(1 for _ in x)
+
+        f((i for i in range(10))) + g((s for s in ['a', 'b']))
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert "def f(x: Iterator[int]) -> int:" in output
+    assert "def g(x: Iterator[str]) -> int:" in output
+
+
+def test_module_list_not_lost_with_multiprocessing():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(t):
             pass
@@ -890,7 +1115,7 @@ def test_module_list_not_lost_with_multiprocessing(tmp_cwd):
     assert 'import xml.dom.minidom\n' in output
 
 
-def test_posonly_and_kwonly(tmp_cwd):
+def test_posonly_and_kwonly():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, /, *, y):
             pass
@@ -906,7 +1131,7 @@ def test_posonly_and_kwonly(tmp_cwd):
     assert 'def foo(x: int, /, *, y: float) -> None:' in output
 
 
-def test_varargs(tmp_cwd):
+def test_varargs():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, *args):
             pass
@@ -922,7 +1147,7 @@ def test_varargs(tmp_cwd):
     assert 'def foo(x: bool, *args: float|int|str) -> None:' in output
 
 
-def test_varargs_empty(tmp_cwd):
+def test_varargs_empty():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, *args):
             pass
@@ -938,7 +1163,7 @@ def test_varargs_empty(tmp_cwd):
     assert 'def foo(x: bool, *args: None) -> None:' in output
 
 
-def test_kwargs(tmp_cwd):
+def test_kwargs():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, **kwargs):
             pass
@@ -954,7 +1179,7 @@ def test_kwargs(tmp_cwd):
     assert 'def foo(x: bool, **kwargs: float|int|str) -> None:' in output
 
 
-def test_kwargs_empty(tmp_cwd):
+def test_kwargs_empty():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, **kwargs):
             pass
@@ -970,7 +1195,7 @@ def test_kwargs_empty(tmp_cwd):
     assert 'def foo(x: bool, **kwargs: None) -> None:' in output
 
 
-def test_none_arg(tmp_cwd):
+def test_none_arg():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             pass
@@ -986,7 +1211,7 @@ def test_none_arg(tmp_cwd):
     assert 'def foo(x: None) -> None:' in output
 
 
-def test_self(tmp_cwd):
+def test_self():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(self):
             return self/2
@@ -1019,7 +1244,27 @@ def test_self(tmp_cwd):
     assert 'def baz(me: Self) -> Self:' in output
 
 
-def test_rich_is_messed_up(tmp_cwd):
+@pytest.mark.xfail(reason="Doesn't currently work")
+def test_self_with_wrapped_method():
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        class C:
+            @functools.cache
+            def foo(self, x):
+                return self
+
+        C().foo(1)
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(self: Self, x: int) -> Self:' in output
+
+
+def test_rich_is_messed_up():
     # running rich's test suite leaves it unusable... simulate that situation.
     Path("t.py").write_text(textwrap.dedent("""\
         import sys
@@ -1037,7 +1282,7 @@ def test_rich_is_messed_up(tmp_cwd):
 
 @pytest.mark.parametrize('as_module', [False, True])
 @pytest.mark.parametrize('use_mp', [False, True])
-def test_nonzero_SystemExit(tmp_cwd, as_module, use_mp):
+def test_nonzero_SystemExit(as_module, use_mp):
     Path("t.py").write_text(textwrap.dedent("""\
         raise SystemExit("something")
     """))
@@ -1051,7 +1296,7 @@ def test_nonzero_SystemExit(tmp_cwd, as_module, use_mp):
 
 @pytest.mark.parametrize('as_module', [False, True])
 @pytest.mark.parametrize('use_mp', [False, True])
-def test_zero_SystemExit(tmp_cwd, as_module, use_mp):
+def test_zero_SystemExit(as_module, use_mp):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             return x
@@ -1092,7 +1337,7 @@ def test_arg_parsing(tmp_cwd):
     assert ['t.py', 'a', '-m'] == test_args('t.py', '--', 'a', '-m')
 
 
-def test_mocked_function(tmp_cwd):
+def test_mocked_function():
     Path("t.py").write_text(textwrap.dedent("""\
         from unittest.mock import create_autospec
 
@@ -1111,7 +1356,7 @@ def test_mocked_function(tmp_cwd):
 
 
 @pytest.mark.parametrize('as_module', [False, True])
-def test_union_superclass(tmp_cwd, as_module):
+def test_union_superclass(as_module):
     Path("t.py").write_text(textwrap.dedent("""\
         class A: pass
         class B(A): pass
@@ -1131,7 +1376,7 @@ def test_union_superclass(tmp_cwd, as_module):
     assert "def foo(x: A) -> None:" in Path("t.py").read_text()
 
 
-def test_sampling_overlaps(tmp_cwd):
+def test_sampling_overlaps():
     # While sampling, the function is started twice, with the first invocation outlasting
     # the second.  We'll get a START and YIELD events for the first invocation and then
     # a RETURN event for the second... if we don't leave the event enabled, we may not
@@ -1159,7 +1404,7 @@ def test_sampling_overlaps(tmp_cwd):
     assert "def gen(more: bool) -> Iterator[int]:" in output
 
 
-def test_no_return(tmp_cwd):
+def test_no_return():
     # A function for which we never see a RETURN: can we still type it?
     t = textwrap.dedent("""\
         def gen():
@@ -1180,7 +1425,7 @@ def test_no_return(tmp_cwd):
     assert "def gen() -> Iterator[int]:" in output
 
 
-def test_generic_simple(tmp_cwd):
+def test_generic_simple():
     t = textwrap.dedent(
         """\
         def add(a, b):
@@ -1199,7 +1444,7 @@ def test_generic_simple(tmp_cwd):
     assert "def add(a: rt_T1, b: rt_T1) -> rt_T1" in output
 
 
-def test_generic_name_conflict(tmp_cwd):
+def test_generic_name_conflict():
     t = textwrap.dedent("""\
         rt_T1 = None
         rt_T2 = None
@@ -1222,7 +1467,7 @@ def test_generic_name_conflict(tmp_cwd):
     assert "def add(a: rt_T3, b: rt_T3) -> rt_T3" in output
 
 
-def test_generic_yield(tmp_cwd):
+def test_generic_yield():
     t = textwrap.dedent("""\
         def y(a):
             yield a
@@ -1240,7 +1485,7 @@ def test_generic_yield(tmp_cwd):
     assert "def y(a: rt_T1) -> Iterator[rt_T1]" in output
 
 
-def test_generic_yield_generator(tmp_cwd):
+def test_generic_yield_generator():
     t = textwrap.dedent("""\
         def y(a, b):
             yield a
@@ -1258,10 +1503,10 @@ def test_generic_yield_generator(tmp_cwd):
     print(output)
     assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
     assert 'rt_T2 = TypeVar("rt_T2", int, str)' in output
-    assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, Any, rt_T2]" in output
+    assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, None, rt_T2]" in output
 
 
-def test_generic_typevar_location(tmp_cwd):
+def test_generic_typevar_location():
     t = textwrap.dedent("""\
         ...
         # comment and emptyline
@@ -1286,7 +1531,7 @@ def test_generic_typevar_location(tmp_cwd):
     assert res in output
 
 
-def test_generic_and_defaults(tmp_cwd):
+def test_generic_and_defaults():
     t = textwrap.dedent("""\
         def f(a, b=None, c=None):
             pass
@@ -1314,7 +1559,7 @@ def test_generic_and_defaults(tmp_cwd):
     ("ItemsView", "ItemsView[Never, Never]"),
     ("tuple", "tuple")
 ])
-def test_custom_collection_len_error(tmp_cwd, superclass, expected):
+def test_custom_collection_len_error(superclass, expected):
     Path("t.py").write_text(textwrap.dedent(f"""\
         from collections.abc import *
 
@@ -1350,7 +1595,7 @@ def test_custom_collection_len_error(tmp_cwd, superclass, expected):
     ("ItemsView", "ItemsView[Never, Never]"),
     ("tuple", "tuple")
 ])
-def test_custom_collection_sample_error(tmp_cwd, superclass, expected):
+def test_custom_collection_sample_error(superclass, expected):
     Path("t.py").write_text(textwrap.dedent(f"""\
         from collections.abc import *
 
@@ -1386,7 +1631,7 @@ def test_custom_collection_sample_error(tmp_cwd, superclass, expected):
     assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
 
 
-def test_class_properties(tmp_cwd):
+def test_class_properties():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
             def __init__(self):
@@ -1415,6 +1660,7 @@ def test_class_properties(tmp_cwd):
                     '--no-use-multiprocessing', '-m', 't'], check=True)
 
     output = Path("t.py").read_text()
+    print(output)
 
     assert "def __init__(self: Self) -> None:" in output
 
@@ -1424,7 +1670,7 @@ def test_class_properties(tmp_cwd):
     assert "def x(self: Self) -> None:" in output               # deleter
 
 
-def test_class_properties_no_setter(tmp_cwd):
+def test_class_properties_no_setter():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
             def __init__(self):
@@ -1456,7 +1702,7 @@ def test_class_properties_no_setter(tmp_cwd):
     assert "def x(self: Self) -> None:" in output               # deleter
 
 
-def test_class_properties_inner_functions(tmp_cwd):
+def test_class_properties_inner_functions():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
             def __init__(self):
@@ -1492,7 +1738,346 @@ def test_class_properties_inner_functions(tmp_cwd):
 
     # TODO parse functions out so that the annotation is included
     assert "def foo() -> str:" in output            # getter's
-    assert "def foo(v: float) -> int:" in output     # setter's
+    assert "def foo(v: float) -> int:" in output    # setter's
 
     # check for inner function's inner function
     assert "def bar() -> None:" in output
+
+
+def test_self_simple():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self):
+                return self
+
+        o = A()
+        o.foo()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
+
+
+def test_self_wrapped_method():
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(self, *args, **kwargs):
+                return func(self, *args, **kwargs)
+
+            return wrapper
+
+        class A:
+            @decorator
+            def foo(self):
+                return self
+
+        o = A()
+        o.foo()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
+
+
+def test_self_bound_method():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                return self
+
+        f = A().foo
+        f(10)
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self, x: int) -> Self:" in Path("t.py").read_text()
+
+
+def test_self_inherited_method():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self):
+                return self
+
+        class B(A):
+            pass
+
+        o = B()
+        o.foo()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
+
+
+def test_self_inherited_method_called_indirectly():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self):
+                return self
+
+        class B(A):
+            def bar(self):
+                self.foo()
+
+        o = B()
+        o.bar()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
+
+
+def test_self_inherited_method_returns_non_self():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self):
+                return A()
+
+        class B(A):
+            pass
+
+        o = B()
+        o.foo()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self) -> \"A\":" in Path("t.py").read_text()
+
+
+def test_self_classmethod():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            @classmethod
+            def static_initializer(cls):
+                return cls()
+
+        o = A.static_initializer()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def static_initializer(cls: type[Self]) -> Self:" in Path("t.py").read_text()
+
+
+def test_self_inherited_classmethod():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            @classmethod
+            def static_initializer(cls):
+                return cls()
+
+        class B(A):
+            pass
+
+        o = B.static_initializer()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def static_initializer(cls: type[Self]) -> Self:" in Path("t.py").read_text()
+
+
+def test_self_within_other_types():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self):
+                return [self, self]
+
+        o = A()
+        o.foo()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self) -> list[Self]" in Path("t.py").read_text()
+
+
+def test_self_yield_generator():
+    t = textwrap.dedent("""\
+        class A:
+            def foo(self):
+                yield self
+                return self
+
+        for _ in A().foo(): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    print(output)
+    assert "def foo(self: Self) -> Generator[Self, None, Self]" in output
+
+
+def test_self_subtyping():
+    t = textwrap.dedent("""\
+        class NumberAdd:
+            def __init__(self, value: float):
+                self.value = value
+
+            def operation(self, rhs):
+                return self.__class__(self.value + rhs.value)
+
+        class IntegerAdd(NumberAdd):
+            def __init__(self, value: int):
+                if value != round(value):
+                    raise ValueError()
+                super().__init__(value)
+
+        a = NumberAdd(0.5)
+        b = IntegerAdd(1)
+
+        a.operation(b)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    # IntegerAdd IS-A NumberAdd, the enclosed class; so the argument should be 'Self'
+    assert "def operation(self: Self, rhs: Self) -> Self:" in output
+
+
+def test_self_subtyping_reversed():
+    t = textwrap.dedent("""\
+        class NumberAdd:
+            def __init__(self, value: float):
+                self.value = value
+
+            def operation(self, rhs):
+                return self.__class__(self.value + rhs.value)
+
+        class IntegerAdd(NumberAdd):
+            def __init__(self, value: int):
+                super().__init__(round(value))
+
+        a = NumberAdd(0.5)
+        b = IntegerAdd(1)
+
+        b.operation(a)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    # The argument isn't Self as (NumberAdd IS-A IntegerAdd) doesn't hold
+    assert "def operation(self: Self, rhs: \"NumberAdd\") -> Self:" in output
+
+
+def test_returns_or_yields_generator():
+    t = textwrap.dedent("""\
+        def test(a):
+            if a < 5:
+                return "too small :("
+            else:
+                for i in range(a):
+                    yield a
+
+        for _ in test(3): pass
+        for _ in test(10): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def test(a: int) -> Generator[int|None, None, str|None]" in output
+
+
+def test_generators_merge_into_iterator():
+    t = textwrap.dedent("""\
+        def test(a):
+            if a < 5:
+                yield "too small"
+            else:
+                yield a
+
+        for _ in test(3): pass
+        for _ in test(10): pass
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def test(a: int) -> Iterator[int|str]" in output
+
+
+@pytest.mark.xfail(reason="Temporarily disabled: RandomDict causes issues with rich")
+def test_random_dict():
+    t = textwrap.dedent("""\
+        def f(x):
+            return len(x)
+
+        d = {'a': {'b': 2}}
+        f(d)
+
+        from righttyper.random_dict import RandomDict
+        assert isinstance(d, RandomDict)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f(x: dict[str, dict[str, int]]) -> int" in output
+
+
+def test_instrument_pytest():
+    t = textwrap.dedent("""\
+        def f():
+            x = yield 42
+            yield x
+
+        def test_foo():
+            g = f()
+            next(g)
+            r = g.send(10)
+            assert r == 10
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                   '-m' 'pytest', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f() -> Generator[int, int, None]" in output

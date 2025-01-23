@@ -7,12 +7,6 @@ from functools import cache
 from typing import Any, Final
 from pathlib import Path
 
-from righttyper.righttyper_types import (
-    Typename,
-    TypeInfo,
-    TypeInfoSet,
-    TYPE_OBJ_TYPES
-)
 
 TOOL_ID: int = 3
 TOOL_NAME: Final[str] = "righttyper"
@@ -62,6 +56,28 @@ def debug_print_set_level(level: bool) -> None:
     _DEBUG_PRINT = level
 
 
+def _get_righttyper_path() -> str:
+    import importlib.util
+    spec = importlib.util.find_spec(__package__)
+    assert spec is not None and spec.origin is not None
+    return str(Path(spec.origin).parent)
+
+RIGHTTYPER_PATH = _get_righttyper_path()
+
+
+def _get_python_libs() -> tuple[str, ...]:
+    import sysconfig
+
+    return tuple(
+        set(
+            sysconfig.get_path(p)
+            for p in ('stdlib', 'platstdlib', 'purelib', 'platlib')
+        )
+    )
+
+PYTHON_LIBS = _get_python_libs()
+
+
 @cache
 def skip_this_file(
     filename: str,
@@ -77,10 +93,9 @@ def skip_this_file(
     else:
         should_skip = (
             filename.startswith("<")
-            or filename.startswith("/Library")
-            or filename.startswith("/opt/homebrew/")
-            or os.sep + "site-packages" + os.sep in filename
-            or "righttyper.py" in filename
+            # FIXME how about packages installed with 'pip install -e' (editable)?
+            or any(filename.startswith(p) for p in PYTHON_LIBS)
+            or filename.startswith(RIGHTTYPER_PATH)
             or script_dir not in os.path.abspath(filename)
         )
     if include_files_pattern:
@@ -92,19 +107,24 @@ def skip_this_file(
 
 def _source_relative_to_pkg(file: Path) -> Path|None:
     """Returns a Python source file's path relative to its package"""
-    if not file.is_absolute():
-        file = file.resolve()
+    try:
+        if not file.is_absolute():
+            file = file.resolve()
 
-    parents = list(file.parents)
+        parents = list(file.parents)
 
-    for d in sys.path:
-        path = Path(d)
-        if not path.is_absolute():
-            path = path.resolve()
+        for d in sys.path:
+            path = Path(d)
+            if not path.is_absolute():
+                path = path.resolve()
 
-        for p in parents:
-            if p == path:
-                return file.relative_to(p)
+            for p in parents:
+                if p == path:
+                    return file.relative_to(p)
+    except:
+        # file.resolve() may throw in case of symlink loops;
+        # Also, torch._dynamo seems to throw Unsupported (see issue 93)
+        pass
 
     return None
 

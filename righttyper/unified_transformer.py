@@ -8,10 +8,9 @@ import re
 
 from righttyper.righttyper_types import (
     Filename,
-    FuncInfo,
+    FuncId,
     FuncAnnotation,
     FunctionName,
-    Typename,
     TypeInfo,
 )
 
@@ -102,7 +101,7 @@ class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
         self,
         filename: str,
-        type_annotations: dict[FuncInfo, FuncAnnotation],
+        type_annotations: dict[FuncId, FuncAnnotation],
         override_annotations: bool,
         inline_generics: bool,
         module_name: str|None,
@@ -352,13 +351,6 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         return True
 
-    def _try_rename_to_self(self, annotation: TypeInfo) -> TypeInfo:
-        if self.use_self and self.module_name:
-            # TODO this doesn't handle composite names, such as "list[Self]"... do we care?
-            if str(annotation) == '.'.join((self.module_name, *self.name_stack)):
-                return TypeInfo("typing", "Self")
-        return annotation
-
     def _get_annotation_expr(self, annotation: TypeInfo) -> cst.BaseExpression:
         class FindGenerics(TypeInfo.Transformer):
             def __init__(self):
@@ -394,8 +386,6 @@ class UnifiedTransformer(cst.CSTTransformer):
             ) is None
         ):
             return parameter
-
-        annotation = self._try_rename_to_self(annotation)
 
         if not self._is_valid(annotation):
             return parameter
@@ -440,7 +430,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.get_metadata(PositionProvider, node).start.line
             for node in (original_node, *original_node.decorators)
         )
-        key = FuncInfo(Filename(self.filename), first_line, FunctionName(name))
+        key = FuncId(Filename(self.filename), first_line, FunctionName(name))
 
         if ann := typing.cast(FuncAnnotation, self.type_annotations.get(key)):  # cast to make mypy happy
             pre_function = []
@@ -502,10 +492,8 @@ class UnifiedTransformer(cst.CSTTransformer):
             updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
 
             if updated_node.returns is None or self.override_annotations:
-                annotation = self._try_rename_to_self(ann.retval)
-                if self._is_valid(annotation):
-
-                    annotation_expr = self._get_annotation_expr(annotation)
+                if self._is_valid(ann.retval):
+                    annotation_expr = self._get_annotation_expr(ann.retval)
 
                     updated_node = updated_node.with_changes(
                         returns=cst.Annotation(annotation=annotation_expr),

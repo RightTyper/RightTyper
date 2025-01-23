@@ -1,4 +1,6 @@
+righttyper/traverse.abi3.so
 righttyper.egg-info/
 */__pycache__/
 .venv
 venv
+righttyper.log

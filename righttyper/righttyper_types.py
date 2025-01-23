@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace, field
-from enum import Enum
 from typing import NewType, TypeVar, Self, TypeAlias
 import types
 
@@ -12,11 +11,12 @@ ArgumentName = NewType("ArgumentName", str)
 Filename = NewType("Filename", str)
 FunctionName = NewType("FunctionName", str)
 
-Typename = NewType("Typename", str)
+CodeId = NewType("CodeId", int)     # obtained from id(code) where code is-a CodeType
+FrameId = NewType("FrameId", int)   # similarly from id(frame)
 
 
 @dataclass(eq=True, frozen=True)
-class FuncInfo:
+class FuncId:
     file_name: Filename
     first_code_line: int
     func_name: FunctionName
@@ -36,10 +36,10 @@ TYPE_OBJ_TYPES: TypeAlias = type
 class TypeInfo:
     module: str
     name: str
-    args: "tuple[TypeInfo|str, ...]" = tuple()    # arguments within [] in the Typename
+    args: "tuple[TypeInfo|str, ...]" = tuple()    # arguments within []
 
-    func: FuncInfo|None = None              # if a callable, the FuncInfo
-    is_bound: bool = False                  # if a callable, whether bound
+    code_id: CodeId = CodeId(0)     # if a callable, generator or coroutine, the CodeId
+    is_bound: bool = False          # if a callable, whether bound
     type_obj: TYPE_OBJ_TYPES|None = None
     typevar_index: int = 0
     typevar_name: str|None = None   # TODO delete me?
@@ -71,7 +71,8 @@ class TypeInfo:
 
     @staticmethod
     def from_type(t: TYPE_OBJ_TYPES, module: str|None = None, **kwargs) -> "TypeInfo":
-        if t == types.NoneType: return NoneTypeInfo
+        if t == types.NoneType:
+            return NoneTypeInfo
 
         return TypeInfo(
             name=t.__qualname__,
@@ -82,7 +83,7 @@ class TypeInfo:
 
 
     @staticmethod
-    def from_set(s: "TypeInfoSet", **kwargs) -> "TypeInfo":
+    def from_set(s: "set[TypeInfo]", **kwargs) -> "TypeInfo":
         if not s:
             return NoneTypeInfo
 
@@ -124,11 +125,8 @@ class TypeInfo:
             return node
 
 
-# FIXME make Singleton using __new__
-NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
-
-
-TypeInfoSet: TypeAlias = set[TypeInfo]
+NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)    # FIXME make Singleton using __new__
+AnyTypeInfo = TypeInfo("typing", "Any")
 
 
 @dataclass
@@ -137,35 +135,57 @@ class ArgInfo:
     default: TypeInfo|None
 
 
+@dataclass(eq=True, frozen=True)
+class FuncInfo:
+    func_id: FuncId
+    args: tuple[ArgInfo, ...]
+
+
+
 @dataclass
 class Sample:
     args: tuple[TypeInfo, ...]
-    yields: TypeInfoSet = field(default_factory=TypeInfoSet)
+    yields: set[TypeInfo] = field(default_factory=set)
+    sends: set[TypeInfo] = field(default_factory=set)
     returns: TypeInfo = NoneTypeInfo
+    is_async: bool = False
+    is_generator: bool = False
+    self_type: TypeInfo | None = None
 
 
     def process(self) -> tuple[TypeInfo, ...]:
         retval = self.returns
-        if len(self.yields):
+
+        if self.is_generator:
             y = TypeInfo.from_set(self.yields)
-            is_async = False
+            s = TypeInfo.from_set(self.sends)
 
-            # FIXME capture send type and switch to Generator/AsyncGenerator if any sent
-
-            if len(self.yields) == 1:
-                y = next(iter(self.yields))
-                if str(y) == "builtins.async_generator_wrapped_value":
-                    y = TypeInfo("typing", "Any")  # FIXME how to unwrap the value without waiting on it?
-                    is_async = True
-
-            if self.returns is NoneTypeInfo:
-                # Note that we are unable to differentiate between an implicit "None"
-                # return and an explicit "return None".
-                # FIXME return value doesn't matter for AsyncIterator
-                iter_type = "AsyncIterator" if is_async else "Iterator"
-                retval = TypeInfo("typing", iter_type, (y,))
-
+            if self.is_async:
+                retval = TypeInfo("typing", "AsyncGenerator", (y, s))
             else:
-                retval = TypeInfo("typing", "Generator", (y, TypeInfo("typing", "Any"), self.returns))
+                retval = TypeInfo("typing", "Generator", (y, s, self.returns))
+            
+        type_data = (*self.args, retval)
 
-        return (*self.args, retval)
+        if self.self_type:
+            class SelfTransformer(TypeInfo.Transformer):
+                """Converts self_type to "typing.Self"."""
+
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    if (
+                        self.self_type and
+                        node.type_obj and
+                        self.self_type.type_obj in node.type_obj.__mro__
+                    ):
+                        return TypeInfo("typing", "Self")
+
+                    if node == self.self_type:
+                        return TypeInfo("typing", "Self")
+
+                    return super().visit(node)
+
+
+            tr = SelfTransformer()
+            type_data = (*(tr.visit(arg) for arg in type_data),)
+
+        return type_data

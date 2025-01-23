@@ -1,8 +1,9 @@
+import ast
 import concurrent.futures
 import importlib.metadata
 import importlib.util
 import inspect
-import itertools
+import functools
 import logging
 import os
 import runpy
@@ -12,12 +13,14 @@ import sys
 import collections.abc as abc
 from collections import defaultdict
 from dataclasses import dataclass, field
-from types import CodeType, FrameType, FunctionType
+from pathlib import Path
+from types import CodeType, FrameType, FunctionType, GeneratorType, AsyncGeneratorType
 from typing import (
     Any,
     TextIO,
     Self,
-    Callable
+    Callable,
+    Sequence
 )
 
 import click
@@ -29,7 +32,10 @@ from righttyper.righttyper_process import (
     SignatureChanges
 )
 from righttyper.righttyper_runtime import (
-    get_full_type,
+    find_function,
+    unwrap,
+    get_value_type,
+    get_type_name,
     should_skip_function,
 )
 from righttyper.righttyper_tool import (
@@ -41,27 +47,31 @@ from righttyper.righttyper_tool import (
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
+    CodeId,
     Filename,
+    FuncId,
     FuncInfo,
+    FrameId,
     FuncAnnotation,
     FunctionName,
-    Typename,
     TypeInfo,
-    TypeInfoSet,
+    NoneTypeInfo,
+    AnyTypeInfo,
     Sample,
 )
 from righttyper.typeinfo import (
-    union_typeset,
+    merged_types,
     generalize,
 )
 from righttyper.righttyper_utils import (
     TOOL_ID,
     TOOL_NAME,
-    debug_print,
     debug_print_set_level,
     skip_this_file,
     get_main_module_fqn
 )
+import righttyper.loader as loader
+
 
 @dataclass
 class Options:
@@ -92,57 +102,89 @@ logger = logging.getLogger("righttyper")
 
 @dataclass
 class Observations:
-    # Visited functions' argument names and their defaults' types, if any
-    functions_visited: dict[FuncInfo, tuple[ArgInfo, ...]] = field(default_factory=dict)
+    # Visited functions' and information about them
+    functions_visited: dict[CodeId, FuncInfo] = field(default_factory=dict)
 
-    # Started, but not completed samples by (function, frame ID)
-    pending_samples: dict[tuple[FuncInfo, int], Sample] = field(default_factory=dict)
+    # Started, but not (yet) completed samples
+    pending_samples: dict[tuple[CodeId, FrameId], Sample] = field(default_factory=dict)
 
-    # Completed samples by function
-    samples: dict[FuncInfo, set[tuple[TypeInfo, ...]]] = field(default_factory=lambda: defaultdict(set))
+    # Completed samples
+    samples: dict[CodeId, set[tuple[TypeInfo, ...]]] = field(default_factory=lambda: defaultdict(set))
 
 
     def record_function(
         self,
-        func: FuncInfo,
+        code: CodeType,
         arg_names: tuple[str, ...],
         get_default_type: Callable[[str], TypeInfo|None]
     ) -> None:
-        """Records that a function was visited, along with its argument names and any defaults."""
+        """Records that a function was visited, along with some details about it."""
 
-        if func not in self.functions_visited:
-            self.functions_visited[func] = tuple(
-                ArgInfo(ArgumentName(name), get_default_type(name))
-                for name in arg_names
+        code_id = CodeId(id(code))
+        if code_id not in self.functions_visited:
+            self.functions_visited[code_id] = FuncInfo(
+                FuncId(
+                    Filename(code.co_filename),
+                    code.co_firstlineno,
+                    FunctionName(code.co_qualname),
+                ),
+                tuple(
+                    ArgInfo(ArgumentName(name), get_default_type(name))
+                    for name in arg_names
+                )
             )
 
 
-    def record_start(self, func: FuncInfo, frame_id: int, arg_types: tuple[TypeInfo, ...]) -> None:
+    def record_start(
+        self,
+        code: CodeType,
+        frame_id: FrameId,
+        arg_types: tuple[TypeInfo, ...],
+        self_type: TypeInfo|None
+    ) -> None:
         """Records a function start."""
 
-        # print(f"record_start {func}")
-        self.pending_samples[(func, frame_id)] = Sample(arg_types)
+        # print(f"record_start {code.co_qualname} {arg_types}")
+        self.pending_samples[(CodeId(id(code)), frame_id)] = Sample(
+            arg_types,
+            self_type=self_type,
+            is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
+            is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
+        )
 
 
-    def record_yield(self, func: FuncInfo, frame_id: int, yield_type: TypeInfo) -> bool:
+    def record_yield(self, code: CodeType, frame_id: FrameId, yield_type: TypeInfo) -> bool:
         """Records a yield."""
 
-        # print(f"record_yield {func}")
-        if (sample := self.pending_samples.get((func, frame_id))):
+        # print(f"record_yield {code.co_qualname}")
+        if (sample := self.pending_samples.get((CodeId(id(code)), frame_id))):
             sample.yields.add(yield_type)
             return True
 
         return False
 
 
-    def record_return(self, func: FuncInfo, frame_id: int, return_type: TypeInfo) -> bool:
+    def record_send(self, code: CodeType, frame_id: FrameId, send_type: TypeInfo) -> bool:
+        """Records a send."""
+
+        # print(f"record_send {code.co_qualname}")
+        if (sample := self.pending_samples.get((CodeId(id(code)), frame_id))):
+            sample.sends.add(send_type)
+            return True
+
+        return False
+
+
+    def record_return(self, code: CodeType, frame_id: FrameId, return_type: TypeInfo) -> bool:
         """Records a return."""
 
-        # print(f"record_return {func}")
-        if (sample := self.pending_samples.get((func, frame_id))):
+        # print(f"record_return {code.co_qualname}")
+
+        code_id = CodeId(id(code))
+        if (sample := self.pending_samples.get((code_id, frame_id))):
             sample.returns = return_type
-            self.samples[func].add(sample.process())
-            del self.pending_samples[(func, frame_id)]
+            self.samples[code_id].add(sample.process())
+            del self.pending_samples[(code_id, frame_id)]
             return True
 
         return False
@@ -159,21 +201,21 @@ class Observations:
                     sample_set.add(sprime)
 
 
-    def collect_annotations(self: Self) -> dict[FuncInfo, FuncAnnotation]:
+    def collect_annotations(self: Self) -> dict[FuncId, FuncAnnotation]:
         """Collects function type annotations from the observed types."""
 
         # Finish samples for any generators that are still unfinished
         # TODO are there other cases we should handle?
-        for (func, _), sample in self.pending_samples.items():
+        for (code_id, _), sample in self.pending_samples.items():
             if sample.yields:
-                self.samples[func].add(sample.process())
+                self.samples[code_id].add(sample.process())
 
-        def mk_annotation(t: FuncInfo) -> FuncAnnotation|None:
-            args = self.functions_visited[t]
-            samples = self.samples[t]
+        def mk_annotation(code_id: CodeId) -> FuncAnnotation|None:
+            func_info = self.functions_visited[code_id]
+            samples = self.samples[code_id]
 
             if (signature := generalize(list(samples))) is None:
-                print(f"Error generalizing {t}: inconsistent samples.\n" +
+                print(f"Error generalizing {func_info.func_id}: inconsistent samples.\n" +
                       f"{[tuple(str(t) for t in s) for s in samples]}")
                 return None
 
@@ -192,13 +234,13 @@ class Observations:
                     (
                         arg.arg_name,
                         tr.visit(
-                            union_typeset(TypeInfoSet((
+                            merged_types({
                                 signature[i],
                                 *((arg.default,) if arg.default is not None else ())
-                            )))
+                            })
                         )
                     )
-                    for i, arg in enumerate(args)
+                    for i, arg in enumerate(func_info.args)
                 ],
                 retval=tr.visit(signature[-1])
             )
@@ -207,27 +249,62 @@ class Observations:
             """Updates Callable type declarations based on observations."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 # if 'args' is there, the function is already annotated
-                # FIXME make overriding dependent upon ignore_annotations
-                if node.func and not node.args and node.func in self.samples:
-                    if (ann := mk_annotation(node.func)):
-                        # TODO: fix callable arguments being strings
-                        return TypeInfo('typing', 'Callable', args=(
-                            f"[{", ".join(map(lambda a: str(a[1]), ann.args[int(node.is_bound):]))}]",
-                            ann.retval
-                        ))
+                if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.samples:
+                    if (ann := mk_annotation(node.code_id)):
+                        if node.name == 'Callable':
+                            # TODO: fix callable arguments being strings
+                            return TypeInfo('typing', 'Callable', args=(
+                                f"[{", ".join(map(lambda a: str(a[1]), ann.args[int(node.is_bound):]))}]",
+                                ann.retval
+                            ))
+                        elif node.name in ('Generator', 'AsyncGenerator'):
+                            return ann.retval
+                        elif node.name == 'Coroutine':
+                            return node.replace(args=(NoneTypeInfo, NoneTypeInfo, ann.retval))
 
                 return super().visit(node)
 
         self._transform_types(T())
 
         return {
-            t: annotation
-            for t in self.samples
-            if (annotation := mk_annotation(t)) is not None
+            self.functions_visited[code_id].func_id: annotation
+            for code_id in self.samples
+            if (annotation := mk_annotation(code_id)) is not None
         }
 
 
 obs = Observations()
+
+
+def wrap_send(obj: Any) -> Any:
+    if (
+        (self := getattr(obj, "__self__", None)) and
+        isinstance(self, (GeneratorType, AsyncGeneratorType))
+    ):
+        if isinstance(self, GeneratorType):
+            @functools.wraps(obj)
+            def wrapper(*args, **kwargs):
+                obs.record_send(
+                    self.gi_code,
+                    FrameId(id(self.gi_frame)),
+                    get_value_type(args[0], use_jaxtyping=options.infer_shapes)
+                )
+                return obj(*args, **kwargs)
+
+            return wrapper
+        else:
+            @functools.wraps(obj)
+            def wrapper(*args, **kwargs):
+                obs.record_send(
+                    self.ag_code,
+                    FrameId(id(self.ag_frame)),
+                    get_value_type(args[0], use_jaxtyping=options.infer_shapes)
+                )
+                return obj(*args, **kwargs)
+
+            return wrapper
+
+    return obj
 
 
 def enter_handler(code: CodeType, offset: int) -> Any:
@@ -245,29 +322,12 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
-    if frame and frame.f_back: # FIXME DRY this
-        # NOTE: this backtracking logic is brittle and must be
-        # adjusted if the call chain changes length.
+    while frame and frame.f_code is not code:
         frame = frame.f_back
-        assert code == frame.f_code
 
-        t = FuncInfo(
-            Filename(code.co_filename),
-            code.co_firstlineno,
-            FunctionName(code.co_qualname),
-        )
-
-        if function := next(find_functions(frame, code), None):
-            defaults = {
-                # use tuple to differentiate a None default from no default
-                param_name: (param.default,)
-                for param_name, param in inspect.signature(function).parameters.items()
-                if param.default != inspect._empty
-            }
-        else:
-            defaults = {}
-
-        process_function_arguments(t, id(frame), inspect.getargvalues(frame), defaults)
+    if frame:
+        function = find_function(frame, code)
+        process_function_arguments(code, FrameId(id(frame)), inspect.getargvalues(frame), function)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -363,22 +423,16 @@ def process_yield_or_return(
     found = False
 
     frame = inspect.currentframe()
-    if frame and frame.f_back and frame.f_back.f_back: # FIXME DRY this
-        frame = frame.f_back.f_back
-        assert code == frame.f_code
+    while frame and frame.f_code is not code:
+        frame = frame.f_back
 
-        t = FuncInfo(
-            Filename(code.co_filename),
-            code.co_firstlineno,
-            FunctionName(code.co_qualname),
-        )
-
-        typeinfo = get_full_type(return_value, use_jaxtyping=options.infer_shapes)
+    if frame:
+        typeinfo = get_value_type(return_value, use_jaxtyping=options.infer_shapes)
 
         if event_type == sys.monitoring.events.PY_YIELD:
-            found = obs.record_yield(t, id(frame), typeinfo)
+            found = obs.record_yield(code, FrameId(id(frame)), typeinfo)
         else:
-            found = obs.record_return(t, id(frame), typeinfo)
+            found = obs.record_return(code, FrameId(id(frame)), typeinfo)
 
         del frame
 
@@ -388,14 +442,23 @@ def process_yield_or_return(
 
 
 def process_function_arguments(
-    t: FuncInfo,
-    frame_id: int,
+    code: CodeType,
+    frame_id: FrameId,
     args: inspect.ArgInfo,
-    defaults: dict[str, tuple[Any]]
+    function: Callable|None
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
-        return get_full_type(v, use_jaxtyping=options.infer_shapes)
+        return get_value_type(v, use_jaxtyping=options.infer_shapes)
+
+
+    defaults: dict[str, tuple[Any]] = {} if not function else {
+        # use tuple to differentiate a None default from no default
+        param_name: (param.default,)
+        for param_name, param in inspect.signature(function).parameters.items()
+        if param.default != inspect._empty
+    }
+
 
     def get_default_type(name: str) -> TypeInfo|None:
         if (def_value := defaults.get(name)):
@@ -403,8 +466,35 @@ def process_function_arguments(
 
         return None
 
+        is_property: bool = (
+            (attr := getattr(type(args.locals[args.args[0]]), code.co_name, None)) and
+            isinstance(attr, property)
+        )
+
+    def get_self_type() -> TypeInfo|None:
+        if args.args:
+            first_arg = args.locals[args.args[0]]
+
+            # @property?
+            if isinstance(getattr(type(first_arg), code.co_name, None), property):
+                return get_type(first_arg)
+
+            if function:
+                # if type(first_arg) is type, we may have a @classmethod
+                first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
+
+                for ancestor in first_arg_class.__mro__:
+                    if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
+                        if first_arg is first_arg_class:
+                            return get_type_name(first_arg)
+
+                        # normal method
+                        return get_type(first_arg)
+        return None
+
     obs.record_function(
-        t, (
+        code,
+        (
             *(a for a in args.args),
             *((args.varargs,) if args.varargs else ()),
             *((args.keywords,) if args.keywords else ())
@@ -415,63 +505,25 @@ def process_function_arguments(
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
         *(
-            (TypeInfo.from_set(
-                TypeInfoSet(
-                    get_type(val) for val in args.locals[args.varargs]
-                )
-            ),) if args.varargs else ()
+            (TypeInfo.from_set({
+                get_type(val) for val in args.locals[args.varargs]
+            }),)
+            if args.varargs else ()
         ),
         *(
-            (TypeInfo.from_set(
-                TypeInfoSet(
-                    get_type(val) for val in args.locals[args.keywords].values()
-                )
-            ),) if args.keywords else ()
+            (TypeInfo.from_set({
+                get_type(val) for val in args.locals[args.keywords].values()
+            }),)
+            if args.keywords else ()
         )
     )
 
-    obs.record_start(t, frame_id, arg_values)
-
-
-def find_functions(
-    caller_frame: FrameType,
-    code: CodeType
-) -> abc.Iterator[abc.Callable]:
-    """
-    Attempts to map back from a code object to the functions that use it.
-    """
-
-    visited_wrapped = set()
-    visited_classes = set()
-
-    def check_function(name: str, obj: abc.Callable) -> abc.Iterator[abc.Callable]:
-        while hasattr(obj, "__wrapped__"):
-            if obj in visited_wrapped:
-                break
-            visited_wrapped.add(obj)
-            obj = obj.__wrapped__
-        if hasattr(obj, "__code__") and obj.__code__ is code:
-            yield obj
-
-    def find_in_class(class_obj: object) -> abc.Iterator[abc.Callable]:
-        if class_obj in visited_classes:
-            return
-        visited_classes.add(class_obj)
-        for name, obj in class_obj.__dict__.items():
-            if inspect.isfunction(obj):
-                yield from check_function(name, obj)
-            elif inspect.isclass(obj):
-                yield from find_in_class(obj)
-
-    dicts: abc.Iterable[tuple[str, Any]] = caller_frame.f_globals.items()
-    if caller_frame.f_back:
-        dicts = itertools.chain(caller_frame.f_back.f_locals.items(), dicts)
-
-    for name, obj in dicts:
-        if inspect.isfunction(obj):
-            yield from check_function(name, obj)
-        elif inspect.isclass(obj):
-            yield from find_in_class(obj)
+    obs.record_start(
+        code,
+        frame_id,
+        arg_values,
+        get_self_type()
+    )
 
 
 def in_instrumentation_code(frame: FrameType) -> bool:
@@ -482,7 +534,8 @@ def in_instrumentation_code(frame: FrameType) -> bool:
     f: FrameType|None = frame
     countdown = 10
     while f and countdown > 0:
-        if f.f_code in instrumentation_functions_code:
+        # using torch dynamo, f_code can apparently be a dict...
+        if isinstance(f.f_code, CodeType) and f.f_code in instrumentation_functions_code:
             # In instrumentation code
             return True
             break
@@ -525,31 +578,31 @@ def restart_sampling(_signum: int, frame: FrameType|None) -> None:
     )
 
 
-instrumentation_functions_code = set(
-    [
-        enter_handler.__code__,
-        call_handler.__code__,
-        process_yield_or_return.__code__,
-        restart_sampling.__code__,
-    ]
-)
+instrumentation_functions_code = {
+    enter_handler.__code__,
+    call_handler.__code__,
+    process_yield_or_return.__code__,
+    restart_sampling.__code__,
+}
 
 
 def execute_script_or_module(
     script: str,
-    module: bool,
+    is_module: bool,
     args: list[str],
 ) -> None:
     try:
         sys.argv = [script, *args]
-        if module:
-            runpy.run_module(
-                script,
-                run_name="__main__",
-                alter_sys=True,
-            )
+        if is_module:
+            with loader.ImportManager():
+                runpy.run_module(
+                    script,
+                    run_name="__main__",
+                    alter_sys=True,
+                )
         else:
-            runpy.run_path(script, run_name="__main__")
+            with loader.ImportManager():
+                runpy.run_path(script, run_name="__main__")
 
     except SystemExit as e:
         if e.code not in (None, 0):
@@ -598,10 +651,10 @@ def process_file_wrapper(args) -> SignatureChanges|BaseException:
 
 def process_all_files() -> list[SignatureChanges]:
     fnames = set(
-        t.file_name
-        for t in obs.functions_visited
+        t.func_id.file_name
+        for t in obs.functions_visited.values()
         if not skip_this_file(
-            t.file_name,
+            t.func_id.file_name,
             options.script_dir,
             options.include_all,
             options.include_files_pattern
@@ -771,21 +824,6 @@ class CheckModule(click.ParamType):
     help="Generate stub files (.pyi).",
     default=False,
 )
-@click.option(
-    "--type-coverage-by-directory",
-    type=click.Path(exists=True, file_okay=True),
-    help="Report per-directory type annotation coverage for a single file or all Python files in a directory and its children.",
-)
-@click.option(
-    "--type-coverage-by-file",
-    type=click.Path(exists=True, file_okay=True),
-    help="Report per-file type annotation coverage for a single file or all Python files in a directory and its children.",
-)
-@click.option(
-    "--type-coverage-summary",
-    type=click.Path(exists=True, file_okay=True),
-    help="Report uncovered and partially covered files and functions when performing type annotation coverage analysis.",
-)  # Note: should only be available if coverage-by-directory or coverage-by-file are specified
 @click.version_option(
     version=importlib.metadata.version(TOOL_NAME),
     prog_name=TOOL_NAME,
@@ -805,13 +843,22 @@ class CheckModule(click.ParamType):
 @click.option(
     "--sampling/--no-sampling",
     default=options.sampling,
-    hidden=True,
-    help="Whether to sample calls and types or to use every one seen.",
+    help=f"Whether to sample calls and types or to use every one seen.",
+    show_default=True,
 )
 @click.option(
     "--inline-generics",
     is_flag=True,
-    help="Whether generics should be declared as a seperate variable or inline"
+    help="Declare type variables inline for generics rather than separately."
+)
+@click.option(
+    "--type-coverage",
+    nargs=2,
+    type=(
+        click.Choice(["by-directory", "by-file", "summary"]),
+        click.Path(exists=True, file_okay=True),
+    ),
+    help="Rather than run a script or module, report a choice of 'by-directory', 'by-file' or 'summary' type annotation coverage for the given path.",
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
@@ -821,9 +868,6 @@ def main(
     all_files: bool,
     include_files: str,
     include_functions: tuple[str, ...],
-    type_coverage_by_directory: str,
-    type_coverage_by_file: str,
-    type_coverage_summary: str,
     verbose: bool,
     overwrite: bool,
     output_files: bool,
@@ -834,8 +878,24 @@ def main(
     target_overhead: float,
     use_multiprocessing: bool,
     sampling: bool,
-    inline_generics: bool
+    inline_generics: bool,
+    type_coverage: tuple[str, str]
 ) -> None:
+
+    if type_coverage:
+        from . import annotation_coverage as cov
+        cov_type, path = type_coverage
+
+        cache = cov.analyze_all_directories(path)
+
+        if cov_type == "by-directory":
+            cov.print_directory_summary(cache)
+        elif cov_type == "by-file":
+            cov.print_file_summary(cache)
+        else:
+            cov.print_annotation_summary()
+
+        return
 
     if module:
         args = [*((script,) if script else ()), *args]  # script, if any, is really the 1st module arg
@@ -863,36 +923,6 @@ def main(
                     print(f" * {package}")
             sys.exit(1)
 
-    if (
-        type_coverage_by_directory or type_coverage_by_file
-    ) and type_coverage_summary:
-        raise click.UsageError(
-            'The "--type-coverage-summary" option can only be specified when "--type-coverage-by-directory" or "--type-coverage-by-file" are NOT specified.'
-        )
-
-    from . import annotation_coverage
-
-    if type_coverage_summary:
-        directory_summary = annotation_coverage.analyze_all_directories(
-            type_coverage_summary
-        )
-        annotation_coverage.print_annotation_summary()
-        return
-
-    if type_coverage_by_directory:
-        directory_summary = annotation_coverage.analyze_all_directories(
-            type_coverage_by_directory
-        )
-        annotation_coverage.print_directory_summary(directory_summary)
-        return
-
-    if type_coverage_by_file:
-        file_summary = annotation_coverage.analyze_all_directories(
-            type_coverage_by_file
-        )
-        annotation_coverage.print_file_summary(file_summary)
-        return
-
     debug_print_set_level(verbose)
     options.script_dir = os.path.dirname(os.path.realpath(script))
     options.include_files_pattern = include_files
@@ -919,7 +949,6 @@ def main(
         )
         sys.monitoring.restart_events()
         setup_timer(restart_sampling)
-        # replace_dicts.replace_dicts()
         execute_script_or_module(script, bool(module), args)
     finally:
         reset_monitoring()

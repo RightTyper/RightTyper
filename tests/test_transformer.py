@@ -4,14 +4,12 @@ from libcst.metadata import MetadataWrapper, PositionProvider
 import textwrap
 from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation, used_names
 from righttyper.righttyper_types import (
-    FuncInfo,
+    FuncId,
     Filename,
     FunctionName,
-    Typename,
     ArgumentName,
     TypeInfo,
     NoneTypeInfo,
-    TypeInfoSet,
     FuncAnnotation
 )
 from righttyper.righttyper_runtime import get_type_name
@@ -67,10 +65,10 @@ def get_function(m: cst.Module, funcname: str) -> str|None:
     return None
 
 
-def get_funcinfo(filename: str, m: cst.Module, funcname: str) -> FuncInfo:
-    """Returns a FuncInfo for the given function, if found in 'm'"""
+def get_funcid(filename: str, m: cst.Module, funcname: str) -> FuncId:
+    """Returns a FuncId for the given function, if found in 'm'"""
     if (f := find_function(m, funcname)):
-        return FuncInfo(
+        return FuncId(
             Filename(filename),
             f[1],
             FunctionName(funcname)
@@ -107,8 +105,8 @@ def test_transform_function():
             return z/2
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
-    baz = get_funcinfo('foo.py', code, 'baz')
+    foo = get_funcid('foo.py', code, 'foo')
+    baz = get_funcid('foo.py', code, 'baz')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -180,9 +178,9 @@ def test_transform_method():
                 return z/2
     """))
 
-    foo = get_funcinfo('foo.py', code, 'C.foo')
-    bar = get_funcinfo('foo.py', code, 'C.bar')
-    baz = get_funcinfo('foo.py', code, 'C.baz')
+    foo = get_funcid('foo.py', code, 'C.foo')
+    bar = get_funcid('foo.py', code, 'C.bar')
+    baz = get_funcid('foo.py', code, 'C.baz')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -259,8 +257,8 @@ def test_transform_local_function():
             return bar(x+y)
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
-    bar = get_funcinfo('foo.py', code, 'foo.<locals>.bar')
+    foo = get_funcid('foo.py', code, 'foo')
+    bar = get_funcid('foo.py', code, 'foo.<locals>.bar')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -305,8 +303,8 @@ def test_override_annotations():
                 return x/2
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
-    bar = get_funcinfo('foo.py', code, 'C.bar')
+    foo = get_funcid('foo.py', code, 'foo')
+    bar = get_funcid('foo.py', code, 'C.bar')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -347,7 +345,7 @@ def test_transform_adds_typing_import_for_typing_names():
         def foo(x): ...
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -384,17 +382,17 @@ def test_transform_unknown_type_as_string():
             return x/2
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
                 foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), TypeInfo.from_type(int, module='')),
-                        (ArgumentName('y'), TypeInfo.from_set(TypeInfoSet((
+                        (ArgumentName('y'), TypeInfo.from_set({
                             TypeInfo(module='x.y', name='Something', args=('"quoted"',)),
                             NoneTypeInfo
-                        ))))
+                        }))
                     ],
                     TypeInfo(module='x.z', name='FloatingPointNumber')
                 )
@@ -430,17 +428,17 @@ def test_transform_unknown_type_with_import_annotations():
             return x/2
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
                 foo: FuncAnnotation(
                     [
                         (ArgumentName('x'), TypeInfo.from_type(int, module='')),
-                        (ArgumentName('y'), TypeInfo.from_set(TypeInfoSet((
+                        (ArgumentName('y'), TypeInfo.from_set({
                             TypeInfo(module='x.y', name='WholeNumber'),
                             NoneTypeInfo
-                        ))))
+                        }))
                     ],
                     TypeInfo(module='x.z', name='FloatingPointNumber')
                 )
@@ -480,7 +478,7 @@ def test_transform_deletes_type_hint_comments_in_header():
             pass
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -530,7 +528,7 @@ def test_transform_deletes_type_hint_comments_in_parameters():
             pass
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -586,7 +584,7 @@ def test_transform_deletes_type_hint_comments_for_retval():
             pass
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -640,9 +638,9 @@ def test_transform_locally_defined_types():
             return F((x+y)/2)
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
-    f_foo = get_funcinfo('foo.py', code, 'F.foo')
-    bar = get_funcinfo('foo.py', code, 'bar')
+    foo = get_funcid('foo.py', code, 'foo')
+    f_foo = get_funcid('foo.py', code, 'F.foo')
+    bar = get_funcid('foo.py', code, 'bar')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -708,7 +706,7 @@ def test_uses_imported_aliases():
         import r    # imported after 'def foo', so can't be used in annotation
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -760,7 +758,7 @@ def test_uses_imported_domains():
         import r    # imported after 'def foo', so can't be used in annotation
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -803,7 +801,7 @@ def test_imports_subdomain_if_needed():
         def foo(x): ...
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -852,7 +850,7 @@ def test_existing_typing_imports():
 
     import ast
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -908,7 +906,7 @@ def test_inserts_imports_after_docstring_and_space():
 
     import ast
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -964,7 +962,7 @@ def test_relative_import():
         def foo(x, y, z): ...
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1013,10 +1011,10 @@ def test_uses_local_imports():
         def f(a, b): ...
     """))
 
-    foobar = get_funcinfo('foo.py', code, 'foo.<locals>.bar')
-    Cfoo = get_funcinfo('foo.py', code, 'C.foo')
-    Dfoo = get_funcinfo('foo.py', code, 'C.D.foo')
-    f = get_funcinfo('foo.py', code, 'f')
+    foobar = get_funcid('foo.py', code, 'foo.<locals>.bar')
+    Cfoo = get_funcid('foo.py', code, 'C.foo')
+    Dfoo = get_funcid('foo.py', code, 'C.D.foo')
+    f = get_funcid('foo.py', code, 'f')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1090,8 +1088,8 @@ def test_nonglobal_imported_modules_are_ignored():
             pass
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
-    bar = get_funcinfo('foo.py', code, 'bar')
+    foo = get_funcid('foo.py', code, 'foo')
+    bar = get_funcid('foo.py', code, 'bar')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1155,8 +1153,8 @@ def test_nonglobal_assignments_are_ignored():
             pass
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
-    bar = get_funcinfo('foo.py', code, 'bar')
+    foo = get_funcid('foo.py', code, 'foo')
+    bar = get_funcid('foo.py', code, 'bar')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1209,7 +1207,7 @@ def test_if_type_checking_insertion():
         def foo(x): ...
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1248,7 +1246,7 @@ def test_import_conflicts_with_import():
         def foo(x, y): ...
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1303,7 +1301,7 @@ def test_import_conflicts_with_definitions():
         def foo(x, y): ...
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1359,7 +1357,7 @@ def test_import_conflicts_with_assignments():
         c: int = 10
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1414,7 +1412,7 @@ def test_import_conflicts_with_with():
         def foo(x): ...
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1457,7 +1455,7 @@ def test_import_conflicts_alias_for_module():
         def foo(x): ...
     """))
 
-    foo = get_funcinfo('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1507,7 +1505,7 @@ def test_builtin_name_conflicts():
             pass
     """))
 
-    f = get_funcinfo('foo.py', code, 'C.f')
+    f = get_funcid('foo.py', code, 'C.f')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1551,7 +1549,7 @@ def test_class_names_dont_affect_body_of_methods():
                 pass
     """))
 
-    g = get_funcinfo('foo.py', code, 'C.f.<locals>.g')
+    g = get_funcid('foo.py', code, 'C.f.<locals>.g')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1603,10 +1601,10 @@ def test_inner_function():
                         pass
     """))
 
-    g = get_funcinfo('foo.py', code, 'C.f.<locals>.g')
-    h = get_funcinfo('foo.py', code, 'C.f.<locals>.g.<locals>.h')
-    i = get_funcinfo('foo.py', code, 'C.f.<locals>.D.i')
-    j = get_funcinfo('foo.py', code, 'C.f.<locals>.D.i.<locals>.j')
+    g = get_funcid('foo.py', code, 'C.f.<locals>.g')
+    h = get_funcid('foo.py', code, 'C.f.<locals>.g.<locals>.h')
+    i = get_funcid('foo.py', code, 'C.f.<locals>.D.i')
+    j = get_funcid('foo.py', code, 'C.f.<locals>.D.i.<locals>.j')
     tuple_int_float = TypeInfo.from_type(tuple, args=(
         TypeInfo.from_type(int, module=''),
         TypeInfo.from_type(float, module='')
@@ -1664,7 +1662,7 @@ def test_builtin_name_conflicts_even_module_name():
             pass
     """))
 
-    f = get_funcinfo('foo.py', code, 'C.f')
+    f = get_funcid('foo.py', code, 'C.f')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1762,7 +1760,7 @@ def test_types_in_annotation():
 
 def make_typevar(args: list, i: int) -> TypeInfo:
     return TypeInfo.from_set(
-        TypeInfoSet(get_type_name(arg) for arg in args),
+        {get_type_name(arg) for arg in args},
         typevar_index=i
     )
 
@@ -1774,7 +1772,7 @@ def test_generics_inline_simple():
     """))
 
     T1 = make_typevar([str, int], 1)
-    f = get_funcinfo('foo.py', code, 'add')
+    f = get_funcid('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1808,7 +1806,7 @@ def test_generics_arg_already_annotated(override):
     """))
 
     T1 = make_typevar([str, int], 1)
-    f = get_funcinfo('foo.py', code, 'add')
+    f = get_funcid('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1848,7 +1846,7 @@ def test_generics_ret_already_annotated(override):
     """))
 
     T1 = make_typevar([str, int], 1)
-    f = get_funcinfo('foo.py', code, 'add')
+    f = get_funcid('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1887,7 +1885,7 @@ def test_generics_already_annotated_no_overlap():
     """))
 
     T1 = make_typevar([str, int], 1)
-    f = get_funcinfo('foo.py', code, 'add')
+    f = get_funcid('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1920,7 +1918,7 @@ def test_generics_existing_generics():
     """))
 
     T1 = make_typevar([str, int], 1)
-    f = get_funcinfo('foo.py', code, 'add')
+    f = get_funcid('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1953,7 +1951,7 @@ def test_generics_inline_multiple():
 
     T1 = make_typevar([int, str], 1)
     T2 = make_typevar([int, str], 2)
-    f = get_funcinfo('foo.py', code, 'foo')
+    f = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -1988,7 +1986,7 @@ def test_generics_inline_nested():
     """))
 
     T1 = make_typevar([int, str], 1)
-    f = get_funcinfo('foo.py', code, 'add')
+    f = get_funcid('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -2021,7 +2019,7 @@ def test_generics_defined_simple():
     """))
 
     T1 = make_typevar([int, str], 1)
-    f = get_funcinfo('foo.py', code, 'add')
+    f = get_funcid('foo.py', code, 'add')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
