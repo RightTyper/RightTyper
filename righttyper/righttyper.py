@@ -552,7 +552,7 @@ def in_instrumentation_code() -> bool:
 def restart_sampling() -> None:
     """
     Measures the instrumentation overhead, restarting event delivery
-    when it drops below the target overhead.
+    if it lies below the target overhead.
     """
     # Walk the stack to see if righttyper instrumentation is running (and thus instrumentation).
     # We use this information to estimate instrumentation overhead, and put off restarting
@@ -566,8 +566,7 @@ def restart_sampling() -> None:
         sample_count_instrumentation / sample_count_total
     )
     if instrumentation_overhead <= options.target_overhead / 100.0:
-        # Instrumentation overhead remains low enough; restart instrumentation.
-        # Restart the system monitoring events
+        # Instrumentation overhead is low enough: restart instrumentation.
         sys.monitoring.restart_events()
 
 
@@ -857,7 +856,7 @@ class CheckModule(click.ParamType):
     "--signal-wakeup/--thread-wakeup",
     default=not platform.system() == "Windows",
     hidden=platform.system() == "Windows",
-    help="Whether to use signal-based wakeups or thead-based wakeups"
+    help="Whether to use signal-based wakeups or thead-based wakeups."
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
