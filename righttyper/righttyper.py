@@ -9,6 +9,7 @@ import os
 import runpy
 import signal
 import sys
+import platform
 
 import collections.abc as abc
 from collections import defaultdict
@@ -41,7 +42,6 @@ from righttyper.righttyper_runtime import (
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
     reset_monitoring,
-    setup_timer,
     setup_tool_id,
 )
 from righttyper.righttyper_types import (
@@ -71,7 +71,10 @@ from righttyper.righttyper_utils import (
     get_main_module_fqn
 )
 import righttyper.loader as loader
-
+from righttyper.righttyper_alarm import (
+    SignalAlarm,
+    ThreadAlarm,
+)
 
 @dataclass
 class Options:
@@ -92,11 +95,6 @@ class Options:
 
 options = Options()
 
-
-instrumentation_overhead = 0.0
-alpha = 0.9
-sample_count_instrumentation = 0.0
-sample_count_total = 0.0
 
 logger = logging.getLogger("righttyper")
 
@@ -276,6 +274,14 @@ class Observations:
 obs = Observations()
 
 
+def send_handler(code: CodeType, frame_id: FrameId, arg0: Any) -> None:
+    obs.record_send(
+        code,
+        frame_id, 
+        get_value_type(arg0, use_jaxtyping=options.infer_shapes)
+    )
+
+
 def wrap_send(obj: Any) -> Any:
     if (
         (self := getattr(obj, "__self__", None)) and
@@ -284,22 +290,16 @@ def wrap_send(obj: Any) -> Any:
         if isinstance(self, GeneratorType):
             @functools.wraps(obj)
             def wrapper(*args, **kwargs):
-                obs.record_send(
-                    self.gi_code,
-                    FrameId(id(self.gi_frame)),
-                    get_value_type(args[0], use_jaxtyping=options.infer_shapes)
-                )
+                # generator.send takes exactly one argument
+                send_handler(self.gi_code, FrameId(id(self.gi_frame)), args[0])
                 return obj(*args, **kwargs)
 
             return wrapper
         else:
             @functools.wraps(obj)
             def wrapper(*args, **kwargs):
-                obs.record_send(
-                    self.ag_code,
-                    FrameId(id(self.ag_frame)),
-                    get_value_type(args[0], use_jaxtyping=options.infer_shapes)
-                )
+                # generator.asend takes exactly one argument
+                send_handler(self.ag_code, FrameId(id(self.ag_frame)), args[0])
                 return obj(*args, **kwargs)
 
             return wrapper
@@ -526,32 +526,42 @@ def process_function_arguments(
     )
 
 
-def in_instrumentation_code(frame: FrameType) -> bool:
-    # We stop walking the stack after a given number of frames to
-    # limit overhead. The instrumentation code should be fairly
-    # shallow, so this heuristic should have no impact on accuracy
-    # while improving performance.
-    f: FrameType|None = frame
-    countdown = 10
-    while f and countdown > 0:
-        # using torch dynamo, f_code can apparently be a dict...
-        if isinstance(f.f_code, CodeType) and f.f_code in instrumentation_functions_code:
-            # In instrumentation code
-            return True
-            break
-        f = f.f_back
-        countdown -= 1
+instrumentation_functions_code = {
+    enter_handler.__code__,
+    call_handler.__code__,
+    return_handler.__code__,
+    yield_handler.__code__,
+    send_handler.__code__
+}
+
+def in_instrumentation_code() -> bool:
+    for frame in sys._current_frames().values():
+        
+        # We stop walking the stack after a given number of frames to
+        # limit overhead. The instrumentation code should be fairly
+        # shallow, so this heuristic should have no impact on accuracy
+        # while improving performance.
+        f: FrameType|None = frame
+        countdown = 10
+        while f and countdown > 0:
+            # using torch dynamo, f_code can apparently be a dict...
+            if isinstance(f.f_code, CodeType) and f.f_code in instrumentation_functions_code:
+                # In instrumentation code
+                return True
+                break
+            f = f.f_back
+            countdown -= 1
     return False
 
 
-def restart_sampling(_signum: int, frame: FrameType|None) -> None:
-    """
-    This function handles the task of clearing the seen functions.
-    Called when a timer signal is received.
+instrumentation_overhead = 0.0
+sample_count_instrumentation = 0.0
+sample_count_total = 0.0
 
-    Args:
-        _signum: The signal number
-        _frame: The current stack frame
+def restart_sampling() -> None:
+    """
+    Measures the instrumentation overhead, restarting event delivery
+    if it lies below the target overhead.
     """
     # Walk the stack to see if righttyper instrumentation is running (and thus instrumentation).
     # We use this information to estimate instrumentation overhead, and put off restarting
@@ -559,31 +569,14 @@ def restart_sampling(_signum: int, frame: FrameType|None) -> None:
     global sample_count_instrumentation, sample_count_total
     global instrumentation_overhead
     sample_count_total += 1.0
-    assert frame is not None
-    if in_instrumentation_code(frame):
+    if in_instrumentation_code():
         sample_count_instrumentation += 1.0
     instrumentation_overhead = (
         sample_count_instrumentation / sample_count_total
     )
     if instrumentation_overhead <= options.target_overhead / 100.0:
-        # Instrumentation overhead remains low enough; restart instrumentation.
-        # Restart the system monitoring events
+        # Instrumentation overhead is low enough: restart instrumentation.
         sys.monitoring.restart_events()
-    else:
-        pass
-    # Set a timer for the next round of sampling.
-    signal.setitimer(
-        signal.ITIMER_REAL,
-        0.01,
-    )
-
-
-instrumentation_functions_code = {
-    enter_handler.__code__,
-    call_handler.__code__,
-    process_yield_or_return.__code__,
-    restart_sampling.__code__,
-}
 
 
 def execute_script_or_module(
@@ -860,6 +853,12 @@ class CheckModule(click.ParamType):
     ),
     help="Rather than run a script or module, report a choice of 'by-directory', 'by-file' or 'summary' type annotation coverage for the given path.",
 )
+@click.option(
+    "--signal-wakeup/--thread-wakeup",
+    default=not platform.system() == "Windows",
+    hidden=True,
+    help="Whether to use signal-based wakeups or thead-based wakeups."
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
     script: str,
@@ -879,7 +878,8 @@ def main(
     use_multiprocessing: bool,
     sampling: bool,
     inline_generics: bool,
-    type_coverage: tuple[str, str]
+    type_coverage: tuple[str, str],
+    signal_wakeup: bool
 ) -> None:
 
     if type_coverage:
@@ -939,6 +939,9 @@ def main(
     options.sampling = sampling
     options.inline_generics = inline_generics
 
+    alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
+    alarm = alarm_cls(restart_sampling, 0.01)
+    
     try:
         setup_tool_id()
         register_monitoring_callbacks(
@@ -948,8 +951,9 @@ def main(
             yield_handler,
         )
         sys.monitoring.restart_events()
-        setup_timer(restart_sampling)
+        alarm.start()
         execute_script_or_module(script, bool(module), args)
     finally:
         reset_monitoring()
+        alarm.stop()
         post_process()
