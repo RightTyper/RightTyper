@@ -551,12 +551,8 @@ def in_instrumentation_code() -> bool:
 
 def restart_sampling() -> None:
     """
-    This function handles the task of clearing the seen functions.
-    Called when a timer signal is received.
-
-    Args:
-        _signum: The signal number
-        _frame: The current stack frame
+    Measures the instrumentation overhead, restarting event delivery
+    when it drops below the target overhead.
     """
     # Walk the stack to see if righttyper instrumentation is running (and thus instrumentation).
     # We use this information to estimate instrumentation overhead, and put off restarting
@@ -573,8 +569,6 @@ def restart_sampling() -> None:
         # Instrumentation overhead remains low enough; restart instrumentation.
         # Restart the system monitoring events
         sys.monitoring.restart_events()
-    else:
-        pass
 
 
 instrumentation_functions_code = {

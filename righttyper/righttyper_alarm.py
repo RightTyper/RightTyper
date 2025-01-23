@@ -5,8 +5,8 @@ from typing import Callable, Self
 from time import sleep
 from abc import ABC, abstractmethod
 
-class Alarm(ABC):
 
+class Alarm(ABC):
     @abstractmethod
     def __init__(self: Self, func: Callable[[], None], time: float) -> None:
         pass
@@ -21,7 +21,6 @@ class Alarm(ABC):
 
 
 class SignalAlarm(Alarm):
-
     def __init__(self: Self, func: Callable[[], None], time: float) -> None:
         self.func = func
         self.time = time
@@ -42,12 +41,11 @@ class SignalAlarm(Alarm):
 
 
 class ThreadAlarm(Alarm):
-
     def __init__(self: Self, func: Callable[[], None], time: float) -> None:
         self.func = func
         self.time = time
         self.stop_event = threading.Event()
-        self.thread: threading.Thread|None = None;
+        self.thread: threading.Thread|None = None
 
     
     def start(self: Self) -> None:
