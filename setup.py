@@ -43,6 +43,8 @@ def platform_link_args():
 def bdist_wheel_options():
     options = {}
 
+    options['py_limited_api'] = 'abi3'
+
     # Build universal wheels on MacOS.
     if sys.platform == 'darwin' and \
        sum(arg == '-arch' for arg in platform_compile_args()) > 1:
