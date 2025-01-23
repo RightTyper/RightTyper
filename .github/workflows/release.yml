@@ -26,10 +26,17 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python
+    - name: set up python (non-container)
+      if: matrix.container == ''
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python_version }}
+
+    - name: set up python (container)
+      if: matrix.container != ''
+      run: |
+        PYV=`echo "${{ matrix.python_version }}" | tr -d "."`; ls -d -1 /opt/python/cp$PYV*/bin | head -n 1 >> $GITHUB_PATH
+        cat $GITHUB_PATH
 
     - name: Install dependencies
       run: |
