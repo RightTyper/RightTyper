@@ -10,13 +10,25 @@ permissions:
   contents: read
 
 jobs:
+  pick-devN:
+    name: create .devN build date coordinated across all matrix jobs
+    runs-on: ubuntu-latest
+    steps:
+      - run: TZ='America/New_York' date '+%Y%m%d%H%M' > dev-build.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devN
+          path: dev-build.txt
+
   release:
+    needs: pick-devN
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     strategy:
       matrix:
         python_version: ['3.12']
-        os: ['ubuntu-latest', 'macos-13']
+        os: ['ubuntu-latest', 'macos-13', 'windows-latest']
         include:
           - os: ubuntu-latest
             container: quay.io/pypa/manylinux_2_34_x86_64 # https://github.com/pypa/manylinux
@@ -24,6 +36,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: get coordinated .devN
+      if: github.event_name != 'release'
+      uses: actions/download-artifact@v4
+      with:
+        name: devN
 
     - name: set up python (non-container)
       if: matrix.container == ''
