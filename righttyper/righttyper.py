@@ -279,6 +279,14 @@ class Observations:
 obs = Observations()
 
 
+def send_handler(code: CodeType, frame_id: FrameId, arg0: Any) -> None:
+    obs.record_send(
+        code,
+        frame_id, 
+        get_value_type(arg0, use_jaxtyping=options.infer_shapes)
+    )
+
+
 def wrap_send(obj: Any) -> Any:
     if (
         (self := getattr(obj, "__self__", None)) and
@@ -287,22 +295,16 @@ def wrap_send(obj: Any) -> Any:
         if isinstance(self, GeneratorType):
             @functools.wraps(obj)
             def wrapper(*args, **kwargs):
-                obs.record_send(
-                    self.gi_code,
-                    FrameId(id(self.gi_frame)),
-                    get_value_type(args[0], use_jaxtyping=options.infer_shapes)
-                )
+                # generator.send takes exactly one argument
+                send_handler(self.gi_code, FrameId(id(self.gi_frame)), args[0])
                 return obj(*args, **kwargs)
 
             return wrapper
         else:
             @functools.wraps(obj)
             def wrapper(*args, **kwargs):
-                obs.record_send(
-                    self.ag_code,
-                    FrameId(id(self.ag_frame)),
-                    get_value_type(args[0], use_jaxtyping=options.infer_shapes)
-                )
+                # generator.asend takes exactly one argument
+                send_handler(self.ag_code, FrameId(id(self.ag_frame)), args[0])
                 return obj(*args, **kwargs)
 
             return wrapper
@@ -573,8 +575,9 @@ def restart_sampling() -> None:
 instrumentation_functions_code = {
     enter_handler.__code__,
     call_handler.__code__,
-    process_yield_or_return.__code__,
-    restart_sampling.__code__,
+    return_handler.__code__,
+    yield_handler.__code__,
+    send_handler.__code__
 }
 
 
@@ -855,7 +858,7 @@ class CheckModule(click.ParamType):
 @click.option(
     "--signal-wakeup/--thread-wakeup",
     default=not platform.system() == "Windows",
-    hidden=platform.system() == "Windows",
+    hidden=True,
     help="Whether to use signal-based wakeups or thead-based wakeups."
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
