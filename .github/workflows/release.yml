@@ -21,7 +21,7 @@ jobs:
         include:
           - os: ubuntu-latest
             container: quay.io/pypa/manylinux_2_34_x86_64 # https://github.com/pypa/manylinux
-            upload_source: true   # only one need upload sources...
+#            upload_source: true   # only one need upload sources...
 
     steps:
     - uses: actions/checkout@v4
