@@ -70,8 +70,22 @@ def find_most_specific_common_superclass(typeinfoset: set[TypeInfo]) -> TypeInfo
     # TODO do we want to merge by protocol?  search for protocols in collections.abc types?
     # TODO we could also merge on portions of the set
 
+    # FIXME besides attribute presence, we should check their types/signatures
+    # FIXME we should check object attributes, not their classes'
+    common_attributes = set.intersection(
+        *(set(dir(cast(TYPE_OBJ_TYPES, t.type_obj))) for t in typeinfoset)
+    )
+
+    # Get the superclasses, if any, that have all the common attributes
     common_superclasses = set.intersection(
-        *(set(cast(TYPE_OBJ_TYPES, t.type_obj).__mro__) for t in typeinfoset)
+        *(
+            set(
+                base
+                for base in cast(TYPE_OBJ_TYPES, t.type_obj).__mro__
+                if common_attributes.issubset(set(dir(base)))
+            )
+            for t in typeinfoset
+        )
     )
 
     common_superclasses.discard(object) # not specific enough to be useful
