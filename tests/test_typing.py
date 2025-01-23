@@ -360,21 +360,49 @@ def test_merged_types_superclass():
     class C(B): pass
     class D(B): pass
 
-    assert f"{__name__}.{B.__qualname__}" == str(merged_types({
+    assert f"{name(B)}" == str(merged_types({
             TypeInfo.from_type(C),
             TypeInfo.from_type(D)
         }
     ))
 
-    assert f"{__name__}.{B.__qualname__}" == str(merged_types({
+    assert f"{name(B)}" == str(merged_types({
             TypeInfo.from_type(B),
             TypeInfo.from_type(D)
         }
     ))
 
-    assert f"{__name__}.{A.__qualname__}" == str(merged_types({
+    assert f"{name(A)}" == str(merged_types({
             TypeInfo.from_type(A),
             TypeInfo.from_type(D)
+        }
+    ))
+
+
+def name(t: type):
+    return f"{t.__module__}.{t.__qualname__}"
+
+
+def test_merged_types_superclass_checks_attributes():
+    class A: pass
+    class B(A):
+        def foo(self): pass
+    class C(B):
+        def bar(self): pass
+    class D(B):
+        def bar(self): pass
+    class E(B):
+        pass
+
+    assert f"{name(C)}|{name(D)}" == str(merged_types({
+            TypeInfo.from_type(C),
+            TypeInfo.from_type(D)
+        }
+    ))
+
+    assert f"{name(B)}" == str(merged_types({
+            TypeInfo.from_type(C),
+            TypeInfo.from_type(E)
         }
     ))
 
@@ -394,7 +422,7 @@ def test_merged_types_generics_superclass():
     class C(B): pass
     class D(B): pass
 
-    assert f"list[{__name__}.{B.__qualname__}]|None" == str(merged_types({
+    assert f"list[{name(B)}]|None" == str(merged_types({
             TypeInfo("", "list", args=(TypeInfo.from_type(C),)),
             TypeInfo("", "list", args=(TypeInfo.from_type(D),)),
             TypeInfo.from_type(type(None))
