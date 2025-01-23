@@ -263,7 +263,7 @@ class Observations:
                         elif node.name in ('Generator', 'AsyncGenerator'):
                             return ann.retval
                         elif node.name == 'Coroutine':
-                            return node.replace(args=(NoneTypeInfo, AnyTypeInfo, ann.retval))
+                            return node.replace(args=(NoneTypeInfo, NoneTypeInfo, ann.retval))
 
                 return super().visit(node)
 
@@ -958,7 +958,6 @@ def main(
         )
         sys.monitoring.restart_events()
         alarm.start()
-        # replace_dicts.replace_dicts()
         execute_script_or_module(script, bool(module), args)
     finally:
         reset_monitoring()
