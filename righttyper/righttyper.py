@@ -96,11 +96,6 @@ class Options:
 options = Options()
 
 
-instrumentation_overhead = 0.0
-alpha = 0.9
-sample_count_instrumentation = 0.0
-sample_count_total = 0.0
-
 logger = logging.getLogger("righttyper")
 
 @dataclass
@@ -531,6 +526,14 @@ def process_function_arguments(
     )
 
 
+instrumentation_functions_code = {
+    enter_handler.__code__,
+    call_handler.__code__,
+    return_handler.__code__,
+    yield_handler.__code__,
+    send_handler.__code__
+}
+
 def in_instrumentation_code() -> bool:
     for frame in sys._current_frames().values():
         
@@ -551,6 +554,10 @@ def in_instrumentation_code() -> bool:
     return False
 
 
+instrumentation_overhead = 0.0
+sample_count_instrumentation = 0.0
+sample_count_total = 0.0
+
 def restart_sampling() -> None:
     """
     Measures the instrumentation overhead, restarting event delivery
@@ -570,15 +577,6 @@ def restart_sampling() -> None:
     if instrumentation_overhead <= options.target_overhead / 100.0:
         # Instrumentation overhead is low enough: restart instrumentation.
         sys.monitoring.restart_events()
-
-
-instrumentation_functions_code = {
-    enter_handler.__code__,
-    call_handler.__code__,
-    return_handler.__code__,
-    yield_handler.__code__,
-    send_handler.__code__
-}
 
 
 def execute_script_or_module(
