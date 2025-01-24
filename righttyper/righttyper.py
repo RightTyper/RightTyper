@@ -117,23 +117,21 @@ class Observations:
         code: CodeType,
         arg_names: tuple[str, ...],
         get_default_type: Callable[[str], TypeInfo|None],
-        function_object: FuncInstance,
     ) -> None:
         """Records that a function was visited, along with some details about it."""
-        for override_code in get_override_contexts(function_object, code):
-            code_id = CodeId(id(override_code))
-            if code_id not in self.functions_visited:
-                self.functions_visited[code_id] = FuncInfo(
-                    FuncId(
-                        Filename(override_code.co_filename),
-                        override_code.co_firstlineno,
-                        FunctionName(override_code.co_qualname),
-                    ),
-                    tuple(
-                        ArgInfo(ArgumentName(name), get_default_type(name))
-                        for name in arg_names
-                    )
+        code_id = CodeId(id(code))
+        if code_id not in self.functions_visited:
+            self.functions_visited[code_id] = FuncInfo(
+                FuncId(
+                    Filename(code.co_filename),
+                    code.co_firstlineno,
+                    FunctionName(code.co_qualname),
+                ),
+                tuple(
+                    ArgInfo(ArgumentName(name), get_default_type(name))
+                    for name in arg_names
                 )
+            )
 
 
     def record_start(
@@ -499,16 +497,16 @@ def process_function_arguments(
                         return get_type(first_arg)
         return None
 
-    obs.record_function(
-        code,
-        (
-            *(a for a in args.args),
-            *((args.varargs,) if args.varargs else ()),
-            *((args.keywords,) if args.keywords else ())
-        ),
-        get_default_type,
-        function_data,
-    )
+    for code_instance in get_override_contexts(function_data, code):
+        obs.record_function(
+            code_instance,
+            (
+                *(a for a in args.args),
+                *((args.varargs,) if args.varargs else ()),
+                *((args.keywords,) if args.keywords else ())
+            ),
+            get_default_type
+        )
 
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
