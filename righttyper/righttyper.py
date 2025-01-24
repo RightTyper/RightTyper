@@ -186,9 +186,7 @@ class Observations:
         code_id = CodeId(id(code))
         if (sample := self.pending_samples.get((code_id, frame_id))):
             sample.returns = return_type
-            # `get_override_contexts` takes a FunctionType. `sample.function_object` is a `FunctionType`.
-            # mypy inerprets `sample.function_object` as a method within `Sample` and not as an attribute of type `FunctionType`.
-            for overridden_code in get_override_contexts(sample.function_object, code): # type: ignore
+            for overridden_code in get_override_contexts(sample.function_object, code):
                 overridden_code_id = CodeId(id(overridden_code))
                 self.samples[overridden_code_id].add(sample.process())
             del self.pending_samples[(code_id, frame_id)]
