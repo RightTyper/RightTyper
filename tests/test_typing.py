@@ -1,4 +1,4 @@
-from righttyper.righttyper_types import FuncInstance, TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample
+from righttyper.righttyper_types import FuncContext, TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample
 from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
@@ -531,6 +531,6 @@ def test_override_yields():
             pass
     
     if isinstance(C.foo, types.FunctionType):
-        c_instance = FuncInstance(C.foo, C)
+        c_instance = FuncContext(C.foo, C)
         overrides_c: set[types.FunctionType] = set(rt.get_overrides(c_instance))
         assert overrides_c == {A.foo, C.foo}

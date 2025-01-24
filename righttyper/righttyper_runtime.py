@@ -26,7 +26,7 @@ from righttyper.righttyper_types import (
     Filename,
     FunctionName,
     FuncId,
-    FuncInstance,
+    FuncContext,
     T,
     TypeInfo,
     NoneTypeInfo,
@@ -302,7 +302,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     return TypeInfo(lookup_type_module(obj), obj.__qualname__, type_obj=obj)
 
 
-def get_overrides(func: FuncInstance) -> Iterator[FunctionType]:
+def get_overrides(func: FuncContext) -> Iterator[FunctionType]:
     """Returns each method overridden by the given method.
     
     Args:
@@ -310,16 +310,15 @@ def get_overrides(func: FuncInstance) -> Iterator[FunctionType]:
     Yields:
         `FunctionType` instances for each method definition overridden by `func`.
     """
-    if func.function_object:
-        yield func.function_object
-    if func.enclosing_class and func.function_object:
-        for ancestor in func.enclosing_class.__mro__:
+    yield func.function_object
+    if func.class_object:
+        for ancestor in func.class_object.__mro__:
             super_func = getattr(ancestor, func.function_object.__name__, None)
             if super_func: super_func = unwrap(super_func)
             if inspect.isfunction(super_func): yield super_func
 
 
-def get_override_contexts(func: FuncInstance, code: CodeType | None = None) -> Iterator[CodeType]:
+def get_override_contexts(func: FuncContext | None, code: CodeType | None = None) -> Iterator[CodeType]:
     """Find each code instance overridden by the given method.
     
     Args:
@@ -362,12 +361,12 @@ def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
 def find_function(
     caller_frame: FrameType,
     code: CodeType
-) -> FuncInstance:
+) -> FuncContext | None:
     """Attempts to map back from a code object to the function that uses it."""
 
     visited = set()
 
-    def find_in_class(class_obj: type) -> FuncInstance | None:
+    def find_in_class(class_obj: type) -> FuncContext | None:
         if class_obj in visited:
             return None
         visited.add(class_obj)
@@ -375,7 +374,7 @@ def find_function(
         for obj in class_obj.__dict__.values():
             if isinstance(obj, (FunctionType, classmethod)):
                 if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
-                    return FuncInstance(obj, class_obj)
+                    return FuncContext(obj, class_obj)
 
             elif inspect.isclass(obj):
                 if (f := find_in_class(obj)):
@@ -390,13 +389,13 @@ def find_function(
     for obj in dicts:
         if isinstance(obj, FunctionType):
             if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
-                return FuncInstance(obj, None)
+                return FuncContext(obj)
 
         elif inspect.isclass(obj):
             if (f := find_in_class(obj)):
                 return f
 
-    return FuncInstance(None, None)
+    return None
 
 
 def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:

@@ -54,7 +54,7 @@ from righttyper.righttyper_types import (
     FuncInfo,
     FrameId,
     FuncAnnotation,
-    FuncInstance,
+    FuncContext,
     FunctionName,
     TypeInfo,
     NoneTypeInfo,
@@ -140,7 +140,7 @@ class Observations:
         frame_id: FrameId,
         arg_types: tuple[TypeInfo, ...],
         self_type: TypeInfo|None,
-        function_object: FuncInstance,
+        function_object: FuncContext|None,
     ) -> None:
         """Records a function start."""
 
@@ -450,17 +450,18 @@ def process_function_arguments(
     code: CodeType,
     frame_id: FrameId,
     args: inspect.ArgInfo,
-    function_data: FuncInstance
+    function_data: FuncContext|None
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
         return get_value_type(v, use_jaxtyping=options.infer_shapes)
 
+    function_object = function_data.function_object if function_data else None
 
-    defaults: dict[str, tuple[Any]] = {} if not function_data.function_object else {
+    defaults: dict[str, tuple[Any]] = {} if not function_object else {
         # use tuple to differentiate a None default from no default
         param_name: (param.default,)
-        for param_name, param in inspect.signature(function_data.function_object).parameters.items()
+        for param_name, param in inspect.signature(function_object).parameters.items()
         if param.default != inspect._empty
     }
 
@@ -484,12 +485,12 @@ def process_function_arguments(
             if isinstance(getattr(type(first_arg), code.co_name, None), property):
                 return get_type(first_arg)
 
-            if function_data.function_object:
+            if function_object:
                 # if type(first_arg) is type, we may have a @classmethod
                 first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
 
                 for ancestor in first_arg_class.__mro__:
-                    if unwrap(ancestor.__dict__.get(function_data.function_object.__name__, None)) is function_data.function_object:
+                    if unwrap(ancestor.__dict__.get(function_object.__name__, None)) is function_object:
                         if first_arg is first_arg_class:
                             return get_type_name(first_arg)
 
