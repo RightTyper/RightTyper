@@ -2,7 +2,11 @@ import setuptools
 import sys
 import os
 from pathlib import Path
-import tomllib
+
+try:
+    import tomllib  # available in Python 3.11+
+except ImportError:
+    import tomli as tomllib
 
 
 def get_version():
