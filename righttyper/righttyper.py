@@ -214,35 +214,32 @@ class Observations:
         args: inspect.ArgInfo,
         get_defaults: abc.Callable[[], dict[str, TypeInfo]],
         overrides: FunctionType|FunctionDescriptor|None,
-        function_object: FuncInstance
     ) -> None:
         """Records that a function was visited, along with some details about it."""
+        code_id = CodeId(id(code))
+        if code_id not in self.functions_visited:
+            arg_names = (
+                *(a for a in args.args),
+                *((args.varargs,) if args.varargs else ()),
+                *((args.keywords,) if args.keywords else ())
+            )
 
-        for override_code in get_override_contexts(function_object, code):
-            code_id = CodeId(id(override_code))
-            if code_id not in self.functions_visited:
-                arg_names = (
-                    *(a for a in args.args),
-                    *((args.varargs,) if args.varargs else ()),
-                    *((args.keywords,) if args.keywords else ())
-                )
+            defaults = get_defaults()
 
-                defaults = get_defaults()
-
-                self.functions_visited[code_id] = FuncInfo(
-                    FuncId(
-                        Filename(code.co_filename),
-                        code.co_firstlineno,
-                        FunctionName(code.co_qualname),
-                    ),
-                    tuple(
-                        ArgInfo(ArgumentName(name), defaults.get(name))
-                        for name in arg_names
-                    ),
-                    ArgumentName(args.varargs) if args.varargs else None,
-                    ArgumentName(args.keywords) if args.keywords else None,
-                    overrides
-                )
+            self.functions_visited[code_id] = FuncInfo(
+                FuncId(
+                    Filename(code.co_filename),
+                    code.co_firstlineno,
+                    FunctionName(code.co_qualname),
+                ),
+                tuple(
+                    ArgInfo(ArgumentName(name), defaults.get(name))
+                    for name in arg_names
+                ),
+                ArgumentName(args.varargs) if args.varargs else None,
+                ArgumentName(args.keywords) if args.keywords else None,
+                overrides
+            )
 
 
     def record_start(
@@ -789,7 +786,8 @@ def process_function_call(
     # and computed only when first recording a function.
     self_type, self_replacement, overrides = get_self_type()
     function_data = find_function(frame, code)
-    obs.record_function(code, args, get_defaults, overrides, function_data)
+    for code_instance in get_override_contexts(function_data, code):
+        obs.record_function(code_instance, args, get_defaults, overrides)
 
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
