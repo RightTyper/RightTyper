@@ -443,8 +443,14 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     return UnknownTypeInfo
 
 
-def get_overrides(callable: types.FunctionType|classmethod|None) -> Iterator[FunctionType]:
-    func = unwrap(callable)
+def get_overrides(func: FunctionType) -> Iterator[FunctionType]:
+    """Returns each method overridden by the given method.
+    
+    Args:
+        func: A `FunctionType` instance.
+    Yields:
+        `FunctionType` instances for each method definition overridden by `func`.
+    """
     if func is None:
         return
     qualname_parts = func.__qualname__.split(".")[:-1]
@@ -465,10 +471,30 @@ def get_overrides(callable: types.FunctionType|classmethod|None) -> Iterator[Fun
         if inspect.isfunction(super_func): yield super_func
 
 
-def get_override_contexts(callable: FunctionType|classmethod|None, code: CodeType) -> Iterator[CodeType]:
-    yield code
-    for override in get_overrides(callable):
-        yield override.__code__
+def get_method_class(func: FunctionType) -> type | None:
+    """Attempt to find the class that has a function as a method
+
+    Args:
+        func: An 
+    """
+    pass
+
+
+def get_override_contexts(func: FunctionType | None, code: CodeType | None = None) -> Iterator[CodeType]:
+    """Find each code instance overridden by the given method.
+    
+    Args:
+        func: An optional `FunctionType` instance.
+        code: An optional backup `CodeType` instance.
+    Yields:
+        `CodeType` instances for each method definition overridden by `func`.
+        If `func` is `None`, then code is yielded.
+    """
+    if code:
+        yield code
+    if func:
+        for override in get_overrides(func):
+            yield override.__code__
 
 
 def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
