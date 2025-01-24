@@ -216,6 +216,7 @@ class Observations:
         overrides: FunctionType|FunctionDescriptor|None,
     ) -> None:
         """Records that a function was visited, along with some details about it."""
+
         code_id = CodeId(id(code))
         if code_id not in self.functions_visited:
             arg_names = (
