@@ -30,7 +30,6 @@ ignore_missing_imports = true
 [build-system]
 requires = [
     "setuptools>=61.0",
-    "tomllib"
 ]
 build-backend = "setuptools.build_meta"
 
