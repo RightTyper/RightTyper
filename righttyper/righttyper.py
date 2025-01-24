@@ -57,7 +57,7 @@ from righttyper.righttyper_types import (
     FuncInfo,
     FrameId,
     FuncAnnotation,
-    FuncInstance,
+    FuncContext,
     FunctionName,
     FunctionDescriptor,
     TypeInfo,
@@ -249,7 +249,7 @@ class Observations:
         arg_types: tuple[TypeInfo, ...],
         self_type: TypeInfo|None,
         self_replacement: TypeInfo|None,
-        function_object: FuncInstance,
+        function_object: FuncContext|None,
     ) -> None:
         """Records a function start."""
 

@@ -186,9 +186,10 @@ class FuncInfo:
 
 
 @dataclass
-class FuncInstance:
-    function_object: types.FunctionType | None
-    enclosing_class: type | None
+class FuncContext:
+    """This is a FunctionType with optional data about which class it is a part of"""
+    function_object: types.FunctionType
+    class_object: type | None
 
 
 @dataclass
@@ -201,7 +202,7 @@ class Sample:
     is_generator: bool = False
     self_type: TypeInfo | None = None
     self_replacement: TypeInfo | None = None
-    function_object: FuncInstance = field(default_factory=lambda: FuncInstance(None, None))
+    function_object: FuncContext | None = None
 
 
     def process(self) -> tuple[TypeInfo, ...]:
