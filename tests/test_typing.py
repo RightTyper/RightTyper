@@ -691,3 +691,23 @@ def test_from_set_with_unions():
         TypeInfo.from_type(str, module=''),
     )
 
+def test_override_yields_internal():
+    # This is failing because we don't handle classes outside of the global scope.
+    class A:
+        def foo(self):
+            pass
+
+
+    class B(A):
+        pass
+
+
+    class C(B):
+        def foo(self):
+            pass
+    
+    if isinstance(C.foo, types.FunctionType):
+        for override in rt.get_overrides(C.foo):
+            print(override)
+        overrides_c: set[types.FunctionType] = set(*rt.get_overrides(C.foo))
+        assert overrides_c == set((A.foo, C.foo))
