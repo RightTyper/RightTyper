@@ -116,9 +116,10 @@ class Observations:
         self,
         code: CodeType,
         arg_names: tuple[str, ...],
-        get_default_type: Callable[[str], TypeInfo|None],
+        get_default_type: Callable[[str], TypeInfo|None]
     ) -> None:
         """Records that a function was visited, along with some details about it."""
+
         code_id = CodeId(id(code))
         if code_id not in self.functions_visited:
             self.functions_visited[code_id] = FuncInfo(
