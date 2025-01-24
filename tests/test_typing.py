@@ -693,7 +693,6 @@ def test_from_set_with_unions():
 
 
 def test_override_yields():
-    # This is failing because we don't handle classes outside of the global scope.
     class A:
         def foo(self):
             pass
