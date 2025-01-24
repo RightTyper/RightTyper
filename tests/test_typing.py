@@ -1,4 +1,4 @@
-from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample, UnknownTypeInfo
+from righttyper.righttyper_types import FuncInstance, TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample, UnknownTypeInfo
 from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
@@ -691,7 +691,8 @@ def test_from_set_with_unions():
         TypeInfo.from_type(str, module=''),
     )
 
-def test_override_yields_internal():
+
+def test_override_yields():
     # This is failing because we don't handle classes outside of the global scope.
     class A:
         def foo(self):
@@ -707,7 +708,6 @@ def test_override_yields_internal():
             pass
     
     if isinstance(C.foo, types.FunctionType):
-        for override in rt.get_overrides(C.foo):
-            print(override)
-        overrides_c: set[types.FunctionType] = set(*rt.get_overrides(C.foo))
-        assert overrides_c == set((A.foo, C.foo))
+        c_instance = FuncInstance(C.foo, C)
+        overrides_c: set[types.FunctionType] = set(rt.get_overrides(c_instance))
+        assert overrides_c == {A.foo, C.foo}
