@@ -89,8 +89,6 @@ jobs:
         echo '  make release'
         exit 1
 
-    - run: python3 -m pip install tomllib
-
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
       with:

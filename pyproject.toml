@@ -28,12 +28,19 @@ pretty = true
 ignore_missing_imports = true
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = [
+    "setuptools>=61.0",
+]
 build-backend = "setuptools.build_meta"
+
+[tool.righttyper_setup]
+# dev builds dynamically add to the version, so it must be defined
+# seperately; setup.py puts it together.
+version = "0.0.10"
 
 [project]
 name = "righttyper"
-version = "0.0.10"
+dynamic = ["version"]
 authors = [
   { name="Emery Berger", email="emerydb@amazon.com" },
   { name="Juan Altmayer Pizzorno", email="jpizzorno@umass.edu" },
