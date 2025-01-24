@@ -516,7 +516,6 @@ def test_sample_process_generator_union():
 
 
 def test_override_yields():
-    # This is failing because we don't handle classes outside of the global scope.
     class A:
         def foo(self):
             pass
