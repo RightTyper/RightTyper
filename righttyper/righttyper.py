@@ -54,6 +54,7 @@ from righttyper.righttyper_types import (
     FuncInfo,
     FrameId,
     FuncAnnotation,
+    FuncInstance,
     FunctionName,
     TypeInfo,
     NoneTypeInfo,
@@ -116,7 +117,7 @@ class Observations:
         code: CodeType,
         arg_names: tuple[str, ...],
         get_default_type: Callable[[str], TypeInfo|None],
-        function_object: FunctionType | None
+        function_object: FuncInstance,
     ) -> None:
         """Records that a function was visited, along with some details about it."""
         for override_code in get_override_contexts(function_object, code):
@@ -141,7 +142,7 @@ class Observations:
         frame_id: FrameId,
         arg_types: tuple[TypeInfo, ...],
         self_type: TypeInfo|None,
-        function_object: FunctionType | None,
+        function_object: FuncInstance,
     ) -> None:
         """Records a function start."""
 
@@ -453,17 +454,17 @@ def process_function_arguments(
     code: CodeType,
     frame_id: FrameId,
     args: inspect.ArgInfo,
-    function: FunctionType|None
+    function_data: FuncInstance
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
         return get_value_type(v, use_jaxtyping=options.infer_shapes)
 
 
-    defaults: dict[str, tuple[Any]] = {} if not function else {
+    defaults: dict[str, tuple[Any]] = {} if not function_data.function_object else {
         # use tuple to differentiate a None default from no default
         param_name: (param.default,)
-        for param_name, param in inspect.signature(function).parameters.items()
+        for param_name, param in inspect.signature(function_data.function_object).parameters.items()
         if param.default != inspect._empty
     }
 
@@ -487,12 +488,12 @@ def process_function_arguments(
             if isinstance(getattr(type(first_arg), code.co_name, None), property):
                 return get_type(first_arg)
 
-            if function:
+            if function_data.function_object:
                 # if type(first_arg) is type, we may have a @classmethod
                 first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
 
                 for ancestor in first_arg_class.__mro__:
-                    if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
+                    if unwrap(ancestor.__dict__.get(function_data.function_object.__name__, None)) is function_data.function_object:
                         if first_arg is first_arg_class:
                             return get_type_name(first_arg)
 
@@ -508,7 +509,7 @@ def process_function_arguments(
             *((args.keywords,) if args.keywords else ())
         ),
         get_default_type,
-        function
+        function_data,
     )
 
     arg_values = (
@@ -532,7 +533,7 @@ def process_function_arguments(
         frame_id,
         arg_values,
         get_self_type(),
-        function
+        function_data,
     )
 
 

@@ -26,6 +26,7 @@ from righttyper.righttyper_types import (
     Filename,
     FunctionName,
     FuncId,
+    FuncInstance,
     T,
     TypeInfo,
     NoneTypeInfo,
@@ -301,7 +302,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     return TypeInfo(lookup_type_module(obj), obj.__qualname__, type_obj=obj)
 
 
-def get_overrides(func: FunctionType) -> Iterator[FunctionType]:
+def get_overrides(func: FuncInstance) -> Iterator[FunctionType]:
     """Returns each method overridden by the given method.
     
     Args:
@@ -309,36 +310,16 @@ def get_overrides(func: FunctionType) -> Iterator[FunctionType]:
     Yields:
         `FunctionType` instances for each method definition overridden by `func`.
     """
-    if func is None:
-        return
-    qualname_parts = func.__qualname__.split(".")[:-1]
-
-    # Follow qualname down
-    current_object: Any = inspect.getmodule(func)
-    for key in qualname_parts:
-        if not hasattr(current_object, key):
-            return None
-        current_object = getattr(current_object, key)
-    
-    if not isinstance(current_object, type):
-        yield func
-        return
-    for ancestor in current_object.__mro__:
-        super_func = getattr(ancestor, func.__name__, None)
-        if super_func: super_func = unwrap(super_func)
-        if inspect.isfunction(super_func): yield super_func
+    if func.function_object:
+        yield func.function_object
+    if func.enclosing_class and func.function_object:
+        for ancestor in func.enclosing_class.__mro__:
+            super_func = getattr(ancestor, func.function_object.__name__, None)
+            if super_func: super_func = unwrap(super_func)
+            if inspect.isfunction(super_func): yield super_func
 
 
-def get_method_class(func: FunctionType) -> type | None:
-    """Attempt to find the class that has a function as a method
-
-    Args:
-        func: An 
-    """
-    pass
-
-
-def get_override_contexts(func: FunctionType | None, code: CodeType | None = None) -> Iterator[CodeType]:
+def get_override_contexts(func: FuncInstance, code: CodeType | None = None) -> Iterator[CodeType]:
     """Find each code instance overridden by the given method.
     
     Args:
@@ -381,12 +362,12 @@ def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
 def find_function(
     caller_frame: FrameType,
     code: CodeType
-) -> FunctionType|None:
+) -> FuncInstance:
     """Attempts to map back from a code object to the function that uses it."""
 
     visited = set()
 
-    def find_in_class(class_obj: object) -> FunctionType|None:
+    def find_in_class(class_obj: type) -> FuncInstance | None:
         if class_obj in visited:
             return None
         visited.add(class_obj)
@@ -394,7 +375,7 @@ def find_function(
         for obj in class_obj.__dict__.values():
             if isinstance(obj, (FunctionType, classmethod)):
                 if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
-                    return obj
+                    return FuncInstance(obj, class_obj)
 
             elif inspect.isclass(obj):
                 if (f := find_in_class(obj)):
@@ -409,16 +390,17 @@ def find_function(
     for obj in dicts:
         if isinstance(obj, FunctionType):
             if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
-                return obj
+                return FuncInstance(obj, None)
 
         elif inspect.isclass(obj):
             if (f := find_in_class(obj)):
                 return f
 
-    return None
+    return FuncInstance(None, None)
 
 
 def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
+
     """
     get_value_type takes a value (an instance) as input and returns a string representing its type.
 
