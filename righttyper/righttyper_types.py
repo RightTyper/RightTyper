@@ -185,6 +185,11 @@ class FuncInfo:
     overrides: types.FunctionType|FunctionDescriptor|None
 
 
+@dataclass
+class FuncInstance:
+    function_object: types.FunctionType | None
+    enclosing_class: type | None
+
 
 @dataclass
 class Sample:
@@ -196,7 +201,7 @@ class Sample:
     is_generator: bool = False
     self_type: TypeInfo | None = None
     self_replacement: TypeInfo | None = None
-    function_object: types.FunctionType | None = None
+    function_object: FuncInstance = field(default_factory=lambda: FuncInstance(None, None))
 
 
     def process(self) -> tuple[TypeInfo, ...]:

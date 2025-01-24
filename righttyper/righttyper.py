@@ -57,6 +57,7 @@ from righttyper.righttyper_types import (
     FuncInfo,
     FrameId,
     FuncAnnotation,
+    FuncInstance,
     FunctionName,
     FunctionDescriptor,
     TypeInfo,
@@ -213,7 +214,7 @@ class Observations:
         args: inspect.ArgInfo,
         get_defaults: abc.Callable[[], dict[str, TypeInfo]],
         overrides: FunctionType|FunctionDescriptor|None,
-        function_object: FunctionType | None
+        function_object: FuncInstance
     ) -> None:
         """Records that a function was visited, along with some details about it."""
 
@@ -251,7 +252,7 @@ class Observations:
         arg_types: tuple[TypeInfo, ...],
         self_type: TypeInfo|None,
         self_replacement: TypeInfo|None,
-        function_object: FunctionType | None,
+        function_object: FuncInstance,
     ) -> None:
         """Records a function start."""
 
@@ -788,8 +789,8 @@ def process_function_call(
     # TODO self_type, like overrides, could just be saved in record_function,
     # and computed only when first recording a function.
     self_type, self_replacement, overrides = get_self_type()
-    function_obj = find_function(frame, code)
-    obs.record_function(code, args, get_defaults, overrides, function_obj)
+    function_data = find_function(frame, code)
+    obs.record_function(code, args, get_defaults, overrides, function_data)
 
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
@@ -813,7 +814,7 @@ def process_function_call(
         arg_values,
         self_type,
         self_replacement,
-        function_obj
+        function_data
     )
 
 
