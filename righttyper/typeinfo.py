@@ -59,6 +59,45 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
 
     # TODO do we want to merge by protocol?  search for protocols in collections.abc types?
 
+    def insert_numerics(mro: tuple[type, ...]) -> tuple[type, ...]:
+        """Inserts numerics where applicable into an mro list
+        
+        This also preserves topological order.
+
+        For example, suppose our type hierarchy looks like
+        ```
+             float int
+                |   |
+                B   C
+                 \\ /
+                  A
+        ```
+        And we are given [A, B, float, C, int]
+
+        According to [PEP 3141](https://peps.python.org/pep-3141/), this type hierarchy is equivalent to
+        ```
+             complex
+                |
+              float
+                | \\
+                |  int
+                |   |
+                B   C
+                 \\ /
+                  A
+        ```
+
+        This method returns a new mro that is consistent with this type hierarchy
+        """
+        new_mro = list(filter(lambda mro_type: mro_type not in {int, float, complex, object}, mro))
+        numerics = list(filter(lambda mro_type: mro_type in {int, float, complex, object}, mro))
+        tower_index = min(map(
+            lambda mro_type: [int, float, complex, object].index(mro_type),
+            numerics
+        ))
+        new_mro.extend([int, float, complex, object][tower_index:])
+        return tuple(new_mro)
+
     # FIXME besides attribute presence, we should check their types/signatures
     # FIXME we should check object attributes, not their classes'
     common_attributes = set.intersection(
@@ -75,7 +114,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     # Get the superclasses, if any, that have all the common attributes
     common_supertypes = defaultdict(list)
     for t in mergeable_types:
-        for base in cast(TYPE_OBJ_TYPES, t.type_obj).__mro__:
+        for base in insert_numerics(cast(TYPE_OBJ_TYPES, t.type_obj).__mro__):
             if common_attributes.issubset(set(dir(base))):
                 common_supertypes[base].append(t)
 
