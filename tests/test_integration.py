@@ -597,7 +597,7 @@ def test_default_arg():
 
     assert "def func(n: int|None=None) -> int" in output
 
-    assert "def func2(n: float|int=5) -> float" in output
+    assert "def func2(n: float=5) -> float" in output
 
 
 def test_default_in_private_method():
