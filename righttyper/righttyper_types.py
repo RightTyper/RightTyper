@@ -141,6 +141,12 @@ class FuncInfo:
     args: tuple[ArgInfo, ...]
 
 
+@dataclass
+class FuncContext:
+    """This is a FunctionType with optional data about which class it is a part of"""
+    function_object: types.FunctionType
+    class_object: type | None = None
+
 
 @dataclass
 class Sample:
@@ -151,6 +157,7 @@ class Sample:
     is_async: bool = False
     is_generator: bool = False
     self_type: TypeInfo | None = None
+    function_object: FuncContext | None = None
 
 
     def process(self) -> tuple[TypeInfo, ...]:
