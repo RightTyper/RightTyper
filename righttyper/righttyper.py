@@ -328,6 +328,10 @@ class Observations:
                 if code_id not in self.samples:
                     self.samples[code_id] = set()
                 self.samples[code_id].add(sample.process())
+                if sample.function_object:
+                    for overridden_code in get_override_contexts(sample.function_object):
+                        overridden_code_id = CodeId(id(overridden_code))
+                        self.samples[overridden_code_id].add(sample.process())
 
         def mk_annotation(code_id: CodeId) -> FuncAnnotation|None:
             func_info = self.functions_visited[code_id]
