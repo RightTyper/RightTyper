@@ -1442,6 +1442,7 @@ def test_generic_simple():
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
+    assert re.search('from typing import.*TypeVar', output)
     assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
     assert "def add(a: rt_T1, b: rt_T1) -> rt_T1" in output
 
@@ -1503,6 +1504,7 @@ def test_generic_yield_generator():
     output = Path("t.py").read_text()
 
     print(output)
+    assert re.search('from typing import.*TypeVar', output)
     assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
     assert 'rt_T2 = TypeVar("rt_T2", int, str)' in output
     assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, None, rt_T2]" in output
@@ -1549,6 +1551,7 @@ def test_generic_and_defaults():
     output = Path("t.py").read_text()
 
     print(output)
+    assert not re.search('from typing import.*TypeVar', output)
     assert "def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None" in output
 
 

@@ -484,6 +484,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                                        ])
                             )
                         ]))
+                        self.unknown_types.add("TypeVar")
 
             class ParamChanger(cst.CSTTransformer):
                 def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
