@@ -202,7 +202,7 @@ class Sample:
     is_generator: bool = False
     self_type: TypeInfo | None = None
     self_replacement: TypeInfo | None = None
-    function_object: FuncContext | None = None
+    func_context: FuncContext | None = None
 
 
     def process(self) -> tuple[TypeInfo, ...]:

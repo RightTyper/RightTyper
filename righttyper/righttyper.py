@@ -250,7 +250,7 @@ class Observations:
         arg_types: tuple[TypeInfo, ...],
         self_type: TypeInfo|None,
         self_replacement: TypeInfo|None,
-        function_object: FuncContext|None,
+        func_context: FuncContext|None,
     ) -> None:
         """Records a function start."""
 
@@ -261,7 +261,7 @@ class Observations:
             self_replacement=self_replacement,
             is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
             is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
-            function_object=function_object,
+            func_context=func_context,
         )
 
 
@@ -297,7 +297,7 @@ class Observations:
             sample.returns = return_type
             if code_id not in self.samples:
                 self.samples[code_id] = set()
-            for overridden_code in get_override_contexts(sample.function_object, code):
+            for overridden_code in get_override_contexts(sample.func_context, code):
                 overridden_code_id = CodeId(id(overridden_code))
                 self.samples[overridden_code_id].add(sample.process())
             del self.pending_samples[(code_id, frame_id)]
@@ -328,8 +328,8 @@ class Observations:
                 if code_id not in self.samples:
                     self.samples[code_id] = set()
                 self.samples[code_id].add(sample.process())
-                if sample.function_object:
-                    for overridden_code in get_override_contexts(sample.function_object):
+                if sample.func_context:
+                    for overridden_code in get_override_contexts(sample.func_context):
                         overridden_code_id = CodeId(id(overridden_code))
                         self.samples[overridden_code_id].add(sample.process())
 
