@@ -399,7 +399,6 @@ def find_function(
 
 
 def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
-
     """
     get_value_type takes a value (an instance) as input and returns a string representing its type.
 
