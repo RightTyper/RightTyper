@@ -34,6 +34,7 @@ from righttyper.righttyper_process import (
 )
 from righttyper.righttyper_runtime import (
     find_function,
+    get_override_contexts,
     unwrap,
     get_value_type,
     get_type_name,
@@ -53,6 +54,7 @@ from righttyper.righttyper_types import (
     FuncInfo,
     FrameId,
     FuncAnnotation,
+    FuncContext,
     FunctionName,
     TypeInfo,
     NoneTypeInfo,
@@ -138,7 +140,8 @@ class Observations:
         code: CodeType,
         frame_id: FrameId,
         arg_types: tuple[TypeInfo, ...],
-        self_type: TypeInfo|None
+        self_type: TypeInfo|None,
+        func_context: FuncContext|None,
     ) -> None:
         """Records a function start."""
 
@@ -148,6 +151,7 @@ class Observations:
             self_type=self_type,
             is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
             is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
+            func_context=func_context,
         )
 
 
@@ -181,7 +185,9 @@ class Observations:
         code_id = CodeId(id(code))
         if (sample := self.pending_samples.get((code_id, frame_id))):
             sample.returns = return_type
-            self.samples[code_id].add(sample.process())
+            for overridden_code in get_override_contexts(sample.func_context, code):
+                overridden_code_id = CodeId(id(overridden_code))
+                self.samples[overridden_code_id].add(sample.process())
             del self.pending_samples[(code_id, frame_id)]
             return True
 
@@ -207,6 +213,10 @@ class Observations:
         for (code_id, _), sample in self.pending_samples.items():
             if sample.yields:
                 self.samples[code_id].add(sample.process())
+                if sample.func_context:
+                    for overridden_code in get_override_contexts(sample.func_context):
+                        overridden_code_id = CodeId(id(overridden_code))
+                        self.samples[overridden_code_id].add(sample.process())
 
         def mk_annotation(code_id: CodeId) -> FuncAnnotation|None:
             func_info = self.functions_visited[code_id]
@@ -445,12 +455,13 @@ def process_function_arguments(
     code: CodeType,
     frame_id: FrameId,
     args: inspect.ArgInfo,
-    function: Callable|None
+    func_context: FuncContext|None
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
         return get_value_type(v, use_jaxtyping=options.infer_shapes)
 
+    function = func_context.function_object if func_context else None
 
     defaults: dict[str, tuple[Any]] = {} if not function else {
         # use tuple to differentiate a None default from no default
@@ -492,15 +503,16 @@ def process_function_arguments(
                         return get_type(first_arg)
         return None
 
-    obs.record_function(
-        code,
-        (
-            *(a for a in args.args),
-            *((args.varargs,) if args.varargs else ()),
-            *((args.keywords,) if args.keywords else ())
-        ),
-        get_default_type
-    )
+    for code_instance in get_override_contexts(func_context, code):
+        obs.record_function(
+            code_instance,
+            (
+                *(a for a in args.args),
+                *((args.varargs,) if args.varargs else ()),
+                *((args.keywords,) if args.keywords else ())
+            ),
+            get_default_type
+        )
 
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
@@ -522,7 +534,8 @@ def process_function_arguments(
         code,
         frame_id,
         arg_values,
-        get_self_type()
+        get_self_type(),
+        func_context,
     )
 
 
