@@ -1,4 +1,3 @@
-import itertools
 from typing import Sequence, Iterator, cast
 from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo
 from .righttyper_utils import get_main_module_fqn
@@ -27,32 +26,6 @@ def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     if len(typeinfoset) > 1:
         if sclass := find_most_specific_common_superclass(typeinfoset):
             return sclass
-
-        # merge similar generics
-        if any(t.args for t in typeinfoset):
-            typeinfoset = set(typeinfoset)   # avoid modifying argument
-
-            # TODO group by superclass/protocol when possible, so that these can be merged
-            # e.g.: list[int], Sequence[int]
-
-            def group_key(t):
-                return t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args)
-            group: Iterator[TypeInfo]|set[TypeInfo]
-            for (mod, name, all_info, nargs), group in itertools.groupby(
-                sorted(typeinfoset, key=group_key),
-                group_key
-            ):
-                if all_info:
-                    group = set(group)
-                    first = next(iter(group))
-                    typeinfoset -= group
-                    typeinfoset.add(first.replace(args=tuple(
-                            merged_types({
-                                cast(TypeInfo, member.args[i]) for member in group
-                            })
-                            for i in range(nargs)
-                        )
-                    ))
 
     tr = SimplifyGeneratorsTransformer()
     typeinfoset = set(

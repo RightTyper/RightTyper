@@ -111,21 +111,14 @@ def test_generalize_generic_not_generalizable():
         (ti('float'), ti('list', args=(ti('float'),))),
         (ti('bool'), TypeInfo.from_type(type(None))),
     ]
-    assert generalize(samples) == ['bool|float|int', 'list[float|int]|None']
-
-    samples = [
-        (ti('int'), ti('list', args=(ti('int'),))),
-        (ti('float'), ti('list', args=(ti('float'),))),
-        (ti('bool'), ti('list', args=(ti('int'),)))
-    ]
-    assert generalize(samples) == ['bool|float|int', 'list[float|int]']
+    assert generalize(samples) == ['bool|float|int', 'list[float]|list[int]|None']
 
     samples = [
         (ti('int'), ti('tuple', args=(ti('int'),))),
         (ti('float'), ti('tuple', args=(ti('float'),))),
         (ti('bool'), ti('tuple', args=(ti('bool'), ti('int'))))
     ]
-    assert generalize(samples) == ['bool|float|int', 'tuple[bool, int]|tuple[float|int]']
+    assert generalize(samples) == ['bool|float|int', 'tuple[bool, int]|tuple[float]|tuple[int]']
 
 
 def test_generalize_generic_among_options():
