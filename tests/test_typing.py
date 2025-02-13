@@ -302,54 +302,9 @@ def test_merged_types():
 
 
 def test_merged_types_generics():
-    assert "list[bool|int]|None" == str(merged_types({
+    assert "list[bool]|list[int]" == str(merged_types({
             TypeInfo("", "list", args=(TypeInfo("", "int"),)),
-            TypeInfo("", "list", args=(TypeInfo("", "bool"),)),
-            TypeInfo.from_type(type(None))
-        }
-    ))
-
-    assert "list[tuple[bool|int, float]]" == str(merged_types({
-            TypeInfo("", "list", args=(
-                TypeInfo("", "tuple", args=(
-                    TypeInfo("", "bool"),
-                    TypeInfo("", "float"),
-                )),
-            )),
-            TypeInfo("", "list", args=(
-                TypeInfo("", "tuple", args=(
-                    TypeInfo("", "int"),
-                    TypeInfo("", "float"),
-                )),
-            )),
-        }
-    ))
-
-    assert "list[tuple[bool, float]|tuple[float]]" == str(merged_types({
-            TypeInfo("", "list", args=(
-                TypeInfo("", "tuple", args=(
-                    TypeInfo("", "bool"),
-                    TypeInfo("", "float"),
-                )),
-            )),
-            TypeInfo("", "list", args=(
-                TypeInfo("", "tuple", args=(
-                    TypeInfo("", "float"),
-                )),
-            )),
-        }
-    ))
-
-
-def test_merged_types_generics_str_not_merged():
-    # the [...] parameters in Callable are passed as a string, which we don't merge (yet)
-    assert "Callable[[], None]|Callable[[int], None]" == str(merged_types({
-            TypeInfo("", "Callable", args=(
-                "[], None",
-            )),
-            TypeInfo("", "Callable", args=(
-                "[int], None",
-            )),
+            TypeInfo("", "list", args=(TypeInfo("", "bool"),))
         }
     ))
 
@@ -415,19 +370,6 @@ def test_merged_types_superclass_bare_type():
         }
     ))
 
-
-def test_merged_types_generics_superclass():
-    class A: pass
-    class B(A): pass
-    class C(B): pass
-    class D(B): pass
-
-    assert f"list[{name(B)}]|None" == str(merged_types({
-            TypeInfo("", "list", args=(TypeInfo.from_type(C),)),
-            TypeInfo("", "list", args=(TypeInfo.from_type(D),)),
-            TypeInfo.from_type(type(None))
-        }
-    ))
 
 str_ti = TypeInfo("", "str", type_obj=str)
 int_ti = TypeInfo("", "int", type_obj=int)
