@@ -1,4 +1,4 @@
-from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample
+from righttyper.righttyper_types import FuncContext, TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample
 from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
@@ -455,3 +455,23 @@ def test_sample_process_generator_union():
     sample = generate_sample(dog, 1, "hi", True)
     assert sample == Sample((int_ti, str_ti, bool_ti,), yields={int_ti, str_ti}, returns=bool_ti, is_generator=True)
     assert generalize([sample.process()]) == [int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), NoneTypeInfo, bool_ti)]
+
+
+def test_override_yields():
+    class A:
+        def foo(self):
+            pass
+
+
+    class B(A):
+        pass
+
+
+    class C(B):
+        def foo(self):
+            pass
+    
+    if isinstance(C.foo, types.FunctionType):
+        c_instance = FuncContext(C.foo, C)
+        overrides_c: set[types.FunctionType] = set(rt.get_overrides(c_instance))
+        assert overrides_c == {A.foo, C.foo}
