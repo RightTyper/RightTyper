@@ -479,11 +479,6 @@ def process_function_arguments(
 
         return None
 
-        is_property: bool = (
-            (attr := getattr(type(args.locals[args.args[0]]), code.co_name, None)) and
-            isinstance(attr, property)
-        )
-
     def get_self_type() -> TypeInfo|None:
         if args.args:
             first_arg = args.locals[args.args[0]]
