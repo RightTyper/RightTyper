@@ -952,6 +952,48 @@ def test_function_type_in_annotation():
     assert 'def baz(f: Callable[[FunctionType, Any], Any], g: Callable[[int], float], x: int) -> float:' in output
 
 
+def test_callable_varargs():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(*args):
+            return args[0]/2
+
+        def bar(f):
+            f(1, 2)
+
+        bar(foo)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(*args: int) -> float:' in output
+    assert 'def bar(f: Callable[[], float]) -> None:' in output
+    # or VarArg(int) from mypy_extensions
+
+
+def test_callable_kwargs():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(**kwargs):
+            return kwargs['a']/2
+
+        def bar(f):
+            f(a=1, b=2)
+
+        bar(foo)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(**kwargs: int) -> float:' in output
+    assert 'def bar(f: Callable[[], float]) -> None:' in output
+    # or KwArg(int) from mypy_extensions, or Unpack + TypedDict
+
+
 def test_discovered_function_type_in_args():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
