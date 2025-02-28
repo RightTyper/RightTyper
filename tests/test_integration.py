@@ -64,13 +64,36 @@ def test_builtins():
     assert "def func3(t: super) -> None" in output
 
 
-def test_type_from_generic_alias_annotation():
+def test_callable_from_annotations():
     t = textwrap.dedent("""\
-        def f() -> list[int]: ...   # list[int] is a GenericAlias
+        def f(x: int) -> float:
+            return x/2
 
         def g():
             return f
 
+        f(1.0)
+        g()
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def g() -> Callable[[int], float]:" in output
+
+
+def test_callable_from_annotation_generic_alias():
+    t = textwrap.dedent("""\
+        def f() -> list[int]:   # list[int] is a GenericAlias
+            return [1,2,3]
+
+        def g():
+            return f
+
+        f()
         g()
         """)
 
@@ -83,13 +106,15 @@ def test_type_from_generic_alias_annotation():
     assert "def g() -> Callable[[], list[int]]:" in output
 
 
-def test_type_from_annotation_none_return():
+def test_callable_from_annotation_none_return():
     t = textwrap.dedent("""\
-        def f() -> None: ...
+        def f() -> None:
+            pass
 
         def g():
             return f
 
+        f()
         g()
         """)
 
