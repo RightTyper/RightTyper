@@ -139,6 +139,8 @@ class ArgInfo:
 class FuncInfo:
     func_id: FuncId
     args: tuple[ArgInfo, ...]
+    varargs: ArgumentName|None
+    kwargs: ArgumentName|None
 
 
 

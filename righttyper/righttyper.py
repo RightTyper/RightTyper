@@ -113,10 +113,16 @@ class Observations:
     def record_function(
         self,
         code: CodeType,
-        arg_names: tuple[str, ...],
+        args: inspect.ArgInfo,
         get_default_type: Callable[[str], TypeInfo|None]
     ) -> None:
         """Records that a function was visited, along with some details about it."""
+
+        arg_names = (
+            *(a for a in args.args),
+            *((args.varargs,) if args.varargs else ()),
+            *((args.keywords,) if args.keywords else ())
+        )
 
         code_id = CodeId(id(code))
         if code_id not in self.functions_visited:
@@ -129,7 +135,9 @@ class Observations:
                 tuple(
                     ArgInfo(ArgumentName(name), get_default_type(name))
                     for name in arg_names
-                )
+                ),
+                ArgumentName(args.varargs) if args.varargs else None,
+                ArgumentName(args.keywords) if args.keywords else None
             )
 
 
@@ -249,10 +257,15 @@ class Observations:
                 # if 'args' is there, the function is already annotated
                 if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.samples:
                     if (ann := mk_annotation(node.code_id)):
+                        func_info = self.functions_visited[node.code_id]
                         if node.name == 'Callable':
                             # TODO: fix callable arguments being strings
                             return TypeInfo('typing', 'Callable', args=(
-                                f"[{", ".join(map(lambda a: str(a[1]), ann.args[int(node.is_bound):]))}]",
+                                "[" + ", ".join(
+                                    str(a[1])
+                                    for a in ann.args[int(node.is_bound):]
+                                    if a[0] not in (func_info.varargs, func_info.kwargs)
+                                ) + "]",
                                 ann.retval
                             ))
                         elif node.name in ('Generator', 'AsyncGenerator'):
@@ -466,11 +479,6 @@ def process_function_arguments(
 
         return None
 
-        is_property: bool = (
-            (attr := getattr(type(args.locals[args.args[0]]), code.co_name, None)) and
-            isinstance(attr, property)
-        )
-
     def get_self_type() -> TypeInfo|None:
         if args.args:
             first_arg = args.locals[args.args[0]]
@@ -492,15 +500,7 @@ def process_function_arguments(
                         return get_type(first_arg)
         return None
 
-    obs.record_function(
-        code,
-        (
-            *(a for a in args.args),
-            *((args.varargs,) if args.varargs else ()),
-            *((args.keywords,) if args.keywords else ())
-        ),
-        get_default_type
-    )
+    obs.record_function(code, args, get_default_type)
 
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
