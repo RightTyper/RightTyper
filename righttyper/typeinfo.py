@@ -1,4 +1,6 @@
 from typing import Sequence, Iterator, cast
+
+from .righttyper_runtime import lookup_type_module
 from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo
 from .righttyper_utils import get_main_module_fqn
 from collections import Counter
@@ -49,12 +51,52 @@ def find_most_specific_common_superclass(typeinfoset: set[TypeInfo]) -> TypeInfo
         *(set(dir(cast(TYPE_OBJ_TYPES, t.type_obj))) for t in typeinfoset)
     )
 
+    def insert_numerics(mro: tuple[type, ...]) -> tuple[type, ...]:
+        """Inserts numerics where applicable into an mro list
+        
+        This also preserves topological order.
+
+        For example, suppose our type hierarchy looks like
+        ```
+             float int
+                |   |
+                B   C
+                 \\ /
+                  A
+        ```
+        And we are given [A, B, float, C, int]
+
+        According to [PEP 3141](https://peps.python.org/pep-3141/), this type hierarchy is equivalent to
+        ```
+             complex
+                |
+              float
+                | \\
+                |  int
+                |   |
+                B   C
+                 \\ /
+                  A
+        ```
+
+        This method returns a new mro that is consistent with this type hierarchy
+        """
+        new_mro = list(filter(lambda mro_type: mro_type not in {int, float, complex, object}, mro))
+        numerics = list(filter(lambda mro_type: mro_type in {int, float, complex, object}, mro))
+        tower_index = min(map(
+            lambda mro_type: [int, float, complex, object].index(mro_type),
+            numerics
+        ))
+        new_mro.extend([int, float, complex, object][tower_index:])
+        return tuple(new_mro)
+
+
     # Get the superclasses, if any, that have all the common attributes
     common_superclasses = set.intersection(
         *(
             set(
                 base
-                for base in cast(TYPE_OBJ_TYPES, t.type_obj).__mro__
+                for base in insert_numerics(cast(TYPE_OBJ_TYPES, t.type_obj).__mro__)
                 if common_attributes.issubset(set(dir(base)))
             )
             for t in typeinfoset
@@ -68,10 +110,10 @@ def find_most_specific_common_superclass(typeinfoset: set[TypeInfo]) -> TypeInfo
 
     specific = max(
         common_superclasses,
-        key=lambda cls: cls.__mro__.index(object),
+        key=lambda cls: insert_numerics(cls.__mro__).index(object),
     )
 
-    module = specific.__module__ if specific.__module__ != '__main__' else get_main_module_fqn()
+    module = lookup_type_module(specific)
     return TypeInfo(module, specific.__qualname__, type_obj=specific)
 
 
