@@ -2153,3 +2153,27 @@ def test_instrument_pytest():
                    '-m' 'pytest', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def f() -> Generator[int, int, None]" in output
+
+
+def test_higher_order_functions():
+    # Check that we can handle such functions.  Do we need the CALL event to handle them?
+    t = textwrap.dedent("""\
+        def foo(x):
+            return x+x
+
+        def runner(f):
+            f(0)
+            return f
+
+        runner(foo)("a")
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--inline-generics', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def foo[T1: (int, str)](x: T1) -> T1" in output
+    # FIXME this is what it should be
+    #assert "def runner[T1: (int, str)](f: Callable[[T1], T1]) -> Callable[[T1], T1]" in output
+    assert "def runner[T1: (int, str)](f: Callable[[int|str], T1]) -> Callable[[int|str], T1]" in output

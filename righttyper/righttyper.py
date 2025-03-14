@@ -946,9 +946,9 @@ def main(
         setup_tool_id()
         register_monitoring_callbacks(
             enter_handler,
-            call_handler,
             return_handler,
             yield_handler,
+            call_handler,
         )
         sys.monitoring.restart_events()
         alarm.start()
