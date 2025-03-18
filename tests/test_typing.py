@@ -21,6 +21,9 @@ class IterableClass(Iterable):
         return None
 
 
+class MyGeneric[A, B, C](dict): pass
+
+
 def test_get_value_type():
     assert NoneTypeInfo is rt.get_value_type(None)
 
@@ -151,6 +154,9 @@ def test_get_value_type():
 
     assert "typing.AsyncGenerator" == get_value_type(async_range(10))
     assert "typing.AsyncGenerator" == get_value_type(aiter(async_range(10)))
+
+    assert f"{__name__}.MyGeneric[builtins.int, builtins.str, builtins.bool]" == \
+            get_value_type(MyGeneric[int, str, bool]())
 
 
 @pytest.mark.filterwarnings("ignore:coroutine .* never awaited")

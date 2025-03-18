@@ -403,6 +403,13 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         return get_value_type(v, use_jaxtyping=use_jaxtyping, depth=depth+1)
 
 
+    if (orig := getattr(value, "__orig_class__", None)):
+        return TypeInfo(orig.__module__, orig.__qualname__,
+                        tuple(
+                            TypeInfo.from_type(a) for a in orig.__args__
+                        )
+               )
+
     if isinstance(value, dict):
         t = dict if isinstance(value, RandomDict) else type(value)
         args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
