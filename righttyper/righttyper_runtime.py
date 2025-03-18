@@ -341,7 +341,7 @@ def find_function(
                 if (f := find_in_class(obj)):
                     return f
 
-            elif isinstance(obj, (abc.Callable, classmethod)):
+            elif isinstance(obj, (abc.Callable, classmethod)):  # type: ignore[arg-type]
                 if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
                     return obj
 
@@ -357,7 +357,7 @@ def find_function(
             if (f := find_in_class(obj)):
                 return f
 
-        elif isinstance(obj, abc.Callable):
+        elif isinstance(obj, abc.Callable):  # type: ignore[arg-type]
             if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
                 return obj
 
