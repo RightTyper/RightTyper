@@ -1313,8 +1313,25 @@ def test_self():
     assert 'def baz(me: Self) -> Self:' in output
 
 
-@pytest.mark.xfail(reason="Doesn't currently work")
-def test_self_with_wrapped_method():
+def test_cached_function():
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        @functools.cache
+        def foo(x=None):
+            return x/2 if x else 0
+
+        foo(1)
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def foo(x: int|None=None) -> float:' in output
+
+
+def test_self_with_cached_method():
     Path("t.py").write_text(textwrap.dedent("""\
         import functools
 

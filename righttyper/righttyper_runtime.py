@@ -337,13 +337,14 @@ def find_function(
         visited.add(class_obj)
 
         for obj in class_obj.__dict__.values():
-            if isinstance(obj, (FunctionType, classmethod)):
+            if inspect.isclass(obj):
+                if (f := find_in_class(obj)):
+                    return f
+
+            elif isinstance(obj, (abc.Callable, classmethod)):
                 if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
                     return obj
 
-            elif inspect.isclass(obj):
-                if (f := find_in_class(obj)):
-                    return f
 
         return None
 
@@ -352,13 +353,14 @@ def find_function(
         dicts = itertools.chain(caller_frame.f_back.f_locals.values(), dicts)
 
     for obj in dicts:
-        if isinstance(obj, FunctionType):
+        if inspect.isclass(obj):
+            if (f := find_in_class(obj)):
+                return f
+
+        elif isinstance(obj, abc.Callable):
             if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
                 return obj
 
-        elif inspect.isclass(obj):
-            if (f := find_in_class(obj)):
-                return f
 
     return None
 
