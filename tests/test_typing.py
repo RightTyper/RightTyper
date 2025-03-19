@@ -3,7 +3,7 @@ from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 from collections.abc import Iterable
 from collections import namedtuple
-from typing import Any, Callable
+from typing import Any, Callable, get_type_hints
 import pytest
 import importlib
 import types
@@ -21,7 +21,7 @@ class IterableClass(Iterable):
         return None
 
 
-class MyGeneric[A, B, C](dict): pass
+class MyGeneric[A, B](dict): pass
 
 
 def test_get_value_type():
@@ -155,8 +155,8 @@ def test_get_value_type():
     assert "typing.AsyncGenerator" == get_value_type(async_range(10))
     assert "typing.AsyncGenerator" == get_value_type(aiter(async_range(10)))
 
-    assert f"{__name__}.MyGeneric[builtins.int, builtins.str, builtins.bool]" == \
-            get_value_type(MyGeneric[int, str, bool]())
+    assert f"{__name__}.MyGeneric[builtins.int, builtins.str]" == \
+            get_value_type(MyGeneric[int, str]())
 
 
 @pytest.mark.filterwarnings("ignore:coroutine .* never awaited")
@@ -237,17 +237,39 @@ def test_get_value_type_torch_jaxtyping():
 
 
 def test_type_from_annotations():
-    def foo(x: int|float, y: list[tuple[bool, ...]]) -> complex|None:
+    def foo(x: int|float, y: list[tuple[bool, ...]], z: Callable[[], None]) -> complex|None:
         pass
 
-    assert "typing.Callable[[int | float, list[tuple[bool, ...]]], complex | None]" == type_from_annotations(foo)
+    assert "typing.Callable[[int|float, list[tuple[bool, ...]], collections.abc.Callable[[], None]], complex|None]" == \
+            type_from_annotations(foo)
+
+
+@pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
+                     importlib.util.find_spec('numpy') is None),
+                    reason='missing modules')
+def test_hint2type():
+    import jaxtyping
+    import jax.numpy as jnp
+
+    def foo(
+        x: int | MyGeneric[1, 2.0],
+        y: MyGeneric[[], ...],
+        z: jaxtyping.Float[jnp.ndarray, "10 20"]
+    ): pass
+
+    hints = get_type_hints(foo)
+
+    assert f"int|{__name__}.MyGeneric[1, 2.0]" == str(rt.hint2type(hints['x']))
+    assert f"{__name__}.MyGeneric[[], ...]" == str(rt.hint2type(hints['y']))
+    assert "jaxtyping.Float[Array, '10 20']" == str(rt.hint2type(hints['z']))
+
 
 
 def test_typeinfo():
     assert "foo.bar" == str(TypeInfo("foo", "bar"))
-    assert "foo.bar[m.baz, \"x y\"]" == str(TypeInfo("foo", "bar", (TypeInfo("m", "baz"), "\"x y\"")))
+    assert "foo.bar[m.baz, \"x y\"]" == str(TypeInfo("foo", "bar", (TypeInfo("m", "baz"), "x y")))
     assert "int" == str(TypeInfo("", "int"))
-    assert "tuple[bool]" == str(TypeInfo("", "tuple", args=('bool',)))
+    assert "tuple[bool]" == str(TypeInfo("", "tuple", args=(TypeInfo('', 'bool'),)))
 
     t = TypeInfo.from_type(type(None))
     assert t.module == ''

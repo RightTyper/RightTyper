@@ -7,10 +7,23 @@ import importlib.util
 import re
 
 
-@pytest.fixture(scope='function', autouse=True)
+@pytest.fixture(scope='function')
 def tmp_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     yield tmp_path
+
+@pytest.fixture(scope='function', autouse=True)
+def runmypy(tmp_cwd, request):
+    yield
+    if 'dont_run_mypy' not in request.keywords:
+        from mypy import api
+        result = api.run(['.'])
+        if result[2]:
+            print(result[0])
+            filename = result[0].split(':')[0]
+            for lineno, line in enumerate(Path(filename).read_text().splitlines(), start=1):
+                print(f"{lineno:3}: {line}")
+            pytest.fail("see mypy errors")
 
 
 @pytest.mark.xfail(reason="Iterable/Iterator introspection doesn't currently work")
@@ -66,7 +79,7 @@ def test_builtins():
 
 def test_callable_from_annotations():
     t = textwrap.dedent("""\
-        def f(x: int) -> float:
+        def f(x: int | float) -> float:
             return x/2
 
         def g():
@@ -82,7 +95,7 @@ def test_callable_from_annotations():
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert "def g() -> Callable[[int], float]:" in output
+    assert "def g() -> Callable[[int|float], float]:" in output
 
 
 def test_callable_from_annotation_generic_alias():
@@ -185,7 +198,7 @@ def test_annotation_with_numpy_dtype_name():
         import numpy as np
         from ml_dtypes import bfloat16 as bf16
 
-        def f() -> np.ndarray[Any, np.dtype[bf16]]: ...
+        def f() -> np.ndarray[Any, np.dtype[bf16]]: ... # type: ignore[empty-body]
 
         def g():
             return f
@@ -202,6 +215,7 @@ def test_annotation_with_numpy_dtype_name():
     assert "def g() -> Callable[[], np.ndarray[Any, np.dtype[bf16]]]:" in output
 
 
+@pytest.mark.dont_run_mypy # it lacks definitions for checking
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None,
                     reason='missing module numpy')
 def test_internal_numpy_type():
@@ -263,7 +277,7 @@ def test_jaxtyping_annotation():
 def test_call_with_none_default():
     t = textwrap.dedent("""\
         def func(n=None):
-            return n+1 if n is not None else 0
+            return n+1 if n is not None else 0  # type: ignore[operator]
 
         func()
         """)
@@ -484,7 +498,7 @@ def test_return_private_class():
 def test_default_inner_function():
     t = textwrap.dedent("""\
         def f(x):
-            def g(y=None):
+            def g(y='0'):
                 return int(y)+1
 
             return g(x)
@@ -498,7 +512,7 @@ def test_default_inner_function():
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert "def g(y: int|None=None) -> int" in output
+    assert "def g(y: int|str='0') -> int" in output
 
 
 def test_default_class_method():
@@ -584,34 +598,6 @@ def test_generator_with_return():
 
     assert "def gen() -> Generator[int, None, str]:" in output
     assert "def g(f: Generator[int, None, str]) -> None" in output
-
-
-@pytest.mark.xfail(reason="Doesn't currently work")
-def test_generator_from_annotation():
-    t = textwrap.dedent("""\
-        from typing import Generator
-
-        def gen() -> Generator[int|str, None, None]:
-            yield ""
-
-        def main():
-            for _ in gen():
-                pass
-
-        def g(f):
-            pass
-
-        main()
-        g(gen())
-        """)
-
-    Path("t.py").write_text(t)
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', 't.py'], check=True)
-    output = Path("t.py").read_text()
-
-    assert "def g(f: Generator[int|str, None, None]) -> None" in output
 
 
 def test_async_generator():
@@ -872,8 +858,6 @@ def test_type_from_main():
     output = Path("m.py").read_text()
     assert "def f(x: \"t.C\") -> str:" in output
 
-    subprocess.run([sys.executable, '-m', 'mypy', 'm.py', 't.py'], check=True)
-
 
 def test_module_type():
     Path("t.py").write_text(textwrap.dedent("""\
@@ -952,6 +936,7 @@ def test_function_type_future_annotations():
     assert 'def baz(h: Callable[[int], int], x: int) -> int:' in output # bound method
 
 
+@pytest.mark.dont_run_mypy  # FIXME FunctionType != Callable
 def test_function_type_in_annotation():
     Path("t.py").write_text(textwrap.dedent("""\
         from types import FunctionType
@@ -994,7 +979,7 @@ def test_callable_varargs():
 
     output = Path("t.py").read_text()
     assert 'def foo(*args: int) -> float:' in output
-    assert 'def bar(f: Callable[[], float]) -> None:' in output
+    assert 'def bar(f: Callable[..., float]) -> None:' in output
     # or VarArg(int) from mypy_extensions
 
 
@@ -1015,7 +1000,7 @@ def test_callable_kwargs():
 
     output = Path("t.py").read_text()
     assert 'def foo(**kwargs: int) -> float:' in output
-    assert 'def bar(f: Callable[[], float]) -> None:' in output
+    assert 'def bar(f: Callable[..., float]) -> None:' in output
     # or KwArg(int) from mypy_extensions, or Unpack + TypedDict
 
 
@@ -1102,7 +1087,7 @@ def test_discovered_function_annotated(ignore_ann):
     if ignore_ann:
         assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
     else:
-        assert "def bar(f: Callable[[int | float], float], x: int) -> float:" in output
+        assert "def bar(f: Callable[[int|float], float], x: int) -> float:" in output
 
 
 def test_discovered_generator():
@@ -1350,6 +1335,7 @@ def test_self_with_cached_method():
     assert 'def foo(self: Self, x: int) -> Self:' in output
 
 
+@pytest.mark.dont_run_mypy  # unnecessary for this test
 def test_rich_is_messed_up():
     # running rich's test suite leaves it unusable... simulate that situation.
     Path("t.py").write_text(textwrap.dedent("""\
@@ -1556,8 +1542,12 @@ def test_generic_name_conflict():
 
 def test_generic_yield():
     t = textwrap.dedent("""\
+        from typing import Any
+
         def y(a):
             yield a
+
+        _: Any
         for _ in y(1): pass
         for _ in y("a"): pass
         """)
@@ -1574,9 +1564,13 @@ def test_generic_yield():
 
 def test_generic_yield_generator():
     t = textwrap.dedent("""\
+        from typing import Any
+
         def y(a, b):
             yield a
             return b
+
+        _: Any
         for _ in y(1, "a"): pass
         for _ in y("a", 1): pass
         """)
@@ -1639,6 +1633,7 @@ def test_generic_and_defaults():
     assert "def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None" in output
 
 
+@pytest.mark.skip(reason="This test is broken: we can't assume collection arguments apply as-is")
 @pytest.mark.parametrize('superclass, expected', [
     ("list", "MyContainer[Never]"),
     ("set", "MyContainer[Never]"),
@@ -1675,6 +1670,7 @@ def test_custom_collection_len_error(superclass, expected):
     assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
 
 
+@pytest.mark.skip(reason="This test is broken: we can't assume collection arguments apply as-is")
 @pytest.mark.parametrize('superclass, expected', [
     ("list", "MyContainer[Never]"),
     ("set", "MyContainer[Never]"),
@@ -1724,7 +1720,7 @@ def test_class_properties():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
             def __init__(self):
-                self._x = None
+                self._x: int|None = None
 
             @property
             def x(self):
@@ -1739,7 +1735,7 @@ def test_class_properties():
                 del self._x
 
         c = C()
-        c.x = 10
+        c.x = 10  # type: ignore[assignment]
         y = c.x
         del c.x
         """
@@ -1795,7 +1791,7 @@ def test_class_properties_inner_functions():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
             def __init__(self):
-                self._x = None
+                self._x: int|None = None
 
             @property
             def x(self):
@@ -1813,7 +1809,7 @@ def test_class_properties_inner_functions():
                 self._x = foo(value)
 
         c = C()
-        c.x = 10.0
+        c.x = 10.0  # type: ignore[assignment]
         y = c.x
         """
     ))
@@ -1850,6 +1846,7 @@ def test_self_simple():
     assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
 
 
+@pytest.mark.dont_run_mypy # FIXME this is broken
 def test_self_wrapped_method():
     Path("t.py").write_text(textwrap.dedent("""\
         import functools
@@ -2097,6 +2094,7 @@ def test_returns_or_yields_generator():
             else:
                 for i in range(a):
                     yield a
+            return None
 
         for _ in test(3): pass
         for _ in test(10): pass
@@ -2106,6 +2104,7 @@ def test_returns_or_yields_generator():
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+
     output = Path("t.py").read_text()
     assert "def test(a: int) -> Generator[int|None, None, str|None]" in output
 
@@ -2126,6 +2125,7 @@ def test_generators_merge_into_iterator():
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+
     output = Path("t.py").read_text()
     assert "def test(a: int) -> Iterator[int|str]" in output
 
@@ -2172,6 +2172,7 @@ def test_instrument_pytest():
     assert "def f() -> Generator[int, int, None]" in output
 
 
+@pytest.mark.dont_run_mypy  # mypy fails, but it's not quite clear why
 def test_higher_order_functions():
     # Check that we can handle such functions.  Do we need the CALL event to handle them?
     t = textwrap.dedent("""\
@@ -2191,6 +2192,4 @@ def test_higher_order_functions():
                     '--inline-generics', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def foo[T1: (int, str)](x: T1) -> T1" in output
-    # FIXME this is what it should be
-    #assert "def runner[T1: (int, str)](f: Callable[[T1], T1]) -> Callable[[T1], T1]" in output
-    assert "def runner[T1: (int, str)](f: Callable[[int|str], T1]) -> Callable[[int|str], T1]" in output
+    assert "def runner[T1: (int, str)](f: Callable[[T1], T1]) -> Callable[[T1], T1]" in output

@@ -259,13 +259,12 @@ class Observations:
                     if (ann := mk_annotation(node.code_id)):
                         func_info = self.functions_visited[node.code_id]
                         if node.name == 'Callable':
-                            # TODO: fix callable arguments being strings
                             return TypeInfo('typing', 'Callable', args=(
-                                "[" + ", ".join(
-                                    str(a[1])
-                                    for a in ann.args[int(node.is_bound):]
-                                    if a[0] not in (func_info.varargs, func_info.kwargs)
-                                ) + "]",
+                                TypeInfo.list([
+                                    a[1] for a in ann.args[int(node.is_bound):]
+                                ])
+                                if not (func_info.varargs or func_info.kwargs) else
+                                ...,
                                 ann.retval
                             ))
                         elif node.name in ('Generator', 'AsyncGenerator'):

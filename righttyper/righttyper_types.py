@@ -36,7 +36,7 @@ TYPE_OBJ_TYPES: TypeAlias = type
 class TypeInfo:
     module: str
     name: str
-    args: "tuple[TypeInfo|str, ...]" = tuple()    # arguments within []
+    args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()    # arguments within []
 
     code_id: CodeId = CodeId(0)     # if a callable, generator or coroutine, the CodeId
     is_bound: bool = False          # if a callable, whether bound
@@ -53,20 +53,27 @@ class TypeInfo:
             return "|".join(str(a) for a in self.args)
         
         module = self.module + '.' if self.module else ''
-        if self.args:
-            # TODO: fix callable arguments being strings
-            # if self.module == "typing" and self.name == "Callable":
-            #     return f"{module}{self.name}[[" + \
-            #         ", ".join(str(a) for a in self.args[:-1]) + \
-            #         f"], {str(self.args[-1])}]"
+        if self.args or self.name == '':
+            def arg2str(a: TypeInfo|str|ellipsis) -> str:
+                if a is Ellipsis:
+                    return '...'
+                if isinstance(a, str):
+                    return f'"{a}"'
+                return str(a)
             
             return (
                 f"{module}{self.name}[" +
-                    ", ".join(str(a) for a in self.args) +
+                    ", ".join(arg2str(a) for a in self.args) +
                 "]"
             )
 
         return f"{module}{self.name}"
+
+
+    @staticmethod
+    def list(args: "list[TypeInfo|str|ellipsis]") -> "TypeInfo":
+        """Builds a list argument, such as the first argument of a Callable"""
+        return TypeInfo('', '', args=tuple(args))   # FIXME subclass?
 
 
     @staticmethod

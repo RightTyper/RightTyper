@@ -17,7 +17,7 @@ from types import (
     CoroutineType,
     GenericAlias
 )
-from typing import Any, cast, TypeAlias
+from typing import Any, cast, TypeAlias, get_type_hints, get_origin, get_args
 from pathlib import Path
 
 from righttyper.random_dict import RandomDict
@@ -104,59 +104,52 @@ def should_skip_function(
     return False
 
 
+def hint2type(hint) -> TypeInfo:
+    def hint2type_arg(hint):
+        if isinstance(hint, list):
+            return TypeInfo.list([hint2type_arg(el) for el in hint])
+
+        if isinstance(hint, type) or get_origin(hint):
+            return hint2type(hint)
+
+        # TODO what types of objects are valid in hints?
+        return hint
+
+    if (origin := get_origin(hint)):
+        return TypeInfo.from_type(
+                    origin,
+                    module=origin.__module__ if origin.__module__ != 'builtins' else '',
+                    args=tuple(
+                        hint2type_arg(a) for a in get_args(hint)
+                    )
+                )
+
+    return get_type_name(hint)
+
+
 def type_from_annotations(func: abc.Callable) -> TypeInfo:
     try:
         signature = inspect.signature(func)
+        hints = get_type_hints(func)
     except ValueError:
         signature = None
+        hints = None
 
-    args: tuple
+    args: tuple = tuple() # default to just "Callable"
 
-    # Do we have an annotation?
-    if (
-        signature and (
-            any(p.annotation is not p.empty for p in signature.parameters.values())
-            or signature.return_annotation is not inspect.Signature.empty
+    # any type hints?
+    if signature and hints:
+        arg_types = TypeInfo.list([
+            hint2type(hints[arg_name]) if arg_name in hints else AnyTypeInfo
+            for arg_name in signature.parameters
+        ])
+
+        return_type = (
+            hint2type(hints['return']) if 'return' in hints else AnyTypeInfo
         )
-    ):
-        # Extract argument types, default to Any if no annotation provided
-        arg_types = [
-            (param.annotation if param.annotation is not param.empty else Any)
-            for name, param in signature.parameters.items()
-        ]
 
-        # Extract return type, default to Any if no annotation provided
-        return_type = signature.return_annotation
-        if return_type is inspect.Signature.empty:
-            return_type = Any
+        args = (arg_types, return_type)
 
-        def format_arg(arg) -> str:
-            if isinstance(arg, str):
-                # If types are quoted while using "from __future__ import annotations",
-                # strings may appear double quoted
-                if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in ["'",'"']:
-                    arg = arg[1:-1]
-
-                return arg
-
-            if isinstance(arg, GenericAlias):
-                return str(arg)
-
-            if isinstance(arg, type):
-                return str(get_type_name(arg))
-
-            return repr(arg)
-
-        # Format the result
-        args = (
-            f"[{', '.join([format_arg(arg) for arg in arg_types])}]",
-            format_arg(return_type)
-        )
-    else:
-        # no annotation: default to just "Callable"
-        args = tuple()
-
-    # Construct the Callable type string
     return TypeInfo("typing", "Callable",
         args=args,
         code_id=CodeId(id(func.__code__)),
@@ -484,7 +477,7 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
             shape = " ".join(str(d) for d in value.shape)
             return TypeInfo("jaxtyping", dtype, args=(
                 get_type_name(type(value), depth+1),
-                f"\"{shape}\""
+                f"{shape}"
             ))
 
     if (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':

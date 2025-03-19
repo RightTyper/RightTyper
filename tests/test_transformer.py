@@ -390,7 +390,7 @@ def test_transform_unknown_type_as_string():
                     [
                         (ArgumentName('x'), TypeInfo.from_type(int, module='')),
                         (ArgumentName('y'), TypeInfo.from_set({
-                            TypeInfo(module='x.y', name='Something', args=('"quoted"',)),
+                            TypeInfo(module='x.y', name='Something', args=('quoted',)),
                             NoneTypeInfo
                         }))
                     ],
