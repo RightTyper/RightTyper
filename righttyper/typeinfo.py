@@ -188,6 +188,8 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
             )
         )
 
+    # Count the number of times a type usage pattern occurs, as we only want to generalize
+    # if one occurs more than once (in more than one argument).
     def expand_types(types: tuple[TypeInfo, ...]) -> Iterator[tuple[TypeInfo, ...]]:
         """Given a tuple of types used in an argument or return value, extracts the
            various type patterns enclosed in those type's arguments.
@@ -199,15 +201,13 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
                 if types[0].args[i] is not Ellipsis:
                     yield from expand_types(cast(tuple[TypeInfo, ...], tuple(t.args[i] for t in types)))
 
-    # Count the number of times a type usage pattern occurs, as we only want to generalize
-    # if one occurs more than once (in more than one argument).
     occurrences: Counter[tuple[TypeInfo, ...]] = Counter()
     for types in transposed:
         occurrences.update([s for s in expand_types(types)])
 
+    # Rebuild the argument list, defining and replacing type patterns with a type variable.
     typevars: dict[tuple[TypeInfo, ...], TypeInfo] = {}
 
-    # Rebuild the argument list, defining and replacing type patterns with a type variable.
     def rebuild(types: tuple[TypeInfo, ...]) -> TypeInfo:
         # if the types look compatible, try to replace them with a single one using variable(s)
         if is_homogeneous(types):
