@@ -20,7 +20,6 @@ from typing import (
     Any,
     TextIO,
     Self,
-    Callable,
     Sequence
 )
 
@@ -114,7 +113,7 @@ class Observations:
         self,
         code: CodeType,
         args: inspect.ArgInfo,
-        get_default_type: Callable[[str], TypeInfo|None]
+        get_default_type: abc.Callable[[str], TypeInfo|None]
     ) -> None:
         """Records that a function was visited, along with some details about it."""
 
@@ -267,7 +266,7 @@ class Observations:
                         func_info = self.functions_visited[node.code_id]
                         # While copying from Callable, Generator, etc., it's important to clone the
                         # TypeInfo elements, as they could be later replaced (e.g., with typing.Self).
-                        if node.name == 'Callable':
+                        if node.type_obj is abc.Callable:
                             node = node.replace(args=(
                                 TypeInfo.list([
                                     ClearIsSelfT().visit(a[1]) for a in ann.args[int(node.is_bound):]
@@ -276,9 +275,9 @@ class Observations:
                                 ...,
                                 ClearIsSelfT().visit(ann.retval)
                             ))
-                        elif node.name in ('Generator', 'AsyncGenerator'):
+                        elif node.type_obj in (abc.Generator, abc.AsyncGenerator):
                             node = ClearIsSelfT().visit(ann.retval)
-                        elif node.name == 'Coroutine':
+                        elif node.type_obj is abc.Coroutine:
                             node = node.replace(args=(
                                 NoneTypeInfo,
                                 NoneTypeInfo,
@@ -480,7 +479,7 @@ def process_function_arguments(
     code: CodeType,
     frame_id: FrameId,
     args: inspect.ArgInfo,
-    function: Callable|None
+    function: abc.Callable|None
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:

@@ -2,6 +2,7 @@ from typing import Sequence, Iterator, cast
 from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo
 from .righttyper_utils import get_main_module_fqn
 from collections import Counter
+import collections.abc as abc
 from types import EllipsisType
 
 
@@ -12,8 +13,7 @@ class SimplifyGeneratorsTransformer(TypeInfo.Transformer):
         node = super().visit(node)
 
         if (
-            node.module == "typing"
-            and node.name == "Generator"
+            node.type_obj is abc.Generator
             and len(node.args) == 3
             and node.args[1] == NoneTypeInfo
             and node.args[2] == NoneTypeInfo

@@ -1,7 +1,7 @@
 from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample
 from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
-from collections.abc import Iterable
+import collections.abc as abc
 from collections import namedtuple
 from typing import Any, Callable, get_type_hints
 import pytest
@@ -16,7 +16,7 @@ def type_from_annotations(*args, **kwargs) -> str:
     return str(rt.type_from_annotations(*args, **kwargs))
 
 
-class IterableClass(Iterable):
+class IterableClass(abc.Iterable):
     def __iter__(self):
         return None
 
@@ -382,7 +382,7 @@ def test_merged_types_superclass_bare_type():
 str_ti = TypeInfo("", "str", type_obj=str)
 int_ti = TypeInfo("", "int", type_obj=int)
 bool_ti = TypeInfo("", "bool", type_obj=bool)
-generator_ti = lambda *a: TypeInfo("typing", "Generator", tuple(a))
+generator_ti = lambda *a: TypeInfo.from_type(abc.Generator, module="typing", args=tuple(a))
 iterator_ti = lambda *a: TypeInfo("typing", "Iterator", tuple(a))
 union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.UnionType)
 

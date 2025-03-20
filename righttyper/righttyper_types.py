@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace, field
 from typing import NewType, TypeVar, Self, TypeAlias
+import collections.abc as abc
 import types
 
 T = TypeVar("T")
@@ -50,7 +51,9 @@ class TypeInfo:
         if self.typevar_name: # FIXME subclass?
             return self.typevar_name
 
-        if self.module == "types" and self.name == "UnionType": # FIXME subclass?
+        # We can't use type_obj here because we need to clear them before using 'multiprocessing',
+        # since type objects aren't pickleable
+        if (self.module, self.name) == ('types', 'UnionType'): # FIXME subclass?
             return "|".join(str(a) for a in self.args)
         
         if self.args or self.name == '':
@@ -174,9 +177,9 @@ class Sample:
             s = TypeInfo.from_set(self.sends)
 
             if self.is_async:
-                retval = TypeInfo("typing", "AsyncGenerator", (y, s))
+                retval = TypeInfo.from_type(abc.AsyncGenerator, module="typing", args=(y, s))
             else:
-                retval = TypeInfo("typing", "Generator", (y, s, self.returns))
+                retval = TypeInfo.from_type(abc.Generator, module="typing", args=(y, s, self.returns))
             
         type_data = (*self.args, retval)
 

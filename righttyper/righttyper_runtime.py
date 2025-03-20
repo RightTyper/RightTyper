@@ -154,6 +154,7 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
     return TypeInfo("typing", "Callable",
         args=args,
         code_id=CodeId(id(func.__code__)),
+        type_obj=abc.Callable,
         is_bound=isinstance(func, MethodType)
     )
 
@@ -380,9 +381,9 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
 
     def type_for_generator(
         obj: GeneratorType|AsyncGeneratorType|CoroutineType,
+        type_obj: type,
         frame: FrameType,
         code: CodeType,
-        name: str
     ) -> TypeInfo:
         if (f := find_function(frame, code)):
             try:
@@ -392,7 +393,7 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
             except ValueError:
                 pass
 
-        return TypeInfo("typing", name, code_id=CodeId(id(code)))
+        return TypeInfo.from_type(type_obj, module="typing", code_id=CodeId(id(code)))
 
 
     def recurse(v: Any) -> TypeInfo:
@@ -463,11 +464,11 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
     elif isinstance(value, GeneratorType):
-        return type_for_generator(value, value.gi_frame, value.gi_code, "Generator")
+        return type_for_generator(value, abc.Generator, value.gi_frame, value.gi_code)
     elif isinstance(value, AsyncGeneratorType):
-        return type_for_generator(value, value.ag_frame, value.ag_code, "AsyncGenerator")
+        return type_for_generator(value, abc.AsyncGenerator, value.ag_frame, value.ag_code)
     elif isinstance(value, CoroutineType):
-        return type_for_generator(value, value.cr_frame, value.cr_code, "Coroutine")
+        return type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
     elif isinstance(value, type) and value is not type:
         return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
     elif type(value).__name__ == 'async_generator_wrapped_value' and type(value).__module__ == 'builtins':
