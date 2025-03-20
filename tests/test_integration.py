@@ -1690,6 +1690,23 @@ def test_generic_and_defaults():
     assert "def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None" in output
 
 
+def test_inline_generics_no_variables():
+    t = textwrap.dedent("""\
+        def f(x):
+            pass
+
+        f([10])
+        f(['10'])
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--inline-generics', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f(x: list[int|str]) -> None" in output
+
+
 @pytest.mark.parametrize('superclass', ['list', 'set', 'dict', 'tuple'])
 def test_custom_collection_typing(superclass):
     Path("t.py").write_text(textwrap.dedent(f"""\
@@ -2328,3 +2345,71 @@ def test_higher_order_functions():
     output = Path("t.py").read_text()
     assert "def foo[T1: (int, str)](x: T1) -> T1" in output
     assert "def runner[T1: (int, str)](f: Callable[[T1], T1]) -> Callable[[T1], T1]" in output
+
+
+def test_generalize_union_arg_typevar():
+    t = textwrap.dedent("""\
+        def f(x):
+            return x[0]
+
+        f([10])
+        f(['10'])
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--inline-generics', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f[T1: (int, str)](x: list[T1]) -> T1" in output
+
+
+def test_generalize_union_arg_not_typevar():
+    t = textwrap.dedent("""\
+        def f(x):
+            x.append(x[0])
+
+        f([10])
+        f(['10'])
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f(x: list[int|str]) -> None" in output
+
+
+def test_generalize_union_return_typevar():
+    t = textwrap.dedent("""\
+        def f(x):
+            return [x]
+
+        f(10)
+        f('10')
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--inline-generics', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f[T1: (int, str)](x: T1) -> list[T1]" in output
+
+
+def test_generalize_union_return_not_typevar():
+    t = textwrap.dedent("""\
+        def f(x):
+            return ['10' if x else 10]
+
+        f(False)
+        f(True)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f(x: bool) -> list[int|str]" in output

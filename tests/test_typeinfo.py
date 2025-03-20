@@ -73,21 +73,6 @@ def test_generalize_first_same_then_different():
     assert generalize(samples) == ['bool|int', 'bool|int']
 
 
-@pytest.mark.skip(reason="still checking whether mypy/pyright agree")
-def test_generalize_doesnt_push_union_into_parameters():
-    samples = [
-        (ti('str'), ti('list', args=(ti('bool'),))),
-        (ti('str'), ti('list', args=(ti('int'),))),
-    ]
-    assert generalize(samples) == ['str', 'list[bool]|list[int]']
-
-    samples = [
-        (ti('list', args=(ti('str'),)), ti('list', args=(ti('bool'),))),
-        (ti('list', args=(ti('str'),)), ti('list', args=(ti('int'),))),
-    ]
-    assert generalize(samples) == ['list[str]', 'list[bool]|list[int]']
-
-
 def test_generalize_mixed_with_constant_types():
     samples = [
         (ti('int'), ti('str'), ti('int')),
