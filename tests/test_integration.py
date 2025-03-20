@@ -999,7 +999,9 @@ def test_function_type_future_annotations():
     assert 'def baz(h: Callable[[int], int], x: int) -> int:' in output # bound method
 
 
-@pytest.mark.dont_run_mypy  # FIXME FunctionType != Callable
+# TODO this leads to an error: FunctionType IS-A Callable, so typing baz's g as
+# a Callable is too general. Should we be narrowing baz's g to FunctionType ?
+@pytest.mark.dont_run_mypy
 def test_function_type_in_annotation():
     Path("t.py").write_text(textwrap.dedent("""\
         from types import FunctionType
