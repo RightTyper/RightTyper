@@ -15,7 +15,7 @@ import collections.abc as abc
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import CodeType, FrameType, FunctionType, GeneratorType, AsyncGeneratorType
+from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType, AsyncGeneratorType
 from typing import (
     Any,
     TextIO,
@@ -251,30 +251,53 @@ class Observations:
                 retval=tr.visit(signature[-1])
             )
 
-        class T(TypeInfo.Transformer):
+        class ClearIsSelfT(TypeInfo.Transformer):
+            """Clones the given TypeInfo, clearing all is_self flags."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                return super().visit(node.replace(is_self=False))
+
+        class CallableT(TypeInfo.Transformer):
             """Updates Callable type declarations based on observations."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
+                node = super().visit(node)
+
                 # if 'args' is there, the function is already annotated
                 if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.samples:
                     if (ann := mk_annotation(node.code_id)):
                         func_info = self.functions_visited[node.code_id]
+                        # While copying from Callable, Generator, etc., it's important to clone the
+                        # TypeInfo elements, as they could be later replaced (e.g., with typing.Self).
                         if node.name == 'Callable':
-                            return TypeInfo('typing', 'Callable', args=(
+                            node = node.replace(args=(
                                 TypeInfo.list([
-                                    a[1] for a in ann.args[int(node.is_bound):]
+                                    ClearIsSelfT().visit(a[1]) for a in ann.args[int(node.is_bound):]
                                 ])
                                 if not (func_info.varargs or func_info.kwargs) else
                                 ...,
-                                ann.retval
+                                ClearIsSelfT().visit(ann.retval)
                             ))
                         elif node.name in ('Generator', 'AsyncGenerator'):
-                            return ann.retval
+                            node = ClearIsSelfT().visit(ann.retval)
                         elif node.name == 'Coroutine':
-                            return node.replace(args=(NoneTypeInfo, NoneTypeInfo, ann.retval))
+                            node = node.replace(args=(
+                                NoneTypeInfo,
+                                NoneTypeInfo,
+                                ClearIsSelfT().visit(ann.retval)
+                            ))
+
+                return node
+
+        self._transform_types(CallableT())
+
+        class SelfT(TypeInfo.Transformer):
+            """Renames types to typing.Self according to is_self."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.is_self:
+                    return TypeInfo("typing", "Self")
 
                 return super().visit(node)
 
-        self._transform_types(T())
+        self._transform_types(SelfT())
 
         return {
             self.functions_visited[code_id].func_id: annotation
@@ -490,13 +513,14 @@ def process_function_arguments(
                 # if type(first_arg) is type, we may have a @classmethod
                 first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
 
-                for ancestor in first_arg_class.__mro__:
-                    if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
-                        if first_arg is first_arg_class:
-                            return get_type_name(first_arg)
+                if isinstance(function, MethodType) or any(
+                    unwrap(ancestor.__dict__.get(function.__name__, None)) is function
+                    for ancestor in first_arg_class.__mro__
+                ):
+                    if first_arg is first_arg_class:
+                        return get_type_name(first_arg) # class method
 
-                        # normal method
-                        return get_type(first_arg)
+                    return get_type(first_arg) # normal method
         return None
 
     obs.record_function(code, args, get_default_type)

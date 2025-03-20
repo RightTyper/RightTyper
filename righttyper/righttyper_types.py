@@ -43,6 +43,7 @@ class TypeInfo:
     type_obj: TYPE_OBJ_TYPES|None = None
     typevar_index: int = 0
     typevar_name: str|None = None   # TODO delete me?
+    is_self: bool = False
 
 
     def __str__(self: Self) -> str:
@@ -52,7 +53,6 @@ class TypeInfo:
         if self.module == "types" and self.name == "UnionType": # FIXME subclass?
             return "|".join(str(a) for a in self.args)
         
-        module = self.module + '.' if self.module else ''
         if self.args or self.name == '':
             def arg2str(a: TypeInfo|str|ellipsis) -> str:
                 if a is Ellipsis:
@@ -62,12 +62,12 @@ class TypeInfo:
                 return str(a)
             
             return (
-                f"{module}{self.name}[" +
+                f"{self.qualname()}[" +
                     ", ".join(arg2str(a) for a in self.args) +
                 "]"
             )
 
-        return f"{module}{self.name}"
+        return self.qualname()
 
 
     @staticmethod
@@ -118,6 +118,10 @@ class TypeInfo:
             for a in self.args
             if isinstance(a, TypeInfo)
         )
+
+
+    def qualname(self) -> str:
+        return self.module + '.' + self.name if self.module else self.name
 
 
     class Transformer:
@@ -186,10 +190,7 @@ class Sample:
                         node.type_obj and
                         self.self_type.type_obj in node.type_obj.__mro__
                     ):
-                        return TypeInfo("typing", "Self")
-
-                    if node == self.self_type:
-                        return TypeInfo("typing", "Self")
+                        node = node.replace(is_self=True)
 
                     return super().visit(node)
 

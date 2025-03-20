@@ -9,6 +9,8 @@ from types import EllipsisType
 
 class SimplifyGeneratorsTransformer(TypeInfo.Transformer):
     def visit(self, node: TypeInfo) -> TypeInfo:
+        node = super().visit(node)
+
         if (
             node.module == "typing"
             and node.name == "Generator"
@@ -17,8 +19,8 @@ class SimplifyGeneratorsTransformer(TypeInfo.Transformer):
             and node.args[2] == NoneTypeInfo
         ):
             return TypeInfo("typing", "Iterator", (node.args[0],))
-        
-        return super().visit(node)
+
+        return node
 
 
 def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:

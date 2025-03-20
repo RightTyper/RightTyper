@@ -691,6 +691,28 @@ def test_async_generator():
     assert "def g(f: AsyncGenerator[int, None]) -> None" in output
 
 
+def test_generator_with_self():
+    t = textwrap.dedent("""\
+        class C:
+            def f(self):
+                yield self
+
+        def f(g):
+            for _ in g:
+                pass
+
+        f(C().f())
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f(self: Self) -> Iterator[Self]" in output
+    assert "def f(g: Iterator[C]) -> None" in output
+
+
 @pytest.mark.parametrize('as_module', [False, True])
 def test_send_generator(as_module):
     t = textwrap.dedent("""\
@@ -850,6 +872,28 @@ def test_coroutine():
 
     output = Path("t.py").read_text()
     assert "def foo() -> Coroutine[None, None, str]:" in output
+
+
+def test_coroutine_with_self():
+    Path("t.py").write_text(textwrap.dedent("""\
+        import asyncio
+
+        class C:
+            async def coro(self):
+                return self
+
+        def f(g):
+            asyncio.run(g)
+
+        f(C().coro())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def coro(self: Self) -> Self:" in output
+    assert "def f(g: Coroutine[None, None, C]) -> None:" in output
 
 
 def test_generate_stubs():
@@ -1067,6 +1111,27 @@ def test_callable_kwargs():
     assert 'def foo(**kwargs: int) -> float:' in output
     assert 'def bar(f: Callable[..., float]) -> None:' in output
     # or KwArg(int) from mypy_extensions, or Unpack + TypedDict
+
+
+def test_callable_with_self():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def f(self):
+                pass
+
+        def g(f):
+            C().f()
+
+        g(C.f)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def f(self: Self) -> None:' in output
+    assert 'def g(f: Callable[[C], None]) -> None:' in output
 
 
 def test_discovered_function_type_in_args():
@@ -2006,7 +2071,6 @@ def test_self_simple():
     assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
 
 
-@pytest.mark.dont_run_mypy # FIXME this is broken
 def test_self_wrapped_method():
     Path("t.py").write_text(textwrap.dedent("""\
         import functools
@@ -2035,20 +2099,31 @@ def test_self_wrapped_method():
 
 
 def test_self_bound_method():
+    # It's important to use a separate function (h() below) to make sure a bound method
+    # object is created... Python 3.12 seems to optimize things like "(C().f)()"
     Path("t.py").write_text(textwrap.dedent("""\
-        class A:
-            def foo(self, x):
-                return self
+        class C:
+            def f(self):
+                pass
 
-        f = A().foo
-        f(10)
-    """))
+            @classmethod
+            def g(cls):
+                pass
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
-                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
-                   check=True)
+        def h(f):
+            f()
 
-    assert "def foo(self: Self, x: int) -> Self:" in Path("t.py").read_text()
+        h(C().f)
+        h(C.g)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    assert 'def f(self: Self) -> None:' in output
+    assert 'def g(cls: type[Self]) -> None:' in output
 
 
 def test_self_inherited_method():
