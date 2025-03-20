@@ -3,6 +3,7 @@ import random
 import re
 import sys
 
+import collections
 import collections.abc as abc
 from functools import cache
 import itertools
@@ -379,15 +380,17 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
 
     def type_for_generator(
         obj: GeneratorType|AsyncGeneratorType|CoroutineType,
-        frame: FrameType|None,
+        frame: FrameType,
         code: CodeType,
         name: str
     ) -> TypeInfo:
-        # FIXME We can't yet retrieve types from annotations because all Callable
-        # arguments returned by type_from_annotations are strings
-        #if (f := find_function(frame, code)):
-        #    ann = type_from_annotations(f)
-        #    (now use ann_type.args[-1], the return value)
+        if (f := find_function(frame, code)):
+            try:
+                hints = get_type_hints(f)
+                if 'return' in hints:
+                    return hint2type(hints['return']).replace(code_id=CodeId(id(code)))
+            except ValueError:
+                pass
 
         return TypeInfo("typing", name, code_id=CodeId(id(code)))
 
@@ -403,27 +406,42 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
                         )
                )
 
-    if isinstance(value, dict):
-        t = dict if isinstance(value, RandomDict) else type(value)
+    t = type(value)
+    if t is RandomDict:
         args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
         try:
             if value:
-                el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
+                el = value.random_item()
                 args = tuple(recurse(fld) for fld in el)
         except Exception:
             pass
-        return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
-    elif isinstance(value, (list, set)):
-        t = type(value)
-        args = (TypeInfo("typing", "Never"),)
-        try:
-            if value:
-                el = sample_from_collection(value)
-                args = (recurse(el),)
-        except Exception:
-            pass
-        return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
+        return TypeInfo.from_type(dict, module='', args=args)
+    elif t in (dict, collections.defaultdict, collections.OrderedDict, collections.ChainMap):
+        if value:
+            el = sample_from_collection(value.items())
+            args = tuple(recurse(fld) for fld in el)
+        else:
+            args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+        return TypeInfo.from_type(t, t.__module__ if t.__module__ != 'builtins' else '', args=args)
+    elif t in (list, set, frozenset, collections.deque, collections.Counter):
+        if value:
+            el = sample_from_collection(value)
+            args = (recurse(el),)
+        else:
+            args = (TypeInfo("typing", "Never"),)
+        return TypeInfo.from_type(t, module='', args=args)
+    elif t is tuple:
+        if value:
+            args = tuple(recurse(fld) for fld in value)
+        else:
+            args = tuple()  # FIXME this should yield "tuple[()]"
+        return TypeInfo.from_type(t, module='', args=args)
+    elif t is re.Pattern:
+        return TypeInfo.from_type(t, args=(recurse(value.pattern),))
+    elif t is re.Match:
+        return TypeInfo.from_type(t, args=(recurse(value.group()),))
     elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
+        # FIXME we should only use this if t.__qualname__ isn't public
         args = (TypeInfo("typing", "Never"),)
         try:
             if value:
@@ -433,6 +451,7 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
             pass
         return TypeInfo("typing", t.__qualname__, args=args)
     elif isinstance(value, abc.ItemsView):
+        # FIXME we should only use this if t.__qualname__ isn't public
         args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
         try:
             if value:
@@ -441,18 +460,6 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         except Exception:
             pass
         return TypeInfo("typing", "ItemsView", args=args)
-    elif isinstance(value, tuple):
-        if isinstance_namedtuple(value):
-            t = type(value)
-            return TypeInfo(lookup_type_module(t), t.__qualname__)
-        else:
-            args = tuple()
-            try:
-                if value:
-                    args = tuple(recurse(fld) for fld in value)
-            except Exception:
-                pass
-            return TypeInfo("", "tuple", args=args)
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
     elif isinstance(value, GeneratorType):
@@ -487,11 +494,3 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         ))
 
     return get_type_name(type(value), depth+1)
-
-
-def isinstance_namedtuple(obj: object) -> bool:
-    return (
-        isinstance(obj, tuple)
-        and hasattr(obj, "_asdict")
-        and hasattr(obj, "_fields")
-    )

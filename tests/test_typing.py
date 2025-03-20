@@ -49,18 +49,21 @@ def test_get_value_type():
     assert "list[int]" == get_value_type([0, 1][:1])
     assert "int" == get_value_type([0, 1][0])
 
-    #assert "List[int]" == get_value_type([0, 'a'])
-
     assert "set[str]" == get_value_type({'a', 'b'})
     assert "set[int]" == get_value_type({0, 1})
+    assert "set[typing.Never]" == get_value_type(set())
 
-    # FIXME use Set instead?  specify element type?
-    assert "frozenset" == get_value_type(frozenset({'a', 'b'}))
-    assert "frozenset" == get_value_type(frozenset({0, 1}))
-    assert "frozenset" == get_value_type(frozenset())
+    assert "frozenset[str]" == get_value_type(frozenset({'a', 'b'}))
+    assert "frozenset[int]" == get_value_type(frozenset({0, 1}))
+    assert "frozenset[typing.Never]" == get_value_type(frozenset())
 
     assert "dict[str, str]" == get_value_type({'a': 'b'})
     assert "dict[typing.Never, typing.Never]" == get_value_type(dict())
+
+    assert "tuple" == get_value_type(tuple())
+    assert "tuple[int, str]" == get_value_type((1, "foo"))
+#    assert "tuple[()]" == get_value_type(tuple())  # FIXME
+#    assert "tuple[int, ...]" == get_value_type((1, 2, 3, 4))
 
     assert "typing.KeysView[str]" == get_value_type({'a':0, 'b':1}.keys())
     assert "typing.ValuesView[int]" == get_value_type({'a':0, 'b':1}.values())
@@ -69,9 +72,6 @@ def test_get_value_type():
     assert "typing.KeysView[typing.Never]" == get_value_type(dict().keys())
     assert "typing.ValuesView[typing.Never]" == get_value_type(dict().values())
     assert "typing.ItemsView[typing.Never, typing.Never]" == get_value_type(dict().items())
-
-    assert "set[str]" == get_value_type({'a', 'b'})
-    assert "set[typing.Never]" == get_value_type(set())
 
     o : Any = range(10)
     assert "range" == get_value_type(o)
@@ -194,25 +194,6 @@ def test_get_value_type_namedtuple_in_class():
     assert f"{__name__}.NamedTupleClass.P" == get_value_type(NamedTupleClass.P())
 
 
-class MyDict(dict):
-    def items(self):
-        for k, v in super().items():
-            yield k, v
-
-def test_get_value_type_dict_with_non_collection_items():
-    assert f"{__name__}.MyDict[str, int]" == get_value_type(MyDict({'a': 0}))
-
-
-class MyList(list):
-    pass
-class MySet(set):
-    pass
-
-def test_get_value_type_custom_collection():
-    assert f"{__name__}.MyList[int]" == get_value_type(MyList([0,1]))
-    assert f"{__name__}.MySet[int]" == get_value_type(MySet({0,1}))
-
-
 @pytest.mark.skipif((importlib.util.find_spec('numpy') is None or
                      importlib.util.find_spec('jaxtyping') is None),
                     reason='missing modules')
@@ -252,17 +233,16 @@ def test_hint2type():
     import jax.numpy as jnp
 
     def foo(
-        x: int | MyGeneric[1, 2.0],
-        y: MyGeneric[[], ...],
+        x: int | MyGeneric[str, Callable[[], None]],
+        y: tuple[int, ...],
         z: jaxtyping.Float[jnp.ndarray, "10 20"]
     ): pass
 
     hints = get_type_hints(foo)
 
-    assert f"int|{__name__}.MyGeneric[1, 2.0]" == str(rt.hint2type(hints['x']))
-    assert f"{__name__}.MyGeneric[[], ...]" == str(rt.hint2type(hints['y']))
+    assert f"int|{__name__}.MyGeneric[str, collections.abc.Callable[[], None]]" == str(rt.hint2type(hints['x']))
+    assert f"tuple[int, ...]" == str(rt.hint2type(hints['y']))
     assert "jaxtyping.Float[Array, '10 20']" == str(rt.hint2type(hints['z']))
-
 
 
 def test_typeinfo():

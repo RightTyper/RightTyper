@@ -12,10 +12,11 @@ def tmp_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     yield tmp_path
 
+
 @pytest.fixture(scope='function', autouse=True)
 def runmypy(tmp_cwd, request):
     yield
-    if 'dont_run_mypy' not in request.keywords:
+    if request.node._report.passed and 'dont_run_mypy' not in request.keywords:
         from mypy import api
         result = api.run(['.'])
         if result[2]:
@@ -29,7 +30,7 @@ def runmypy(tmp_cwd, request):
 @pytest.mark.xfail(reason="Iterable/Iterator introspection doesn't currently work")
 def test_iterable():
     t = textwrap.dedent("""\
-        def func(iter):
+        def func(iter) -> enumerate[str]:
             return enumerate(iter)
 
         print(list(func(range(10))))
@@ -40,6 +41,7 @@ def test_iterable():
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
 
+    # or def "func(iter: range) -> enumerate[int]"
     assert "def func(iter: Iterable[int]) -> Iterable[tuple[int, int]]" in Path("t.py").read_text()
 
 
@@ -598,6 +600,61 @@ def test_generator_with_return():
 
     assert "def gen() -> Generator[int, None, str]:" in output
     assert "def g(f: Generator[int, None, str]) -> None" in output
+
+
+def test_generator_from_annotation():
+    t = textwrap.dedent("""\
+        from collections.abc import Generator
+
+        def gen() -> Generator[int|str, None, None]:
+            yield ""
+
+        def main():
+            for _ in gen():
+                pass
+
+        def g(f):
+            pass
+
+        main()
+        g(gen())
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    # we know it's from the annotation because we never observed an 'int' yield
+    assert "def g(f: Generator[int|str, None, None]) -> None" in output
+
+
+def test_generator_ignore_annotation():
+    t = textwrap.dedent("""\
+        from collections.abc import Generator
+
+        def gen() -> Generator[int|str, None, None]:
+            yield ""
+
+        def main():
+            for _ in gen():
+                pass
+
+        def g(f):
+            pass
+
+        main()
+        g(gen())
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--ignore-annotations', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    # If from annotation, it'll include an 'int' yield
+    assert "def g(f: Iterator[str]) -> None" in output
 
 
 def test_async_generator():
@@ -1633,15 +1690,98 @@ def test_generic_and_defaults():
     assert "def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None" in output
 
 
-@pytest.mark.skip(reason="This test is broken: we can't assume collection arguments apply as-is")
+@pytest.mark.parametrize('superclass', ['list', 'set', 'dict', 'tuple'])
+def test_custom_collection_typing(superclass):
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        class MyContainer({superclass}): pass
+        def foo(x): pass
+
+        foo(MyContainer())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+    output = Path("t.py").read_text()
+    assert "def foo(x: MyContainer) -> None:" in output
+
+@pytest.mark.parametrize('init, expected', [
+    ['[1,2,3]', 'list[int]'],
+    ['{"a", "b"}', 'set[str]'],
+    ['frozenset({"a", "b"})', 'frozenset[str]'],
+    ['{"a": 1, "b": 2}', 'dict[str, int]'],
+    ['defaultdict(int, {"a": 1, "b": 2})', 'defaultdict[str, int]'],
+    ['OrderedDict({"a": 1, "b": 2})', 'OrderedDict[str, int]'],
+    ['ChainMap({"a": 1}, {"b": 2})', 'ChainMap[str, int]'],
+    ['Counter(["foo", "bar"])', 'Counter[str]'],
+    ['deque([1,2,3])', 'deque[int]'],
+    ['RandomDict({"a": 1, "b": 2})', 'dict[str, int]'],
+])
+def test_collection_typing(init, expected):
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        from collections import defaultdict, OrderedDict, ChainMap, Counter, deque
+        from righttyper.random_dict import RandomDict
+
+        def foo(x): pass
+
+        foo({init})
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+    output = Path("t.py").read_text()
+    assert f"def foo(x: {expected}) -> None:" in output
+
+
+@pytest.mark.parametrize('pattern, matching, notmatching, expected', [
+    ['r"\\d+"', '"123"', '""', 'str'],
+    ['rb"\\d+"', 'b"123"', 'b""', 'bytes'],
+])
+def test_pattern_match(pattern, matching, notmatching, expected):
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        import re
+
+        def foo(p, data):
+            return re.match(p, data)
+
+        foo(re.compile({pattern}), {matching})
+        foo(re.compile({pattern}), {notmatching})
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert f"def foo(p: re.Pattern[{expected}], data: {expected}) -> re.Match[{expected}]|None:" in output
+
+
+def test_namedtuple():
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        from collections import namedtuple
+
+        P = namedtuple('P', [])
+
+        def foo(x):
+            return x
+
+        foo(P())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+    output = Path("t.py").read_text()
+    assert (
+        "def foo(x: P) -> P:" in output or
+        "def foo(x: \"P\") -> \"P\":" in output
+    )
+
+
 @pytest.mark.parametrize('superclass, expected', [
-    ("list", "MyContainer[Never]"),
-    ("set", "MyContainer[Never]"),
-    ("dict", "MyContainer[Never, Never]"),
     ("KeysView", "KeysView[Never]"),
     ("ValuesView", "ValuesView[Never]"),
     ("ItemsView", "ItemsView[Never, Never]"),
-    ("tuple", "tuple")
 ])
 def test_custom_collection_len_error(superclass, expected):
     Path("t.py").write_text(textwrap.dedent(f"""\
@@ -1670,15 +1810,10 @@ def test_custom_collection_len_error(superclass, expected):
     assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
 
 
-@pytest.mark.skip(reason="This test is broken: we can't assume collection arguments apply as-is")
 @pytest.mark.parametrize('superclass, expected', [
-    ("list", "MyContainer[Never]"),
-    ("set", "MyContainer[Never]"),
-    ("dict", "MyContainer[Never, Never]"),
     ("KeysView", "KeysView[Never]"),
     ("ValuesView", "ValuesView[Never]"),
     ("ItemsView", "ItemsView[Never, Never]"),
-    ("tuple", "tuple")
 ])
 def test_custom_collection_sample_error(superclass, expected):
     Path("t.py").write_text(textwrap.dedent(f"""\

@@ -162,7 +162,7 @@ def test_generalize_with_ellipsis():
 
 
 def test_generalize_callable():
-    samples = [
+    samples: list[tuple[TypeInfo, ...]] = [
         (ti('Callable', args=(TypeInfo.list([ti('int'), ti('int')]), ti('int'))),),
         (ti('Callable', args=(TypeInfo.list([ti('str'), ti('str')]), ti('str'))),),
     ]
