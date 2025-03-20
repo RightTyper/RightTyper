@@ -13,6 +13,11 @@ def tmp_cwd(tmp_path, monkeypatch):
     yield tmp_path
 
 
+def print_file(file: Path) -> None:
+    for lineno, line in enumerate(file.read_text().splitlines(), start=1):
+        print(f"{lineno:3}: {line}")
+
+
 @pytest.fixture(scope='function', autouse=True)
 def runmypy(tmp_cwd, request):
     yield
@@ -22,8 +27,7 @@ def runmypy(tmp_cwd, request):
         if result[2]:
             print(result[0])
             filename = result[0].split(':')[0]
-            for lineno, line in enumerate(Path(filename).read_text().splitlines(), start=1):
-                print(f"{lineno:3}: {line}")
+            print_file(Path(filename))
             pytest.fail("see mypy errors")
 
 
@@ -81,13 +85,13 @@ def test_builtins():
 
 def test_callable_from_annotations():
     t = textwrap.dedent("""\
-        def f(x: int | float) -> float:
+        def f(x: int | float, y) -> float:
             return x/2
 
         def g():
             return f
 
-        f(1.0)
+        f(1.0, None)
         g()
         """)
 
@@ -97,7 +101,9 @@ def test_callable_from_annotations():
                     '--no-use-multiprocessing', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert "def g() -> Callable[[int|float], float]:" in output
+    assert "def g() -> Callable[[int|float, Any], float]:" in output
+    # TODO is it ok for 'y' to be typed as observed, while the Callable uses 'Any' ?
+    assert "def f(x: int | float, y: None) -> float:" in output
 
 
 def test_callable_from_annotation_generic_alias():
