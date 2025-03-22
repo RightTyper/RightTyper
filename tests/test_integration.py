@@ -127,6 +127,29 @@ def test_callable_from_annotation_generic_alias():
     assert "def g() -> Callable[[], list[int]]:" in output
 
 
+@pytest.mark.dont_run_mypy # fails because of SomethingUnknown
+def test_callable_annotation_errors():
+    t = textwrap.dedent("""\
+        from __future__ import annotations
+
+        def f(x: SomethingUnknown) -> None:
+            pass
+
+        def g():
+            return f
+
+        g()
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def g() -> Callable:" in output
+
+
 def test_callable_from_annotation_none_return():
     t = textwrap.dedent("""\
         def f() -> None:

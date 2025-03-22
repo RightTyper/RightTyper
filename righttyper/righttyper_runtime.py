@@ -132,7 +132,7 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
     try:
         signature = inspect.signature(func)
         hints = get_type_hints(func)
-    except ValueError:
+    except (ValueError, NameError):
         signature = None
         hints = None
 
