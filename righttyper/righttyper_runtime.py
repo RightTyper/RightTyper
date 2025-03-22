@@ -390,7 +390,7 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
                 hints = get_type_hints(f)
                 if 'return' in hints:
                     return hint2type(hints['return']).replace(code_id=CodeId(id(code)))
-            except ValueError:
+            except:
                 pass
 
         return TypeInfo.from_type(type_obj, module="typing", code_id=CodeId(id(code)))

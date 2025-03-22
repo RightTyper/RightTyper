@@ -150,6 +150,30 @@ def test_callable_annotation_errors():
     assert "def g() -> Callable:" in output
 
 
+@pytest.mark.dont_run_mypy # fails because of SomethingUnknown
+def test_generator_annotation_errors():
+    t = textwrap.dedent("""\
+        from __future__ import annotations
+        from collections.abc import Generator
+
+        def f() -> Generator[SomethingUnknown, None, None]:
+            yield 1
+
+        def g(x):
+            pass
+
+        g(f())
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def g(x: Generator) -> None" in output
+
+
 def test_callable_from_annotation_none_return():
     t = textwrap.dedent("""\
         def f() -> None:
