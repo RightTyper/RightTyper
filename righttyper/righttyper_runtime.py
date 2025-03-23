@@ -400,7 +400,9 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         return get_value_type(v, use_jaxtyping=use_jaxtyping, depth=depth+1)
 
 
-    if (orig := getattr(value, "__orig_class__", None)):
+    # using getattr or hasattr here leads to max. recursion errors with tqdm and rich
+    if '__orig_class__' in getattr(value, "__dict__", {}):
+        orig = value.__orig_class__
         return TypeInfo(orig.__module__, orig.__qualname__,
                         tuple(
                             TypeInfo.from_type(a) for a in orig.__args__
