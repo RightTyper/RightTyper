@@ -1827,10 +1827,17 @@ def test_inline_generics_no_variables():
     assert "def f(x: list[int|str]) -> None" in output
 
 
-@pytest.mark.parametrize('superclass', ['list', 'set', 'dict', 'tuple'])
+@pytest.mark.parametrize('superclass', [
+    'list', 'set', 'dict', 'tuple', 'KeysView', 'ValuesView', 'ItemsView'
+])
 def test_custom_collection_typing(superclass):
     Path("t.py").write_text(textwrap.dedent(f"""\
-        class MyContainer({superclass}): pass
+        from collections.abc import *
+
+        class MyContainer({superclass}):
+            def __init__(self):
+                super()
+
         def foo(x): pass
 
         foo(MyContainer())
@@ -1913,79 +1920,6 @@ def test_namedtuple():
         "def foo(x: P) -> P:" in output or
         "def foo(x: \"P\") -> \"P\":" in output
     )
-
-
-@pytest.mark.parametrize('superclass, expected', [
-    ("KeysView", "KeysView[Never]"),
-    ("ValuesView", "ValuesView[Never]"),
-    ("ItemsView", "ItemsView[Never, Never]"),
-])
-def test_custom_collection_len_error(superclass, expected):
-    Path("t.py").write_text(textwrap.dedent(f"""\
-        from collections.abc import *
-
-        class MyContainer({superclass}):
-            def __init__(self):
-                super()
-
-            def __len__(self):
-                raise Exception("Oops, something went wrong!")
-
-
-        def foo(bar):
-            pass
-
-
-        my_object = MyContainer()
-        foo(my_object)
-        """
-    ))
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '-m', 't'], check=True)
-
-    assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
-
-
-@pytest.mark.parametrize('superclass, expected', [
-    ("KeysView", "KeysView[Never]"),
-    ("ValuesView", "ValuesView[Never]"),
-    ("ItemsView", "ItemsView[Never, Never]"),
-])
-def test_custom_collection_sample_error(superclass, expected):
-    Path("t.py").write_text(textwrap.dedent(f"""\
-        from collections.abc import *
-
-        class MyContainer({superclass}):
-            def __init__(self):
-                super()
-
-            def __len__(self):
-                return 1
-
-            def __getitem__(self, key):
-                raise Exception("Oops, something went wrong!")
-
-            def __contains__(self, key):
-                raise Exception("Oops, something went wrong!")
-
-            def __iter__(self):
-                raise Exception("Oops, something went wrong!")
-
-
-        def foo(bar):
-            pass
-
-
-        my_object = MyContainer()
-        foo(my_object)
-        """
-    ))
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '-m', 't'], check=True)
-
-    assert f"def foo(bar: {expected}) -> None" in Path("t.py").read_text()
 
 
 def test_class_properties():
@@ -2543,3 +2477,54 @@ def test_generalize_union_return_not_typevar():
                     '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def f(x: bool) -> list[int|str]" in output
+
+
+@pytest.mark.dont_run_mypy # unnecessary 
+def test_object_overridden_getattr():
+    # Derived from tqdm.utils.ObjectWrapper: sometimes calls to getattr() lead to infinite recursion
+    t = textwrap.dedent("""\
+        class Thing:
+            def __getattr__(self, name):
+                raise AttributeError
+
+        def f(t):
+            pass
+
+        f(Thing())
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+    # mostly we are checking that it doesn't fail (raises fatal exception)
+    output = Path("t.py").read_text()
+    assert "def f(t: Thing) -> None" in output
+
+
+@pytest.mark.dont_run_mypy # unnecessary 
+def test_object_with_empty_dir():
+    # Derived from 'rich' test case "Issue #1838 - Edge case with Faiss library - object with empty dir()"
+    # This leads to an AttributeError if we do any isinstance(obj, X) where X is from collections.abc
+    t = textwrap.dedent("""\
+        def g(x):
+            pass
+
+        class Thing:
+            @property
+            def __class__(self):
+                raise AttributeError
+
+            def f(self):
+                pass
+
+        Thing().f()
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+    # mostly we are checking that it doesn't fail (raises fatal exception)
+    output = Path("t.py").read_text()
+    assert "def f(self: Self) -> None" in output

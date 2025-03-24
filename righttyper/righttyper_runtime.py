@@ -16,7 +16,9 @@ from types import (
     GeneratorType,
     AsyncGeneratorType,
     CoroutineType,
-    GenericAlias
+    GenericAlias,
+    ModuleType,
+    MappingProxyType
 )
 from typing import Any, cast, TypeAlias, get_type_hints, get_origin, get_args
 from pathlib import Path
@@ -318,44 +320,57 @@ def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
     return method
 
 
+@cache
+def src2module(src: str) -> ModuleType|None:
+    """Maps a module's source file to the module."""
+    return next(
+        (
+            m
+            for m in list(sys.modules.values()) # sys.modules may change during iteration
+            if getattr(m, "__file__", None) == src
+        ),
+        None
+    )
+
+
 def find_function(
     caller_frame: FrameType,
     code: CodeType
 ) -> abc.Callable|None:
     """Attempts to map back from a code object to the function that uses it."""
 
-    visited = set()
+    parts = code.co_qualname.split('.')
 
-    def find_in_class(class_obj: object) -> abc.Callable|None:
-        if class_obj in visited:
-            return None
-        visited.add(class_obj)
+    def find_in(namespace: dict|MappingProxyType, index: int=0) -> FunctionType|None:
+        if index<len(parts) and (obj := namespace.get(parts[index])):
+            if (
+                # don't use isinstance(obj, Callable), as it relies on __class__, which may be overridden
+                (hasattr(obj, "__call__") or type(obj) is classmethod)
+                and (obj := unwrap(obj))
+                and getattr(obj, "__code__", None) is code
+            ):
+                return obj
 
-        for obj in class_obj.__dict__.values():
-            if inspect.isclass(obj):
-                if (f := find_in_class(obj)):
-                    return f
-
-            elif isinstance(obj, (abc.Callable, classmethod)):  # type: ignore[arg-type]
-                if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
-                    return obj
-
+            if type(obj) is dict:
+                return find_in(obj, index+1)
+            elif isinstance(obj, type):
+                return find_in(obj.__dict__, index+1)
 
         return None
 
-    dicts: abc.Iterable[Any] = caller_frame.f_globals.values()
-    if caller_frame.f_back:
-        dicts = itertools.chain(caller_frame.f_back.f_locals.values(), dicts)
 
-    for obj in dicts:
-        if inspect.isclass(obj):
-            if (f := find_in_class(obj)):
-                return f
+    if '<locals>' in parts:
+        # Python re-creates the function object dynamically with each invocation;
+        # look for it on the stack.
+        if caller_frame.f_back:
+            after_locals = len(parts) - parts[::-1].index('<locals>')
+            parts = parts[after_locals:]
+            return find_in(caller_frame.f_back.f_locals)
 
-        elif isinstance(obj, abc.Callable):  # type: ignore[arg-type]
-            if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
-                return obj
-
+    else:
+        # look for it in its module
+        if (m := src2module(code.co_filename)):
+            return find_in(m.__dict__)
 
     return None
 
@@ -400,14 +415,16 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         return get_value_type(v, use_jaxtyping=use_jaxtyping, depth=depth+1)
 
 
-    # using getattr or hasattr here leads to max. recursion errors with tqdm and rich
-    if '__orig_class__' in getattr(value, "__dict__", {}):
-        orig = value.__orig_class__
+    try:
+        # using getattr or hasattr here can lead to problems when __getattr__ is overriden
+        orig = object.__getattribute__(value, "__orig_class__")
         return TypeInfo(orig.__module__, orig.__qualname__,
                         tuple(
                             TypeInfo.from_type(a) for a in orig.__args__
                         )
                )
+    except AttributeError:
+        pass
 
     t = type(value)
     if t is RandomDict:
@@ -443,26 +460,6 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         return TypeInfo.from_type(t, args=(recurse(value.pattern),))
     elif t is re.Match:
         return TypeInfo.from_type(t, args=(recurse(value.group()),))
-    elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
-        # FIXME we should only use this if t.__qualname__ isn't public
-        args = (TypeInfo("typing", "Never"),)
-        try:
-            if value:
-                el = sample_from_collection(value)
-                args = (recurse(el),)
-        except Exception:
-            pass
-        return TypeInfo("typing", t.__qualname__, args=args)
-    elif isinstance(value, abc.ItemsView):
-        # FIXME we should only use this if t.__qualname__ isn't public
-        args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
-        try:
-            if value:
-                el = sample_from_collection(value)
-                args = tuple(recurse(fld) for fld in el)
-        except Exception:
-            pass
-        return TypeInfo("typing", "ItemsView", args=args)
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
     elif isinstance(value, GeneratorType):
@@ -473,13 +470,34 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         return type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
     elif isinstance(value, type) and value is not type:
         return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
-    elif type(value).__name__ == 'async_generator_wrapped_value' and type(value).__module__ == 'builtins':
-        import righttyper.traverse as tr
-        if (len(v := tr.traverse(value)) == 1):
-            return recurse(v[0])
-        else:
-            # something went wrong with the 'traverse' workaround
-            return AnyTypeInfo
+    elif t.__module__ == "builtins":
+        if t is NoneType:
+            return NoneTypeInfo
+        elif in_builtins_import(t):
+            return TypeInfo.from_type(t, module="") # these are "well known", so no module name needed
+        elif (name := from_types_import(t)):
+            return TypeInfo(module="types", name=name, type_obj=t)
+        elif (v := _is_instance(value, (abc.KeysView, abc.ValuesView))):
+            # no name in "builtins" or "types" modules, so use abc protocol
+            if value:
+                args = (recurse(sample_from_collection(value)),)
+            else:
+                args = (TypeInfo("typing", "Never"),)
+            return TypeInfo("typing", v.__qualname__, args=args)
+        elif isinstance(value, abc.ItemsView):
+            # no name in "builtins" or "types" modules, so use abc protocol
+            if value:
+                args = tuple(recurse(fld) for fld in sample_from_collection(value))
+            else:
+                args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+            return TypeInfo("typing", "ItemsView", args=args)
+        elif t.__name__ == 'async_generator_wrapped_value':
+            import righttyper.traverse as tr
+            if len(v := tr.traverse(value)) == 1:
+                return recurse(v[0])
+            else:
+                # something went wrong with the 'traverse' workaround
+                return AnyTypeInfo
 
 
     if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):
