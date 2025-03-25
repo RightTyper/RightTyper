@@ -342,19 +342,29 @@ def find_function(
     parts = code.co_qualname.split('.')
 
     def find_in(namespace: dict|MappingProxyType, index: int=0) -> FunctionType|None:
-        if index<len(parts) and (obj := namespace.get(parts[index])):
+        if index < len(parts):
+            name = parts[index]
             if (
-                # don't use isinstance(obj, Callable), as it relies on __class__, which may be overridden
-                (hasattr(obj, "__call__") or type(obj) is classmethod)
-                and (obj := unwrap(obj))
-                and getattr(obj, "__code__", None) is code
+                name.startswith("__")
+                and not name.endswith("__")
+                and index > 0
+                and parts[index-1] != '<locals>'
             ):
-                return obj
+                name = f"_{parts[index-1]}{name}"   # private method/attribute
 
-            if type(obj) is dict:
-                return find_in(obj, index+1)
-            elif isinstance(obj, type):
-                return find_in(obj.__dict__, index+1)
+            if obj := namespace.get(name):
+                if (
+                    # don't use isinstance(obj, Callable), as it relies on __class__, which may be overridden
+                    (hasattr(obj, "__call__") or type(obj) is classmethod)
+                    and (obj := unwrap(obj))
+                    and getattr(obj, "__code__", None) is code
+                ):
+                    return obj
+
+                if type(obj) is dict:
+                    return find_in(obj, index+1)
+                elif isinstance(obj, type):
+                    return find_in(obj.__dict__, index+1)
 
         return None
 

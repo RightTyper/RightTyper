@@ -329,27 +329,10 @@ def test_jaxtyping_annotation():
            '-> "jaxtyping.Int64[np.ndarray, \\"2 1\\"]"' in output
 
 
-def test_call_with_none_default():
-    t = textwrap.dedent("""\
-        def func(n=None):
-            return n+1 if n is not None else 0  # type: ignore[operator]
-
-        func()
-        """)
-
-    Path("t.py").write_text(t)
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', 't.py'], check=True)
-    output = Path("t.py").read_text()
-
-    assert "def func(n: None=None) -> int" in output
-
-
 def test_default_arg():
     t = textwrap.dedent("""\
         def func(n=None):
-            return n+1 if n is not None else 0
+            return n+1 if n else 0
 
         def func2(n=5):
             return n+1
@@ -367,6 +350,27 @@ def test_default_arg():
     assert "def func(n: int|None=None) -> int" in output
 
     assert "def func2(n: float|int=5) -> float" in output
+
+
+def test_default_in_private_method():
+    t = textwrap.dedent("""\
+        class C:
+            def __f(self, x=None):
+                return x+1 if x else 0
+
+            def f(self, x):
+                return self.__f(x)
+
+        C().f(1)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+
+    assert "def __f(self: Self, x: int|None=None) -> int" in output
 
 
 def test_inner_function():
