@@ -504,22 +504,33 @@ def process_function_arguments(
         if args.args:
             first_arg = args.locals[args.args[0]]
 
+            name = code.co_name
+            if (
+                name.startswith("__")
+                and not name.endswith("__")
+                and len(parts := code.co_qualname.split(".")) > 1
+            ):
+                # parts[-2] may be "<locals>"... that's ok, as we then have
+                # a local function and there is no 'Self' to find.
+                name = f"_{parts[-2]}{name}"    # private attribute/method
+
             # @property?
-            if isinstance(getattr(type(first_arg), code.co_name, None), property):
+            if isinstance(getattr(type(first_arg), name, None), property):
                 return get_type(first_arg)
 
-            if function:
-                # if type(first_arg) is type, we may have a @classmethod
-                first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
+            # if type(first_arg) is type, we may have a @classmethod
+            first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
 
-                if isinstance(function, MethodType) or any(
-                    unwrap(ancestor.__dict__.get(function.__name__, None)) is function
-                    for ancestor in first_arg_class.__mro__
-                ):
-                    if first_arg is first_arg_class:
-                        return get_type_name(first_arg) # class method
+            if any (
+                (f := unwrap(ancestor.__dict__.get(name, None)))
+                and getattr(f, "__code__", None) is code
+                for ancestor in first_arg_class.__mro__
+            ):
+                if first_arg is first_arg_class:
+                    return get_type_name(first_arg) # @classmethod
 
-                    return get_type(first_arg) # normal method
+                return get_type(first_arg) # normal method
+
         return None
 
     obs.record_function(code, args, get_default_type)

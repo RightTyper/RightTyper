@@ -1450,8 +1450,10 @@ def test_self():
         class C:
             def bar(self, x):
                 class D:
+                    def __private(moi): ...
+
                     def __init__(self):
-                        pass
+                        self.__private()
 
                 D()
                 return x/2
@@ -1471,6 +1473,7 @@ def test_self():
     output = Path("t.py").read_text()
     assert 'def foo(self: int) -> float:' in output
     assert 'def bar(self: Self, x: int) -> float:' in output
+    assert 'def __private(moi: Self) -> None:' in output
     assert 'def __init__(self: Self) -> None:' in output
     assert 'def baz(me: Self) -> Self:' in output
 
@@ -1960,6 +1963,44 @@ def test_class_properties():
     assert "def x(self: Self, value: int) -> None:" in output   # setter
     assert "def x(self: Self) -> None:" in output               # deleter
 
+
+def test_class_properties_private():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x: int|None = None
+
+            @property
+            def __x(self):
+                return str(self._x)
+
+            @__x.setter
+            def __x(self, value):
+                self._x = value
+
+            @__x.deleter
+            def __x(self):
+                del self._x
+
+        c = C()
+        c._C__x = 10  # type: ignore[assignment, attr-defined]
+        y = c._C__x   # type: ignore[attr-defined]
+        del c._C__x   # type: ignore[attr-defined]
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+    print(output)
+
+    assert "def __init__(self: Self) -> None:" in output
+
+    # TODO parse functions out so that the annotation is included
+    assert "def __x(self: Self) -> str:" in output                # getter
+    assert "def __x(self: Self, value: int) -> None:" in output   # setter
+    assert "def __x(self: Self) -> None:" in output               # deleter
 
 def test_class_properties_no_setter():
     Path("t.py").write_text(textwrap.dedent("""\
