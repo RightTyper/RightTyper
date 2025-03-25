@@ -113,18 +113,20 @@ class Observations:
         self,
         code: CodeType,
         args: inspect.ArgInfo,
-        get_default_type: abc.Callable[[str], TypeInfo|None]
+        get_defaults: abc.Callable[[], dict[str, TypeInfo]]
     ) -> None:
         """Records that a function was visited, along with some details about it."""
 
-        arg_names = (
-            *(a for a in args.args),
-            *((args.varargs,) if args.varargs else ()),
-            *((args.keywords,) if args.keywords else ())
-        )
-
         code_id = CodeId(id(code))
         if code_id not in self.functions_visited:
+            arg_names = (
+                *(a for a in args.args),
+                *((args.varargs,) if args.varargs else ()),
+                *((args.keywords,) if args.keywords else ())
+            )
+
+            defaults = get_defaults()
+
             self.functions_visited[code_id] = FuncInfo(
                 FuncId(
                     Filename(code.co_filename),
@@ -132,7 +134,7 @@ class Observations:
                     FunctionName(code.co_qualname),
                 ),
                 tuple(
-                    ArgInfo(ArgumentName(name), get_default_type(name))
+                    ArgInfo(ArgumentName(name), defaults.get(name))
                     for name in arg_names
                 ),
                 ArgumentName(args.varargs) if args.varargs else None,
@@ -360,8 +362,7 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         frame = frame.f_back
 
     if frame:
-        function = find_function(frame, code)
-        process_function_arguments(code, FrameId(id(frame)), inspect.getargvalues(frame), function)
+        process_function_call(code, frame)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -475,30 +476,27 @@ def process_yield_or_return(
     return sys.monitoring.DISABLE if (options.sampling and found) else None
 
 
-def process_function_arguments(
+def process_function_call(
     code: CodeType,
-    frame_id: FrameId,
-    args: inspect.ArgInfo,
-    function: abc.Callable|None
+    frame: FrameType,
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
         return get_value_type(v, use_jaxtyping=options.infer_shapes)
 
 
-    defaults: dict[str, tuple[Any]] = {} if not function else {
-        # use tuple to differentiate a None default from no default
-        param_name: (param.default,)
-        for param_name, param in inspect.signature(function).parameters.items()
-        if param.default != inspect._empty
-    }
+    def get_defaults() -> dict[str, TypeInfo]:
+        if (function := find_function(frame, code)):
+            return {
+                param_name: get_type(param.default)
+                for param_name, param in inspect.signature(function).parameters.items()
+                if param.default != inspect._empty
+            }
+
+        return {}
 
 
-    def get_default_type(name: str) -> TypeInfo|None:
-        if (def_value := defaults.get(name)):
-            return get_type(*def_value)
-
-        return None
+    args = inspect.getargvalues(frame)
 
     def get_self_type() -> TypeInfo|None:
         if args.args:
@@ -533,7 +531,7 @@ def process_function_arguments(
 
         return None
 
-    obs.record_function(code, args, get_default_type)
+    obs.record_function(code, args, get_defaults)
 
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
@@ -553,7 +551,7 @@ def process_function_arguments(
 
     obs.record_start(
         code,
-        frame_id,
+        FrameId(id(frame)),
         arg_values,
         get_self_type()
     )
