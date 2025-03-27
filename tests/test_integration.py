@@ -651,6 +651,35 @@ def test_method_overriding_method_called_indirectly():
     assert "def foo(self: Self, x: int) -> Self:" in Path("t.py").read_text()
 
 
+def test_method_overriding_inherited():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self, x: float):
+                return self
+
+        class B(A):
+            def foo(self, x):
+                return self
+
+        class C(B):
+            def bar(self, x):
+                self.foo(x)
+
+        o = C()
+        o.bar(1)
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+        def foo(self: Self, x: float|int) -> Self: ...
+    """)
+
+
 def test_method_overriding_arg_names_change():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
@@ -782,6 +811,29 @@ def test_method_overriding_typeshed():
     """)
 
     assert "\nimport Self" not in output
+
+
+def test_method_overriding_inherited_typeshed():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Comparable:
+            def __eq__(self, other):
+                return False
+
+        class C(Comparable):
+            pass
+
+        C() == C()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'Comparable.__eq__', body=False) == textwrap.dedent("""\
+        def __eq__(self: Self, other: object|Self) -> bool: ...
+    """)
 
 
 @pytest.mark.dont_run_mypy  # this results in incompatible signatures... TODO could we resolve it?

@@ -644,10 +644,7 @@ def process_function_call(
                 # The first argument is 'Self'; now let's see if we override a method
                 overrides = None
 
-                if not (
-                    name in ('__init__', '__new__')         # irrelevant for Liskov
-                    or name not in first_arg_class.__dict__ # not defined in the class; likely just inherited
-                ):
+                if not name in ('__init__', '__new__'):         # irrelevant for Liskov
                     overrides = next(
                         (
                             # wrapper_descriptor and possibly other native objects may lack __module__
@@ -655,6 +652,9 @@ def process_function_call(
                             else FunctionDescriptor(ancestor.__module__, f.__qualname__)
                             for ancestor in first_arg_class.__mro__[1:]
                             if (f := unwrap(ancestor.__dict__.get(name, None)))
+                            # if a method is only inherited (but not defined in the class),
+                            # starting at __mro__[1:] above isn't enough to skip it
+                            if getattr(f, "__code__", None) is not code
                         ),
                         None
                     )
