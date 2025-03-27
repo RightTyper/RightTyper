@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace, field
-from typing import NewType, TypeVar, Self, TypeAlias
+from typing import NewType, TypeVar, Self, TypeAlias, List
 import collections.abc as abc
 import types
 
@@ -99,6 +99,16 @@ class TypeInfo:
 
         if len(s) == 1:
             return next(iter(s))
+
+        def expand_unions(t: "TypeInfo") -> "Iterator[TypeInfo]":
+            # don't merge unions designated as typevars, or the typevar gets lost.
+            if t.type_obj is types.UnionType and not t.typevar_index:
+                for a in t.args:
+                    yield from expand_unions(a)
+            else:
+                yield t
+
+        s = {ex for t in s for ex in expand_unions(t)}
 
         return TypeInfo(
             module='types',

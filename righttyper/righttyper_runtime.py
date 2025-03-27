@@ -108,17 +108,22 @@ def should_skip_function(
 
 
 def hint2type(hint) -> TypeInfo:
+    import typing
+
     def hint2type_arg(hint):
         if isinstance(hint, list):
             return TypeInfo.list([hint2type_arg(el) for el in hint])
 
-        if isinstance(hint, type) or get_origin(hint):
+        if isinstance(hint, (type, typing.TypeVar)) or get_origin(hint):
             return hint2type(hint)
 
         # TODO what types of objects are valid in hints?
         return hint
 
     if (origin := get_origin(hint)):
+        if origin is typing.Union:
+            return TypeInfo.from_set({hint2type(a) for a in get_args(hint)})
+
         return TypeInfo.from_type(
                     origin,
                     module=origin.__module__ if origin.__module__ != 'builtins' else '',
@@ -126,6 +131,9 @@ def hint2type(hint) -> TypeInfo:
                         hint2type_arg(a) for a in get_args(hint)
                     )
                 )
+
+    if isinstance(hint, typing.TypeVar):
+        return TypeInfo(name=hint.__name__, module=hint.__module__) # no __qualname__
 
     return get_type_name(hint)
 

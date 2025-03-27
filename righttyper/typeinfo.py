@@ -27,7 +27,7 @@ def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     """Attempts to merge types in a set before forming their union."""
 
     if len(typeinfoset) > 1:
-        if sclass := find_most_specific_common_superclass(typeinfoset):
+        if sclass := find_superclass(typeinfoset):
             return sclass
 
     tr = SimplifyGeneratorsTransformer()
@@ -39,8 +39,17 @@ def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     return TypeInfo.from_set(typeinfoset)
 
 
-def find_most_specific_common_superclass(typeinfoset: set[TypeInfo]) -> TypeInfo|None:
-    if any(t.type_obj is None for t in typeinfoset):    # we require type_obj for this
+def find_superclass(typeinfoset: set[TypeInfo]) -> TypeInfo|None:
+    """Finds the most specific common superclass with all the common
+       attributes, if any.
+    """
+    if any(
+        # typing.Union is a "special type" and has no __mro__.  We now
+        # convert that to types.UnionType, but left this check in place
+        # just in case something else lacks the MRO.
+        t.type_obj is None or not hasattr(t.type_obj, "__mro__")
+        for t in typeinfoset
+    ):
         return None
 
     # TODO do we want to merge by protocol?  search for protocols in collections.abc types?

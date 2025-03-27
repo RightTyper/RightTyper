@@ -1,9 +1,9 @@
 from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample
-from righttyper.typeinfo import merged_types, generalize
+from righttyper.typeinfo import merged_types, generalize, find_superclass
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
 from collections import namedtuple
-from typing import Any, Callable, get_type_hints
+from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List
 import pytest
 import importlib
 import types
@@ -463,3 +463,49 @@ def test_sample_process_generator_union():
     sample = generate_sample(dog, 1, "hi", True)
     assert sample == Sample((int_ti, str_ti, bool_ti,), yields={int_ti, str_ti}, returns=bool_ti, is_generator=True)
     assert generalize([sample.process()]) == [int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), NoneTypeInfo, bool_ti)]
+
+
+T = TypeVar("T")
+
+def test_hint2type_typevar():
+    t = rt.hint2type(T)
+    assert t == TypeInfo(module=__name__, name='T')
+
+    t = rt.hint2type(List[T])
+    assert t == TypeInfo.from_type(list, module='', args=(TypeInfo(module=__name__, name='T'),))
+
+
+
+def test_hint2type_unions():
+    t = rt.hint2type(Union[int, str])
+    assert t.qualname() == "types.UnionType"
+    assert t.args == (
+        TypeInfo.from_type(int, module=''),
+        TypeInfo.from_type(str, module=''),
+    )
+
+    t = rt.hint2type(Optional[str])
+    assert t.qualname() == "types.UnionType"
+    assert t.args == (
+        TypeInfo.from_type(str, module=''),
+        NoneTypeInfo
+    )
+
+
+def test_from_set_with_unions():
+    t = merged_types({
+            TypeInfo.from_set({
+                TypeInfo.from_type(str, module=''),
+                TypeInfo.from_set({
+                    TypeInfo.from_type(int, module='')
+                })
+            }),
+            TypeInfo.from_type(str, module='')
+        })
+
+    assert t.qualname() == "types.UnionType"
+    assert t.args == (
+        TypeInfo.from_type(int, module=''),
+        TypeInfo.from_type(str, module=''),
+    )
+
