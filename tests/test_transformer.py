@@ -57,10 +57,18 @@ def find_function(m: cst.Module, name: str) -> tuple[cst.FunctionDef, int]|None:
     return v.found
 
 
-def get_function(m: cst.Module, funcname: str) -> str|None:
+def get_function(m: cst.Module, funcname: str, body=True) -> str|None:
     """Returns the given function as a string, if found in 'm'"""
     if (f := find_function(m, funcname)):
-        return cst.Module([f[0]]).code.lstrip('\n')
+        if body:
+            return cst.Module([f[0]]).code.lstrip('\n')
+
+        return cst.Module([
+                f[0].with_changes(
+                    body=cst.SimpleStatementSuite([cst.Expr(cst.Ellipsis())]),
+                    leading_lines=[]
+                )
+            ]).code
 
     return None
 

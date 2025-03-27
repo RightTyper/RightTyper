@@ -10,17 +10,19 @@ import runpy
 import signal
 import sys
 import platform
+import typeshed_client as ts
+
 
 import collections.abc as abc
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType, AsyncGeneratorType
+import typing
 from typing import (
     Any,
     TextIO,
-    Self,
-    Sequence
+    Self
 )
 
 import click
@@ -37,6 +39,7 @@ from righttyper.righttyper_runtime import (
     get_value_type,
     get_type_name,
     should_skip_function,
+    hint2type,
 )
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
@@ -53,6 +56,7 @@ from righttyper.righttyper_types import (
     FrameId,
     FuncAnnotation,
     FunctionName,
+    FunctionDescriptor,
     TypeInfo,
     NoneTypeInfo,
     AnyTypeInfo,
@@ -97,6 +101,91 @@ options = Options()
 
 logger = logging.getLogger("righttyper")
 
+
+def get_inline_arg_types(
+    parents_func: FunctionType|FunctionDescriptor,
+    child_args: tuple[ArgInfo, ...]
+) -> list[TypeInfo|None] | None:
+    """Returns inline type annotations for a parent's method's arguments."""
+
+    if not (co := getattr(parents_func, "__code__", None)):
+        return None
+
+    try:
+        if not (hints := typing.get_type_hints(parents_func)):
+            return None
+    except NameError:
+        return None
+
+    return (
+        # first the positional, looking up by their names given in the parent
+        [
+            hint2type(hints[arg]) if arg in hints else None
+            for arg in co.co_varnames[:co.co_argcount]
+        ]
+        +
+        # then kwonly, going by the order in the child
+        [
+            hint2type(hints[arg.arg_name]) if arg.arg_name in hints else None
+            for arg in child_args[co.co_argcount:]
+        ]
+    )
+
+
+def get_typeshed_arg_types(
+    parents_func: FunctionDescriptor|FunctionType,
+    child_args: tuple[ArgInfo, ...]
+) -> list[TypeInfo|None] | None:
+    """Returns typeshed type annotations for a parent's method's arguments."""
+
+    def find_def(tree: ast.AST, qualified_name: str) -> list[ast.FunctionDef|ast.AsyncFunctionDef]:
+        parts = qualified_name.split('.')
+        results = []
+
+        def visit(node, path):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                full_name = '.'.join(path + [node.name])
+                if full_name == qualified_name:
+                    results.append(node)
+            elif isinstance(node, ast.ClassDef):
+                new_path = path + [node.name]
+                for body_item in node.body:
+                    visit(body_item, new_path)
+            elif isinstance(node, ast.Module):
+                for body_item in node.body:
+                    visit(body_item, path)
+
+        visit(tree, [])
+        return results
+
+    if stub_ast := ts.get_stub_ast(parents_func.__module__):    # FIXME replace __main__?
+        if defs := find_def(stub_ast, parents_func.__qualname__):
+            #print(ast.dump(defs[0], indent=4))
+
+            # FIXME use eval() in the context of the module and hint2type so
+            # as not to have an unqualified string for a "type"
+
+            # first the positional, looking up by their names given in the parent
+            pos_args = [
+                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
+                for a in (defs[0].args.posonlyargs + defs[0].args.args)
+                if isinstance(a, ast.arg)
+            ]
+
+            # then kwonly, going by the order in the child
+            kw_args = [
+                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
+                for child_arg_name in child_args[len(pos_args):]
+                for a in defs[0].args.kwonlyargs
+                if isinstance(a, ast.arg)
+                if a.arg == child_arg_name
+            ]
+
+            return pos_args + kw_args
+
+    return None
+
+
 @dataclass
 class Observations:
     # Visited functions' and information about them
@@ -113,7 +202,8 @@ class Observations:
         self,
         code: CodeType,
         args: inspect.ArgInfo,
-        get_defaults: abc.Callable[[], dict[str, TypeInfo]]
+        get_defaults: abc.Callable[[], dict[str, TypeInfo]],
+        overrides: FunctionType|FunctionDescriptor|None
     ) -> None:
         """Records that a function was visited, along with some details about it."""
 
@@ -138,7 +228,8 @@ class Observations:
                     for name in arg_names
                 ),
                 ArgumentName(args.varargs) if args.varargs else None,
-                ArgumentName(args.keywords) if args.keywords else None
+                ArgumentName(args.keywords) if args.keywords else None,
+                overrides
             )
 
 
@@ -221,6 +312,25 @@ class Observations:
             func_info = self.functions_visited[code_id]
             samples = self.samples[code_id]
 
+            parents_arg_types = None
+            if func_info.overrides:
+                parents_func = func_info.overrides
+
+                if (
+                    options.ignore_annotations
+                    or not (
+                        (parents_arg_types := get_inline_arg_types(parents_func, func_info.args))
+                        or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
+                    )
+                ):
+                    parent_code_id = CodeId(id(parents_func.__code__)) if hasattr(parents_func, "__code__") else None
+                    if (
+                        parent_code_id
+                        and parent_code_id in self.functions_visited
+                        and (ann := mk_annotation(parent_code_id))
+                    ):
+                        parents_arg_types = [arg[1] for arg in ann.args]
+
             if (signature := generalize(list(samples))) is None:
                 print(f"Error generalizing {func_info.func_id}: inconsistent samples.\n" +
                       f"{[tuple(str(t) for t in s) for s in samples]}")
@@ -243,7 +353,14 @@ class Observations:
                         tr.visit(
                             merged_types({
                                 signature[i],
-                                *((arg.default,) if arg.default is not None else ())
+                                *((arg.default,) if arg.default is not None else ()),
+                                # by building sets with the parent's types, we prevent arg. type narrowing
+                                *((parents_arg_types[i],) if (
+                                      parents_arg_types
+                                      and len(parents_arg_types) == len(func_info.args)
+                                      and parents_arg_types[i] is not None
+                                    ) else ()
+                                 )
                             })
                         )
                     )
@@ -498,7 +615,7 @@ def process_function_call(
 
     args = inspect.getargvalues(frame)
 
-    def get_self_type() -> TypeInfo|None:
+    def get_self_type() -> tuple[TypeInfo|None, FunctionType|FunctionDescriptor|None]:
         if args.args:
             first_arg = args.locals[args.args[0]]
 
@@ -514,7 +631,7 @@ def process_function_call(
 
             # @property?
             if isinstance(getattr(type(first_arg), name, None), property):
-                return get_type(first_arg)
+                return get_type(first_arg), None
 
             # if type(first_arg) is type, we may have a @classmethod
             first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
@@ -524,14 +641,35 @@ def process_function_call(
                 and getattr(f, "__code__", None) is code
                 for ancestor in first_arg_class.__mro__
             ):
+                # The first argument is 'Self'; now let's see if we override a method
+                overrides = None
+
+                if not (
+                    name in ('__init__', '__new__')         # irrelevant for Liskov
+                    or name not in first_arg_class.__dict__ # not defined in the class; likely just inherited
+                ):
+                    overrides = next(
+                        (
+                            # wrapper_descriptor and possibly other native objects may lack __module__
+                            f if hasattr(f, "__module__")
+                            else FunctionDescriptor(ancestor.__module__, f.__qualname__)
+                            for ancestor in first_arg_class.__mro__[1:]
+                            if (f := unwrap(ancestor.__dict__.get(name, None)))
+                        ),
+                        None
+                    )
+
                 if first_arg is first_arg_class:
-                    return get_type_name(first_arg) # @classmethod
+                    return get_type_name(first_arg), overrides # @classmethod
 
-                return get_type(first_arg) # normal method
+                return get_type(first_arg), overrides # normal method
 
-        return None
+        return None, None
 
-    obs.record_function(code, args, get_defaults)
+    # TODO self_type, like overrides, could just be saved in record_function,
+    # and computed only when first recording a function.
+    self_type, overrides = get_self_type()
+    obs.record_function(code, args, get_defaults, overrides)
 
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
@@ -553,7 +691,7 @@ def process_function_call(
         code,
         FrameId(id(frame)),
         arg_values,
-        get_self_type()
+        self_type
     )
 
 
@@ -567,7 +705,6 @@ instrumentation_functions_code = {
 
 def in_instrumentation_code() -> bool:
     for frame in sys._current_frames().values():
-        
         # We stop walking the stack after a given number of frames to
         # limit overhead. The instrumentation code should be fairly
         # shallow, so this heuristic should have no impact on accuracy
@@ -972,7 +1109,7 @@ def main(
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
-    
+
     try:
         setup_tool_id()
         register_monitoring_callbacks(

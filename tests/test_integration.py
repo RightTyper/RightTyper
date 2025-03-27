@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 import importlib.util
 import re
+from test_transformer import get_function
+import libcst as cst
 
 
 @pytest.fixture(scope='function')
@@ -393,7 +395,7 @@ def test_inner_function():
     assert "def g(y: int) -> int" in output
 
 
-def test_class_method():
+def test_method():
     t = textwrap.dedent("""\
         class C:
             def f(self, n):
@@ -422,7 +424,7 @@ def test_class_method():
     assert "def h(self: Self, x: int) -> float" in output
 
 
-def test_class_method_imported():
+def test_method_imported():
     Path("m.py").write_text(textwrap.dedent("""\
         class C:
             def f(self, n):
@@ -456,6 +458,361 @@ def test_class_method_imported():
     assert "def g(x: int) -> float" in output
     assert "def h(self: Self, x: int) -> float" in output
     assert "import gC" not in output
+
+
+def test_method_overriding():
+    t = textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                return x/2
+
+        class B(A):
+            def foo(self, x):
+                return int(x//2)
+
+        A().foo(1.0)
+        B().foo(10)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'A.foo', body=False) == textwrap.dedent("""\
+        def foo(self: Self, x: float) -> float: ...
+    """)
+
+    # contravariant for parameters, covariant for return value;
+    # so that while 'x' must not be 'int', but the return value may be 'int'
+    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+        def foo(self: Self, x: float|int) -> int: ...
+    """)
+
+
+def test_method_overriding_init_irrelevant():
+    t = textwrap.dedent("""\
+        class A:
+            def __init__(self, x):
+                pass
+
+        class B(A):
+            def __init__(self):
+                super().__init__('x')
+                pass
+
+        A(1)
+        B()
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'A.__init__', body=False) == textwrap.dedent("""\
+       def __init__(self: Self, x: int|str) -> None: ...
+    """)
+
+    assert get_function(code, 'B.__init__', body=False) == textwrap.dedent("""\
+        def __init__(self: Self) -> None: ...
+    """)
+
+
+def test_method_overriding_new_irrelevant():
+    t = textwrap.dedent("""\
+        class A:
+            def __new__(cls, x: int):
+                return super().__new__(cls)
+
+        class B(A):
+            def __new__(cls, x):
+                return super().__new__(cls, 0)
+
+        B("")
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.__new__', body=False) == textwrap.dedent("""\
+        def __new__(cls: type[Self], x: str) -> Self: ...
+    """)
+
+
+def test_method_overriding_classmethod():
+    t = textwrap.dedent("""\
+        class A:
+            @classmethod
+            def foo(cls, x):
+                pass
+
+        class B(A):
+            @classmethod
+            def foo(cls, x):
+                pass
+
+        A.foo('')
+        B.foo(1)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'A.foo', body=False) == textwrap.dedent("""\
+        @classmethod
+        def foo(cls: type[Self], x: str) -> None: ...
+    """)
+
+    # Somewhat unexpectedly, @classmethod matters for LSP (I think because they
+    # are also available in subclasses).  At least according to mypy 1.15.0.
+    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+        @classmethod
+        def foo(cls: type[Self], x: int|str) -> None: ...
+    """)
+
+
+def test_method_overriding_private():
+    t = textwrap.dedent("""\
+        class A:
+            def __foo(self, x):
+                return x/2
+
+            def _bar(self, x):
+                return x/2
+
+        class B(A):
+            def __foo(self, x):
+                return int(x//2)
+
+            def _bar(self, x):
+                return int(x//2)
+
+        A()._A__foo(1.0)    # type: ignore[attr-defined]
+        A()._bar(1.0)
+        B()._B__foo(10)     # type: ignore[attr-defined]
+        B()._bar(10)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'A.__foo', body=False) == textwrap.dedent("""\
+        def __foo(self: Self, x: float) -> float: ...
+    """)
+
+    assert get_function(code, 'A._bar', body=False) == textwrap.dedent("""\
+        def _bar(self: Self, x: float) -> float: ...
+    """)
+
+    assert get_function(code, 'B.__foo', body=False) == textwrap.dedent("""\
+        def __foo(self: Self, x: int) -> int: ...
+    """)
+
+    assert get_function(code, 'B._bar', body=False) == textwrap.dedent("""\
+        def _bar(self: Self, x: float|int) -> int: ...
+    """)
+
+
+def test_method_overriding_method_called_indirectly():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                return self
+
+        class B(A):
+            def bar(self, x):
+                self.foo(x)
+
+        o = B()
+        o.bar(1)
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+
+    assert "def foo(self: Self, x: int) -> Self:" in Path("t.py").read_text()
+
+
+def test_method_overriding_arg_names_change():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def foo(self, a: float, b: float, *, c: str) -> tuple[float, str]:
+                return (a/b, c)
+
+        class D(C):
+            def foo(self, x, y, *, d=None, c) -> tuple[float, str]:
+                return (0.0, '')
+
+
+        o = D()
+        o.foo(1, 2.0, d=4, c='*')
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
+                    '--no-sampling', '--no-use-multiprocessing', 't.py'],
+                   check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'D.foo', body=False) == textwrap.dedent("""\
+        def foo(self: Self, x: float|int, y: float, *, d: int|None=None, c: str) -> tuple[float, str]: ...
+    """)
+
+
+def test_method_overriding_annotation():
+    t = textwrap.dedent("""\
+        class A:
+            def foo(self, x: float) -> float:
+                return x/2
+
+        class B(A):
+            def foo(self, x):
+                return int(x//2)
+
+        B().foo(10)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # contravariant for parameters, covariant for return value;
+    # so that while 'x' must not be 'int', but the return value may be 'int'
+    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+        def foo(self: Self, x: float|int) -> int: ...
+    """)
+
+
+def test_method_overriding_annotation_ignored():
+    t = textwrap.dedent("""\
+        class A:
+            def foo(self, x: float) -> float:
+                return x/2
+
+        class B(A):
+            def foo(self, x):
+                return int(x//2)
+
+        A().foo(10)
+        B().foo(10)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--ignore-annotations', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # TODO int|int is silly
+    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+        def foo(self: Self, x: int|int) -> int: ...
+    """)
+
+
+@pytest.mark.dont_run_mypy # fails because of SomethingUnknown
+def test_method_overriding_annotation_errors():
+    t = textwrap.dedent("""\
+        from __future__ import annotations
+
+        class A:
+            def foo(self, x: SomethingUnknown) -> float:
+                return x/2
+
+        class B(A):
+            def foo(self, x):
+                return int(x//2)
+
+        B().foo(10)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+        def foo(self: Self, x: int) -> int: ...
+    """)
+
+
+def test_method_overriding_typeshed():
+    t = textwrap.dedent("""\
+        class C:
+            def __eq__(self, other):
+                if not isinstance(other, C):
+                    return False
+                return self is other
+
+        C() == C()
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'C.__eq__', body=False) == textwrap.dedent("""\
+        def __eq__(self: Self, other: object|Self) -> bool: ...
+    """)
+
+    assert "\nimport Self" not in output
+
+
+@pytest.mark.dont_run_mypy  # this results in incompatible signatures... TODO could we resolve it?
+def test_method_overriding_different_signature():
+    t = textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                pass
+
+        class B(A):
+            def foo(self, y, z):
+                pass
+
+        A().foo(1)
+        B().foo(1.0, 2)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'A.foo', body=False) == textwrap.dedent("""\
+       def foo(self: Self, x: int) -> None: ...
+    """)
+
+    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+        def foo(self: Self, y: float, z: int) -> None: ...
+    """)
 
 
 def test_class_name_imported():
@@ -574,7 +931,7 @@ def test_default_inner_function():
     assert "def g(y: int|str='0') -> int" in output
 
 
-def test_default_class_method():
+def test_default_method():
     t = textwrap.dedent("""\
         class C:
             def f(self, n=5):

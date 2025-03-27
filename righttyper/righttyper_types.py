@@ -149,12 +149,22 @@ class ArgInfo:
     default: TypeInfo|None
 
 
+@dataclass
+class FunctionDescriptor:
+    """Describes a function by name; stands in for a FunctionType where the function
+       is a wrapper_descriptor (or possibly other objects), lacking __module__
+    """
+    __module__: str
+    __qualname__: str
+
+
 @dataclass(eq=True, frozen=True)
 class FuncInfo:
     func_id: FuncId
     args: tuple[ArgInfo, ...]
     varargs: ArgumentName|None
     kwargs: ArgumentName|None
+    overrides: types.FunctionType|FunctionDescriptor|None
 
 
 
