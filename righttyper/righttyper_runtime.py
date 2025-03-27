@@ -156,7 +156,7 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
     return TypeInfo("typing", "Callable",
         args=args,
         code_id=CodeId(id(func.__code__)),
-        type_obj=abc.Callable,
+        type_obj=cast(type, abc.Callable),
         is_bound=isinstance(func, MethodType)
     )
 
@@ -483,17 +483,17 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
     elif t.__module__ == "builtins":
         if t is NoneType:
             return NoneTypeInfo
-        elif in_builtins_import(t):
+        elif in_builtins_import(cast(type, t)):
             return TypeInfo.from_type(t, module="") # these are "well known", so no module name needed
-        elif (name := from_types_import(t)):
+        elif (name := from_types_import(cast(type, t))):
             return TypeInfo(module="types", name=name, type_obj=t)
-        elif (v := _is_instance(value, (abc.KeysView, abc.ValuesView))):
+        elif (view := _is_instance(value, (abc.KeysView, abc.ValuesView))):
             # no name in "builtins" or "types" modules, so use abc protocol
             if value:
                 args = (recurse(sample_from_collection(value)),)
             else:
                 args = (TypeInfo("typing", "Never"),)
-            return TypeInfo("typing", v.__qualname__, args=args)
+            return TypeInfo("typing", view.__qualname__, args=args)
         elif isinstance(value, abc.ItemsView):
             # no name in "builtins" or "types" modules, so use abc protocol
             if value:
@@ -503,8 +503,8 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
             return TypeInfo("typing", "ItemsView", args=args)
         elif t.__name__ == 'async_generator_wrapped_value':
             import righttyper.traverse as tr
-            if len(v := tr.traverse(value)) == 1:
-                return recurse(v[0])
+            if len(memlist := tr.traverse(value)) == 1:
+                return recurse(memlist[0])
             else:
                 # something went wrong with the 'traverse' workaround
                 return AnyTypeInfo
