@@ -1090,9 +1090,18 @@ def test_generator_from_annotation():
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'], check=True)
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     # we know it's from the annotation because we never observed an 'int' yield
-    assert "def g(f: Generator[int|str, None, None]) -> None" in output
+    assert (
+        get_function(code, 'g', body=False) == textwrap.dedent("""\
+            def g(f: Generator[int|str, None, None]) -> None: ...
+        """)
+        or 
+        get_function(code, 'g', body=False) == textwrap.dedent("""\
+            def g(f: Iterator[int|str]) -> None: ...
+        """)
+    )
 
 
 def test_generator_ignore_annotation():

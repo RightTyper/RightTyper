@@ -3,7 +3,7 @@ from righttyper.typeinfo import merged_types, generalize, find_superclass
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
 from collections import namedtuple
-from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List
+from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal
 import pytest
 import importlib
 import types
@@ -230,19 +230,19 @@ def test_type_from_annotations():
                     reason='missing modules')
 def test_hint2type():
     import jaxtyping
-    import jax.numpy as jnp
+    import jax
 
     def foo(
         x: int | MyGeneric[str, Callable[[], None]],
         y: tuple[int, ...],
-        z: jaxtyping.Float[jnp.ndarray, "10 20"]
+        z: jaxtyping.Float[jax.Array, "10 20"]
     ): pass
 
     hints = get_type_hints(foo)
 
     assert f"int|{__name__}.MyGeneric[str, collections.abc.Callable[[], None]]" == str(rt.hint2type(hints['x']))
     assert f"tuple[int, ...]" == str(rt.hint2type(hints['y']))
-    assert "jaxtyping.Float[Array, '10 20']" == str(rt.hint2type(hints['z']))
+    assert """jaxtyping.Float[jax.Array, "10 20"]""" == str(rt.hint2type(hints['z']))
 
 
 def test_typeinfo():
@@ -475,6 +475,44 @@ def test_hint2type_typevar():
     assert t == TypeInfo.from_type(list, module='', args=(TypeInfo(module=__name__, name='T'),))
 
 
+def test_hint2type_none():
+    t = rt.hint2type(None)
+    assert t is NoneTypeInfo
+
+    t = rt.hint2type(abc.Generator[int|str, None, None])
+    assert t == TypeInfo.from_type(abc.Generator, args=(
+        TypeInfo.from_set({
+            TypeInfo.from_type(int, module=''),
+            TypeInfo.from_type(str, module=''),
+        }),
+        NoneTypeInfo,
+        NoneTypeInfo
+    ))
+
+
+def test_hint2type_ellipsis():
+    t = rt.hint2type(tuple[str, ...])
+    assert t == TypeInfo.from_type(tuple, module="", args=(
+        TypeInfo.from_type(str, module=""),
+        ...
+    ))
+
+
+def test_hint2type_list():
+    t = rt.hint2type(abc.Callable[[], None]) 
+    assert t == TypeInfo.from_type(abc.Callable, args=(
+        TypeInfo.list([]),
+        NoneTypeInfo
+    ))
+
+
+def test_hint2type_string():
+    t = rt.hint2type(Literal["a", "b"])
+    assert t == TypeInfo.from_type(Literal, args=(
+        "a",
+        "b"
+    ))
+
 
 def test_hint2type_unions():
     t = rt.hint2type(Union[int, str])
@@ -490,6 +528,22 @@ def test_hint2type_unions():
         TypeInfo.from_type(str, module=''),
         NoneTypeInfo
     )
+
+
+@pytest.mark.skipif((importlib.util.find_spec('numpy') is None or
+                     importlib.util.find_spec('jaxtyping') is None),
+                    reason='missing modules')
+def test_hint2type_jaxtyping():
+    import jaxtyping
+    import numpy
+
+    t = rt.hint2type(jaxtyping.Float64[numpy.ndarray, "0"])
+    assert t == TypeInfo("jaxtyping", "Float64", args=(
+        TypeInfo.from_type(numpy.ndarray),
+        "0"
+    ))
+
+    assert str(t) == "jaxtyping.Float64[numpy.ndarray, \"0\"]"
 
 
 def test_from_set_with_unions():

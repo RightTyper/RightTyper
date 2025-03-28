@@ -48,63 +48,32 @@ def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) 
     n = random.randint(1, MAX_ELEMENTS)
     return list(itertools.islice(value, n))[-1]
 
-
-JX_DTYPES = None
-def jx_dtype(value: Any) -> str|None:
-    global JX_DTYPES
-
-    if JX_DTYPES is None:
-        # we lazy load jaxtyping to avoid "PytestAssertRewriteWarning"s
-        try:
-            import jaxtyping as jx
-            jx_dtype_type: TypeAlias = jx._array_types._MetaAbstractDtype
-            JX_DTYPES = cast(list[jx_dtype_type], [
-                jx.UInt4, jx.UInt8, jx.UInt16, jx.UInt32, jx.UInt64,
-                jx.Int4, jx.Int8, jx.Int16, jx.Int32, jx.Int64,
-                jx.BFloat16, jx.Float16, jx.Float32, jx.Float64,
-                jx.Complex64, jx.Complex128,
-                jx.Bool, jx.UInt, jx.Int, jx.Integer,
-                jx.Float, jx.Complex, jx.Inexact, jx.Real,
-                jx.Num, jx.Shaped, jx.Key,
-            ])
-        except ImportError:
-            JX_DTYPES = []
-
-    t = type(value)
-    for dtype in JX_DTYPES:
-        if isinstance(value, dtype[t, "..."]):
-            return dtype.__qualname__
-    return None
-
-
 @cache
-def should_skip_function(
-    code: CodeType,
-    script_dir: str,
-    include_all: bool,
-    include_files_pattern: str,
-    include_functions_pattern: tuple[str, ...]
-) -> bool:
-    skip_file = skip_this_file(
-        code.co_filename,
-        script_dir,
-        include_all,
-        include_files_pattern,
-    )
-    included_in_pattern = include_functions_pattern and \
-        all([not re.search(pattern, code.co_name) \
-             for pattern in include_functions_pattern])
-    if (
-        skip_file
-        or included_in_pattern
-    ):
-        return True
-    if not (code.co_flags & 0x2):
-        import dis
+def get_jaxtyping():
+    try:
+        # we lazy load jaxtyping to avoid "PytestAssertRewriteWarning"s
+        import jaxtyping
+        return jaxtyping
+    except ImportError:
+        return None
 
-        assert dis.COMPILER_FLAG_NAMES[0x2] == "NEWLOCALS"
-        return True
-    return False
+
+def jx_dtype(value: Any) -> str|None:
+    if jx := get_jaxtyping():
+        t = type(value)
+        for dtype in (
+            jx.UInt4, jx.UInt8, jx.UInt16, jx.UInt32, jx.UInt64,
+            jx.Int4, jx.Int8, jx.Int16, jx.Int32, jx.Int64,
+            jx.BFloat16, jx.Float16, jx.Float32, jx.Float64,
+            jx.Complex64, jx.Complex128,
+            jx.Bool, jx.UInt, jx.Int, jx.Integer,
+            jx.Float, jx.Complex, jx.Inexact, jx.Real,
+            jx.Num, jx.Shaped, jx.Key
+        ):
+            if isinstance(value, dtype[t, "..."]):
+                return dtype.__qualname__
+
+    return None
 
 
 def hint2type(hint) -> TypeInfo:
@@ -114,11 +83,11 @@ def hint2type(hint) -> TypeInfo:
         if isinstance(hint, list):
             return TypeInfo.list([hint2type_arg(el) for el in hint])
 
-        if isinstance(hint, (type, typing.TypeVar)) or get_origin(hint):
-            return hint2type(hint)
+        if hint is Ellipsis or type(hint) is str:
+            return hint
 
-        # TODO what types of objects are valid in hints?
-        return hint
+        return hint2type(hint)
+
 
     if (origin := get_origin(hint)):
         if origin is typing.Union:
@@ -132,8 +101,20 @@ def hint2type(hint) -> TypeInfo:
                     )
                 )
 
-    if isinstance(hint, typing.TypeVar):
-        return TypeInfo(name=hint.__name__, module=hint.__module__) # no __qualname__
+    if type(hint) is NoneType:
+        return NoneTypeInfo
+
+    if (
+        (jx := get_jaxtyping())
+        and (bases := getattr(hint, "__bases__", None))
+        and jx.AbstractArray in bases
+    ):
+        return TypeInfo(hint.__module__, hint.__name__.split('[')[0], args=(
+            get_type_name(bases[0]), hint.dim_str
+        ))
+
+    if not hasattr(hint, "__qualname__"): # e.g., typing.TypeVar
+        return TypeInfo(name=hint.__name__, module=hint.__module__)
 
     return get_type_name(hint)
 
@@ -167,6 +148,36 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
         type_obj=cast(type, abc.Callable),
         is_bound=isinstance(func, MethodType)
     )
+
+
+@cache
+def should_skip_function(
+    code: CodeType,
+    script_dir: str,
+    include_all: bool,
+    include_files_pattern: str,
+    include_functions_pattern: tuple[str, ...]
+) -> bool:
+    skip_file = skip_this_file(
+        code.co_filename,
+        script_dir,
+        include_all,
+        include_files_pattern,
+    )
+    included_in_pattern = include_functions_pattern and \
+        all([not re.search(pattern, code.co_name) \
+             for pattern in include_functions_pattern])
+    if (
+        skip_file
+        or included_in_pattern
+    ):
+        return True
+    if not (code.co_flags & 0x2):
+        import dis
+
+        assert dis.COMPILER_FLAG_NAMES[0x2] == "NEWLOCALS"
+        return True
+    return False
 
 
 def find_caller_frame() -> FrameType|None:
