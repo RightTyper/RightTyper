@@ -3,7 +3,7 @@ from righttyper.typeinfo import merged_types, generalize, find_superclass
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
 from collections import namedtuple
-from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal
+from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal, cast
 import pytest
 import importlib
 import types
@@ -471,7 +471,7 @@ def test_hint2type_typevar():
     t = rt.hint2type(T)
     assert t == TypeInfo(module=__name__, name='T')
 
-    t = rt.hint2type(List[T])
+    t = rt.hint2type(List[T])   # type: ignore[valid-type]
     assert t == TypeInfo.from_type(list, module='', args=(TypeInfo(module=__name__, name='T'),))
 
 
@@ -500,7 +500,7 @@ def test_hint2type_ellipsis():
 
 def test_hint2type_list():
     t = rt.hint2type(abc.Callable[[], None]) 
-    assert t == TypeInfo.from_type(abc.Callable, args=(
+    assert t == TypeInfo.from_type(cast(type, abc.Callable), args=(
         TypeInfo.list([]),
         NoneTypeInfo
     ))
@@ -508,7 +508,7 @@ def test_hint2type_list():
 
 def test_hint2type_string():
     t = rt.hint2type(Literal["a", "b"])
-    assert t == TypeInfo.from_type(Literal, args=(
+    assert t == TypeInfo.from_type(cast(type, Literal), args=(
         "a",
         "b"
     ))
