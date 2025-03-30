@@ -45,11 +45,13 @@ authors = [
   { name="Emery Berger", email="emerydb@amazon.com" },
   { name="Juan Altmayer Pizzorno", email="jpizzorno@umass.edu" },
 ]
-dependencies = [ "libcst >= 1.2.0",
-		 "click >= 8.1.7",
-		 "rich >= 13.7.1",
-		 "wcmatch >= 10.0",
-		 ]
+dependencies = [
+    "libcst >= 1.2.0",
+    "click >= 8.1.7",
+    "rich >= 13.7.1",
+    "wcmatch >= 10.0",
+    "typeshed_client"
+]
 	 
 description = "A fast runtime type hint assistant for Python code."
 readme = "README.md"
@@ -76,3 +78,7 @@ shapes = [
 [project.scripts]
 righttyper = "righttyper.righttyper:main"
 
+[tool.pytest.ini_options]
+markers = [
+    'dont_run_mypy'
+]

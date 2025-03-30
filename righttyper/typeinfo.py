@@ -2,29 +2,32 @@ from typing import Sequence, Iterator, cast
 from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo
 from .righttyper_utils import get_main_module_fqn
 from collections import Counter
+import collections.abc as abc
+from types import EllipsisType
 
 
 # TODO integrate these into TypeInfo?
 
 class SimplifyGeneratorsTransformer(TypeInfo.Transformer):
     def visit(self, node: TypeInfo) -> TypeInfo:
+        node = super().visit(node)
+
         if (
-            node.module == "typing"
-            and node.name == "Generator"
+            node.type_obj is abc.Generator
             and len(node.args) == 3
             and node.args[1] == NoneTypeInfo
             and node.args[2] == NoneTypeInfo
         ):
             return TypeInfo("typing", "Iterator", (node.args[0],))
-        
-        return super().visit(node)
+
+        return node
 
 
 def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     """Attempts to merge types in a set before forming their union."""
 
     if len(typeinfoset) > 1:
-        if sclass := find_most_specific_common_superclass(typeinfoset):
+        if sclass := find_superclass(typeinfoset):
             return sclass
 
     tr = SimplifyGeneratorsTransformer()
@@ -36,8 +39,17 @@ def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     return TypeInfo.from_set(typeinfoset)
 
 
-def find_most_specific_common_superclass(typeinfoset: set[TypeInfo]) -> TypeInfo|None:
-    if any(t.type_obj is None for t in typeinfoset):    # we require type_obj for this
+def find_superclass(typeinfoset: set[TypeInfo]) -> TypeInfo|None:
+    """Finds the most specific common superclass with all the common
+       attributes, if any.
+    """
+    if any(
+        # typing.Union is a "special type" and has no __mro__.  We now
+        # convert that to types.UnionType, but left this check in place
+        # just in case something else lacks the MRO.
+        t.type_obj is None or not hasattr(t.type_obj, "__mro__")
+        for t in typeinfoset
+    ):
         return None
 
     # TODO do we want to merge by protocol?  search for protocols in collections.abc types?
@@ -92,13 +104,12 @@ def generalize_jaxtyping(samples: Sequence[tuple[TypeInfo, ...]]) -> Sequence[tu
         return (
             t.module == 'jaxtyping' and
             len(t.args) == 2 and
-            isinstance(t.args[1], str) and
-            t.args[1][0] in ('"', "'") and t.args[1][-1] == t.args[1][0]
+            isinstance(t.args[1], str)
         )
 
     def get_dims(t: TypeInfo) -> Sequence[str]:
         # str type already checked by is_jaxtyping_array
-        return cast(str, t.args[1])[1:-1].split()  # space separated dimensions within quotes
+        return cast(str, t.args[1]).split()  # space separated dimensions
 
     # Get the set of dimensions seen for each consistent jaxtyping array
     dimensions = {
@@ -130,7 +141,7 @@ def generalize_jaxtyping(samples: Sequence[tuple[TypeInfo, ...]]) -> Sequence[tu
             results.append([
                 s[argno].replace(args=(
                         s[argno].args[0],
-                        f"\"{' '.join(dims)}\""
+                        f"{' '.join(dims)}"
                     )
                 )
                 for s, dims in zip(samples, tdims)
@@ -164,9 +175,9 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
     # various types seen for each argument.
     transposed = list(zip(*samples))
 
-    def is_homogeneous_generic(types: tuple[TypeInfo, ...]) -> bool:
-        """Whether the set only contains instances of a single, consistent generic type
-           whose arguments are also all TypeInfo.
+    def is_homogeneous(types: tuple[TypeInfo, ...]) -> bool:
+        """Whether the tuple only contains instances of a single, consistent generic type
+           whose arguments are all either TypeInfo or ellipsis.
         """
         if not types:
             return False
@@ -175,44 +186,51 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
 
         return (
             all(
-                all(isinstance(a, TypeInfo) for a in t.args)
+                isinstance(t, TypeInfo) and
+                all(isinstance(a, (TypeInfo, EllipsisType)) for a in t.args)
                 for t in types
             )
             and all(
                 t.module == first.module and
                 t.name == first.name and
                 len(t.args) == len(first.args) and
-                all(isinstance(a, TypeInfo) for a in t.args)
+                all((a is Ellipsis) == (first.args[i] is Ellipsis) for i, a in enumerate(t.args))
                 for t in types[1:]
             )
         )
 
-    def expand_generics(types: tuple[TypeInfo, ...]) -> Iterator[tuple[TypeInfo, ...]]:
-        yield types
-
-        if is_homogeneous_generic(types):
-            for i in range(len(types[0].args)):
-                # cast dropping 'str' is checked by is_homogeneous_generic
-                yield from expand_generics(cast(tuple[TypeInfo, ...], tuple(t.args[i] for t in types)))
-
     # Count the number of times a type usage pattern occurs, as we only want to generalize
     # if one occurs more than once (in more than one argument).
+    def expand_types(types: tuple[TypeInfo, ...]) -> Iterator[tuple[TypeInfo, ...]]:
+        """Given a tuple of types used in an argument or return value, extracts the
+           various type patterns enclosed in those type's arguments.
+        """
+        yield types
+
+        if is_homogeneous(types):
+            for i in range(len(types[0].args)):
+                if types[0].args[i] is not Ellipsis:
+                    yield from expand_types(cast(tuple[TypeInfo, ...], tuple(t.args[i] for t in types)))
+
     occurrences: Counter[tuple[TypeInfo, ...]] = Counter()
     for types in transposed:
-        occurrences.update([s for s in expand_generics(types)])
-
-    typevars: dict[tuple[TypeInfo, ...], TypeInfo] = {}
+        occurrences.update([s for s in expand_types(types)])
 
     # Rebuild the argument list, defining and replacing type patterns with a type variable.
+    typevars: dict[tuple[TypeInfo, ...], TypeInfo] = {}
+
     def rebuild(types: tuple[TypeInfo, ...]) -> TypeInfo:
-        if is_homogeneous_generic(types):
+        # if the types look compatible, try to replace them with a single one using variable(s)
+        if is_homogeneous(types):
             args = tuple(
-                rebuild(cast(tuple[TypeInfo, ...], tuple(t.args[i] for t in types)))
+                rebuild(tuple(cast(TypeInfo, t.args[i]) for t in types))
+                if types[0].args[i] is not Ellipsis else Ellipsis
                 for i in range(len(types[0].args))
             )
 
             return SimplifyGeneratorsTransformer().visit(types[0].replace(args=args))
 
+        # replace type sequence with a variable
         if occurrences[types] > 1:
             if types not in typevars:
                 typevars[types] = TypeInfo.from_set(
@@ -222,6 +240,5 @@ def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
             return typevars[types]
 
         return merged_types(set(types))
-
 
     return [rebuild(types) for types in transposed]

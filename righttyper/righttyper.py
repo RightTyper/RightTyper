@@ -10,18 +10,19 @@ import runpy
 import signal
 import sys
 import platform
+import typeshed_client as ts
+
 
 import collections.abc as abc
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import CodeType, FrameType, FunctionType, GeneratorType, AsyncGeneratorType
+from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType, AsyncGeneratorType
+import typing
 from typing import (
     Any,
     TextIO,
-    Self,
-    Callable,
-    Sequence
+    Self
 )
 
 import click
@@ -38,6 +39,7 @@ from righttyper.righttyper_runtime import (
     get_value_type,
     get_type_name,
     should_skip_function,
+    hint2type,
 )
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
@@ -54,6 +56,7 @@ from righttyper.righttyper_types import (
     FrameId,
     FuncAnnotation,
     FunctionName,
+    FunctionDescriptor,
     TypeInfo,
     NoneTypeInfo,
     AnyTypeInfo,
@@ -98,6 +101,91 @@ options = Options()
 
 logger = logging.getLogger("righttyper")
 
+
+def get_inline_arg_types(
+    parents_func: FunctionType|FunctionDescriptor,
+    child_args: tuple[ArgInfo, ...]
+) -> list[TypeInfo|None] | None:
+    """Returns inline type annotations for a parent's method's arguments."""
+
+    if not (co := getattr(parents_func, "__code__", None)):
+        return None
+
+    try:
+        if not (hints := typing.get_type_hints(parents_func)):
+            return None
+    except NameError:
+        return None
+
+    return (
+        # first the positional, looking up by their names given in the parent
+        [
+            hint2type(hints[arg]) if arg in hints else None
+            for arg in co.co_varnames[:co.co_argcount]
+        ]
+        +
+        # then kwonly, going by the order in the child
+        [
+            hint2type(hints[arg.arg_name]) if arg.arg_name in hints else None
+            for arg in child_args[co.co_argcount:]
+        ]
+    )
+
+
+def get_typeshed_arg_types(
+    parents_func: FunctionDescriptor|FunctionType,
+    child_args: tuple[ArgInfo, ...]
+) -> list[TypeInfo|None] | None:
+    """Returns typeshed type annotations for a parent's method's arguments."""
+
+    def find_def(tree: ast.AST, qualified_name: str) -> list[ast.FunctionDef|ast.AsyncFunctionDef]:
+        parts = qualified_name.split('.')
+        results = []
+
+        def visit(node, path):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                full_name = '.'.join(path + [node.name])
+                if full_name == qualified_name:
+                    results.append(node)
+            elif isinstance(node, ast.ClassDef):
+                new_path = path + [node.name]
+                for body_item in node.body:
+                    visit(body_item, new_path)
+            elif isinstance(node, ast.Module):
+                for body_item in node.body:
+                    visit(body_item, path)
+
+        visit(tree, [])
+        return results
+
+    if stub_ast := ts.get_stub_ast(parents_func.__module__):    # FIXME replace __main__?
+        if defs := find_def(stub_ast, parents_func.__qualname__):
+            #print(ast.dump(defs[0], indent=4))
+
+            # FIXME use eval() in the context of the module and hint2type so
+            # as not to have an unqualified string for a "type"
+
+            # first the positional, looking up by their names given in the parent
+            pos_args = [
+                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
+                for a in (defs[0].args.posonlyargs + defs[0].args.args)
+                if isinstance(a, ast.arg)
+            ]
+
+            # then kwonly, going by the order in the child
+            kw_args = [
+                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
+                for child_arg_name in child_args[len(pos_args):]
+                for a in defs[0].args.kwonlyargs
+                if isinstance(a, ast.arg)
+                if a.arg == child_arg_name
+            ]
+
+            return pos_args + kw_args
+
+    return None
+
+
 @dataclass
 class Observations:
     # Visited functions' and information about them
@@ -114,18 +202,21 @@ class Observations:
         self,
         code: CodeType,
         args: inspect.ArgInfo,
-        get_default_type: Callable[[str], TypeInfo|None]
+        get_defaults: abc.Callable[[], dict[str, TypeInfo]],
+        overrides: FunctionType|FunctionDescriptor|None
     ) -> None:
         """Records that a function was visited, along with some details about it."""
 
-        arg_names = (
-            *(a for a in args.args),
-            *((args.varargs,) if args.varargs else ()),
-            *((args.keywords,) if args.keywords else ())
-        )
-
         code_id = CodeId(id(code))
         if code_id not in self.functions_visited:
+            arg_names = (
+                *(a for a in args.args),
+                *((args.varargs,) if args.varargs else ()),
+                *((args.keywords,) if args.keywords else ())
+            )
+
+            defaults = get_defaults()
+
             self.functions_visited[code_id] = FuncInfo(
                 FuncId(
                     Filename(code.co_filename),
@@ -133,11 +224,12 @@ class Observations:
                     FunctionName(code.co_qualname),
                 ),
                 tuple(
-                    ArgInfo(ArgumentName(name), get_default_type(name))
+                    ArgInfo(ArgumentName(name), defaults.get(name))
                     for name in arg_names
                 ),
                 ArgumentName(args.varargs) if args.varargs else None,
-                ArgumentName(args.keywords) if args.keywords else None
+                ArgumentName(args.keywords) if args.keywords else None,
+                overrides
             )
 
 
@@ -220,6 +312,25 @@ class Observations:
             func_info = self.functions_visited[code_id]
             samples = self.samples[code_id]
 
+            parents_arg_types = None
+            if func_info.overrides:
+                parents_func = func_info.overrides
+
+                if (
+                    options.ignore_annotations
+                    or not (
+                        (parents_arg_types := get_inline_arg_types(parents_func, func_info.args))
+                        or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
+                    )
+                ):
+                    parent_code_id = CodeId(id(parents_func.__code__)) if hasattr(parents_func, "__code__") else None
+                    if (
+                        parent_code_id
+                        and parent_code_id in self.functions_visited
+                        and (ann := mk_annotation(parent_code_id))
+                    ):
+                        parents_arg_types = [arg[1] for arg in ann.args]
+
             if (signature := generalize(list(samples))) is None:
                 print(f"Error generalizing {func_info.func_id}: inconsistent samples.\n" +
                       f"{[tuple(str(t) for t in s) for s in samples]}")
@@ -242,7 +353,14 @@ class Observations:
                         tr.visit(
                             merged_types({
                                 signature[i],
-                                *((arg.default,) if arg.default is not None else ())
+                                *((arg.default,) if arg.default is not None else ()),
+                                # by building sets with the parent's types, we prevent arg. type narrowing
+                                *((parents_arg_types[i],) if (
+                                      parents_arg_types
+                                      and len(parents_arg_types) == len(func_info.args)
+                                      and parents_arg_types[i] is not None
+                                    ) else ()
+                                 )
                             })
                         )
                     )
@@ -251,31 +369,53 @@ class Observations:
                 retval=tr.visit(signature[-1])
             )
 
-        class T(TypeInfo.Transformer):
+        class ClearIsSelfT(TypeInfo.Transformer):
+            """Clones the given TypeInfo, clearing all is_self flags."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                return super().visit(node.replace(is_self=False))
+
+        class CallableT(TypeInfo.Transformer):
             """Updates Callable type declarations based on observations."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
+                node = super().visit(node)
+
                 # if 'args' is there, the function is already annotated
                 if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.samples:
                     if (ann := mk_annotation(node.code_id)):
                         func_info = self.functions_visited[node.code_id]
-                        if node.name == 'Callable':
-                            # TODO: fix callable arguments being strings
-                            return TypeInfo('typing', 'Callable', args=(
-                                "[" + ", ".join(
-                                    str(a[1])
-                                    for a in ann.args[int(node.is_bound):]
-                                    if a[0] not in (func_info.varargs, func_info.kwargs)
-                                ) + "]",
-                                ann.retval
+                        # While copying from Callable, Generator, etc., it's important to clone the
+                        # TypeInfo elements, as they could be later replaced (e.g., with typing.Self).
+                        if node.type_obj is abc.Callable:
+                            node = node.replace(args=(
+                                TypeInfo.list([
+                                    ClearIsSelfT().visit(a[1]) for a in ann.args[int(node.is_bound):]
+                                ])
+                                if not (func_info.varargs or func_info.kwargs) else
+                                ...,
+                                ClearIsSelfT().visit(ann.retval)
                             ))
-                        elif node.name in ('Generator', 'AsyncGenerator'):
-                            return ann.retval
-                        elif node.name == 'Coroutine':
-                            return node.replace(args=(NoneTypeInfo, NoneTypeInfo, ann.retval))
+                        elif node.type_obj in (abc.Generator, abc.AsyncGenerator):
+                            node = ClearIsSelfT().visit(ann.retval)
+                        elif node.type_obj is abc.Coroutine:
+                            node = node.replace(args=(
+                                NoneTypeInfo,
+                                NoneTypeInfo,
+                                ClearIsSelfT().visit(ann.retval)
+                            ))
+
+                return node
+
+        self._transform_types(CallableT())
+
+        class SelfT(TypeInfo.Transformer):
+            """Renames types to typing.Self according to is_self."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.is_self:
+                    return TypeInfo("typing", "Self")
 
                 return super().visit(node)
 
-        self._transform_types(T())
+        self._transform_types(SelfT())
 
         return {
             self.functions_visited[code_id].func_id: annotation
@@ -339,8 +479,7 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         frame = frame.f_back
 
     if frame:
-        function = find_function(frame, code)
-        process_function_arguments(code, FrameId(id(frame)), inspect.getargvalues(frame), function)
+        process_function_call(code, frame)
         del frame
 
     return sys.monitoring.DISABLE if options.sampling else None
@@ -454,53 +593,83 @@ def process_yield_or_return(
     return sys.monitoring.DISABLE if (options.sampling and found) else None
 
 
-def process_function_arguments(
+def process_function_call(
     code: CodeType,
-    frame_id: FrameId,
-    args: inspect.ArgInfo,
-    function: Callable|None
+    frame: FrameType,
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
         return get_value_type(v, use_jaxtyping=options.infer_shapes)
 
 
-    defaults: dict[str, tuple[Any]] = {} if not function else {
-        # use tuple to differentiate a None default from no default
-        param_name: (param.default,)
-        for param_name, param in inspect.signature(function).parameters.items()
-        if param.default != inspect._empty
-    }
+    def get_defaults() -> dict[str, TypeInfo]:
+        if (function := find_function(frame, code)):
+            return {
+                param_name: get_type(param.default)
+                for param_name, param in inspect.signature(function).parameters.items()
+                if param.default != inspect._empty
+            }
+
+        return {}
 
 
-    def get_default_type(name: str) -> TypeInfo|None:
-        if (def_value := defaults.get(name)):
-            return get_type(*def_value)
+    args = inspect.getargvalues(frame)
 
-        return None
-
-    def get_self_type() -> TypeInfo|None:
+    def get_self_type() -> tuple[TypeInfo|None, FunctionType|FunctionDescriptor|None]:
         if args.args:
             first_arg = args.locals[args.args[0]]
 
+            name = code.co_name
+            if (
+                name.startswith("__")
+                and not name.endswith("__")
+                and len(parts := code.co_qualname.split(".")) > 1
+            ):
+                # parts[-2] may be "<locals>"... that's ok, as we then have
+                # a local function and there is no 'Self' to find.
+                name = f"_{parts[-2]}{name}"    # private attribute/method
+
             # @property?
-            if isinstance(getattr(type(first_arg), code.co_name, None), property):
-                return get_type(first_arg)
+            if isinstance(getattr(type(first_arg), name, None), property):
+                return get_type(first_arg), None
 
-            if function:
-                # if type(first_arg) is type, we may have a @classmethod
-                first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
+            # if type(first_arg) is type, we may have a @classmethod
+            first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
 
-                for ancestor in first_arg_class.__mro__:
-                    if unwrap(ancestor.__dict__.get(function.__name__, None)) is function:
-                        if first_arg is first_arg_class:
-                            return get_type_name(first_arg)
+            if any (
+                (f := unwrap(ancestor.__dict__.get(name, None)))
+                and getattr(f, "__code__", None) is code
+                for ancestor in first_arg_class.__mro__
+            ):
+                # The first argument is 'Self'; now let's see if we override a method
+                overrides = None
 
-                        # normal method
-                        return get_type(first_arg)
-        return None
+                if not name in ('__init__', '__new__'):         # irrelevant for Liskov
+                    overrides = next(
+                        (
+                            # wrapper_descriptor and possibly other native objects may lack __module__
+                            f if hasattr(f, "__module__")
+                            else FunctionDescriptor(ancestor.__module__, f.__qualname__)
+                            for ancestor in first_arg_class.__mro__[1:]
+                            if (f := unwrap(ancestor.__dict__.get(name, None)))
+                            # if a method is only inherited (but not defined in the class),
+                            # starting at __mro__[1:] above isn't enough to skip it
+                            if getattr(f, "__code__", None) is not code
+                        ),
+                        None
+                    )
 
-    obs.record_function(code, args, get_default_type)
+                if first_arg is first_arg_class:
+                    return get_type_name(first_arg), overrides # @classmethod
+
+                return get_type(first_arg), overrides # normal method
+
+        return None, None
+
+    # TODO self_type, like overrides, could just be saved in record_function,
+    # and computed only when first recording a function.
+    self_type, overrides = get_self_type()
+    obs.record_function(code, args, get_defaults, overrides)
 
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
@@ -520,9 +689,9 @@ def process_function_arguments(
 
     obs.record_start(
         code,
-        frame_id,
+        FrameId(id(frame)),
         arg_values,
-        get_self_type()
+        self_type
     )
 
 
@@ -536,7 +705,6 @@ instrumentation_functions_code = {
 
 def in_instrumentation_code() -> bool:
     for frame in sys._current_frames().values():
-        
         # We stop walking the stack after a given number of frames to
         # limit overhead. The instrumentation code should be fairly
         # shallow, so this heuristic should have no impact on accuracy
@@ -941,14 +1109,14 @@ def main(
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
-    
+
     try:
         setup_tool_id()
         register_monitoring_callbacks(
             enter_handler,
-            call_handler,
             return_handler,
             yield_handler,
+            call_handler,
         )
         sys.monitoring.restart_events()
         alarm.start()

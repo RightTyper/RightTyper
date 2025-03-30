@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace, field
-from typing import NewType, TypeVar, Self, TypeAlias
+from typing import NewType, TypeVar, Self, TypeAlias, List, Iterator
+import collections.abc as abc
 import types
 
 T = TypeVar("T")
@@ -36,37 +37,46 @@ TYPE_OBJ_TYPES: TypeAlias = type
 class TypeInfo:
     module: str
     name: str
-    args: "tuple[TypeInfo|str, ...]" = tuple()    # arguments within []
+    args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()    # arguments within []
 
     code_id: CodeId = CodeId(0)     # if a callable, generator or coroutine, the CodeId
     is_bound: bool = False          # if a callable, whether bound
     type_obj: TYPE_OBJ_TYPES|None = None
     typevar_index: int = 0
     typevar_name: str|None = None   # TODO delete me?
+    is_self: bool = False
 
 
     def __str__(self: Self) -> str:
         if self.typevar_name: # FIXME subclass?
             return self.typevar_name
 
-        if self.module == "types" and self.name == "UnionType": # FIXME subclass?
+        # We can't use type_obj here because we need to clear them before using 'multiprocessing',
+        # since type objects aren't pickleable
+        if (self.module, self.name) == ('types', 'UnionType'): # FIXME subclass?
             return "|".join(str(a) for a in self.args)
         
-        module = self.module + '.' if self.module else ''
-        if self.args:
-            # TODO: fix callable arguments being strings
-            # if self.module == "typing" and self.name == "Callable":
-            #     return f"{module}{self.name}[[" + \
-            #         ", ".join(str(a) for a in self.args[:-1]) + \
-            #         f"], {str(self.args[-1])}]"
+        if self.args or self.name == '':
+            def arg2str(a: TypeInfo|str|ellipsis) -> str:
+                if a is Ellipsis:
+                    return '...'
+                if isinstance(a, str):
+                    return f'"{a}"'
+                return str(a)
             
             return (
-                f"{module}{self.name}[" +
-                    ", ".join(str(a) for a in self.args) +
+                f"{self.qualname()}[" +
+                    ", ".join(arg2str(a) for a in self.args) +
                 "]"
             )
 
-        return f"{module}{self.name}"
+        return self.qualname()
+
+
+    @staticmethod
+    def list(args: "list[TypeInfo|str|ellipsis]") -> "TypeInfo":
+        """Builds a list argument, such as the first argument of a Callable"""
+        return TypeInfo('', '', args=tuple(args))   # FIXME subclass?
 
 
     @staticmethod
@@ -89,6 +99,17 @@ class TypeInfo:
 
         if len(s) == 1:
             return next(iter(s))
+
+        def expand_unions(t: "TypeInfo") -> Iterator["TypeInfo"]:
+            # don't merge unions designated as typevars, or the typevar gets lost.
+            if t.type_obj is types.UnionType and not t.typevar_index:
+                for a in t.args:
+                    if isinstance(a, TypeInfo):
+                        yield from expand_unions(a)
+            else:
+                yield t
+
+        s = {ex for t in s for ex in expand_unions(t)}
 
         return TypeInfo(
             module='types',
@@ -113,6 +134,10 @@ class TypeInfo:
         )
 
 
+    def qualname(self) -> str:
+        return self.module + '.' + self.name if self.module else self.name
+
+
     class Transformer:
         def visit(self, node: "TypeInfo") -> "TypeInfo":
             new_args = tuple(
@@ -135,12 +160,22 @@ class ArgInfo:
     default: TypeInfo|None
 
 
+@dataclass
+class FunctionDescriptor:
+    """Describes a function by name; stands in for a FunctionType where the function
+       is a wrapper_descriptor (or possibly other objects), lacking __module__
+    """
+    __module__: str
+    __qualname__: str
+
+
 @dataclass(eq=True, frozen=True)
 class FuncInfo:
     func_id: FuncId
     args: tuple[ArgInfo, ...]
     varargs: ArgumentName|None
     kwargs: ArgumentName|None
+    overrides: types.FunctionType|FunctionDescriptor|None
 
 
 
@@ -163,9 +198,9 @@ class Sample:
             s = TypeInfo.from_set(self.sends)
 
             if self.is_async:
-                retval = TypeInfo("typing", "AsyncGenerator", (y, s))
+                retval = TypeInfo.from_type(abc.AsyncGenerator, module="typing", args=(y, s))
             else:
-                retval = TypeInfo("typing", "Generator", (y, s, self.returns))
+                retval = TypeInfo.from_type(abc.Generator, module="typing", args=(y, s, self.returns))
             
         type_data = (*self.args, retval)
 
@@ -179,10 +214,7 @@ class Sample:
                         node.type_obj and
                         self.self_type.type_obj in node.type_obj.__mro__
                     ):
-                        return TypeInfo("typing", "Self")
-
-                    if node == self.self_type:
-                        return TypeInfo("typing", "Self")
+                        node = node.replace(is_self=True)
 
                     return super().visit(node)
 

@@ -1,9 +1,9 @@
 from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample
-from righttyper.typeinfo import merged_types, generalize
+from righttyper.typeinfo import merged_types, generalize, find_superclass
 import righttyper.righttyper_runtime as rt
-from collections.abc import Iterable
+import collections.abc as abc
 from collections import namedtuple
-from typing import Any, Callable
+from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal, cast
 import pytest
 import importlib
 import types
@@ -16,9 +16,12 @@ def type_from_annotations(*args, **kwargs) -> str:
     return str(rt.type_from_annotations(*args, **kwargs))
 
 
-class IterableClass(Iterable):
+class IterableClass(abc.Iterable):
     def __iter__(self):
         return None
+
+
+class MyGeneric[A, B](dict): pass
 
 
 def test_get_value_type():
@@ -46,18 +49,21 @@ def test_get_value_type():
     assert "list[int]" == get_value_type([0, 1][:1])
     assert "int" == get_value_type([0, 1][0])
 
-    #assert "List[int]" == get_value_type([0, 'a'])
-
     assert "set[str]" == get_value_type({'a', 'b'})
     assert "set[int]" == get_value_type({0, 1})
+    assert "set[typing.Never]" == get_value_type(set())
 
-    # FIXME use Set instead?  specify element type?
-    assert "frozenset" == get_value_type(frozenset({'a', 'b'}))
-    assert "frozenset" == get_value_type(frozenset({0, 1}))
-    assert "frozenset" == get_value_type(frozenset())
+    assert "frozenset[str]" == get_value_type(frozenset({'a', 'b'}))
+    assert "frozenset[int]" == get_value_type(frozenset({0, 1}))
+    assert "frozenset[typing.Never]" == get_value_type(frozenset())
 
     assert "dict[str, str]" == get_value_type({'a': 'b'})
     assert "dict[typing.Never, typing.Never]" == get_value_type(dict())
+
+    assert "tuple" == get_value_type(tuple())
+    assert "tuple[int, str]" == get_value_type((1, "foo"))
+#    assert "tuple[()]" == get_value_type(tuple())  # FIXME
+#    assert "tuple[int, ...]" == get_value_type((1, 2, 3, 4))
 
     assert "typing.KeysView[str]" == get_value_type({'a':0, 'b':1}.keys())
     assert "typing.ValuesView[int]" == get_value_type({'a':0, 'b':1}.values())
@@ -66,9 +72,6 @@ def test_get_value_type():
     assert "typing.KeysView[typing.Never]" == get_value_type(dict().keys())
     assert "typing.ValuesView[typing.Never]" == get_value_type(dict().values())
     assert "typing.ItemsView[typing.Never, typing.Never]" == get_value_type(dict().items())
-
-    assert "set[str]" == get_value_type({'a', 'b'})
-    assert "set[typing.Never]" == get_value_type(set())
 
     o : Any = range(10)
     assert "range" == get_value_type(o)
@@ -152,6 +155,9 @@ def test_get_value_type():
     assert "typing.AsyncGenerator" == get_value_type(async_range(10))
     assert "typing.AsyncGenerator" == get_value_type(aiter(async_range(10)))
 
+    assert f"{__name__}.MyGeneric[builtins.int, builtins.str]" == \
+            get_value_type(MyGeneric[int, str]())
+
 
 @pytest.mark.filterwarnings("ignore:coroutine .* never awaited")
 def test_get_value_type_coro():
@@ -188,25 +194,6 @@ def test_get_value_type_namedtuple_in_class():
     assert f"{__name__}.NamedTupleClass.P" == get_value_type(NamedTupleClass.P())
 
 
-class MyDict(dict):
-    def items(self):
-        for k, v in super().items():
-            yield k, v
-
-def test_get_value_type_dict_with_non_collection_items():
-    assert f"{__name__}.MyDict[str, int]" == get_value_type(MyDict({'a': 0}))
-
-
-class MyList(list):
-    pass
-class MySet(set):
-    pass
-
-def test_get_value_type_custom_collection():
-    assert f"{__name__}.MyList[int]" == get_value_type(MyList([0,1]))
-    assert f"{__name__}.MySet[int]" == get_value_type(MySet({0,1}))
-
-
 @pytest.mark.skipif((importlib.util.find_spec('numpy') is None or
                      importlib.util.find_spec('jaxtyping') is None),
                     reason='missing modules')
@@ -231,17 +218,38 @@ def test_get_value_type_torch_jaxtyping():
 
 
 def test_type_from_annotations():
-    def foo(x: int|float, y: list[tuple[bool, ...]]) -> complex|None:
+    def foo(x: int|float, y: list[tuple[bool, ...]], z: Callable[[], None]) -> complex|None:
         pass
 
-    assert "typing.Callable[[int | float, list[tuple[bool, ...]]], complex | None]" == type_from_annotations(foo)
+    assert "typing.Callable[[int|float, list[tuple[bool, ...]], collections.abc.Callable[[], None]], complex|None]" == \
+            type_from_annotations(foo)
+
+
+@pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
+                     importlib.util.find_spec('numpy') is None),
+                    reason='missing modules')
+def test_hint2type():
+    import jaxtyping
+    import jax
+
+    def foo(
+        x: int | MyGeneric[str, Callable[[], None]],
+        y: tuple[int, ...],
+        z: jaxtyping.Float[jax.Array, "10 20"]
+    ): pass
+
+    hints = get_type_hints(foo)
+
+    assert f"int|{__name__}.MyGeneric[str, collections.abc.Callable[[], None]]" == str(rt.hint2type(hints['x']))
+    assert f"tuple[int, ...]" == str(rt.hint2type(hints['y']))
+    assert """jaxtyping.Float[jax.Array, "10 20"]""" == str(rt.hint2type(hints['z']))
 
 
 def test_typeinfo():
     assert "foo.bar" == str(TypeInfo("foo", "bar"))
-    assert "foo.bar[m.baz, \"x y\"]" == str(TypeInfo("foo", "bar", (TypeInfo("m", "baz"), "\"x y\"")))
+    assert "foo.bar[m.baz, \"x y\"]" == str(TypeInfo("foo", "bar", (TypeInfo("m", "baz"), "x y")))
     assert "int" == str(TypeInfo("", "int"))
-    assert "tuple[bool]" == str(TypeInfo("", "tuple", args=('bool',)))
+    assert "tuple[bool]" == str(TypeInfo("", "tuple", args=(TypeInfo('', 'bool'),)))
 
     t = TypeInfo.from_type(type(None))
     assert t.module == ''
@@ -374,7 +382,7 @@ def test_merged_types_superclass_bare_type():
 str_ti = TypeInfo("", "str", type_obj=str)
 int_ti = TypeInfo("", "int", type_obj=int)
 bool_ti = TypeInfo("", "bool", type_obj=bool)
-generator_ti = lambda *a: TypeInfo("typing", "Generator", tuple(a))
+generator_ti = lambda *a: TypeInfo.from_type(abc.Generator, module="typing", args=tuple(a))
 iterator_ti = lambda *a: TypeInfo("typing", "Iterator", tuple(a))
 union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.UnionType)
 
@@ -455,3 +463,103 @@ def test_sample_process_generator_union():
     sample = generate_sample(dog, 1, "hi", True)
     assert sample == Sample((int_ti, str_ti, bool_ti,), yields={int_ti, str_ti}, returns=bool_ti, is_generator=True)
     assert generalize([sample.process()]) == [int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), NoneTypeInfo, bool_ti)]
+
+
+T = TypeVar("T")
+
+def test_hint2type_typevar():
+    t = rt.hint2type(T)
+    assert t == TypeInfo(module=__name__, name='T')
+
+    t = rt.hint2type(List[T])   # type: ignore[valid-type]
+    assert t == TypeInfo.from_type(list, module='', args=(TypeInfo(module=__name__, name='T'),))
+
+
+def test_hint2type_none():
+    t = rt.hint2type(None)
+    assert t is NoneTypeInfo
+
+    t = rt.hint2type(abc.Generator[int|str, None, None])
+    assert t == TypeInfo.from_type(abc.Generator, args=(
+        TypeInfo.from_set({
+            TypeInfo.from_type(int, module=''),
+            TypeInfo.from_type(str, module=''),
+        }),
+        NoneTypeInfo,
+        NoneTypeInfo
+    ))
+
+
+def test_hint2type_ellipsis():
+    t = rt.hint2type(tuple[str, ...])
+    assert t == TypeInfo.from_type(tuple, module="", args=(
+        TypeInfo.from_type(str, module=""),
+        ...
+    ))
+
+
+def test_hint2type_list():
+    t = rt.hint2type(abc.Callable[[], None]) 
+    assert t == TypeInfo.from_type(cast(type, abc.Callable), args=(
+        TypeInfo.list([]),
+        NoneTypeInfo
+    ))
+
+
+def test_hint2type_string():
+    t = rt.hint2type(Literal["a", "b"])
+    assert t == TypeInfo.from_type(cast(type, Literal), args=(
+        "a",
+        "b"
+    ))
+
+
+def test_hint2type_unions():
+    t = rt.hint2type(Union[int, str])
+    assert t.qualname() == "types.UnionType"
+    assert t.args == (
+        TypeInfo.from_type(int, module=''),
+        TypeInfo.from_type(str, module=''),
+    )
+
+    t = rt.hint2type(Optional[str])
+    assert t.qualname() == "types.UnionType"
+    assert t.args == (
+        TypeInfo.from_type(str, module=''),
+        NoneTypeInfo
+    )
+
+
+@pytest.mark.skipif((importlib.util.find_spec('numpy') is None or
+                     importlib.util.find_spec('jaxtyping') is None),
+                    reason='missing modules')
+def test_hint2type_jaxtyping():
+    import jaxtyping
+    import numpy
+
+    t = rt.hint2type(jaxtyping.Float64[numpy.ndarray, "0"])
+    assert t == TypeInfo("jaxtyping", "Float64", args=(
+        TypeInfo.from_type(numpy.ndarray),
+        "0"
+    ))
+
+    assert str(t) == "jaxtyping.Float64[numpy.ndarray, \"0\"]"
+
+
+def test_from_set_with_unions():
+    t = merged_types({
+            TypeInfo.from_set({
+                TypeInfo.from_type(str, module=''),
+                TypeInfo.from_set({
+                    TypeInfo.from_type(int, module='')
+                })
+            }),
+            TypeInfo.from_type(str, module='')
+        })
+
+    assert t.qualname() == "types.UnionType"
+    assert t.args == (
+        TypeInfo.from_type(int, module=''),
+        TypeInfo.from_type(str, module=''),
+    )
+

@@ -465,9 +465,10 @@ class UnifiedTransformer(cst.CSTTransformer):
                             ])
                         )))
 
-                    updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
-                        params=our_params
-                    ))
+                    if our_params:
+                        updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
+                            params=our_params
+                        ))
 
                 else:
                     for generic in generics.values():

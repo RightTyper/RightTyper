@@ -3,6 +3,7 @@ import random
 import re
 import sys
 
+import collections
 import collections.abc as abc
 from functools import cache
 import itertools
@@ -15,9 +16,11 @@ from types import (
     GeneratorType,
     AsyncGeneratorType,
     CoroutineType,
-    GenericAlias
+    GenericAlias,
+    ModuleType,
+    MappingProxyType
 )
-from typing import Any, cast, TypeAlias
+from typing import Any, cast, TypeAlias, get_type_hints, get_origin, get_args
 from pathlib import Path
 
 from righttyper.random_dict import RandomDict
@@ -45,33 +48,106 @@ def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) 
     n = random.randint(1, MAX_ELEMENTS)
     return list(itertools.islice(value, n))[-1]
 
-
-JX_DTYPES = None
-def jx_dtype(value: Any) -> str|None:
-    global JX_DTYPES
-
-    if JX_DTYPES is None:
+@cache
+def get_jaxtyping():
+    try:
         # we lazy load jaxtyping to avoid "PytestAssertRewriteWarning"s
-        try:
-            import jaxtyping as jx
-            jx_dtype_type: TypeAlias = jx._array_types._MetaAbstractDtype
-            JX_DTYPES = cast(list[jx_dtype_type], [
-                jx.UInt4, jx.UInt8, jx.UInt16, jx.UInt32, jx.UInt64,
-                jx.Int4, jx.Int8, jx.Int16, jx.Int32, jx.Int64,
-                jx.BFloat16, jx.Float16, jx.Float32, jx.Float64,
-                jx.Complex64, jx.Complex128,
-                jx.Bool, jx.UInt, jx.Int, jx.Integer,
-                jx.Float, jx.Complex, jx.Inexact, jx.Real,
-                jx.Num, jx.Shaped, jx.Key,
-            ])
-        except ImportError:
-            JX_DTYPES = []
+        import jaxtyping
+        return jaxtyping
+    except ImportError:
+        return None
 
-    t = type(value)
-    for dtype in JX_DTYPES:
-        if isinstance(value, dtype[t, "..."]):
-            return dtype.__qualname__
+
+def jx_dtype(value: Any) -> str|None:
+    if jx := get_jaxtyping():
+        t = type(value)
+        for dtype in (
+            jx.UInt4, jx.UInt8, jx.UInt16, jx.UInt32, jx.UInt64,
+            jx.Int4, jx.Int8, jx.Int16, jx.Int32, jx.Int64,
+            jx.BFloat16, jx.Float16, jx.Float32, jx.Float64,
+            jx.Complex64, jx.Complex128,
+            jx.Bool, jx.UInt, jx.Int, jx.Integer,
+            jx.Float, jx.Complex, jx.Inexact, jx.Real,
+            jx.Num, jx.Shaped, jx.Key
+        ):
+            if isinstance(value, dtype[t, "..."]):
+                return dtype.__qualname__
+
     return None
+
+
+def hint2type(hint) -> TypeInfo:
+    import typing
+
+    def hint2type_arg(hint):
+        if isinstance(hint, list):
+            return TypeInfo.list([hint2type_arg(el) for el in hint])
+
+        if hint is Ellipsis or type(hint) is str:
+            return hint
+
+        return hint2type(hint)
+
+
+    if (origin := get_origin(hint)):
+        if origin is typing.Union:
+            return TypeInfo.from_set({hint2type(a) for a in get_args(hint)})
+
+        return TypeInfo.from_type(
+                    origin,
+                    module=origin.__module__ if origin.__module__ != 'builtins' else '',
+                    args=tuple(
+                        hint2type_arg(a) for a in get_args(hint)
+                    )
+                )
+
+    if type(hint) is NoneType:
+        return NoneTypeInfo
+
+    if (
+        (jx := get_jaxtyping())
+        and (bases := getattr(hint, "__bases__", None))
+        and jx.AbstractArray in bases
+    ):
+        return TypeInfo(hint.__module__, hint.__name__.split('[')[0], args=(
+            get_type_name(bases[0]), hint.dim_str
+        ))
+
+    if not hasattr(hint, "__qualname__"): # e.g., typing.TypeVar
+        return TypeInfo(name=hint.__name__, module=hint.__module__)
+
+    return get_type_name(hint)
+
+
+def type_from_annotations(func: abc.Callable) -> TypeInfo:
+    try:
+        signature = inspect.signature(func)
+        hints = get_type_hints(func)
+    except (ValueError, NameError):
+        signature = None
+        hints = None
+
+    args: tuple = tuple() # default to just "Callable"
+
+    # any type hints?
+    if signature and hints:
+        arg_types = TypeInfo.list([
+            hint2type(hints[arg_name]) if arg_name in hints else AnyTypeInfo
+            for arg_name in signature.parameters
+        ])
+
+        return_type = (
+            hint2type(hints['return']) if 'return' in hints else AnyTypeInfo
+        )
+
+        args = (arg_types, return_type)
+
+    return TypeInfo("typing", "Callable",
+        args=args,
+        code_id=CodeId(id(func.__code__)),
+        type_obj=cast(type, abc.Callable),
+        is_bound=isinstance(func, MethodType)
+    )
 
 
 @cache
@@ -102,66 +178,6 @@ def should_skip_function(
         assert dis.COMPILER_FLAG_NAMES[0x2] == "NEWLOCALS"
         return True
     return False
-
-
-def type_from_annotations(func: abc.Callable) -> TypeInfo:
-    try:
-        signature = inspect.signature(func)
-    except ValueError:
-        signature = None
-
-    args: tuple
-
-    # Do we have an annotation?
-    if (
-        signature and (
-            any(p.annotation is not p.empty for p in signature.parameters.values())
-            or signature.return_annotation is not inspect.Signature.empty
-        )
-    ):
-        # Extract argument types, default to Any if no annotation provided
-        arg_types = [
-            (param.annotation if param.annotation is not param.empty else Any)
-            for name, param in signature.parameters.items()
-        ]
-
-        # Extract return type, default to Any if no annotation provided
-        return_type = signature.return_annotation
-        if return_type is inspect.Signature.empty:
-            return_type = Any
-
-        def format_arg(arg) -> str:
-            if isinstance(arg, str):
-                # If types are quoted while using "from __future__ import annotations",
-                # strings may appear double quoted
-                if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in ["'",'"']:
-                    arg = arg[1:-1]
-
-                return arg
-
-            if isinstance(arg, GenericAlias):
-                return str(arg)
-
-            if isinstance(arg, type):
-                return str(get_type_name(arg))
-
-            return repr(arg)
-
-        # Format the result
-        args = (
-            f"[{', '.join([format_arg(arg) for arg in arg_types])}]",
-            format_arg(return_type)
-        )
-    else:
-        # no annotation: default to just "Callable"
-        args = tuple()
-
-    # Construct the Callable type string
-    return TypeInfo("typing", "Callable",
-        args=args,
-        code_id=CodeId(id(func.__code__)),
-        is_bound=isinstance(func, MethodType)
-    )
 
 
 def find_caller_frame() -> FrameType|None:
@@ -323,42 +339,67 @@ def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
     return method
 
 
+@cache
+def src2module(src: str) -> ModuleType|None:
+    """Maps a module's source file to the module."""
+    return next(
+        (
+            m
+            for m in list(sys.modules.values()) # sys.modules may change during iteration
+            if getattr(m, "__file__", None) == src
+        ),
+        None
+    )
+
+
 def find_function(
     caller_frame: FrameType,
     code: CodeType
 ) -> abc.Callable|None:
     """Attempts to map back from a code object to the function that uses it."""
 
-    visited = set()
+    parts = code.co_qualname.split('.')
 
-    def find_in_class(class_obj: object) -> abc.Callable|None:
-        if class_obj in visited:
-            return None
-        visited.add(class_obj)
+    def find_in(namespace: dict|MappingProxyType, index: int=0) -> FunctionType|None:
+        if index < len(parts):
+            name = parts[index]
+            if (
+                name.startswith("__")
+                and not name.endswith("__")
+                and index > 0
+                and parts[index-1] != '<locals>'
+            ):
+                name = f"_{parts[index-1]}{name}"   # private method/attribute
 
-        for obj in class_obj.__dict__.values():
-            if isinstance(obj, (FunctionType, classmethod)):
-                if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
+            if obj := namespace.get(name):
+                if (
+                    # don't use isinstance(obj, Callable), as it relies on __class__, which may be overridden
+                    (hasattr(obj, "__call__") or type(obj) is classmethod)
+                    and (obj := unwrap(obj))
+                    and getattr(obj, "__code__", None) is code
+                ):
                     return obj
 
-            elif inspect.isclass(obj):
-                if (f := find_in_class(obj)):
-                    return f
+                if type(obj) is dict:
+                    return find_in(obj, index+1)
+                elif isinstance(obj, type):
+                    return find_in(obj.__dict__, index+1)
 
         return None
 
-    dicts: abc.Iterable[Any] = caller_frame.f_globals.values()
-    if caller_frame.f_back:
-        dicts = itertools.chain(caller_frame.f_back.f_locals.values(), dicts)
 
-    for obj in dicts:
-        if isinstance(obj, FunctionType):
-            if (obj := unwrap(obj)) and getattr(obj, "__code__", None) is code:
-                return obj
+    if '<locals>' in parts:
+        # Python re-creates the function object dynamically with each invocation;
+        # look for it on the stack.
+        if caller_frame.f_back:
+            after_locals = len(parts) - parts[::-1].index('<locals>')
+            parts = parts[after_locals:]
+            return find_in(caller_frame.f_back.f_locals)
 
-        elif inspect.isclass(obj):
-            if (f := find_in_class(obj)):
-                return f
+    else:
+        # look for it in its module
+        if (m := src2module(code.co_filename)):
+            return find_in(m.__dict__)
 
     return None
 
@@ -384,90 +425,108 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
 
     def type_for_generator(
         obj: GeneratorType|AsyncGeneratorType|CoroutineType,
-        frame: FrameType|None,
+        type_obj: type,
+        frame: FrameType,
         code: CodeType,
-        name: str
     ) -> TypeInfo:
-        # FIXME We can't yet retrieve types from annotations because all Callable
-        # arguments returned by type_from_annotations are strings
-        #if (f := find_function(frame, code)):
-        #    ann = type_from_annotations(f)
-        #    (now use ann_type.args[-1], the return value)
+        if (f := find_function(frame, code)):
+            try:
+                hints = get_type_hints(f)
+                if 'return' in hints:
+                    return hint2type(hints['return']).replace(code_id=CodeId(id(code)))
+            except:
+                pass
 
-        return TypeInfo("typing", name, code_id=CodeId(id(code)))
+        return TypeInfo.from_type(type_obj, module="typing", code_id=CodeId(id(code)))
 
 
     def recurse(v: Any) -> TypeInfo:
         return get_value_type(v, use_jaxtyping=use_jaxtyping, depth=depth+1)
 
 
-    if isinstance(value, dict):
-        t = dict if isinstance(value, RandomDict) else type(value)
+    try:
+        # using getattr or hasattr here can lead to problems when __getattr__ is overriden
+        orig = object.__getattribute__(value, "__orig_class__")
+        return TypeInfo(orig.__module__, orig.__qualname__,
+                        tuple(
+                            TypeInfo.from_type(a) for a in orig.__args__
+                        )
+               )
+    except AttributeError:
+        pass
+
+    t = type(value)
+    if t is RandomDict:
         args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
         try:
             if value:
-                el = value.random_item() if isinstance(value, RandomDict) else sample_from_collection(value.items())
+                el = value.random_item()
                 args = tuple(recurse(fld) for fld in el)
         except Exception:
             pass
-        return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
-    elif isinstance(value, (list, set)):
-        t = type(value)
-        args = (TypeInfo("typing", "Never"),)
-        try:
-            if value:
-                el = sample_from_collection(value)
-                args = (recurse(el),)
-        except Exception:
-            pass
-        return TypeInfo(lookup_type_module(t), t.__qualname__, args=args)
-    elif (t := _is_instance(value, (abc.KeysView, abc.ValuesView))):
-        args = (TypeInfo("typing", "Never"),)
-        try:
-            if value:
-                el = sample_from_collection(value)
-                args = (recurse(el),)
-        except Exception:
-            pass
-        return TypeInfo("typing", t.__qualname__, args=args)
-    elif isinstance(value, abc.ItemsView):
-        args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
-        try:
-            if value:
-                el = sample_from_collection(value)
-                args = tuple(recurse(fld) for fld in el)
-        except Exception:
-            pass
-        return TypeInfo("typing", "ItemsView", args=args)
-    elif isinstance(value, tuple):
-        if isinstance_namedtuple(value):
-            t = type(value)
-            return TypeInfo(lookup_type_module(t), t.__qualname__)
+        return TypeInfo.from_type(dict, module='', args=args)
+    elif t in (dict, collections.defaultdict, collections.OrderedDict, collections.ChainMap):
+        if value:
+            el = sample_from_collection(value.items())
+            args = tuple(recurse(fld) for fld in el)
         else:
-            args = tuple()
-            try:
-                if value:
-                    args = tuple(recurse(fld) for fld in value)
-            except Exception:
-                pass
-            return TypeInfo("", "tuple", args=args)
+            args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+        return TypeInfo.from_type(t, t.__module__ if t.__module__ != 'builtins' else '', args=args)
+    elif t in (list, set, frozenset, collections.deque, collections.Counter):
+        if value:
+            el = sample_from_collection(value)
+            args = (recurse(el),)
+        else:
+            args = (TypeInfo("typing", "Never"),)
+        return TypeInfo.from_type(t, module='', args=args)
+    elif t is tuple:
+        if value:
+            args = tuple(recurse(fld) for fld in value)
+        else:
+            args = tuple()  # FIXME this should yield "tuple[()]"
+        return TypeInfo.from_type(t, module='', args=args)
+    elif t is re.Pattern:
+        return TypeInfo.from_type(t, args=(recurse(value.pattern),))
+    elif t is re.Match:
+        return TypeInfo.from_type(t, args=(recurse(value.group()),))
     elif isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
     elif isinstance(value, GeneratorType):
-        return type_for_generator(value, value.gi_frame, value.gi_code, "Generator")
+        return type_for_generator(value, abc.Generator, value.gi_frame, value.gi_code)
     elif isinstance(value, AsyncGeneratorType):
-        return type_for_generator(value, value.ag_frame, value.ag_code, "AsyncGenerator")
+        return type_for_generator(value, abc.AsyncGenerator, value.ag_frame, value.ag_code)
     elif isinstance(value, CoroutineType):
-        return type_for_generator(value, value.cr_frame, value.cr_code, "Coroutine")
+        return type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
     elif isinstance(value, type) and value is not type:
         return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
-    elif type(value).__name__ == 'async_generator_wrapped_value' and type(value).__module__ == 'builtins':
-        import righttyper.traverse as tr
-        if (len(v := tr.traverse(value)) == 1):
-            return recurse(v[0])
-        else:
-            # something went wrong with the 'traverse' workaround
-            return AnyTypeInfo
+    elif t.__module__ == "builtins":
+        if t is NoneType:
+            return NoneTypeInfo
+        elif in_builtins_import(cast(type, t)):
+            return TypeInfo.from_type(t, module="") # these are "well known", so no module name needed
+        elif (name := from_types_import(cast(type, t))):
+            return TypeInfo(module="types", name=name, type_obj=t)
+        elif (view := _is_instance(value, (abc.KeysView, abc.ValuesView))):
+            # no name in "builtins" or "types" modules, so use abc protocol
+            if value:
+                args = (recurse(sample_from_collection(value)),)
+            else:
+                args = (TypeInfo("typing", "Never"),)
+            return TypeInfo("typing", view.__qualname__, args=args)
+        elif isinstance(value, abc.ItemsView):
+            # no name in "builtins" or "types" modules, so use abc protocol
+            if value:
+                args = tuple(recurse(fld) for fld in sample_from_collection(value))
+            else:
+                args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+            return TypeInfo("typing", "ItemsView", args=args)
+        elif t.__name__ == 'async_generator_wrapped_value':
+            import righttyper.traverse as tr
+            if len(memlist := tr.traverse(value)) == 1:
+                return recurse(memlist[0])
+            else:
+                # something went wrong with the 'traverse' workaround
+                return AnyTypeInfo
 
 
     if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):
@@ -475,7 +534,7 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
             shape = " ".join(str(d) for d in value.shape)
             return TypeInfo("jaxtyping", dtype, args=(
                 get_type_name(type(value), depth+1),
-                f"\"{shape}\""
+                f"{shape}"
             ))
 
     if (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':
@@ -485,11 +544,3 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         ))
 
     return get_type_name(type(value), depth+1)
-
-
-def isinstance_namedtuple(obj: object) -> bool:
-    return (
-        isinstance(obj, tuple)
-        and hasattr(obj, "_asdict")
-        and hasattr(obj, "_fields")
-    )

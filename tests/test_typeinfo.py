@@ -1,6 +1,7 @@
 from righttyper.righttyper_types import TypeInfo
 import righttyper.typeinfo
 from typing import Any
+import pytest
 
 
 def ti(name: str, **kwargs) -> TypeInfo:
@@ -137,23 +138,45 @@ def test_generalize_generic_within_args():
     assert generalize(samples) == ['tuple[T1]', 'list[T1]']
 
 
+def test_generalize_with_ellipsis():
+    samples = [
+        (ti('int'), ti('tuple', args=(ti('int'), ...))),
+        (ti('float'), ti('tuple', args=(ti('float'), ...))),
+    ]
+    assert generalize(samples) == ['T1', 'tuple[T1, ...]']
+
+
+def test_generalize_callable():
+    samples: list[tuple[TypeInfo, ...]] = [
+        (ti('Callable', args=(TypeInfo.list([ti('int'), ti('int')]), ti('int'))),),
+        (ti('Callable', args=(TypeInfo.list([ti('str'), ti('str')]), ti('str'))),),
+    ]
+    assert generalize(samples) == ['Callable[[T1, T1], T1]']
+
+    samples = [
+        (ti('int'), ti('Callable', args=(..., ti('int'))),),
+        (ti('str'), ti('Callable', args=(..., ti('str'))),),
+    ]
+    assert generalize(samples) == ['T1', 'Callable[..., T1]']
+
+
 def test_generalize_generic_with_string():
     samples: Any = [
-        (ti('int'), ti('X', args=(ti('int'), '"foo"'))),
-        (ti('bool'), ti('X', args=(ti('bool'), '"bar"'))),
+        (ti('int'), ti('X', args=(ti('int'), 'foo'))),
+        (ti('bool'), ti('X', args=(ti('bool'), 'bar'))),
     ]
     assert generalize(samples) == ['bool|int', 'X[bool, "bar"]|X[int, "foo"]']
 
     # first has a string, others don't
     samples = [
-        (ti('int'), ti('X', args=(ti('int'), '"foo"'))),
+        (ti('int'), ti('X', args=(ti('int'), 'foo'))),
         (ti('bool'), ti('X', args=(ti('bool'), ti('bool')))),
     ]
     assert generalize(samples) == ['bool|int', 'X[bool, bool]|X[int, "foo"]']
 
     samples = [
-        (ti('X', args=(ti('int'), '"foo"')),),
-        (ti('X', args=(ti('bool'), '"bar"')),),
+        (ti('X', args=(ti('int'), 'foo')),),
+        (ti('X', args=(ti('bool'), 'bar')),),
     ]
     assert generalize(samples) == ['X[bool, "bar"]|X[int, "foo"]']
 
@@ -164,12 +187,12 @@ def test_generalize_jaxtyping_dimensions():
             TypeInfo('', 'int'),
             TypeInfo('jaxtyping', 'Float64', args=(
                     TypeInfo('np', 'ndarray'),
-                    '"10 20"'
+                    '10 20'
                 )
             ),
             TypeInfo('jaxtyping', 'Float64', args=(
                     TypeInfo('np', 'ndarray'),
-                    '"20"'
+                    '20'
                 )
             )
         ),
@@ -177,12 +200,12 @@ def test_generalize_jaxtyping_dimensions():
             TypeInfo('', 'int'),
             TypeInfo('jaxtyping', 'Float64', args=(
                     TypeInfo('np', 'ndarray'),
-                    '"10 10"'
+                    '10 10'
                 )
             ),
             TypeInfo('jaxtyping', 'Float64', args=(
                     TypeInfo('np', 'ndarray'),
-                    '"10"'
+                    '10'
                 )
             )
         )
@@ -198,12 +221,12 @@ def test_generalize_jaxtyping_single_sample():
             TypeInfo('', 'int'),
             TypeInfo('jaxtyping', 'Float64', args=(
                     TypeInfo('np', 'ndarray'),
-                    '"10 20"'
+                    '10 20'
                 )
             ),
             TypeInfo('jaxtyping', 'Float64', args=(
                     TypeInfo('np', 'ndarray'),
-                    '"20"'
+                    '20'
                 )
             )
         ),
