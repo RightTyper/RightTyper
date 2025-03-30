@@ -59,7 +59,8 @@ class GeneratorSendTransformer(ast.NodeTransformer):
         return node
 
 
-def instrument(m: ast.Module) -> ast.Module:
+def instrument(m: ast.Module, *, replace_dict: bool = False) -> ast.Module:
     m = GeneratorSendTransformer().visit(m)
-#    m = DictTransformer().visit(m)
+    if replace_dict:
+        m = DictTransformer().visit(m)
     return m

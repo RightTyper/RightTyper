@@ -113,14 +113,13 @@ def test_send_assignment_context():
     compile(t, 'tp.py', 'exec') # ensure it doesn't throw
 
 
-@pytest.mark.xfail(reason="Temporarily disabled: RandomDict causes issues with rich")
 def test_dict_literal():
     t = parse("""\
         x = {'a': 0, 'b': 1}
         y = {}
         """)
 
-    t = instrument(t)
+    t = instrument(t, replace_dict=True)
 
     assert unparse(t) == textwrap.dedent(f"""\
         from righttyper.random_dict import {RANDOM_DICT_NAME} as {RANDOM_DICT_ASNAME}
@@ -131,13 +130,12 @@ def test_dict_literal():
     compile(t, 'tp.py', 'exec') # ensure it doesn't throw
 
 
-@pytest.mark.xfail(reason="Temporarily disabled: RandomDict causes issues with rich")
 def test_dict_comprehension():
     t = parse("""\
         x = {i: i + 1 for i in range(10)}
         """)
 
-    t = instrument(t)
+    t = instrument(t, replace_dict=True)
 
     assert unparse(t) == textwrap.dedent(f"""\
         from righttyper.random_dict import {RANDOM_DICT_NAME} as {RANDOM_DICT_ASNAME}
@@ -147,13 +145,12 @@ def test_dict_comprehension():
     compile(t, 'tp.py', 'exec') # ensure it doesn't throw
 
 
-@pytest.mark.xfail(reason="Temporarily disabled: RandomDict causes issues with rich")
 def test_dict_call():
     t = parse("""\
         x = dict([('a', 1), ('b', 2)])
         """)
 
-    t = instrument(t)
+    t = instrument(t, replace_dict=True)
 
     assert unparse(t) == textwrap.dedent(f"""\
         from righttyper.random_dict import {RANDOM_DICT_NAME} as {RANDOM_DICT_ASNAME}
@@ -163,7 +160,6 @@ def test_dict_call():
     compile(t, 'tp.py', 'exec') # ensure it doesn't throw
 
 
-@pytest.mark.xfail(reason="Temporarily disabled: RandomDict causes issues with rich")
 def test_dict_import_after_from_future():
     t = parse("""\
         from __future__ import annotations
@@ -173,7 +169,7 @@ def test_dict_import_after_from_future():
             return dict()
         """)
 
-    t = instrument(t)
+    t = instrument(t, replace_dict=True)
 
     assert unparse(t) == textwrap.dedent(f"""\
         from __future__ import annotations
