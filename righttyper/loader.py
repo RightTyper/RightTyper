@@ -13,10 +13,11 @@ import typing
 from righttyper.ast_instrument import instrument
 
 class RightTyperLoader(ExecutionLoader):
-    def __init__(self, fullname: str, path: Path, orig_loader: Loader|None=None):
+    def __init__(self, fullname: str, path: Path, orig_loader: Loader|None=None, *, replace_dict: bool):
         self.fullname = fullname
         self.path = path.resolve()
         self.orig_loader = orig_loader
+        self.replace_dict = replace_dict
 
     # for compability with loaders supporting resources, used e.g. by sklearn
     def get_resource_reader(self, fullname: str) -> TraversableResources|None:
@@ -32,7 +33,7 @@ class RightTyperLoader(ExecutionLoader):
 
     def get_code(self, fullname: str) -> types.CodeType:
         tree = ast.parse(self.get_source(fullname))
-        tree = instrument(tree)
+        tree = instrument(tree, replace_dict=self.replace_dict)
         return compile(tree, str(self.path), "exec")
 
     def create_module(self, spec):
@@ -45,11 +46,12 @@ class RightTyperLoader(ExecutionLoader):
 
 
 class RightTyperMetaPathFinder(MetaPathFinder):
-    def __init__(self: typing.Self) -> None:
+    def __init__(self: typing.Self, *, replace_dict: bool) -> None:
         self._pylib_paths = {
             Path(sysconfig.get_path(p)).resolve()
             for p in ('stdlib', 'platstdlib', 'purelib', 'platlib')
         }
+        self.replace_dict = replace_dict
 
 
     @functools.cache
@@ -86,7 +88,7 @@ class RightTyperMetaPathFinder(MetaPathFinder):
                 not self._in_python_libs(filename)
             ):
                 # For those that look like we can load, insert our loader
-                spec.loader = RightTyperLoader(fullname, filename, spec.loader)
+                spec.loader = RightTyperLoader(fullname, filename, spec.loader, replace_dict=self.replace_dict)
 
             return spec
 
@@ -94,26 +96,31 @@ class RightTyperMetaPathFinder(MetaPathFinder):
 
 
 class RightTyperPathEntryFinder(PathEntryFinder):
-    def __init__(self, filename):
+    def __init__(self, filename, *, replace_dict: bool):
         self.filename = filename
+        self.replace_dict = replace_dict
 
     def find_spec(self, fullname: str, target: types.ModuleType|None=None) -> machinery.ModuleSpec|None:
         # we want to intercept runpy's loading of some script (".py") as __main__
         if fullname == "__main__":
             return importlib.util.spec_from_loader(
                 fullname,
-                RightTyperLoader(fullname, Path(self.filename))
+                RightTyperLoader(fullname, Path(self.filename), replace_dict=self.replace_dict)
             )
 
         return None
 
 
-def path_entry_hook(filename: str) -> PathEntryFinder:
-    # we want to intercept runpy's loading of some script (".py") as __main__
-    if filename.endswith(".py"):
-        return RightTyperPathEntryFinder(filename)
+class PathEntryHook:
+    def __init__(self, *, replace_dict: bool):
+        self.replace_dict = replace_dict
 
-    raise ImportError()
+    def __call__(self, filename: str) -> PathEntryFinder:
+        # we want to intercept runpy's loading of some script (".py") as __main__
+        if filename.endswith(".py"):
+            return RightTyperPathEntryFinder(filename, replace_dict=self.replace_dict)
+
+        raise ImportError()
 
 
 def pytest_patcher():
@@ -162,13 +169,14 @@ def pytest_patcher():
 class ImportManager:
     """A context manager that enables instrumentation while active."""
 
-    def __init__(self) -> None:
-        self.mpf = RightTyperMetaPathFinder()
+    def __init__(self, *, replace_dict: bool) -> None:
+        self.mpf = RightTyperMetaPathFinder(replace_dict=replace_dict)
+        self.peh = PathEntryHook(replace_dict=replace_dict)
 
 
     def __enter__(self) -> typing.Self:
         sys.meta_path.insert(0, self.mpf)
-        sys.path_hooks.insert(0, path_entry_hook)
+        sys.path_hooks.insert(0, self.peh)
         self.pytest_patcher = pytest_patcher()
         next(self.pytest_patcher)
         return self
@@ -176,5 +184,5 @@ class ImportManager:
 
     def __exit__(self, *args) -> None:
         next(self.pytest_patcher, None)
-        sys.path_hooks.remove(path_entry_hook)
+        sys.path_hooks.remove(self.peh)
         sys.meta_path.remove(self.mpf)

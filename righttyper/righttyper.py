@@ -95,6 +95,7 @@ class Options:
     use_multiprocessing: bool = True
     sampling: bool = True
     inline_generics: bool = False
+    replace_dict: bool = False
 
 options = Options()
 
@@ -755,14 +756,14 @@ def execute_script_or_module(
     try:
         sys.argv = [script, *args]
         if is_module:
-            with loader.ImportManager():
+            with loader.ImportManager(replace_dict=options.replace_dict):
                 runpy.run_module(
                     script,
                     run_name="__main__",
                     alter_sys=True,
                 )
         else:
-            with loader.ImportManager():
+            with loader.ImportManager(replace_dict=options.replace_dict):
                 runpy.run_path(script, run_name="__main__")
 
     except SystemExit as e:
@@ -1027,6 +1028,11 @@ class CheckModule(click.ParamType):
     hidden=True,
     help="Whether to use signal-based wakeups or thead-based wakeups."
 )
+@click.option(
+    "--replace-dict/--no-replace-dict",
+    is_flag=True,
+    help="Whether to replace 'dict' to enable efficient, statistically correct samples."
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
     script: str,
@@ -1047,7 +1053,8 @@ def main(
     sampling: bool,
     inline_generics: bool,
     type_coverage: tuple[str, str],
-    signal_wakeup: bool
+    signal_wakeup: bool,
+    replace_dict: bool,
 ) -> None:
 
     if type_coverage:
@@ -1106,6 +1113,7 @@ def main(
     options.use_multiprocessing = use_multiprocessing
     options.sampling = sampling
     options.inline_generics = inline_generics
+    options.replace_dict = replace_dict
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
