@@ -37,17 +37,6 @@ from righttyper.righttyper_types import (
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 
 
-def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) -> T:
-    """Samples from a collection, or from an interator/generator whose state we don't mind changing."""
-    MAX_ELEMENTS = 10   # to keep this O(1)
-
-    if isinstance(value, abc.Collection):
-        n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
-        return next(itertools.islice(value, n, n + 1))
-
-    n = random.randint(1, MAX_ELEMENTS)
-    return list(itertools.islice(value, n))[-1]
-
 @cache
 def get_jaxtyping():
     try:
@@ -404,7 +393,13 @@ def find_function(
     return None
 
 
-def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
+def get_value_type(
+    value: Any,
+    *,
+    container_sample_limit: int,
+    use_jaxtyping: bool,
+    depth: int = 0
+) -> TypeInfo:
     """
     get_value_type takes a value (an instance) as input and returns a string representing its type.
 
@@ -441,7 +436,20 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
 
 
     def recurse(v: Any) -> TypeInfo:
-        return get_value_type(v, use_jaxtyping=use_jaxtyping, depth=depth+1)
+        return get_value_type(
+            v,
+            use_jaxtyping=use_jaxtyping,
+            container_sample_limit=container_sample_limit,
+            depth=depth+1
+        )
+
+
+    def random_item[T](container: abc.Collection[T]) -> T:
+        """Randomly samples from a container."""
+        # Unbounded, islice's running time seems to be O(N); we arbitrarily bound to 1,000 items
+        # to keep the overhead low (similar to list's O(1), in fact)
+        n = random.randint(0, min(container_sample_limit, len(container)-1))
+        return next(itertools.islice(container, n, None))
 
 
     try:
@@ -467,14 +475,23 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         return TypeInfo.from_type(dict, module='', args=args)
     elif t in (dict, collections.defaultdict, collections.OrderedDict, collections.ChainMap):
         if value:
-            el = sample_from_collection(value.items())
-            args = tuple(recurse(fld) for fld in el)
+            # it's more efficient to sample a key and then use it than to build .items()
+            el = random_item(value)
+            args = (recurse(el), recurse(value[el]))
         else:
             args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
         return TypeInfo.from_type(t, t.__module__ if t.__module__ != 'builtins' else '', args=args)
-    elif t in (list, set, frozenset, collections.deque, collections.Counter):
+    elif t is list:
         if value:
-            el = sample_from_collection(value)
+            el = value[random.randint(0, len(value)-1)] # this is O(1), much faster than islice()
+            args = (recurse(el),)
+        else:
+            args = (TypeInfo("typing", "Never"),)
+        return TypeInfo.from_type(t, module='', args=args)
+    elif t in (set, frozenset, collections.Counter, collections.deque):
+        # note that deque is-a Sequence, but its integer indexing is O(N)
+        if value:
+            el = random_item(value)
             args = (recurse(el),)
         else:
             args = (TypeInfo("typing", "Never"),)
@@ -509,14 +526,16 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         elif (view := _is_instance(value, (abc.KeysView, abc.ValuesView))):
             # no name in "builtins" or "types" modules, so use abc protocol
             if value:
-                args = (recurse(sample_from_collection(value)),)
+                el = random_item(value)
+                args = (recurse(el),)
             else:
                 args = (TypeInfo("typing", "Never"),)
             return TypeInfo("typing", view.__qualname__, args=args)
         elif isinstance(value, abc.ItemsView):
             # no name in "builtins" or "types" modules, so use abc protocol
             if value:
-                args = tuple(recurse(fld) for fld in sample_from_collection(value))
+                el = random_item(value)
+                args = (recurse(el[0]), recurse(el[1]))
             else:
                 args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
             return TypeInfo("typing", "ItemsView", args=args)

@@ -7,10 +7,13 @@ from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List
 import pytest
 import importlib
 import types
+from functools import partial
+
+rt_get_value_type = partial(rt.get_value_type, container_sample_limit=1000, use_jaxtyping=False)
 
 
-def get_value_type(*args, **kwargs) -> str:
-    return str(rt.get_value_type(*args, **kwargs))
+def get_value_type(v, **kwargs) -> str:
+    return str(rt_get_value_type(v, **kwargs))
 
 def type_from_annotations(*args, **kwargs) -> str:
     return str(rt.type_from_annotations(*args, **kwargs))
@@ -25,7 +28,7 @@ class MyGeneric[A, B](dict): pass
 
 
 def test_get_value_type():
-    assert NoneTypeInfo is rt.get_value_type(None)
+    assert NoneTypeInfo is rt_get_value_type(None)
 
     assert "bool" == get_value_type(True)
     assert "bool" == get_value_type(False)
@@ -390,18 +393,18 @@ def generate_sample(func: Callable, *args) -> Sample:
     import righttyper.righttyper_runtime as rt
 
     res = func(*args)
-    sample = Sample(tuple(rt.get_value_type(arg) for arg in args))
+    sample = Sample(tuple(rt_get_value_type(arg) for arg in args))
     if type(res).__name__ == "generator":
         sample.is_generator = True
         try:
             while True:
                 nex = next(res) # this can fail
-                sample.yields.add(rt.get_value_type(nex))
+                sample.yields.add(rt_get_value_type(nex))
         except StopIteration as e:
             if e.value is not None:
-                sample.returns = rt.get_value_type(e.value)
+                sample.returns = rt_get_value_type(e.value)
     else:
-        sample.returns = rt.get_value_type(res)
+        sample.returns = rt_get_value_type(res)
 
     return sample
 
