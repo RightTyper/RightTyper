@@ -2992,3 +2992,21 @@ def test_object_with_empty_dir():
     # mostly we are checking that it doesn't fail (raises fatal exception)
     output = Path("t.py").read_text()
     assert "def f(self: Self) -> None" in output
+
+
+@pytest.mark.skip(reason="just documents an idea")
+def test_container_is_modified():
+    # TODO should we resample mutable containers upon return?
+    t = textwrap.dedent("""\
+        def f(x):
+            x.append(1)
+
+        f([])
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f(x: list[int]) -> None" in output
