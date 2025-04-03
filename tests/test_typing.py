@@ -140,9 +140,6 @@ def test_get_value_type():
     assert "typing.Generator" == get_value_type(o)
     assert 0 == next(o), "changed state"
 
-    Point = namedtuple('Point', ['x', 'y'])
-    assert f"{__name__}.Point" == get_value_type(Point(1,1))
-
     assert f"{__name__}.IterableClass" == get_value_type(IterableClass())
     assert "super" == get_value_type(super(IterableClass))
 
@@ -191,10 +188,16 @@ def test_non_array_with_dtype():
 class NamedTupleClass:
     P = namedtuple('P', [])
 
-@pytest.mark.xfail(reason='Not sure how to fix')
-def test_get_value_type_namedtuple_in_class():
+def test_get_value_type_namedtuple_nonlocal():
     # namedtuple's __qualname__ also doesn't contain the enclosing class name...
     assert f"{__name__}.NamedTupleClass.P" == get_value_type(NamedTupleClass.P())
+
+
+@pytest.mark.xfail(reason="How to best solve this?")
+def test_get_value_type_namedtuple_local():
+    # namedtuple's __qualname__ lacks context
+    P = namedtuple('P', ['x', 'y'])
+    assert f"{__name__}.test_get_value_type_namedtuple_local.<locals>.P" == get_value_type(P(1,1))
 
 
 @pytest.mark.skipif((importlib.util.find_spec('numpy') is None or

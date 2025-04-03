@@ -32,7 +32,8 @@ from righttyper.righttyper_types import (
     T,
     TypeInfo,
     NoneTypeInfo,
-    AnyTypeInfo
+    AnyTypeInfo,
+    UnknownTypeInfo
 )
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 
@@ -121,12 +122,12 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
     # any type hints?
     if signature and hints:
         arg_types = TypeInfo.list([
-            hint2type(hints[arg_name]) if arg_name in hints else AnyTypeInfo
+            hint2type(hints[arg_name]) if arg_name in hints else UnknownTypeInfo
             for arg_name in signature.parameters
         ])
 
         return_type = (
-            hint2type(hints['return']) if 'return' in hints else AnyTypeInfo
+            hint2type(hints['return']) if 'return' in hints else UnknownTypeInfo
         )
 
         args = (arg_types, return_type)
@@ -217,33 +218,53 @@ def normalize_module_name(module_name: str) -> str:
 
 
 @cache
-def lookup_type_module(t: type) -> str:
-    parts = t.__qualname__.split('.')
+def search_type(t: type) -> tuple[str, str] | None:
+    name_parts = t.__qualname__.split('.')
 
-    def is_defined_in_module(namespace: dict, index: int=0) -> bool:
-        if index<len(parts) and (obj := namespace.get(parts[index])):
+    def is_defined_in(target: type|ModuleType, index: int=0) -> bool:
+        if index<len(name_parts) and (obj := target.__dict__.get(name_parts[index])):
             if obj is t:
                 return True
 
-            if isinstance(obj, dict):
-                return is_defined_in_module(obj, index+1)
+            if type(obj) in (type, ModuleType):
+                return is_defined_in(obj, index+1)
 
         return False
 
     # Is it defined where it claims to be?
-    if (m := sys.modules.get(t.__module__)):
-        if is_defined_in_module(m.__dict__):
-            return normalize_module_name(t.__module__)
+    if (
+        '<locals>' in name_parts or (   # we can't fully check local names... trust them?
+            (m := sys.modules.get(t.__module__)) and is_defined_in(m)
+        )
+    ):
+        return normalize_module_name(t.__module__), t.__qualname__
 
-    # Can we find it some submodule?
-    # FIXME this search could be more exhaustive and/or more principled
-    module_prefix = f"{t.__module__}."
-    for name, mod in sys.modules.items():
-        if name.startswith(module_prefix) and is_defined_in_module(mod.__dict__):
-            return normalize_module_name(name)
+    # Try to find it by some other name
+    visited = set()
+    def find_in(m_name: str, target: type|ModuleType, path: list[str] = []) -> tuple[str, str]|None:
+        if target not in visited:
+            visited.add(target)
 
-    # Keep it as a last resort, to facilitate diagnostics
-    return normalize_module_name(t.__module__)
+            # FIXME we should limit this to public names (in __all__, don't start with _, etc.)
+            for name, obj in target.__dict__.items():
+                if obj is t:
+                    return m_name, ('.').join(path + [name])
+
+                if type(obj) is type:
+                    if (f := find_in(m_name, obj, path + [name])):
+                        return f
+
+                elif type(obj) is ModuleType and obj.__name__.startswith(m_name):
+                    if (f := find_in(obj.__name__, obj)):
+                        return f
+
+        return None
+
+
+    if (f := find_in(t.__module__, sys.modules[t.__module__])):
+        return normalize_module_name(f[0]), f[1]
+
+    return None
 
 
 RANGE_ITER_TYPE = type(iter(range(1)))
@@ -271,38 +292,19 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
             return TypeInfo("typing", "Iterator", args=(TypeInfo("", "int", type_obj=int),))
         # TODO match other ABC from collections.abc based on interface
         elif issubclass(obj, abc.Iterator):
-            return TypeInfo("typing", "Iterator", args=(AnyTypeInfo,))
+            return TypeInfo("typing", "Iterator", args=(UnknownTypeInfo,))
         else:
-            # fall back to its name, just so we can tell where it came from.
-            return TypeInfo.from_type(obj)
+            return UnknownTypeInfo
 
     # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
     if obj.__module__ == 'numpy' and 'dtype[' in obj.__name__ and hasattr(obj, "type"):
         t_name = obj.__qualname__.split('[')[0]
         return TypeInfo(obj.__module__, t_name, args=(get_type_name(obj.type, depth+1),))
 
-    # Disabled for now: passing types using aliases at this point can lead to
-    # confusion, as there can be an alias that conflicts with a module's fully
-    # qualified name.  For example, "import x.y as ast" would conflict with "ast.If"
-    if False:
-        # Look for a local alias for the type
-        # FIXME this only checks for globally known names, and doesn't match inner classes (e.g., Foo.Bar).
-        # FIXME that name may be locally bound to something different, hiding the global
-        if caller_frame := find_caller_frame():
-            current_namespace = caller_frame.f_globals
-            if current_namespace.get(obj.__name__) is obj:
-                return obj.__name__
+    if (module_and_name := search_type(obj)):
+        return TypeInfo(*module_and_name, type_obj=obj)
 
-            # Check if the type is accessible from a module in the current namespace
-            for name, mod in current_namespace.items():
-                if (
-                    inspect.ismodule(mod)
-                    and hasattr(mod, obj.__name__)
-                    and getattr(mod, obj.__name__) is obj
-                ):
-                    return f"{name}.{obj.__name__}"
-
-    return TypeInfo(lookup_type_module(obj), obj.__qualname__, type_obj=obj)
+    return UnknownTypeInfo
 
 
 def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
@@ -545,7 +547,7 @@ def get_value_type(
                 return recurse(memlist[0])
             else:
                 # something went wrong with the 'traverse' workaround
-                return AnyTypeInfo
+                return UnknownTypeInfo
 
 
     if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):

@@ -151,6 +151,7 @@ class TypeInfo:
 
 
 NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)    # FIXME make Singleton using __new__
+UnknownTypeInfo = TypeInfo("typing", "Any")                     # FIXME make Singleton
 AnyTypeInfo = TypeInfo("typing", "Any")
 
 
