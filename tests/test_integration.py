@@ -124,6 +124,41 @@ def test_getitem_iterator_from_annotation():
     """)
 
 
+def test_custom_iterator():
+    t = textwrap.dedent(f"""\
+        class X:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                return 42
+
+        def f(it):
+            next(it)
+
+        f(iter(X()))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f', body=False) == textwrap.dedent("""\
+        def f(it: X) -> None: ...
+    """)
+
+    assert get_function(code, 'X.__iter__', body=False) == textwrap.dedent("""\
+        def __iter__(self: Self) -> Self: ...
+    """)
+
+    assert get_function(code, 'X.__next__', body=False) == textwrap.dedent("""\
+        def __next__(self: Self) -> int: ...
+    """)
+
+
 def test_builtins():
     t = textwrap.dedent("""\
         def func(s):
