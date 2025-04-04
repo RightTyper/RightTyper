@@ -33,22 +33,130 @@ def runmypy(tmp_cwd, request):
             pytest.fail("see mypy errors")
 
 
-@pytest.mark.xfail(reason="Iterable/Iterator introspection doesn't currently work")
-def test_iterable():
-    t = textwrap.dedent("""\
-        def func(iter) -> enumerate[str]:
-            return enumerate(iter)
+@pytest.mark.parametrize("init, expected", [
+    ["iter(b'0')", "Iterator[int]"],
+    ["iter(bytearray(b'0'))", "Iterator[int]"],
+    ["iter({'a': 0})", "Iterator[str]"],
+    ["iter({'a': 0}.values())", "Iterator[int]"],
+    ["iter({'a': 0}.items())", "Iterator[tuple[str, int]]"],
+    ["iter([0, 1])", "Iterator[int]"],
+    ["iter(reversed([0, 1]))", "Iterator[int]"],
+    ["iter(range(1))", "Iterator[int]"],
+    ["iter(range(1 << 1000))", "Iterator[int]"],
+    ["iter({'a'})", "Iterator[str]"],
+    ["iter('ab')", "Iterator[str]"],
+    ["iter(('a', 'b'))", "Iterator[str]"],
+    ["iter(tuple(c for c in ('a', 'b')))", "Iterator[str]"],
+    ["iter(zip([0], ('a',)))", "Iterator[tuple[int, str]]"],
+    ["enumerate(('a', 'b'))", "enumerate[str]"],
+    ["iter(zip([0], (c for c in ('a',))))", "Iterator[tuple[int, str]]"],
+    ["enumerate(c for c in ('a', 'b') if c)", "enumerate[str]"],
+])
+def test_builtin_iterator(init, expected):
+    t = textwrap.dedent(f"""\
+        def f():
+            return {init}
 
-        print(list(func(range(10))))
+        next(f())
         """)
 
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    # or def "func(iter: range) -> enumerate[int]"
-    assert "def func(iter: Iterable[int]) -> Iterable[tuple[int, int]]" in Path("t.py").read_text()
+    assert get_function(code, 'f', body=False) == textwrap.dedent(f"""\
+        def f() -> {expected}: ...
+    """)
+
+
+def test_getitem_iterator():
+    t = textwrap.dedent(f"""\
+        class X:
+            def __getitem__(self, n):
+                if n < 10:
+                    return (n & 2) == 0
+                raise IndexError()
+
+        def f(it):
+            next(it)
+
+        f(iter(X()))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f', body=False) == textwrap.dedent("""\
+        def f(it: Iterator[bool]) -> None: ...
+    """)
+
+
+def test_getitem_iterator_from_annotation():
+    t = textwrap.dedent(f"""\
+        class X:
+            def __getitem__(self, n) -> float:
+                if n < 10:
+                    return n
+                raise IndexError()
+
+        def f(it):
+            pass
+
+        f(iter(X()))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f', body=False) == textwrap.dedent("""\
+        def f(it: Iterator[float]) -> None: ...
+    """)
+
+
+def test_custom_iterator():
+    t = textwrap.dedent(f"""\
+        class X:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                return 42
+
+        def f(it):
+            next(it)
+
+        f(iter(X()))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f', body=False) == textwrap.dedent("""\
+        def f(it: X) -> None: ...
+    """)
+
+    assert get_function(code, 'X.__iter__', body=False) == textwrap.dedent("""\
+        def __iter__(self: Self) -> Self: ...
+    """)
+
+    assert get_function(code, 'X.__next__', body=False) == textwrap.dedent("""\
+        def __next__(self: Self) -> int: ...
+    """)
 
 
 def test_builtins():
@@ -1937,6 +2045,44 @@ def test_self_with_cached_method():
     assert 'def foo(self: Self, x: int) -> Self:' in output
 
 
+def test_self_in_hierarchy():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def f(self):
+                return self
+
+        class B(A):
+            def g(self):
+                ...
+
+        class C(A):
+            def h(self):
+                ...
+
+        A().f()
+        B().f().g()
+        C().f().h()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'A.f', body=False) == textwrap.dedent("""\
+        def f(self: Self) -> Self: ...
+    """)
+
+    assert get_function(code, 'B.g', body=False) == textwrap.dedent("""\
+        def g(self: Self) -> None: ...
+    """)
+
+    assert get_function(code, 'C.h', body=False) == textwrap.dedent("""\
+        def h(self: Self) -> None: ...
+    """)
+
+
 @pytest.mark.dont_run_mypy  # unnecessary for this test
 def test_rich_is_messed_up():
     # running rich's test suite leaves it unusable... simulate that situation.
@@ -2992,3 +3138,21 @@ def test_object_with_empty_dir():
     # mostly we are checking that it doesn't fail (raises fatal exception)
     output = Path("t.py").read_text()
     assert "def f(self: Self) -> None" in output
+
+
+@pytest.mark.skip(reason="just documents an idea")
+def test_container_is_modified():
+    # TODO should we resample mutable containers upon return?
+    t = textwrap.dedent("""\
+        def f(x):
+            x.append(1)
+
+        f([])
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    assert "def f(x: list[int]) -> None" in output

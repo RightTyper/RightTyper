@@ -40,6 +40,7 @@ from righttyper.righttyper_runtime import (
     get_type_name,
     should_skip_function,
     hint2type,
+    IteratorArg,
 )
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
@@ -96,6 +97,7 @@ class Options:
     sampling: bool = True
     inline_generics: bool = False
     replace_dict: bool = False
+    container_sample_limit: int = 1000
 
 options = Options()
 
@@ -376,7 +378,7 @@ class Observations:
                 return super().visit(node.replace(is_self=False))
 
         class CallableT(TypeInfo.Transformer):
-            """Updates Callable type declarations based on observations."""
+            """Updates Callable/Generator/Coroutine type declarations based on observations."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
 
@@ -408,6 +410,22 @@ class Observations:
 
         self._transform_types(CallableT())
 
+        class IteratorArgsT(TypeInfo.Transformer):
+            """Clones the given TypeInfo, clearing all is_self flags."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.type_obj is IteratorArg:
+                    source = node.args[0]
+                    if source.args:
+                        if source.type_obj is abc.Callable:
+                            return source.args[1]   # Callable return value
+                        else:
+                            return source.args[0]   # Generator/Iterator yield value
+                    return UnknownTypeInfo
+
+                return super().visit(node)
+
+        self._transform_types(IteratorArgsT())
+
         class SelfT(TypeInfo.Transformer):
             """Renames types to typing.Self according to is_self."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
@@ -432,7 +450,11 @@ def send_handler(code: CodeType, frame_id: FrameId, arg0: Any) -> None:
     obs.record_send(
         code,
         frame_id, 
-        get_value_type(arg0, use_jaxtyping=options.infer_shapes)
+        get_value_type(
+            arg0,
+            container_sample_limit=options.container_sample_limit,
+            use_jaxtyping=options.infer_shapes
+        )
     )
 
 
@@ -580,7 +602,11 @@ def process_yield_or_return(
         frame = frame.f_back
 
     if frame:
-        typeinfo = get_value_type(return_value, use_jaxtyping=options.infer_shapes)
+        typeinfo = get_value_type(
+            return_value,
+            container_sample_limit=options.container_sample_limit,
+            use_jaxtyping=options.infer_shapes
+        )
 
         if event_type == sys.monitoring.events.PY_YIELD:
             found = obs.record_yield(code, FrameId(id(frame)), typeinfo)
@@ -600,7 +626,11 @@ def process_function_call(
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
-        return get_value_type(v, use_jaxtyping=options.infer_shapes)
+        return get_value_type(
+            v,
+            container_sample_limit=options.container_sample_limit,
+            use_jaxtyping=options.infer_shapes
+        )
 
 
     def get_defaults() -> dict[str, TypeInfo]:
@@ -1033,6 +1063,12 @@ class CheckModule(click.ParamType):
     is_flag=True,
     help="Whether to replace 'dict' to enable efficient, statistically correct samples."
 )
+@click.option(
+    "--container-sample-limit",
+    type=int,
+    default=options.container_sample_limit,
+    help="Limit on number of container elements from which to sample.",
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
     script: str,
@@ -1055,6 +1091,7 @@ def main(
     type_coverage: tuple[str, str],
     signal_wakeup: bool,
     replace_dict: bool,
+    container_sample_limit: int,
 ) -> None:
 
     if type_coverage:
@@ -1114,6 +1151,7 @@ def main(
     options.sampling = sampling
     options.inline_generics = inline_generics
     options.replace_dict = replace_dict
+    options.container_sample_limit = container_sample_limit
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
