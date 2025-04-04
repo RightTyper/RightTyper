@@ -267,7 +267,19 @@ def search_type(t: type) -> tuple[str, str] | None:
     return None
 
 
-RANGE_ITER_TYPE = type(iter(range(1)))
+BYTES_ITER = type(iter(b''))
+BYTEARRAY_ITER = type(iter(bytearray()))
+DICT_KEYITER = type(iter({}))
+DICT_VALUEITER = type(iter({}.values()))
+DICT_ITEMITER = type(iter({}.items()))
+LIST_ITER = type(iter([]))
+LIST_REVERSED_ITER = type(iter(reversed([])))
+RANGE_ITER = type(iter(range(1)))
+LONGRANGE_ITER = type(iter(range(1 << 1000)))
+SET_ITER = type(iter(set()))
+STR_ITER = type(iter(""))
+TUPLE_ITER = type(iter(()))
+
 
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
@@ -284,15 +296,18 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     if obj.__module__ == "builtins":
         if obj is NoneType:
             return NoneTypeInfo
+        elif obj is zip:
+            return TypeInfo("typing", "Iterator")
         elif in_builtins_import(obj):
             return TypeInfo("", obj.__name__, type_obj=obj) # these are "well known", so no module name needed
         elif (name := from_types_import(obj)):
             return TypeInfo("types", name, type_obj=obj)
-        elif obj is RANGE_ITER_TYPE:
-            return TypeInfo("typing", "Iterator", args=(TypeInfo("", "int", type_obj=int),))
-        # TODO match other ABC from collections.abc based on interface
+        elif obj in (RANGE_ITER, LONGRANGE_ITER, BYTES_ITER, BYTEARRAY_ITER):
+            return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(int, module=""),))
+        elif obj is STR_ITER:
+            return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(str, module=""),))
         elif issubclass(obj, abc.Iterator):
-            return TypeInfo("typing", "Iterator", args=(UnknownTypeInfo,))
+            return TypeInfo("typing", "Iterator")
         else:
             return UnknownTypeInfo
 
@@ -395,6 +410,10 @@ def find_function(
     return None
 
 
+class IteratorArg:
+    """Type used to postpone evaluating generator-based iterators"""
+
+
 def get_value_type(
     value: Any,
     *,
@@ -452,6 +471,13 @@ def get_value_type(
         # to keep the overhead low (similar to list's O(1), in fact)
         n = random.randint(0, min(container_sample_limit, len(container)-1))
         return next(itertools.islice(container, n, None))
+
+
+    def first_referent() -> object|None:
+        """Returns the first object 'value' refers to, if any."""
+        import gc
+        ref = gc.get_referents(value)
+        return ref[0] if len(ref) else None
 
 
     try:
@@ -521,6 +547,51 @@ def get_value_type(
     elif t.__module__ == "builtins":
         if t is NoneType:
             return NoneTypeInfo
+        elif t in (RANGE_ITER, LONGRANGE_ITER, BYTES_ITER, BYTEARRAY_ITER):
+            return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(int, module=""),))
+        elif (t is DICT_KEYITER and (d := first_referent()) is not None and type(d) is dict):
+            return TypeInfo("typing", "Iterator", args=(recurse(d).args[0],))
+        elif (t is DICT_VALUEITER and (d := first_referent()) is not None and type(d) is dict):
+            return TypeInfo("typing", "Iterator", args=(recurse(d).args[1],))
+        elif (t is DICT_ITEMITER and (d := first_referent()) is not None and type(d) is dict):
+            return TypeInfo("typing", "Iterator", args=(
+                       TypeInfo.from_type(tuple, module="", args=recurse(d).args),)
+                   )
+        elif (
+            t in (LIST_ITER, LIST_REVERSED_ITER)
+            and (l := first_referent()) is not None
+            and type(l) is list
+        ):
+            return TypeInfo("typing", "Iterator", args=recurse(l).args)
+        elif (t is SET_ITER and (l := first_referent()) is not None and type(l) is set):
+            return TypeInfo("typing", "Iterator", args=recurse(l).args)
+        elif t is STR_ITER:
+            return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(str, module=""),))
+        elif (t is TUPLE_ITER and (l := first_referent()) is not None and type(l) is tuple):
+            if l:
+                el = l[random.randint(0, len(l)-1)] # this is O(1), much faster than islice()
+                args = (recurse(el),)
+            else:
+                args = (TypeInfo("typing", "Never"),)
+            return TypeInfo("typing", "Iterator", args=args)
+        elif (t is zip and (l := first_referent()) is not None):
+            zip_sources = tuple(recurse(s) for s in l)
+            args = (
+                TypeInfo.from_type(tuple, module="", args=(
+                    src.args[0] if src.qualname() == "typing.Iterator"
+                    else TypeInfo.from_type(IteratorArg, args=(src,))
+                    for src in zip_sources
+                )),
+            )
+            return TypeInfo("typing", "Iterator", args=args)
+        elif (t is enumerate and (l := first_referent()) is not None):
+            src = recurse(l)
+            args = (
+                (src.args[0],) if src.qualname() == "typing.Iterator"
+                else (TypeInfo.from_type(IteratorArg, args=(src,)),)
+            )
+
+            return TypeInfo.from_type(t, module="", args=args)
         elif in_builtins_import(cast(type, t)):
             return TypeInfo.from_type(t, module="") # these are "well known", so no module name needed
         elif (name := from_types_import(cast(type, t))):
@@ -542,12 +613,10 @@ def get_value_type(
                 args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
             return TypeInfo("typing", "ItemsView", args=args)
         elif t.__name__ == 'async_generator_wrapped_value':
-            import righttyper.traverse as tr
-            if len(memlist := tr.traverse(value)) == 1:
-                return recurse(memlist[0])
-            else:
-                # something went wrong with the 'traverse' workaround
-                return UnknownTypeInfo
+            if (l := first_referent()) is not None:
+                return recurse(l)
+
+            return UnknownTypeInfo
 
 
     if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):

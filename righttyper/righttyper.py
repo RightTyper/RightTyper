@@ -40,6 +40,7 @@ from righttyper.righttyper_runtime import (
     get_type_name,
     should_skip_function,
     hint2type,
+    IteratorArg,
 )
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
@@ -377,7 +378,7 @@ class Observations:
                 return super().visit(node.replace(is_self=False))
 
         class CallableT(TypeInfo.Transformer):
-            """Updates Callable type declarations based on observations."""
+            """Updates Callable/Generator/Coroutine type declarations based on observations."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
 
@@ -408,6 +409,17 @@ class Observations:
                 return node
 
         self._transform_types(CallableT())
+
+        class IteratorArgsT(TypeInfo.Transformer):
+            """Clones the given TypeInfo, clearing all is_self flags."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.type_obj is IteratorArg:
+                    source = node.args[0]
+                    return source.args[0] if source.args else UnknownTypeInfo
+
+                return super().visit(node)
+
+        self._transform_types(IteratorArgsT())
 
         class SelfT(TypeInfo.Transformer):
             """Renames types to typing.Self according to is_self."""

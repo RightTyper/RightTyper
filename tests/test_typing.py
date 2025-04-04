@@ -80,60 +80,12 @@ def test_get_value_type():
     assert "range" == get_value_type(o)
     assert 0 == next(iter(o)), "changed state"
 
-    o = iter(range(10))
-    assert "typing.Iterator[int]" == get_value_type(o)
-    assert 0 == next(o), "changed state"
-
-    o = iter([0,1])
-    assert "typing.Iterator[typing.Any]" == get_value_type(o)
-    assert 0 == next(o), "changed state"
-
-    o = enumerate([0,1])
-    assert "enumerate" == get_value_type(o)
-    assert (0, 0) == next(o), "changed state"
-
     o = filter(lambda x:True, [0,1])
     assert "filter" == get_value_type(o)
     assert 0 == next(o), "changed state"
 
-    o = reversed([0,1])
-    assert "typing.Iterator[typing.Any]" == get_value_type(o)
-    assert 1 == next(o), "changed state"
-
-    o = zip([0,1], ['a','b'])
-    assert "zip" == get_value_type(o)
-    assert (0,'a') == next(o), "changed state"
-
     o = map(lambda x:x, [0,1])
     assert "map" == get_value_type(o)
-    assert 0 == next(o), "changed state"
-
-    o = iter({0, 1})
-    assert "typing.Iterator[typing.Any]" == get_value_type(o)
-    assert 0 == next(o), "changed state"
-
-    o = iter({0:0, 1:1})
-    assert "typing.Iterator[typing.Any]" == get_value_type(o)
-    assert 0 == next(o), "changed state"
-
-    o = iter({0:0, 1:1}.items())
-    assert "typing.Iterator[typing.Any]" == get_value_type(o)
-    assert (0, 0) == next(o), "changed state"
-
-    o = iter({0:0, 1:1}.values())
-    assert "typing.Iterator[typing.Any]" == get_value_type(o)
-    assert 0 == next(o), "changed state"
-
-    o = iter({0:0, 1:1}.keys())
-    assert "typing.Iterator[typing.Any]" == get_value_type(o)
-    assert 0 == next(o), "changed state"
-
-    o = iter({0:0, 1:1}.items())
-    assert "typing.Iterator[typing.Any]" == get_value_type(o)
-    assert (0, 0) == next(o), "changed state"
-
-    o = iter({0:0, 1:1}.values())
-    assert "typing.Iterator[typing.Any]" == get_value_type(o)
     assert 0 == next(o), "changed state"
 
     o = (i for i in range(10))
@@ -157,6 +109,55 @@ def test_get_value_type():
 
     assert f"{__name__}.MyGeneric[builtins.int, builtins.str]" == \
             get_value_type(MyGeneric[int, str]())
+
+
+@pytest.mark.parametrize("init, name, nextv", [
+    ["iter(b'0')", "typing.Iterator[int]", b'0'[0]],
+    ["iter(bytearray(b'0'))", "typing.Iterator[int]", bytearray(b'0')[0]],
+    ["iter({'a': 0})", "typing.Iterator[str]", 'a'],
+    ["iter({'a': 0}.values())", "typing.Iterator[int]", 0],
+    ["iter({'a': 0}.items())", "typing.Iterator[tuple[str, int]]", ('a', 0)],
+    ["iter([0, 1])", "typing.Iterator[int]", 0],
+    ["iter(reversed([0, 1]))", "typing.Iterator[int]", 1],
+    ["iter(range(1))", "typing.Iterator[int]", 0],
+    ["iter(range(1 << 1000))", "typing.Iterator[int]", 0],
+    ["iter({'a'})", "typing.Iterator[str]", 'a'],
+    ["iter('ab')", "typing.Iterator[str]", 'a'],
+    ["iter(('a', 'b'))", "typing.Iterator[str]", 'a'],
+    ["iter(tuple(c for c in ('a', 'b')))", "typing.Iterator[str]", 'a'],
+    ["zip([0], ('a',))", "typing.Iterator[tuple[int, str]]", (0, 'a')],
+    ["iter(zip([0], ('a',)))", "typing.Iterator[tuple[int, str]]", (0, 'a')],
+    ["enumerate(('a', 'b'))", "enumerate[str]", (0, 'a')],
+    ["iter(enumerate(('a', 'b')))", "enumerate[str]", (0, 'a')],
+#    ["iter(zip([0], (c for c in ('a',))))", "typing.Iterator[tuple[int, str]]", (0, 'a')],
+#    ["enumerate(c for c in ('a', 'b'))", "enumerate[str]", (0, 'a')],
+])
+def test_value_type_iterator(init, name, nextv):
+    obj = eval(init)
+    assert name == get_value_type(obj)
+    assert nextv == next(obj), "changed state"
+
+
+@pytest.mark.parametrize("init, name", [
+    ["iter(b'0')", "typing.Iterator[int]"],
+    ["iter(bytearray(b'0'))", "typing.Iterator[int]"],
+    ["iter({'a': 0})", "typing.Iterator"],
+    ["iter({'a': 0}.values())", "typing.Iterator"],
+    ["iter({'a': 0}.items())", "typing.Iterator"],
+    ["iter([0, 1])", "typing.Iterator"],
+    ["iter(reversed([0, 1]))", "typing.Iterator"],
+    ["iter(range(1))", "typing.Iterator[int]"],
+    ["iter(range(1 << 1000))", "typing.Iterator[int]"],
+    ["iter({'a'})", "typing.Iterator"],
+    ["iter('ab')", "typing.Iterator[str]"],
+    ["iter(('a', 'b'))", "typing.Iterator"],
+    ["zip([0], ('a',))", "typing.Iterator"],
+    ["iter(zip([0], ('a',)))", "typing.Iterator"],
+    ["enumerate(('a', 'b'))", "enumerate"],
+    ["iter(enumerate(('a', 'b')))", "enumerate"],
+])
+def test_type_name_iterator(init, name):
+    assert name == str(rt.get_type_name(type(eval(init))))
 
 
 @pytest.mark.filterwarnings("ignore:coroutine .* never awaited")
