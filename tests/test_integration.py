@@ -1958,6 +1958,44 @@ def test_self_with_cached_method():
     assert 'def foo(self: Self, x: int) -> Self:' in output
 
 
+def test_self_in_hierarchy():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def f(self):
+                return self
+
+        class B(A):
+            def g(self):
+                ...
+
+        class C(A):
+            def h(self):
+                ...
+
+        A().f()
+        B().f().g()
+        C().f().h()
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', 't.py'], check=True)
+
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'A.f', body=False) == textwrap.dedent("""\
+        def f(self: Self) -> Self: ...
+    """)
+
+    assert get_function(code, 'B.g', body=False) == textwrap.dedent("""\
+        def g(self: Self) -> None: ...
+    """)
+
+    assert get_function(code, 'C.h', body=False) == textwrap.dedent("""\
+        def h(self: Self) -> None: ...
+    """)
+
+
 @pytest.mark.dont_run_mypy  # unnecessary for this test
 def test_rich_is_messed_up():
     # running rich's test suite leaves it unusable... simulate that situation.
