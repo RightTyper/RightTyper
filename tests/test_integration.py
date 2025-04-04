@@ -50,9 +50,9 @@ def runmypy(tmp_cwd, request):
     ["iter(zip([0], ('a',)))", "Iterator[tuple[int, str]]"],
     ["enumerate(('a', 'b'))", "enumerate[str]"],
     ["iter(zip([0], (c for c in ('a',))))", "Iterator[tuple[int, str]]"],
-    ["enumerate(c for c in ('a', 'b'))", "enumerate[str]"],
+    ["enumerate(c for c in ('a', 'b') if c)", "enumerate[str]"],
 ])
-def test_iterator(init, expected):
+def test_builtin_iterator(init, expected):
     t = textwrap.dedent(f"""\
         def f():
             return {init}
@@ -69,6 +69,58 @@ def test_iterator(init, expected):
 
     assert get_function(code, 'f', body=False) == textwrap.dedent(f"""\
         def f() -> {expected}: ...
+    """)
+
+
+def test_getitem_iterator():
+    t = textwrap.dedent(f"""\
+        class X:
+            def __getitem__(self, n):
+                if n < 10:
+                    return (n & 2) == 0
+                raise IndexError()
+
+        def f(it):
+            next(it)
+
+        f(iter(X()))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f', body=False) == textwrap.dedent("""\
+        def f(it: Iterator[bool]) -> None: ...
+    """)
+
+
+def test_getitem_iterator_from_annotation():
+    t = textwrap.dedent(f"""\
+        class X:
+            def __getitem__(self, n) -> float:
+                if n < 10:
+                    return n
+                raise IndexError()
+
+        def f(it):
+            pass
+
+        f(iter(X()))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f', body=False) == textwrap.dedent("""\
+        def f(it: Iterator[float]) -> None: ...
     """)
 
 

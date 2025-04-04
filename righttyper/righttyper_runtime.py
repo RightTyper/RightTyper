@@ -280,6 +280,11 @@ SET_ITER = type(iter(set()))
 STR_ITER = type(iter(""))
 TUPLE_ITER = type(iter(()))
 
+class _GetItemDummy:
+    def __getitem__(self, n):
+        return n
+GETITEM_ITER = type(iter(_GetItemDummy()))
+
 
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
@@ -574,7 +579,23 @@ def get_value_type(
             else:
                 args = (TypeInfo("typing", "Never"),)
             return TypeInfo("typing", "Iterator", args=args)
-        elif (t is zip and (l := first_referent()) is not None):
+        elif (
+            t is GETITEM_ITER
+            and (l := first_referent())
+            and (getitem := getattr(type(l), "__getitem__", None)) is not None
+        ):
+            src = recurse(getitem)
+            assert src.type_obj is abc.Callable
+            return TypeInfo("typing", "Iterator", args=(
+                    TypeInfo.from_type(IteratorArg, args=(src,)),
+                )
+            )
+        elif (
+            t is zip
+            and (l := first_referent()) is not None
+            and type(l) is tuple
+            and all(isinstance(s, abc.Iterator) for s in l)
+        ):
             zip_sources = tuple(recurse(s) for s in l)
             args = (
                 TypeInfo.from_type(tuple, module="", args=(
@@ -584,7 +605,7 @@ def get_value_type(
                 )),
             )
             return TypeInfo("typing", "Iterator", args=args)
-        elif (t is enumerate and (l := first_referent()) is not None):
+        elif (t is enumerate and (l := first_referent()) is not None and isinstance(l, abc.Iterator)):
             src = recurse(l)
             args = (
                 (src.args[0],) if src.qualname() == "typing.Iterator"

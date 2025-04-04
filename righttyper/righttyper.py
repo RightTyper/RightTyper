@@ -415,7 +415,12 @@ class Observations:
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 if node.type_obj is IteratorArg:
                     source = node.args[0]
-                    return source.args[0] if source.args else UnknownTypeInfo
+                    if source.args:
+                        if source.type_obj is abc.Callable:
+                            return source.args[1]   # Callable return value
+                        else:
+                            return source.args[0]   # Generator/Iterator yield value
+                    return UnknownTypeInfo
 
                 return super().visit(node)
 
