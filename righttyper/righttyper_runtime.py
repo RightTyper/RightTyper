@@ -219,22 +219,27 @@ def normalize_module_name(module_name: str) -> str:
 
 @cache
 def search_type(t: type) -> tuple[str, str] | None:
-    name_parts = t.__qualname__.split('.')
+    """Searches for a given type in its __module__ and any submodules,
+       returning the module and qualified name under which it exist, if any.
+    """
 
-    def is_defined_in(target: type|ModuleType, index: int=0) -> bool:
-        if index<len(name_parts) and (obj := target.__dict__.get(name_parts[index])):
+    def is_defined_in(target: type|ModuleType, name_parts: list[str], name_index: int=0) -> bool:
+        """Checks whether a name, given split into name_parts, is defined in a class or module."""
+        if name_index<len(name_parts) and (obj := target.__dict__.get(name_parts[name_index])):
             if obj is t:
                 return True
 
             if type(obj) in (type, ModuleType):
-                return is_defined_in(obj, index+1)
+                return is_defined_in(obj, name_parts, name_index+1)
 
         return False
+
+    name_parts = t.__qualname__.split('.')
 
     # Is it defined where it claims to be?
     if (
         '<locals>' in name_parts or (   # we can't fully check local names... trust them?
-            (m := sys.modules.get(t.__module__)) and is_defined_in(m)
+            (m := sys.modules.get(t.__module__)) and is_defined_in(m, name_parts)
         )
     ):
         return normalize_module_name(t.__module__), t.__qualname__
@@ -242,10 +247,13 @@ def search_type(t: type) -> tuple[str, str] | None:
     # Try to find it by some other name
     visited = set()
     def find_in(m_name: str, target: type|ModuleType, path: list[str] = []) -> tuple[str, str]|None:
+        """Searches for a type in modules and classes, returning the module's name and its qualified name
+           if found.
+        """
         if target not in visited:
             visited.add(target)
 
-            # FIXME we should limit this to public names (in __all__, don't start with _, etc.)
+            # TODO should we limit this to public names (in __all__, don't start with _, etc.) ?
             for name, obj in target.__dict__.items():
                 if obj is t:
                     return m_name, ('.').join(path + [name])
@@ -266,7 +274,10 @@ def search_type(t: type) -> tuple[str, str] | None:
 
     return None
 
-
+# CPython 3.12 returns specialized objects for each one of the following iterators,
+# but does not name their types publicly.  We here give them names to keep the
+# introspection code more readable. Note that these types may not be exhaustive
+# and may overlap as across Python versions and implementations.
 BYTES_ITER = type(iter(b''))
 BYTEARRAY_ITER = type(iter(bytearray()))
 DICT_KEYITER = type(iter({}))

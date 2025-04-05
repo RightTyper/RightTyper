@@ -372,8 +372,10 @@ class Observations:
                 retval=tr.visit(signature[-1])
             )
 
-        class ClearIsSelfT(TypeInfo.Transformer):
-            """Clones the given TypeInfo, clearing all is_self flags."""
+        class NonSelfCloningT(TypeInfo.Transformer):
+            """Clones the given TypeInfo tree, clearing all 'is_self' flags,
+               as the type information may not be equivalent to typing.Self in the new context.
+            """
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 return super().visit(node.replace(is_self=False))
 
@@ -386,24 +388,24 @@ class Observations:
                 if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.samples:
                     if (ann := mk_annotation(node.code_id)):
                         func_info = self.functions_visited[node.code_id]
-                        # While copying from Callable, Generator, etc., it's important to clone the
-                        # TypeInfo elements, as they could be later replaced (e.g., with typing.Self).
+                        # Clone (rather than link to) types from Callable, Generator, etc.,
+                        # clearing is_self, as these types may be later replaced with typing.Self.
                         if node.type_obj is abc.Callable:
                             node = node.replace(args=(
                                 TypeInfo.list([
-                                    ClearIsSelfT().visit(a[1]) for a in ann.args[int(node.is_bound):]
+                                    NonSelfCloningT().visit(a[1]) for a in ann.args[int(node.is_bound):]
                                 ])
                                 if not (func_info.varargs or func_info.kwargs) else
                                 ...,
-                                ClearIsSelfT().visit(ann.retval)
+                                NonSelfCloningT().visit(ann.retval)
                             ))
                         elif node.type_obj in (abc.Generator, abc.AsyncGenerator):
-                            node = ClearIsSelfT().visit(ann.retval)
+                            node = NonSelfCloningT().visit(ann.retval)
                         elif node.type_obj is abc.Coroutine:
                             node = node.replace(args=(
                                 NoneTypeInfo,
                                 NoneTypeInfo,
-                                ClearIsSelfT().visit(ann.retval)
+                                NonSelfCloningT().visit(ann.retval)
                             ))
 
                 return node
@@ -1067,7 +1069,7 @@ class CheckModule(click.ParamType):
     "--container-sample-limit",
     type=int,
     default=options.container_sample_limit,
-    help="Limit on number of container elements from which to sample.",
+    help="Number of container elements to sample.",
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
