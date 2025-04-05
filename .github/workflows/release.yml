@@ -23,10 +23,12 @@ jobs:
       if: github.event_name != 'release'
       run: TZ='America/New_York' date '+%Y%m%d%H%M' > dev-build.txt
 
-    - name: build id
+    - name: build it
       run: |
         python3 -m pip install build twine
-        python3 -m build
+        # called without --wheel and --sdist, build somehow misses the build date in the wheel
+        python3 -m build --wheel
+        python3 -m build --sdist
 
     - name: Upload test package
       if: github.event_name != 'release'
