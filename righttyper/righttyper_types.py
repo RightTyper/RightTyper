@@ -44,7 +44,7 @@ class TypeInfo:
     type_obj: TYPE_OBJ_TYPES|None = None
     typevar_index: int = 0
     typevar_name: str|None = None   # TODO delete me?
-    is_self: bool = False
+    is_self: bool = False           # indicates equivalence to typing.Self
 
 
     def __str__(self: Self) -> str:
@@ -150,7 +150,8 @@ class TypeInfo:
             return node
 
 
-NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)    # FIXME make Singleton using __new__
+NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
+UnknownTypeInfo = TypeInfo("typing", "Any")
 AnyTypeInfo = TypeInfo("typing", "Any")
 
 

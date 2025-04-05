@@ -40,6 +40,7 @@ from righttyper.righttyper_runtime import (
     get_type_name,
     should_skip_function,
     hint2type,
+    IteratorArg,
 )
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
@@ -96,6 +97,7 @@ class Options:
     sampling: bool = True
     inline_generics: bool = False
     replace_dict: bool = False
+    container_sample_limit: int = 1000
 
 options = Options()
 
@@ -370,13 +372,15 @@ class Observations:
                 retval=tr.visit(signature[-1])
             )
 
-        class ClearIsSelfT(TypeInfo.Transformer):
-            """Clones the given TypeInfo, clearing all is_self flags."""
+        class NonSelfCloningT(TypeInfo.Transformer):
+            """Clones the given TypeInfo tree, clearing all 'is_self' flags,
+               as the type information may not be equivalent to typing.Self in the new context.
+            """
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 return super().visit(node.replace(is_self=False))
 
         class CallableT(TypeInfo.Transformer):
-            """Updates Callable type declarations based on observations."""
+            """Updates Callable/Generator/Coroutine type declarations based on observations."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
 
@@ -384,29 +388,45 @@ class Observations:
                 if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.samples:
                     if (ann := mk_annotation(node.code_id)):
                         func_info = self.functions_visited[node.code_id]
-                        # While copying from Callable, Generator, etc., it's important to clone the
-                        # TypeInfo elements, as they could be later replaced (e.g., with typing.Self).
+                        # Clone (rather than link to) types from Callable, Generator, etc.,
+                        # clearing is_self, as these types may be later replaced with typing.Self.
                         if node.type_obj is abc.Callable:
                             node = node.replace(args=(
                                 TypeInfo.list([
-                                    ClearIsSelfT().visit(a[1]) for a in ann.args[int(node.is_bound):]
+                                    NonSelfCloningT().visit(a[1]) for a in ann.args[int(node.is_bound):]
                                 ])
                                 if not (func_info.varargs or func_info.kwargs) else
                                 ...,
-                                ClearIsSelfT().visit(ann.retval)
+                                NonSelfCloningT().visit(ann.retval)
                             ))
                         elif node.type_obj in (abc.Generator, abc.AsyncGenerator):
-                            node = ClearIsSelfT().visit(ann.retval)
+                            node = NonSelfCloningT().visit(ann.retval)
                         elif node.type_obj is abc.Coroutine:
                             node = node.replace(args=(
                                 NoneTypeInfo,
                                 NoneTypeInfo,
-                                ClearIsSelfT().visit(ann.retval)
+                                NonSelfCloningT().visit(ann.retval)
                             ))
 
                 return node
 
         self._transform_types(CallableT())
+
+        class IteratorArgsT(TypeInfo.Transformer):
+            """Clones the given TypeInfo, clearing all is_self flags."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.type_obj is IteratorArg:
+                    source = node.args[0]
+                    if source.args:
+                        if source.type_obj is abc.Callable:
+                            return source.args[1]   # Callable return value
+                        else:
+                            return source.args[0]   # Generator/Iterator yield value
+                    return UnknownTypeInfo
+
+                return super().visit(node)
+
+        self._transform_types(IteratorArgsT())
 
         class SelfT(TypeInfo.Transformer):
             """Renames types to typing.Self according to is_self."""
@@ -432,7 +452,11 @@ def send_handler(code: CodeType, frame_id: FrameId, arg0: Any) -> None:
     obs.record_send(
         code,
         frame_id, 
-        get_value_type(arg0, use_jaxtyping=options.infer_shapes)
+        get_value_type(
+            arg0,
+            container_sample_limit=options.container_sample_limit,
+            use_jaxtyping=options.infer_shapes
+        )
     )
 
 
@@ -580,7 +604,11 @@ def process_yield_or_return(
         frame = frame.f_back
 
     if frame:
-        typeinfo = get_value_type(return_value, use_jaxtyping=options.infer_shapes)
+        typeinfo = get_value_type(
+            return_value,
+            container_sample_limit=options.container_sample_limit,
+            use_jaxtyping=options.infer_shapes
+        )
 
         if event_type == sys.monitoring.events.PY_YIELD:
             found = obs.record_yield(code, FrameId(id(frame)), typeinfo)
@@ -600,7 +628,11 @@ def process_function_call(
 ) -> None:
 
     def get_type(v: Any) -> TypeInfo:
-        return get_value_type(v, use_jaxtyping=options.infer_shapes)
+        return get_value_type(
+            v,
+            container_sample_limit=options.container_sample_limit,
+            use_jaxtyping=options.infer_shapes
+        )
 
 
     def get_defaults() -> dict[str, TypeInfo]:
@@ -1033,6 +1065,12 @@ class CheckModule(click.ParamType):
     is_flag=True,
     help="Whether to replace 'dict' to enable efficient, statistically correct samples."
 )
+@click.option(
+    "--container-sample-limit",
+    type=int,
+    default=options.container_sample_limit,
+    help="Number of container elements to sample.",
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
     script: str,
@@ -1055,6 +1093,7 @@ def main(
     type_coverage: tuple[str, str],
     signal_wakeup: bool,
     replace_dict: bool,
+    container_sample_limit: int,
 ) -> None:
 
     if type_coverage:
@@ -1114,6 +1153,7 @@ def main(
     options.sampling = sampling
     options.inline_generics = inline_generics
     options.replace_dict = replace_dict
+    options.container_sample_limit = container_sample_limit
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)

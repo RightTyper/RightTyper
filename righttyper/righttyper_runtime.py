@@ -32,21 +32,11 @@ from righttyper.righttyper_types import (
     T,
     TypeInfo,
     NoneTypeInfo,
-    AnyTypeInfo
+    AnyTypeInfo,
+    UnknownTypeInfo
 )
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 
-
-def sample_from_collection(value: abc.Collection[T]|abc.Iterator[T], depth = 0) -> T:
-    """Samples from a collection, or from an interator/generator whose state we don't mind changing."""
-    MAX_ELEMENTS = 10   # to keep this O(1)
-
-    if isinstance(value, abc.Collection):
-        n = random.randint(0, min(MAX_ELEMENTS, len(value) - 1))
-        return next(itertools.islice(value, n, n + 1))
-
-    n = random.randint(1, MAX_ELEMENTS)
-    return list(itertools.islice(value, n))[-1]
 
 @cache
 def get_jaxtyping():
@@ -132,12 +122,12 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
     # any type hints?
     if signature and hints:
         arg_types = TypeInfo.list([
-            hint2type(hints[arg_name]) if arg_name in hints else AnyTypeInfo
+            hint2type(hints[arg_name]) if arg_name in hints else UnknownTypeInfo
             for arg_name in signature.parameters
         ])
 
         return_type = (
-            hint2type(hints['return']) if 'return' in hints else AnyTypeInfo
+            hint2type(hints['return']) if 'return' in hints else UnknownTypeInfo
         )
 
         args = (arg_types, return_type)
@@ -228,36 +218,84 @@ def normalize_module_name(module_name: str) -> str:
 
 
 @cache
-def lookup_type_module(t: type) -> str:
-    parts = t.__qualname__.split('.')
+def search_type(t: type) -> tuple[str, str] | None:
+    """Searches for a given type in its __module__ and any submodules,
+       returning the module and qualified name under which it exist, if any.
+    """
 
-    def is_defined_in_module(namespace: dict, index: int=0) -> bool:
-        if index<len(parts) and (obj := namespace.get(parts[index])):
+    def is_defined_in(target: type|ModuleType, name_parts: list[str], name_index: int=0) -> bool:
+        """Checks whether a name, given split into name_parts, is defined in a class or module."""
+        if name_index<len(name_parts) and (obj := target.__dict__.get(name_parts[name_index])):
             if obj is t:
                 return True
 
-            if isinstance(obj, dict):
-                return is_defined_in_module(obj, index+1)
+            if type(obj) in (type, ModuleType):
+                return is_defined_in(obj, name_parts, name_index+1)
 
         return False
 
+    name_parts = t.__qualname__.split('.')
+
     # Is it defined where it claims to be?
-    if (m := sys.modules.get(t.__module__)):
-        if is_defined_in_module(m.__dict__):
-            return normalize_module_name(t.__module__)
+    if (
+        '<locals>' in name_parts or (   # we can't fully check local names... trust them?
+            (m := sys.modules.get(t.__module__)) and is_defined_in(m, name_parts)
+        )
+    ):
+        return normalize_module_name(t.__module__), t.__qualname__
 
-    # Can we find it some submodule?
-    # FIXME this search could be more exhaustive and/or more principled
-    module_prefix = f"{t.__module__}."
-    for name, mod in sys.modules.items():
-        if name.startswith(module_prefix) and is_defined_in_module(mod.__dict__):
-            return normalize_module_name(name)
+    # Try to find it by some other name
+    visited = set()
+    def find_in(m_name: str, target: type|ModuleType, path: list[str] = []) -> tuple[str, str]|None:
+        """Searches for a type in modules and classes, returning the module's name and its qualified name
+           if found.
+        """
+        if target not in visited:
+            visited.add(target)
 
-    # Keep it as a last resort, to facilitate diagnostics
-    return normalize_module_name(t.__module__)
+            # TODO should we limit this to public names (in __all__, don't start with _, etc.) ?
+            for name, obj in target.__dict__.items():
+                if obj is t:
+                    return m_name, ('.').join(path + [name])
+
+                if type(obj) is type:
+                    if (f := find_in(m_name, obj, path + [name])):
+                        return f
+
+                elif type(obj) is ModuleType and obj.__name__.startswith(m_name):
+                    if (f := find_in(obj.__name__, obj)):
+                        return f
+
+        return None
 
 
-RANGE_ITER_TYPE = type(iter(range(1)))
+    if (f := find_in(t.__module__, sys.modules[t.__module__])):
+        return normalize_module_name(f[0]), f[1]
+
+    return None
+
+# CPython 3.12 returns specialized objects for each one of the following iterators,
+# but does not name their types publicly.  We here give them names to keep the
+# introspection code more readable. Note that these types may not be exhaustive
+# and may overlap as across Python versions and implementations.
+BYTES_ITER = type(iter(b''))
+BYTEARRAY_ITER = type(iter(bytearray()))
+DICT_KEYITER = type(iter({}))
+DICT_VALUEITER = type(iter({}.values()))
+DICT_ITEMITER = type(iter({}.items()))
+LIST_ITER = type(iter([]))
+LIST_REVERSED_ITER = type(iter(reversed([])))
+RANGE_ITER = type(iter(range(1)))
+LONGRANGE_ITER = type(iter(range(1 << 1000)))
+SET_ITER = type(iter(set()))
+STR_ITER = type(iter(""))
+TUPLE_ITER = type(iter(()))
+
+class _GetItemDummy:
+    def __getitem__(self, n):
+        return n
+GETITEM_ITER = type(iter(_GetItemDummy()))
+
 
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
@@ -274,46 +312,30 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     if obj.__module__ == "builtins":
         if obj is NoneType:
             return NoneTypeInfo
+        elif obj is zip:
+            return TypeInfo("typing", "Iterator")
         elif in_builtins_import(obj):
             return TypeInfo("", obj.__name__, type_obj=obj) # these are "well known", so no module name needed
         elif (name := from_types_import(obj)):
             return TypeInfo("types", name, type_obj=obj)
-        elif obj is RANGE_ITER_TYPE:
-            return TypeInfo("typing", "Iterator", args=(TypeInfo("", "int", type_obj=int),))
-        # TODO match other ABC from collections.abc based on interface
+        elif obj in (RANGE_ITER, LONGRANGE_ITER, BYTES_ITER, BYTEARRAY_ITER):
+            return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(int, module=""),))
+        elif obj is STR_ITER:
+            return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(str, module=""),))
         elif issubclass(obj, abc.Iterator):
-            return TypeInfo("typing", "Iterator", args=(AnyTypeInfo,))
+            return TypeInfo("typing", "Iterator")
         else:
-            # fall back to its name, just so we can tell where it came from.
-            return TypeInfo.from_type(obj)
+            return UnknownTypeInfo
 
     # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
     if obj.__module__ == 'numpy' and 'dtype[' in obj.__name__ and hasattr(obj, "type"):
         t_name = obj.__qualname__.split('[')[0]
         return TypeInfo(obj.__module__, t_name, args=(get_type_name(obj.type, depth+1),))
 
-    # Disabled for now: passing types using aliases at this point can lead to
-    # confusion, as there can be an alias that conflicts with a module's fully
-    # qualified name.  For example, "import x.y as ast" would conflict with "ast.If"
-    if False:
-        # Look for a local alias for the type
-        # FIXME this only checks for globally known names, and doesn't match inner classes (e.g., Foo.Bar).
-        # FIXME that name may be locally bound to something different, hiding the global
-        if caller_frame := find_caller_frame():
-            current_namespace = caller_frame.f_globals
-            if current_namespace.get(obj.__name__) is obj:
-                return obj.__name__
+    if (module_and_name := search_type(obj)):
+        return TypeInfo(*module_and_name, type_obj=obj)
 
-            # Check if the type is accessible from a module in the current namespace
-            for name, mod in current_namespace.items():
-                if (
-                    inspect.ismodule(mod)
-                    and hasattr(mod, obj.__name__)
-                    and getattr(mod, obj.__name__) is obj
-                ):
-                    return f"{name}.{obj.__name__}"
-
-    return TypeInfo(lookup_type_module(obj), obj.__qualname__, type_obj=obj)
+    return UnknownTypeInfo
 
 
 def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
@@ -404,7 +426,17 @@ def find_function(
     return None
 
 
-def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -> TypeInfo:
+class IteratorArg:
+    """Type used to postpone evaluating generator-based iterators"""
+
+
+def get_value_type(
+    value: Any,
+    *,
+    container_sample_limit: int,
+    use_jaxtyping: bool,
+    depth: int = 0
+) -> TypeInfo:
     """
     get_value_type takes a value (an instance) as input and returns a string representing its type.
 
@@ -441,7 +473,27 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
 
 
     def recurse(v: Any) -> TypeInfo:
-        return get_value_type(v, use_jaxtyping=use_jaxtyping, depth=depth+1)
+        return get_value_type(
+            v,
+            use_jaxtyping=use_jaxtyping,
+            container_sample_limit=container_sample_limit,
+            depth=depth+1
+        )
+
+
+    def random_item[T](container: abc.Collection[T]) -> T:
+        """Randomly samples from a container."""
+        # Unbounded, islice's running time seems to be O(N); we arbitrarily bound to 1,000 items
+        # to keep the overhead low (similar to list's O(1), in fact)
+        n = random.randint(0, min(container_sample_limit, len(container)-1))
+        return next(itertools.islice(container, n, None))
+
+
+    def first_referent() -> object|None:
+        """Returns the first object 'value' refers to, if any."""
+        import gc
+        ref = gc.get_referents(value)
+        return ref[0] if len(ref) else None
 
 
     try:
@@ -467,14 +519,23 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         return TypeInfo.from_type(dict, module='', args=args)
     elif t in (dict, collections.defaultdict, collections.OrderedDict, collections.ChainMap):
         if value:
-            el = sample_from_collection(value.items())
-            args = tuple(recurse(fld) for fld in el)
+            # it's more efficient to sample a key and then use it than to build .items()
+            el = random_item(value)
+            args = (recurse(el), recurse(value[el]))
         else:
             args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
         return TypeInfo.from_type(t, t.__module__ if t.__module__ != 'builtins' else '', args=args)
-    elif t in (list, set, frozenset, collections.deque, collections.Counter):
+    elif t is list:
         if value:
-            el = sample_from_collection(value)
+            el = value[random.randint(0, len(value)-1)] # this is O(1), much faster than islice()
+            args = (recurse(el),)
+        else:
+            args = (TypeInfo("typing", "Never"),)
+        return TypeInfo.from_type(t, module='', args=args)
+    elif t in (set, frozenset, collections.Counter, collections.deque):
+        # note that deque is-a Sequence, but its integer indexing is O(N)
+        if value:
+            el = random_item(value)
             args = (recurse(el),)
         else:
             args = (TypeInfo("typing", "Never"),)
@@ -502,6 +563,67 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
     elif t.__module__ == "builtins":
         if t is NoneType:
             return NoneTypeInfo
+        elif t in (RANGE_ITER, LONGRANGE_ITER, BYTES_ITER, BYTEARRAY_ITER):
+            return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(int, module=""),))
+        elif (t is DICT_KEYITER and (d := first_referent()) is not None and type(d) is dict):
+            return TypeInfo("typing", "Iterator", args=(recurse(d).args[0],))
+        elif (t is DICT_VALUEITER and (d := first_referent()) is not None and type(d) is dict):
+            return TypeInfo("typing", "Iterator", args=(recurse(d).args[1],))
+        elif (t is DICT_ITEMITER and (d := first_referent()) is not None and type(d) is dict):
+            return TypeInfo("typing", "Iterator", args=(
+                       TypeInfo.from_type(tuple, module="", args=recurse(d).args),)
+                   )
+        elif (
+            t in (LIST_ITER, LIST_REVERSED_ITER)
+            and (l := first_referent()) is not None
+            and type(l) is list
+        ):
+            return TypeInfo("typing", "Iterator", args=recurse(l).args)
+        elif (t is SET_ITER and (l := first_referent()) is not None and type(l) is set):
+            return TypeInfo("typing", "Iterator", args=recurse(l).args)
+        elif t is STR_ITER:
+            return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(str, module=""),))
+        elif (t is TUPLE_ITER and (l := first_referent()) is not None and type(l) is tuple):
+            if l:
+                el = l[random.randint(0, len(l)-1)] # this is O(1), much faster than islice()
+                args = (recurse(el),)
+            else:
+                args = (TypeInfo("typing", "Never"),)
+            return TypeInfo("typing", "Iterator", args=args)
+        elif (
+            t is GETITEM_ITER
+            and (l := first_referent())
+            and (getitem := getattr(type(l), "__getitem__", None)) is not None
+        ):
+            src = recurse(getitem)
+            assert src.type_obj is abc.Callable
+            return TypeInfo("typing", "Iterator", args=(
+                    TypeInfo.from_type(IteratorArg, args=(src,)),
+                )
+            )
+        elif (
+            t is zip
+            and (l := first_referent()) is not None
+            and type(l) is tuple
+            and all(isinstance(s, abc.Iterator) for s in l)
+        ):
+            zip_sources = tuple(recurse(s) for s in l)
+            args = (
+                TypeInfo.from_type(tuple, module="", args=(
+                    src.args[0] if src.qualname() == "typing.Iterator"
+                    else TypeInfo.from_type(IteratorArg, args=(src,))
+                    for src in zip_sources
+                )),
+            )
+            return TypeInfo("typing", "Iterator", args=args)
+        elif (t is enumerate and (l := first_referent()) is not None and isinstance(l, abc.Iterator)):
+            src = recurse(l)
+            args = (
+                (src.args[0],) if src.qualname() == "typing.Iterator"
+                else (TypeInfo.from_type(IteratorArg, args=(src,)),)
+            )
+
+            return TypeInfo.from_type(t, module="", args=args)
         elif in_builtins_import(cast(type, t)):
             return TypeInfo.from_type(t, module="") # these are "well known", so no module name needed
         elif (name := from_types_import(cast(type, t))):
@@ -509,24 +631,24 @@ def get_value_type(value: Any, *, use_jaxtyping: bool = False, depth: int = 0) -
         elif (view := _is_instance(value, (abc.KeysView, abc.ValuesView))):
             # no name in "builtins" or "types" modules, so use abc protocol
             if value:
-                args = (recurse(sample_from_collection(value)),)
+                el = random_item(value)
+                args = (recurse(el),)
             else:
                 args = (TypeInfo("typing", "Never"),)
             return TypeInfo("typing", view.__qualname__, args=args)
         elif isinstance(value, abc.ItemsView):
             # no name in "builtins" or "types" modules, so use abc protocol
             if value:
-                args = tuple(recurse(fld) for fld in sample_from_collection(value))
+                el = random_item(value)
+                args = (recurse(el[0]), recurse(el[1]))
             else:
                 args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
             return TypeInfo("typing", "ItemsView", args=args)
         elif t.__name__ == 'async_generator_wrapped_value':
-            import righttyper.traverse as tr
-            if len(memlist := tr.traverse(value)) == 1:
-                return recurse(memlist[0])
-            else:
-                # something went wrong with the 'traverse' workaround
-                return AnyTypeInfo
+            if (l := first_referent()) is not None:
+                return recurse(l)
+
+            return UnknownTypeInfo
 
 
     if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):
