@@ -20,5 +20,6 @@ def get_version():
 
 
 setuptools.setup(
+    packages=['righttyper'],
     version=get_version(),
 )
