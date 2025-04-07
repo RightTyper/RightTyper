@@ -5,8 +5,11 @@ from pathlib import Path
 import pytest
 import importlib.util
 import re
-from test_transformer import get_function
 import libcst as cst
+
+from test_transformer import get_function as t_get_function
+from functools import partial
+get_function = partial(t_get_function, body=False)
 
 
 @pytest.fixture(scope='function')
@@ -24,8 +27,15 @@ def print_file(file: Path) -> None:
 def runmypy(tmp_cwd, request):
     yield
     if request.node._report.passed and 'dont_run_mypy' not in request.keywords:
+        # if we are specifying a Python version in the test, have mypy check for that as well
+        python_version = (
+            ('--python-version', request.node.callspec.params.get('python_version'))
+            if hasattr(request.node, 'callspec')
+            and 'python_version' in request.node.callspec.params
+            else ()
+        )
         from mypy import api
-        result = api.run(['.'])
+        result = api.run([*python_version, '.'])
         if result[2]:
             print(result[0])
             filename = result[0].split(':')[0]
@@ -67,7 +77,7 @@ def test_builtin_iterator(init, expected):
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'f', body=False) == textwrap.dedent(f"""\
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
         def f() -> {expected}: ...
     """)
 
@@ -93,7 +103,7 @@ def test_getitem_iterator():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'f', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'f') == textwrap.dedent("""\
         def f(it: Iterator[bool]) -> None: ...
     """)
 
@@ -119,7 +129,7 @@ def test_getitem_iterator_from_annotation():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'f', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'f') == textwrap.dedent("""\
         def f(it: Iterator[float]) -> None: ...
     """)
 
@@ -146,15 +156,15 @@ def test_custom_iterator():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'f', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'f') == textwrap.dedent("""\
         def f(it: X) -> None: ...
     """)
 
-    assert get_function(code, 'X.__iter__', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'X.__iter__') == textwrap.dedent("""\
         def __iter__(self: Self) -> Self: ...
     """)
 
-    assert get_function(code, 'X.__next__', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'X.__next__') == textwrap.dedent("""\
         def __next__(self: Self) -> int: ...
     """)
 
@@ -589,13 +599,13 @@ def test_method_overriding():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'A.foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
         def foo(self: Self, x: float) -> float: ...
     """)
 
     # contravariant for parameters, covariant for return value;
     # so that while 'x' must not be 'int', but the return value may be 'int'
-    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
         def foo(self: Self, x: float|int) -> int: ...
     """)
 
@@ -622,11 +632,11 @@ def test_method_overriding_init_irrelevant():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'A.__init__', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'A.__init__') == textwrap.dedent("""\
        def __init__(self: Self, x: int|str) -> None: ...
     """)
 
-    assert get_function(code, 'B.__init__', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B.__init__') == textwrap.dedent("""\
         def __init__(self: Self) -> None: ...
     """)
 
@@ -651,7 +661,7 @@ def test_method_overriding_new_irrelevant():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'B.__new__', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B.__new__') == textwrap.dedent("""\
         def __new__(cls: type[Self], x: str) -> Self: ...
     """)
 
@@ -679,14 +689,14 @@ def test_method_overriding_classmethod():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'A.foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
         @classmethod
         def foo(cls: type[Self], x: str) -> None: ...
     """)
 
     # Somewhat unexpectedly, @classmethod matters for LSP (I think because they
     # are also available in subclasses).  At least according to mypy 1.15.0.
-    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
         @classmethod
         def foo(cls: type[Self], x: int|str) -> None: ...
     """)
@@ -721,19 +731,19 @@ def test_method_overriding_private():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'A.__foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'A.__foo') == textwrap.dedent("""\
         def __foo(self: Self, x: float) -> float: ...
     """)
 
-    assert get_function(code, 'A._bar', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'A._bar') == textwrap.dedent("""\
         def _bar(self: Self, x: float) -> float: ...
     """)
 
-    assert get_function(code, 'B.__foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B.__foo') == textwrap.dedent("""\
         def __foo(self: Self, x: int) -> int: ...
     """)
 
-    assert get_function(code, 'B._bar', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B._bar') == textwrap.dedent("""\
         def _bar(self: Self, x: float|int) -> int: ...
     """)
 
@@ -783,7 +793,7 @@ def test_method_overriding_inherited():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
         def foo(self: Self, x: float|int) -> Self: ...
     """)
 
@@ -809,7 +819,7 @@ def test_method_overriding_arg_names_change():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'D.foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'D.foo') == textwrap.dedent("""\
         def foo(self: Self, x: float|int, y: float, *, d: int|None=None, c: str) -> tuple[float, str]: ...
     """)
 
@@ -836,7 +846,7 @@ def test_method_overriding_annotation():
 
     # contravariant for parameters, covariant for return value;
     # so that while 'x' must not be 'int', but the return value may be 'int'
-    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
         def foo(self: Self, x: float|int) -> int: ...
     """)
 
@@ -863,7 +873,7 @@ def test_method_overriding_annotation_ignored():
     code = cst.parse_module(output)
 
     # TODO int|int is silly
-    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
         def foo(self: Self, x: int|int) -> int: ...
     """)
 
@@ -891,7 +901,7 @@ def test_method_overriding_annotation_errors():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
         def foo(self: Self, x: int) -> int: ...
     """)
 
@@ -914,7 +924,7 @@ def test_method_overriding_typeshed():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'C.__eq__', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'C.__eq__') == textwrap.dedent("""\
         def __eq__(self: Self, other: object|Self) -> bool: ...
     """)
 
@@ -939,7 +949,7 @@ def test_method_overriding_inherited_typeshed():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'Comparable.__eq__', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'Comparable.__eq__') == textwrap.dedent("""\
         def __eq__(self: Self, other: object|Self) -> bool: ...
     """)
 
@@ -966,11 +976,11 @@ def test_method_overriding_different_signature():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'A.foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
        def foo(self: Self, x: int) -> None: ...
     """)
 
-    assert get_function(code, 'B.foo', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
         def foo(self: Self, y: float, z: int) -> None: ...
     """)
 
@@ -1202,11 +1212,11 @@ def test_generator_from_annotation():
 
     # we know it's from the annotation because we never observed an 'int' yield
     assert (
-        get_function(code, 'g', body=False) == textwrap.dedent("""\
+        get_function(code, 'g') == textwrap.dedent("""\
             def g(f: Generator[int|str, None, None]) -> None: ...
         """)
         or 
-        get_function(code, 'g', body=False) == textwrap.dedent("""\
+        get_function(code, 'g') == textwrap.dedent("""\
             def g(f: Iterator[int|str]) -> None: ...
         """)
     )
@@ -1972,7 +1982,8 @@ def test_none_arg():
     assert 'def foo(x: None) -> None:' in output
 
 
-def test_self():
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self(python_version):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(self):
             return self/2
@@ -1998,14 +2009,45 @@ def test_self():
     """))
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', 't.py'], check=True)
+                    f'--python-version={python_version}', 't.py'], check=True)
 
     output = Path("t.py").read_text()
-    assert 'def foo(self: int) -> float:' in output
-    assert 'def bar(self: Self, x: int) -> float:' in output
-    assert 'def __private(moi: Self) -> None:' in output
-    assert 'def __init__(self: Self) -> None:' in output
-    assert 'def baz(me: Self) -> Self:' in output
+    code = cst.parse_module(output)
+
+    if python_version == '3.10':
+        assert get_function(code, 'foo') == textwrap.dedent("""\
+            def foo(self: int) -> float: ...
+        """)
+        assert get_function(code, 'C.bar') == textwrap.dedent("""\
+            def bar(self: "C", x: int) -> float: ...
+        """)
+        # TODO we're not annotating because of <locals> in the name, but we could annotate "D"
+        assert get_function(code, 'C.bar.<locals>.D.__private') == textwrap.dedent("""\
+            def __private(moi) -> None: ...
+        """)
+        # TODO we're not annotating because of <locals> in the name, but we could annotate "D"
+        assert get_function(code, 'C.bar.<locals>.D.__init__') == textwrap.dedent("""\
+            def __init__(self) -> None: ...
+        """)
+        assert get_function(code, 'C.E.baz') == textwrap.dedent("""\
+            def baz(me: "C.E") -> "C.E": ...
+        """)
+    else:
+        assert get_function(code, 'foo') == textwrap.dedent("""\
+            def foo(self: int) -> float: ...
+        """)
+        assert get_function(code, 'C.bar') == textwrap.dedent("""\
+            def bar(self: Self, x: int) -> float: ...
+        """)
+        assert get_function(code, 'C.bar.<locals>.D.__private') == textwrap.dedent("""\
+            def __private(moi: Self) -> None: ...
+        """)
+        assert get_function(code, 'C.bar.<locals>.D.__init__') == textwrap.dedent("""\
+            def __init__(self: Self) -> None: ...
+        """)
+        assert get_function(code, 'C.E.baz') == textwrap.dedent("""\
+            def baz(me: Self) -> Self: ...
+        """)
 
 
 def test_cached_function():
@@ -2070,15 +2112,15 @@ def test_self_in_hierarchy():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'A.f', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'A.f') == textwrap.dedent("""\
         def f(self: Self) -> Self: ...
     """)
 
-    assert get_function(code, 'B.g', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'B.g') == textwrap.dedent("""\
         def g(self: Self) -> None: ...
     """)
 
-    assert get_function(code, 'C.h', body=False) == textwrap.dedent("""\
+    assert get_function(code, 'C.h') == textwrap.dedent("""\
         def h(self: Self) -> None: ...
     """)
 
@@ -2245,7 +2287,8 @@ def test_no_return():
     assert "def gen() -> Iterator[int]:" in output
 
 
-def test_generic_simple():
+@pytest.mark.parametrize("python_version", ["3.11", "3.12"])
+def test_generic_simple(python_version):
     t = textwrap.dedent(
         """\
         def add(a, b):
@@ -2257,12 +2300,15 @@ def test_generic_simple():
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+                    f'--python-version={python_version}', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert re.search('from typing import.*TypeVar', output)
-    assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
-    assert "def add(a: rt_T1, b: rt_T1) -> rt_T1" in output
+    if python_version == "3.11":
+        assert re.search('from typing import.*TypeVar', output)
+        assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
+        assert "def add(a: rt_T1, b: rt_T1) -> rt_T1" in output
+    else:
+        assert "def add[T1: (int, str)](a: T1, b: T1) -> T1" in output
 
 
 def test_generic_name_conflict():
@@ -2281,14 +2327,15 @@ def test_generic_name_conflict():
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+                    '--python-version=3.11', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
     assert 'rt_T3 = TypeVar("rt_T3", int, str)' in output
     assert "def add(a: rt_T3, b: rt_T3) -> rt_T3" in output
 
 
-def test_generic_yield():
+@pytest.mark.parametrize("python_version", ["3.11", "3.12"])
+def test_generic_yield(python_version):
     t = textwrap.dedent("""\
         from typing import Any
 
@@ -2303,14 +2350,18 @@ def test_generic_yield():
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+                    f'--python-version={python_version}', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
-    assert "def y(a: rt_T1) -> Iterator[rt_T1]" in output
+    if python_version == '3.11':
+        assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
+        assert "def y(a: rt_T1) -> Iterator[rt_T1]" in output
+    else:
+        assert "def y[T1: (int, str)](a: T1) -> Iterator[T1]" in output
 
 
-def test_generic_yield_generator():
+@pytest.mark.parametrize("python_version", ["3.11", "3.12"])
+def test_generic_yield_generator(python_version):
     t = textwrap.dedent("""\
         from typing import Any
 
@@ -2326,14 +2377,16 @@ def test_generic_yield_generator():
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+                    f'--python-version={python_version}', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    print(output)
-    assert re.search('from typing import.*TypeVar', output)
-    assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
-    assert 'rt_T2 = TypeVar("rt_T2", int, str)' in output
-    assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, None, rt_T2]" in output
+    if python_version == '3.11':
+        assert re.search('from typing import.*TypeVar', output)
+        assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
+        assert 'rt_T2 = TypeVar("rt_T2", int, str)' in output
+        assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, None, rt_T2]" in output
+    else:
+        assert "def y[T1: (int, str), T2: (int, str)](a: T1, b: T2) -> Generator[T1, None, T2]" in output
 
 
 def test_generic_typevar_location():
@@ -2349,7 +2402,7 @@ def test_generic_typevar_location():
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', 't.py'], check=True)
+                    '--python-version=3.11', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
     res = textwrap.dedent("""\
@@ -2373,10 +2426,9 @@ def test_generic_and_defaults():
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--inline-generics', 't.py'], check=True)
+                    '--no-sampling', '--python-version=3.12', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    print(output)
     assert not re.search('from typing import.*TypeVar', output)
     assert "def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None" in output
 
@@ -2393,7 +2445,7 @@ def test_inline_generics_no_variables():
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--inline-generics', '--no-sampling', 't.py'], check=True)
+                    '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def f(x: list[int|str]) -> None" in output
 
@@ -3015,7 +3067,7 @@ def test_higher_order_functions():
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--inline-generics', '--no-sampling', 't.py'], check=True)
+                    '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def foo[T1: (int, str)](x: T1) -> T1" in output
     assert "def runner[T1: (int, str)](f: Callable[[T1], T1]) -> Callable[[T1], T1]" in output
@@ -3033,7 +3085,7 @@ def test_generalize_union_arg_typevar():
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--inline-generics', '--no-sampling', 't.py'], check=True)
+                    '--python-version=3.12', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def f[T1: (int, str)](x: list[T1]) -> T1" in output
 
@@ -3067,7 +3119,7 @@ def test_generalize_union_return_typevar():
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--inline-generics', '--no-sampling', 't.py'], check=True)
+                    '--python-version=3.12', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def f[T1: (int, str)](x: T1) -> list[T1]" in output
 

@@ -95,9 +95,10 @@ class Options:
     srcdir: str = ""
     use_multiprocessing: bool = True
     sampling: bool = True
-    inline_generics: bool = False
     replace_dict: bool = False
     container_sample_limit: int = 1000
+    use_self_type: bool = False
+    inline_generics: bool = False
 
 options = Options()
 
@@ -436,7 +437,8 @@ class Observations:
 
                 return super().visit(node)
 
-        self._transform_types(SelfT())
+        if options.use_self_type:
+            self._transform_types(SelfT())
 
         return {
             self.functions_visited[code_id].func_id: annotation
@@ -1041,11 +1043,6 @@ class CheckModule(click.ParamType):
     show_default=True,
 )
 @click.option(
-    "--inline-generics",
-    is_flag=True,
-    help="Declare type variables inline for generics rather than separately."
-)
-@click.option(
     "--type-coverage",
     nargs=2,
     type=(
@@ -1071,6 +1068,12 @@ class CheckModule(click.ParamType):
     default=options.container_sample_limit,
     help="Number of container elements to sample.",
 )
+@click.option(
+    "--python-version",
+    type=click.Choice(["3.10", "3.11", "3.12", "3.13"]),
+    default="3.12",
+    help="Python version for which to emit annotations.",
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
     script: str,
@@ -1089,11 +1092,11 @@ def main(
     target_overhead: float,
     use_multiprocessing: bool,
     sampling: bool,
-    inline_generics: bool,
     type_coverage: tuple[str, str],
     signal_wakeup: bool,
     replace_dict: bool,
     container_sample_limit: int,
+    python_version: str|tuple[int, ...]
 ) -> None:
 
     if type_coverage:
@@ -1137,6 +1140,8 @@ def main(
                     print(f" * {package}")
             sys.exit(1)
 
+    python_version = tuple(int(n) for n in python_version.split('.'))
+
     debug_print_set_level(verbose)
     options.script_dir = os.path.dirname(os.path.realpath(script))
     options.include_files_pattern = include_files
@@ -1151,9 +1156,10 @@ def main(
     options.srcdir = srcdir
     options.use_multiprocessing = use_multiprocessing
     options.sampling = sampling
-    options.inline_generics = inline_generics
     options.replace_dict = replace_dict
     options.container_sample_limit = container_sample_limit
+    options.use_self_type = python_version >= (3, 11)
+    options.inline_generics = python_version >= (3, 12)
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
