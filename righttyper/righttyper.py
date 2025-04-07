@@ -100,6 +100,7 @@ class Options:
     container_sample_limit: int = 1000
     use_typing_union: bool = False
     use_typing_self: bool = False
+    use_typing_never: bool = False
     inline_generics: bool = False
 
 options = Options()
@@ -434,6 +435,16 @@ class Observations:
         if options.use_typing_self:
             self._transform_types(SelfT())
 
+        class NeverSayNeverT(TypeInfo.Transformer):
+            """Removes uses of typing.Never, replacing them with typing.Any"""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.qualname() == "typing.Never":
+                    return TypeInfo("typing", "Any")
+
+                return super().visit(node)
+
+        if not options.use_typing_never:
+            self._transform_types(NeverSayNeverT())
 
         class TypingUnionT(TypeInfo.Transformer):
             """Replaces types.UnionType with typing.Union and typing.Optional."""
@@ -1200,6 +1211,7 @@ def main(
     options.container_sample_limit = container_sample_limit
     options.use_typing_union = python_version < (3, 10)
     options.use_typing_self = python_version >= (3, 11)
+    options.use_typing_never = python_version >= (3, 11)
     options.inline_generics = python_version >= (3, 12)
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm

@@ -3191,6 +3191,33 @@ def test_object_with_empty_dir():
     assert "def f(self: Self) -> None" in output
 
 
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_empty_container(python_version):
+    t = textwrap.dedent("""\
+        def f(x):
+            return len(x)
+
+        f([])
+        f({})
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    f'--python-version={python_version}', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    if python_version == "3.11":
+        assert get_function(code, 'f') == textwrap.dedent("""\
+            def f(x: dict[Never, Never]|list[Never]) -> int: ...
+        """)
+    else:
+        assert get_function(code, 'f') == textwrap.dedent("""\
+            def f(x: dict[Any, Any]|list[Any]) -> int: ...
+        """)
+
+
 @pytest.mark.skip(reason="just documents an idea")
 def test_container_is_modified():
     # TODO should we resample mutable containers upon return?
