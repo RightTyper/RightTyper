@@ -872,9 +872,8 @@ def test_method_overriding_annotation_ignored():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    # TODO int|int is silly
     assert get_function(code, 'B.foo') == textwrap.dedent("""\
-        def foo(self: Self, x: int|int) -> int: ...
+        def foo(self: Self, x: int) -> int: ...
     """)
 
 
@@ -3208,3 +3207,34 @@ def test_container_is_modified():
                     '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
     assert "def f(x: list[int]) -> None" in output
+
+
+@pytest.mark.parametrize("python_version", ["3.9"])
+def test_typing_union(python_version):
+    t = textwrap.dedent("""\
+        def f(x=None):
+            return x if x else 0.0
+
+        def g(x):
+            return x if x else None
+
+        f(10)
+        f("foo")
+        f()
+        g(0)
+        g(1)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    f'--python-version={python_version}', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: Optional[Union[int, str]]=None) -> Union[float, int, str]: ...
+    """)
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(x: int) -> Optional[int]: ...
+    """)

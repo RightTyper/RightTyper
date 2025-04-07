@@ -106,8 +106,6 @@ class UnifiedTransformer(cst.CSTTransformer):
         inline_generics: bool,
         module_name: str|None,
         module_names: list[str],
-        *,
-        use_self: bool = True
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
@@ -117,7 +115,6 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.module_name = module_name
         self.module_names = sorted(module_names, key=lambda name: -name.count('.'))
         self.change_list: list[tuple[FunctionName, cst.FunctionDef, cst.FunctionDef]] = []
-        self.use_self = use_self
 
     def _module_for(self, name: str) -> tuple[str, str]:
         """Splits a dot name in its module and qualified name parts."""

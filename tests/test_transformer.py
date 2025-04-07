@@ -678,8 +678,7 @@ def test_transform_locally_defined_types():
             module_names=[
                 'foo'
             ],
-            inline_generics=False,
-            use_self = False
+            inline_generics=False
         )
 
     code = t.transform_code(code)
