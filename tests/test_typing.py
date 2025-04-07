@@ -252,6 +252,18 @@ def test_hint2type():
     assert """jaxtyping.Float[jax.Array, "10 20"]""" == str(rt.hint2type(hints['z']))
 
 
+def test_hint2type_pre_3_10():
+    def foo(
+        x: Optional[Union[int, str]],
+        y: Optional[bool]
+    ): pass
+
+    hints = get_type_hints(foo)
+
+    assert "int|str|None" == str(rt.hint2type(hints['x']))
+    assert "bool|None" == str(rt.hint2type(hints['y']))
+
+
 def test_typeinfo():
     assert "foo.bar" == str(TypeInfo("foo", "bar"))
     assert "foo.bar[m.baz, \"x y\"]" == str(TypeInfo("foo", "bar", (TypeInfo("m", "baz"), "x y")))
@@ -280,10 +292,29 @@ def test_typeinfo_from_set():
 
     t = TypeInfo.from_set({
             TypeInfo.from_type(int),
+            NoneTypeInfo
+        })
+
+    assert str(t) == 'builtins.int|None'
+
+    t = TypeInfo.from_set({
+            TypeInfo.from_type(int),
             TypeInfo.from_type(bool)
         })
 
     assert str(t) == 'builtins.bool|builtins.int'
+
+    t = TypeInfo.from_set({
+            TypeInfo.from_type(int),
+            TypeInfo(module='', name='X', args=(
+                TypeInfo.from_set({
+                    TypeInfo.from_type(bool),
+                    NoneTypeInfo
+                }),
+            ))
+        })
+
+    assert str(t) == 'X[builtins.bool|None]|builtins.int'
 
     t = TypeInfo.from_set({
             TypeInfo.from_type(int),

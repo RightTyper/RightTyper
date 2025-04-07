@@ -17,7 +17,7 @@ import collections.abc as abc
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType, AsyncGeneratorType
+from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType, AsyncGeneratorType, UnionType
 import typing
 from typing import (
     Any,
@@ -62,6 +62,7 @@ from righttyper.righttyper_types import (
     NoneTypeInfo,
     AnyTypeInfo,
     Sample,
+    UnknownTypeInfo
 )
 from righttyper.typeinfo import (
     merged_types,
@@ -95,9 +96,11 @@ class Options:
     srcdir: str = ""
     use_multiprocessing: bool = True
     sampling: bool = True
-    inline_generics: bool = False
     replace_dict: bool = False
     container_sample_limit: int = 1000
+    use_typing_union: bool = False
+    use_typing_self: bool = False
+    inline_generics: bool = False
 
 options = Options()
 
@@ -339,37 +342,25 @@ class Observations:
                       f"{[tuple(str(t) for t in s) for s in samples]}")
                 return None
 
-            # Annotations are pickled by 'multiprocessing', but many type objects
-            # (such as local ones, or from __main__) aren't pickleable.
-            class RemoveTypeObjTransformer(TypeInfo.Transformer):
-                def visit(vself, node: TypeInfo) -> TypeInfo:
-                    if node.type_obj:
-                        node = node.replace(type_obj=None)
-                    return super().visit(node)
-
-            tr = RemoveTypeObjTransformer()
-
             return FuncAnnotation(
                 args=[
                     (
                         arg.arg_name,
-                        tr.visit(
-                            merged_types({
-                                signature[i],
-                                *((arg.default,) if arg.default is not None else ()),
-                                # by building sets with the parent's types, we prevent arg. type narrowing
-                                *((parents_arg_types[i],) if (
-                                      parents_arg_types
-                                      and len(parents_arg_types) == len(func_info.args)
-                                      and parents_arg_types[i] is not None
-                                    ) else ()
-                                 )
-                            })
-                        )
+                        merged_types({
+                            signature[i],
+                            *((arg.default,) if arg.default is not None else ()),
+                            # by building sets with the parent's types, we prevent arg. type narrowing
+                            *((parents_arg_types[i],) if (
+                                  parents_arg_types
+                                  and len(parents_arg_types) == len(func_info.args)
+                                  and parents_arg_types[i] is not None
+                                ) else ()
+                             )
+                        })
                     )
                     for i, arg in enumerate(func_info.args)
                 ],
-                retval=tr.visit(signature[-1])
+                retval=signature[-1]
             )
 
         class NonSelfCloningT(TypeInfo.Transformer):
@@ -386,6 +377,7 @@ class Observations:
 
                 # if 'args' is there, the function is already annotated
                 if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.samples:
+                    # TODO we only need the retval, can we avoid computing the entire annotation?
                     if (ann := mk_annotation(node.code_id)):
                         func_info = self.functions_visited[node.code_id]
                         # Clone (rather than link to) types from Callable, Generator, etc.,
@@ -416,11 +408,14 @@ class Observations:
             """Clones the given TypeInfo, clearing all is_self flags."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 if node.type_obj is IteratorArg:
+                    assert isinstance(node.args[0], TypeInfo)
                     source = node.args[0]
                     if source.args:
                         if source.type_obj is abc.Callable:
+                            assert isinstance(source.args[1], TypeInfo)
                             return source.args[1]   # Callable return value
                         else:
+                            assert isinstance(source.args[0], TypeInfo)
                             return source.args[0]   # Generator/Iterator yield value
                     return UnknownTypeInfo
 
@@ -436,10 +431,57 @@ class Observations:
 
                 return super().visit(node)
 
-        self._transform_types(SelfT())
+        if options.use_typing_self:
+            self._transform_types(SelfT())
+
+
+        class TypingUnionT(TypeInfo.Transformer):
+            """Replaces types.UnionType with typing.Union and typing.Optional."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                print(node)
+                if node.type_obj is UnionType:
+                    has_none = node.args[-1] == NoneTypeInfo
+                    non_none_count = len(node.args) - int(has_none)
+                    if non_none_count > 1:
+                        non_none = TypeInfo("typing", "Union", args=node.args[:non_none_count])
+                    else:
+                        assert isinstance(node.args[0], TypeInfo)
+                        non_none = node.args[0]
+
+                    if has_none:
+                        return TypeInfo("typing", "Optional", args=(non_none,))
+
+                    return non_none
+
+                return super().visit(node)
+
+
+        class ClearTypeObjTransformer(TypeInfo.Transformer):
+            """Clears type_obj on all TypeInfo: annotations are pickled by 'multiprocessing',
+               but many type objects (such as local ones, or from __main__) aren't pickleable.
+            """
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.type_obj:
+                    node = node.replace(type_obj=None)
+                return super().visit(node)
+
+
+        clear = ClearTypeObjTransformer()
+
+        if options.use_typing_union:
+            tu = TypingUnionT()
+
+            def finalize(t: TypeInfo) -> TypeInfo:
+                return clear.visit(tu.visit(t))
+        else:
+            def finalize(t: TypeInfo) -> TypeInfo:
+                return clear.visit(t)
 
         return {
-            self.functions_visited[code_id].func_id: annotation
+            self.functions_visited[code_id].func_id: FuncAnnotation(
+                args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
+                retval=finalize(annotation.retval)
+            )
             for code_id in self.samples
             if (annotation := mk_annotation(code_id)) is not None
         }
@@ -1041,11 +1083,6 @@ class CheckModule(click.ParamType):
     show_default=True,
 )
 @click.option(
-    "--inline-generics",
-    is_flag=True,
-    help="Declare type variables inline for generics rather than separately."
-)
-@click.option(
     "--type-coverage",
     nargs=2,
     type=(
@@ -1071,6 +1108,12 @@ class CheckModule(click.ParamType):
     default=options.container_sample_limit,
     help="Number of container elements to sample.",
 )
+@click.option(
+    "--python-version",
+    type=click.Choice(["3.9", "3.10", "3.11", "3.12", "3.13"]),
+    default="3.12",
+    help="Python version for which to emit annotations.",
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
     script: str,
@@ -1089,11 +1132,11 @@ def main(
     target_overhead: float,
     use_multiprocessing: bool,
     sampling: bool,
-    inline_generics: bool,
     type_coverage: tuple[str, str],
     signal_wakeup: bool,
     replace_dict: bool,
     container_sample_limit: int,
+    python_version: str|tuple[int, ...]
 ) -> None:
 
     if type_coverage:
@@ -1137,6 +1180,8 @@ def main(
                     print(f" * {package}")
             sys.exit(1)
 
+    python_version = tuple(int(n) for n in python_version.split('.'))
+
     debug_print_set_level(verbose)
     options.script_dir = os.path.dirname(os.path.realpath(script))
     options.include_files_pattern = include_files
@@ -1151,9 +1196,11 @@ def main(
     options.srcdir = srcdir
     options.use_multiprocessing = use_multiprocessing
     options.sampling = sampling
-    options.inline_generics = inline_generics
     options.replace_dict = replace_dict
     options.container_sample_limit = container_sample_limit
+    options.use_typing_union = python_version < (3, 10)
+    options.use_typing_self = python_version >= (3, 11)
+    options.inline_generics = python_version >= (3, 12)
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
