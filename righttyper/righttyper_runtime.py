@@ -278,23 +278,23 @@ def search_type(t: type) -> tuple[str, str] | None:
 # but does not name their types publicly.  We here give them names to keep the
 # introspection code more readable. Note that these types may not be exhaustive
 # and may overlap as across Python versions and implementations.
-BYTES_ITER = type(iter(b''))
-BYTEARRAY_ITER = type(iter(bytearray()))
-DICT_KEYITER = type(iter({}))
-DICT_VALUEITER = type(iter({}.values()))
-DICT_ITEMITER = type(iter({}.items()))
-LIST_ITER = type(iter([]))
-LIST_REVERSED_ITER = type(iter(reversed([])))
-RANGE_ITER = type(iter(range(1)))
-LONGRANGE_ITER = type(iter(range(1 << 1000)))
-SET_ITER = type(iter(set()))
-STR_ITER = type(iter(""))
-TUPLE_ITER = type(iter(()))
+BYTES_ITER: type = type(iter(b''))
+BYTEARRAY_ITER: type = type(iter(bytearray()))
+DICT_KEYITER: type = type(iter({}))
+DICT_VALUEITER: type = type(iter({}.values()))
+DICT_ITEMITER: type = type(iter({}.items()))
+LIST_ITER: type = type(iter([]))
+LIST_REVERSED_ITER: type = type(iter(reversed([])))
+RANGE_ITER: type = type(iter(range(1)))
+LONGRANGE_ITER: type = type(iter(range(1 << 1000)))
+SET_ITER: type = type(iter(set()))
+STR_ITER: type = type(iter(""))
+TUPLE_ITER: type = type(iter(()))
 
 class _GetItemDummy:
     def __getitem__(self, n):
         return n
-GETITEM_ITER = type(iter(_GetItemDummy()))
+GETITEM_ITER: type = type(iter(_GetItemDummy()))
 
 
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
@@ -452,7 +452,7 @@ def get_value_type(
         return TypeInfo("typing", "Never")
 
     t: type|None
-    args: tuple[TypeInfo, ...]
+    args: tuple[TypeInfo|str|ellipsis, ...]
 
 
     def type_for_generator(

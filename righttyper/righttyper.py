@@ -62,6 +62,7 @@ from righttyper.righttyper_types import (
     NoneTypeInfo,
     AnyTypeInfo,
     Sample,
+    UnknownTypeInfo
 )
 from righttyper.typeinfo import (
     merged_types,
@@ -417,11 +418,14 @@ class Observations:
             """Clones the given TypeInfo, clearing all is_self flags."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 if node.type_obj is IteratorArg:
+                    assert isinstance(node.args[0], TypeInfo)
                     source = node.args[0]
                     if source.args:
                         if source.type_obj is abc.Callable:
+                            assert isinstance(source.args[1], TypeInfo)
                             return source.args[1]   # Callable return value
                         else:
+                            assert isinstance(source.args[0], TypeInfo)
                             return source.args[0]   # Generator/Iterator yield value
                     return UnknownTypeInfo
 
