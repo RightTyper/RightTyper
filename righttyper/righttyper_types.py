@@ -39,12 +39,13 @@ class TypeInfo:
     name: str
     args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()    # arguments within []
 
-    code_id: CodeId = CodeId(0)     # if a callable, generator or coroutine, the CodeId
-    is_bound: bool = False          # if a callable, whether bound
-    type_obj: TYPE_OBJ_TYPES|None = None
-    typevar_index: int = 0
-    typevar_name: str|None = None   # TODO delete me?
-    is_self: bool = False           # indicates equivalence to typing.Self
+    # These fields are included for convenience, but don't affect what type is meant
+    code_id: CodeId = field(default=CodeId(0), compare=False)   # if a callable, generator or coroutine, the CodeId
+    is_bound: bool = field(default=False, compare=False)        # if a callable, whether bound
+    type_obj: TYPE_OBJ_TYPES|None = field(default=None, compare=False)
+    typevar_index: int = field(default=0, compare=False)
+    typevar_name: str|None = field(default=None, compare=False) # TODO delete me?
+    is_self: bool = field(default=False, compare=False)         # indicates equivalence to typing.Self
 
 
     def __str__(self: Self) -> str:
@@ -144,7 +145,8 @@ class TypeInfo:
                 self.visit(arg) if isinstance(arg, TypeInfo) else arg
                 for arg in node.args
             )
-            if new_args != node.args:
+            # Use identity rather than ==, as only non-essential attributes may have changed
+            if any(old is not new for old, new in zip(node.args, new_args)):
                 return node.replace(args=new_args)
 
             return node
