@@ -40,7 +40,7 @@ from righttyper.righttyper_runtime import (
     get_type_name,
     should_skip_function,
     hint2type,
-    IteratorArg,
+    PostponedIteratorArg,
 )
 from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
@@ -100,6 +100,7 @@ class Options:
     container_sample_limit: int = 1000
     use_typing_union: bool = False
     use_typing_self: bool = False
+    use_typing_never: bool = False
     inline_generics: bool = False
 
 options = Options()
@@ -300,7 +301,8 @@ class Observations:
         for sample_set in self.samples.values():
             for s in list(sample_set):
                 sprime = tuple(tr.visit(t) for t in s)
-                if sprime != s:
+                # Use identity rather than ==, as only non-essential attributes may have changed
+                if any(old is not new for old, new in zip(s, sprime)):
                     sample_set.remove(s)
                     sample_set.add(sprime)
 
@@ -404,10 +406,14 @@ class Observations:
 
         self._transform_types(CallableT())
 
-        class IteratorArgsT(TypeInfo.Transformer):
-            """Clones the given TypeInfo, clearing all is_self flags."""
+        class PostponedIteratorArgsT(TypeInfo.Transformer):
+            """Replaces a postponed iterator argument evaluation marker with
+               its evaluation (performed by CallableT).
+            """
             def visit(vself, node: TypeInfo) -> TypeInfo:
-                if node.type_obj is IteratorArg:
+                node = super().visit(node)
+
+                if node.type_obj is PostponedIteratorArg:
                     assert isinstance(node.args[0], TypeInfo)
                     source = node.args[0]
                     if source.args:
@@ -419,9 +425,9 @@ class Observations:
                             return source.args[0]   # Generator/Iterator yield value
                     return UnknownTypeInfo
 
-                return super().visit(node)
+                return node
 
-        self._transform_types(IteratorArgsT())
+        self._transform_types(PostponedIteratorArgsT())
 
         class SelfT(TypeInfo.Transformer):
             """Renames types to typing.Self according to is_self."""
@@ -434,11 +440,22 @@ class Observations:
         if options.use_typing_self:
             self._transform_types(SelfT())
 
+        class NeverSayNeverT(TypeInfo.Transformer):
+            """Removes uses of typing.Never, replacing them with typing.Any"""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.qualname() == "typing.Never":
+                    return TypeInfo("typing", "Any")
+
+                return super().visit(node)
+
+        if not options.use_typing_never:
+            self._transform_types(NeverSayNeverT())
 
         class TypingUnionT(TypeInfo.Transformer):
             """Replaces types.UnionType with typing.Union and typing.Optional."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
-                print(node)
+                node = super().visit(node)
+
                 if node.type_obj is UnionType:
                     has_none = node.args[-1] == NoneTypeInfo
                     non_none_count = len(node.args) - int(has_none)
@@ -453,7 +470,7 @@ class Observations:
 
                     return non_none
 
-                return super().visit(node)
+                return node
 
 
         class ClearTypeObjTransformer(TypeInfo.Transformer):
@@ -461,7 +478,7 @@ class Observations:
                but many type objects (such as local ones, or from __main__) aren't pickleable.
             """
             def visit(vself, node: TypeInfo) -> TypeInfo:
-                if node.type_obj:
+                if node.type_obj is not None:
                     node = node.replace(type_obj=None)
                 return super().visit(node)
 
@@ -1200,6 +1217,7 @@ def main(
     options.container_sample_limit = container_sample_limit
     options.use_typing_union = python_version < (3, 10)
     options.use_typing_self = python_version >= (3, 11)
+    options.use_typing_never = python_version >= (3, 11)
     options.inline_generics = python_version >= (3, 12)
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm

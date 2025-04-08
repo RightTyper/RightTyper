@@ -301,10 +301,9 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
 
     if depth > 255:
-        # We have likely fallen into an infinite recursion.
-        # Fail gracefully to return "Never" while reporting the warning.
+        # We have likely fallen into an infinite recursion; fail gracefully
         print(f"Warning: RightTyper failed to compute the type of {obj}.")
-        return TypeInfo("typing", "Never")
+        return UnknownTypeInfo
 
     # Some builtin types are available from the "builtins" module,
     # some from the "types" module, but others still, such as
@@ -426,7 +425,7 @@ def find_function(
     return None
 
 
-class IteratorArg:
+class PostponedIteratorArg:
     """Type used to postpone evaluating generator-based iterators"""
 
 
@@ -446,10 +445,9 @@ def get_value_type(
     For other types, it returns the name of the type.
     """
     if depth > 255:
-        # We have likely fallen into an infinite recursion.
-        # Fail gracefully to return "Never" while reporting the warning.
+        # We have likely fallen into an infinite recursion; fail gracefully
         print(f"Warning: RightTyper failed to compute the type of {value}.")
-        return TypeInfo("typing", "Never")
+        return UnknownTypeInfo
 
     t: type|None
     args: tuple[TypeInfo|str|ellipsis, ...]
@@ -598,7 +596,7 @@ def get_value_type(
             src = recurse(getitem)
             assert src.type_obj is abc.Callable
             return TypeInfo("typing", "Iterator", args=(
-                    TypeInfo.from_type(IteratorArg, args=(src,)),
+                    TypeInfo.from_type(PostponedIteratorArg, args=(src,)),
                 )
             )
         elif (
@@ -609,9 +607,9 @@ def get_value_type(
         ):
             zip_sources = tuple(recurse(s) for s in l)
             args = (
-                TypeInfo.from_type(tuple, module="", args=(
+                TypeInfo.from_type(tuple, module="", args=tuple(
                     src.args[0] if src.qualname() == "typing.Iterator"
-                    else TypeInfo.from_type(IteratorArg, args=(src,))
+                    else TypeInfo.from_type(PostponedIteratorArg, args=(src,))
                     for src in zip_sources
                 )),
             )
@@ -620,7 +618,7 @@ def get_value_type(
             src = recurse(l)
             args = (
                 (src.args[0],) if src.qualname() == "typing.Iterator"
-                else (TypeInfo.from_type(IteratorArg, args=(src,)),)
+                else (TypeInfo.from_type(PostponedIteratorArg, args=(src,)),)
             )
 
             return TypeInfo.from_type(t, module="", args=args)
