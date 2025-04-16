@@ -245,7 +245,8 @@ class Observations:
         code: CodeType,
         frame_id: FrameId,
         arg_types: tuple[TypeInfo, ...],
-        self_type: TypeInfo|None
+        self_type: TypeInfo|None,
+        self_replacement: TypeInfo|None,
     ) -> None:
         """Records a function start."""
 
@@ -253,6 +254,7 @@ class Observations:
         self.pending_samples[(CodeId(id(code)), frame_id)] = Sample(
             arg_types,
             self_type=self_type,
+            self_replacement=self_replacement,
             is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
             is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
         )
@@ -707,7 +709,7 @@ def process_function_call(
 
     args = inspect.getargvalues(frame)
 
-    def get_self_type() -> tuple[TypeInfo|None, FunctionType|FunctionDescriptor|None]:
+    def get_self_type() -> tuple[TypeInfo|None, TypeInfo|None, FunctionType|FunctionDescriptor|None]:
         if args.args:
             first_arg = args.locals[args.args[0]]
 
@@ -721,46 +723,58 @@ def process_function_call(
                 # a local function and there is no 'Self' to find.
                 name = f"_{parts[-2]}{name}"    # private attribute/method
 
-            # @property?
-            if isinstance(getattr(type(first_arg), name, None), property):
-                return get_type(first_arg), None
-
             # if type(first_arg) is type, we may have a @classmethod
             first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
 
-            if any (
-                (f := unwrap(ancestor.__dict__.get(name, None)))
-                and getattr(f, "__code__", None) is code
-                for ancestor in first_arg_class.__mro__
-            ):
-                # The first argument is 'Self'; now let's see if we override a method
-                overrides = None
+            # @property?
+            is_property = isinstance(getattr(type(first_arg), name, None), property)
 
-                if not name in ('__init__', '__new__'):         # irrelevant for Liskov
-                    overrides = next(
-                        (
-                            # wrapper_descriptor and possibly other native objects may lack __module__
-                            f if hasattr(f, "__module__")
-                            else FunctionDescriptor(ancestor.__module__, f.__qualname__)
-                            for ancestor in first_arg_class.__mro__[1:]
-                            if (f := unwrap(ancestor.__dict__.get(name, None)))
-                            # if a method is only inherited (but not defined in the class),
-                            # starting at __mro__[1:] above isn't enough to skip it
-                            if getattr(f, "__code__", None) is not code
-                        ),
-                        None
+            # find class that defines that name, in case it's inherited
+            defining_class, next_index = next(
+                (
+                    (ancestor, i+1)
+                    for i, ancestor in enumerate(first_arg_class.__mro__)
+                    if (
+                        (is_property and name in ancestor.__dict__)
+                        or (
+                            (f := unwrap(ancestor.__dict__.get(name, None)))
+                            and getattr(f, "__code__", None) is code
+                        )
                     )
+                ),
+                (None, None)
+            )
 
-                if first_arg is first_arg_class:
-                    return get_type_name(first_arg), overrides # @classmethod
+            if not defining_class:
+                return None, None, None
 
-                return get_type(first_arg), overrides # normal method
+            # The first argument is 'Self' and the type of 'Self', in the context of
+            # its definition, is "defining_class"; now let's see if this method
+            # overrides another
+            overrides = None
+            if not (
+                is_property
+                or name in ('__init__', '__new__')  # irrelevant for Liskov
+            ):
+                overrides = next(
+                    (
+                        # wrapper_descriptor and possibly other native objects may lack __module__
+                        f if hasattr(f, "__module__")
+                        else FunctionDescriptor(ancestor.__module__, f.__qualname__)
+                        for ancestor in first_arg_class.__mro__[next_index:]
+                        if (f := unwrap(ancestor.__dict__.get(name, None)))
+                        if getattr(f, "__code__", None) is not code
+                    ),
+                    None
+                )
 
-        return None, None
+            return get_type_name(first_arg_class), get_type_name(defining_class), overrides
+
+        return None, None, None
 
     # TODO self_type, like overrides, could just be saved in record_function,
     # and computed only when first recording a function.
-    self_type, overrides = get_self_type()
+    self_type, self_replacement, overrides = get_self_type()
     obs.record_function(code, args, get_defaults, overrides)
 
     arg_values = (
@@ -783,7 +797,8 @@ def process_function_call(
         code,
         FrameId(id(frame)),
         arg_values,
-        self_type
+        self_type,
+        self_replacement
     )
 
 
