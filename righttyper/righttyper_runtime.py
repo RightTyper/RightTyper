@@ -557,7 +557,7 @@ def get_value_type(
     elif isinstance(value, CoroutineType):
         return type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
     elif isinstance(value, type) and value is not type:
-        return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
+        return TypeInfo("", "type", args=(get_type_name(value, depth+1),), type_obj=t)
     elif t.__module__ == "builtins":
         if t is NoneType:
             return NoneTypeInfo
@@ -603,7 +603,7 @@ def get_value_type(
             t is zip
             and (l := first_referent()) is not None
             and type(l) is tuple
-            and all(isinstance(s, abc.Iterator) for s in l)
+            and all(isinstance(s, abc.Iterator) for s in l)  # note a generator also IS-A abc.Iterator
         ):
             zip_sources = tuple(recurse(s) for s in l)
             args = (

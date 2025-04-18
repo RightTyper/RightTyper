@@ -2086,8 +2086,9 @@ def test_self_with_cached_method():
     assert 'def foo(self: Self, x: int) -> Self:' in output
 
 
-def test_self_in_hierarchy():
-    Path("t.py").write_text(textwrap.dedent("""\
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_in_hierarchy(python_version):
+    Path("t.py").write_text(textwrap.dedent(f"""\
         class A:
             def f(self):
                 return self
@@ -2101,27 +2102,41 @@ def test_self_in_hierarchy():
                 ...
 
         A().f()
-        B().f().g()
-        C().f().h()
+        {"B().f().g()" if python_version != "3.10" else "B().f(); B().g()"}
+        {"C().f().h()" if python_version != "3.10" else "C().f(); C().h()"}
     """))
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-sampling', 't.py'], check=True)
+                    '--no-sampling', f'--python-version={python_version}', 't.py'], check=True)
 
     output = Path("t.py").read_text()
+    print(output)
     code = cst.parse_module(output)
 
-    assert get_function(code, 'A.f') == textwrap.dedent("""\
-        def f(self: Self) -> Self: ...
-    """)
+    if python_version == '3.10':
+        assert get_function(code, 'A.f') == textwrap.dedent("""\
+            def f(self: "A") -> "A": ...
+        """)
 
-    assert get_function(code, 'B.g') == textwrap.dedent("""\
-        def g(self: Self) -> None: ...
-    """)
+        assert get_function(code, 'B.g') == textwrap.dedent("""\
+            def g(self: "B") -> None: ...
+        """)
 
-    assert get_function(code, 'C.h') == textwrap.dedent("""\
-        def h(self: Self) -> None: ...
-    """)
+        assert get_function(code, 'C.h') == textwrap.dedent("""\
+            def h(self: "C") -> None: ...
+        """)
+    else:
+        assert get_function(code, 'A.f') == textwrap.dedent("""\
+            def f(self: Self) -> Self: ...
+        """)
+
+        assert get_function(code, 'B.g') == textwrap.dedent("""\
+            def g(self: Self) -> None: ...
+        """)
+
+        assert get_function(code, 'C.h') == textwrap.dedent("""\
+            def h(self: Self) -> None: ...
+        """)
 
 
 @pytest.mark.dont_run_mypy  # unnecessary for this test
@@ -2621,6 +2636,7 @@ def test_class_properties_private():
     assert "def __x(self: Self, value: int) -> None:" in output   # setter
     assert "def __x(self: Self) -> None:" in output               # deleter
 
+
 def test_class_properties_no_setter():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
@@ -2693,6 +2709,79 @@ def test_class_properties_inner_functions():
 
     # check for inner function's inner function
     assert "def bar() -> None:" in output
+
+
+def test_class_properties_inherited():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x: int|None = None
+
+            @property
+            def x(self):
+                return str(self._x)
+
+            @x.setter
+            def x(self, value):
+                self._x = value
+
+            @x.deleter
+            def x(self):
+                del self._x
+
+        class D(C):
+            pass
+
+        d = D()
+        d.x = 10  # type: ignore[assignment]
+        y = d.x
+        del d.x
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '-m', 't'], check=True)
+    output = Path("t.py").read_text()
+    print(output)
+
+    assert "def __init__(self: Self) -> None:" in output
+
+    # TODO parse functions out so that the annotation is included
+    assert "def x(self: Self) -> str:" in output                # getter
+    assert "def x(self: Self, value: int) -> None:" in output   # setter
+    assert "def x(self: Self) -> None:" in output               # deleter
+
+
+@pytest.mark.skip(reason="Doesn't currently work")  # FIXME
+def test_class_properties_from_metaclass():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Meta(type):
+            @property
+            def my_property(cls):
+                return cls()
+
+        class C(metaclass=Meta):
+            pass
+
+        x = C.my_property
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '-m', 't'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    print(output)
+
+    # According to mypy, typing.Self can't be used in metaclasses.
+    # Also, typing the return value is problematic.  Perhaps use a typevar, as in
+    #   def my_property[T](cls: type[T]) -> T
+    # ?
+
+#    assert get_function(code, 'Meta.my_property') == textwrap.dedent("""\
+#        @property
+#        def my_property(cls: "Meta"): ...
+#    """)
 
 
 def test_self_simple():
@@ -2828,7 +2917,8 @@ def test_self_inherited_method_returns_non_self():
     assert "def foo(self: Self) -> \"A\":" in Path("t.py").read_text()
 
 
-def test_self_classmethod():
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_classmethod(python_version):
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             @classmethod
@@ -2839,13 +2929,25 @@ def test_self_classmethod():
     """))
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
-                    '--no-sampling', 't.py'],
+                    f'--python-version={python_version}', '--no-sampling', 't.py'],
                    check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def static_initializer(cls: type[Self]) -> Self:" in Path("t.py").read_text()
+    if python_version == '3.10':
+        assert get_function(code, 'A.static_initializer') == textwrap.dedent("""\
+            @classmethod
+            def static_initializer(cls: "type[A]") -> "A": ...
+        """)
+    else:
+        assert get_function(code, 'A.static_initializer') == textwrap.dedent("""\
+            @classmethod
+            def static_initializer(cls: type[Self]) -> Self: ...
+        """)
 
 
-def test_self_inherited_classmethod():
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_inherited_classmethod(python_version):
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             @classmethod
@@ -2859,10 +2961,21 @@ def test_self_inherited_classmethod():
     """))
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
-                    '--no-sampling', 't.py'],
+                    f'--python-version={python_version}', '--no-sampling', 't.py'],
                    check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def static_initializer(cls: type[Self]) -> Self:" in Path("t.py").read_text()
+    if python_version == '3.10':
+        assert get_function(code, 'A.static_initializer') == textwrap.dedent("""\
+            @classmethod
+            def static_initializer(cls: "type[A]") -> "A": ...
+        """)
+    else:
+        assert get_function(code, 'A.static_initializer') == textwrap.dedent("""\
+            @classmethod
+            def static_initializer(cls: type[Self]) -> Self: ...
+        """)
 
 
 def test_self_within_other_types():
@@ -2902,7 +3015,8 @@ def test_self_yield_generator():
     assert "def foo(self: Self) -> Generator[Self, None, Self]" in output
 
 
-def test_self_subtyping():
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_subtyping(python_version):
     t = textwrap.dedent("""\
         class NumberAdd:
             def __init__(self, value: float):
@@ -2926,14 +3040,23 @@ def test_self_subtyping():
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-sampling', 't.py'], check=True)
+                    '--no-sampling', f'--python-version={python_version}', 't.py'], check=True)
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     # IntegerAdd IS-A NumberAdd, the enclosed class; so the argument should be 'Self'
-    assert "def operation(self: Self, rhs: Self) -> Self:" in output
+    if python_version == '3.10':
+        assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
+            def operation(self: "NumberAdd", rhs: "NumberAdd") -> "NumberAdd": ...
+        """)
+    else:
+        assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
+            def operation(self: Self, rhs: Self) -> Self: ...
+        """)
 
 
-def test_self_subtyping_reversed():
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_subtyping_reversed(python_version):
     t = textwrap.dedent("""\
         class NumberAdd:
             def __init__(self, value: float):
@@ -2950,16 +3073,68 @@ def test_self_subtyping_reversed():
         b = IntegerAdd(1)
 
         b.operation(a)
+        a.operation(b)
         """)
 
     Path("t.py").write_text(t)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-sampling', 't.py'], check=True)
+                    '--no-sampling', f'--python-version={python_version}', 't.py'], check=True)
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     # The argument isn't Self as (NumberAdd IS-A IntegerAdd) doesn't hold
-    assert "def operation(self: Self, rhs: \"NumberAdd\") -> Self:" in output
+    if python_version == '3.10':
+        assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
+            def operation(self: "NumberAdd", rhs: "NumberAdd") -> "NumberAdd": ...
+        """)
+    else:
+        # FIXME the rhs should ideally just be "NumberAdd"
+        assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
+            def operation(self: Self, rhs: "NumberAdd|Self") -> Self: ...
+        """)
+
+
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_subtyping_reversed_too(python_version):
+    # This is the same as test_self_subtyping_reversed,
+    # but with "operation" calls in opposite order.
+    t = textwrap.dedent("""\
+        class NumberAdd:
+            def __init__(self, value: float):
+                self.value = value
+
+            def operation(self, rhs):
+                return self.__class__(self.value + rhs.value)
+
+        class IntegerAdd(NumberAdd):
+            def __init__(self, value: int):
+                super().__init__(round(value))
+
+        a = NumberAdd(0.5)
+        b = IntegerAdd(1)
+
+        a.operation(b)
+        b.operation(a)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', f'--python-version={python_version}', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # The argument isn't Self as (NumberAdd IS-A IntegerAdd) doesn't hold
+    if python_version == '3.10':
+        assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
+            def operation(self: "NumberAdd", rhs: "NumberAdd") -> "NumberAdd": ...
+        """)
+    else:
+        # FIXME the rhs should ideally just be "NumberAdd"
+        assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
+            def operation(self: Self, rhs: "NumberAdd|Self") -> Self: ...
+        """)
 
 
 def test_returns_or_yields_generator():

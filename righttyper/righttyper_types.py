@@ -45,7 +45,11 @@ class TypeInfo:
     type_obj: TYPE_OBJ_TYPES|None = field(default=None, compare=False)
     typevar_index: int = field(default=0, compare=False)
     typevar_name: str|None = field(default=None, compare=False) # TODO delete me?
-    is_self: bool = field(default=False, compare=False)         # indicates equivalence to typing.Self
+
+    # Indicates equivalence to typing.Self. Note that is_self may be true for one
+    # type (class) in one sample, but false for the exact same type in another,
+    # so that is_self matters for equivalence
+    is_self: bool = field(default=False, compare=True)
 
 
     def __str__(self: Self) -> str:
@@ -191,6 +195,7 @@ class Sample:
     is_async: bool = False
     is_generator: bool = False
     self_type: TypeInfo | None = None
+    self_replacement: TypeInfo | None = None
 
 
     def process(self) -> tuple[TypeInfo, ...]:
@@ -209,15 +214,18 @@ class Sample:
 
         if self.self_type:
             class SelfTransformer(TypeInfo.Transformer):
-                """Converts self_type to "typing.Self"."""
+                """Replaces 'self' types with the type of the class that defines them,
+                   also setting is_self for possible later replacement with typing.Self."""
 
                 def visit(vself, node: TypeInfo) -> TypeInfo:
+#                    if self.self_type: print(f"checking {str(node)} against {str(self.self_type)}")
                     if (
                         self.self_type and
                         node.type_obj and
                         self.self_type.type_obj in node.type_obj.__mro__
                     ):
-                        node = node.replace(is_self=True)
+#                        print(f"replacing {str(node)} with {str(self.self_replacement)}")
+                        node = self.self_replacement.replace(is_self=True)
 
                     return super().visit(node)
 
