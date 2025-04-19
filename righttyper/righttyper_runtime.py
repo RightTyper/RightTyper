@@ -95,12 +95,11 @@ def hint2type(hint) -> TypeInfo:
         return NoneTypeInfo
 
     if (
-        (jx := get_jaxtyping())
-        and (bases := getattr(hint, "__bases__", None))
-        and jx.AbstractArray in bases
+        hint.__module__ == 'jaxtyping' and
+        (array_type := getattr(hint, "array_type", None))
     ):
         return TypeInfo(hint.__module__, hint.__name__.split('[')[0], args=(
-            get_type_name(bases[0]), hint.dim_str
+            get_type_name(array_type), hint.dim_str
         ))
 
     if not hasattr(hint, "__qualname__"): # e.g., typing.TypeVar
