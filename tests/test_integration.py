@@ -26,21 +26,27 @@ def print_file(file: Path) -> None:
 @pytest.fixture(scope='function', autouse=True)
 def runmypy(tmp_cwd, request):
     yield
-    if request.node._report.passed and 'dont_run_mypy' not in request.keywords:
-        # if we are specifying a Python version in the test, have mypy check for that as well
-        python_version = (
-            ('--python-version', request.node.callspec.params.get('python_version'))
-            if hasattr(request.node, 'callspec')
-            and 'python_version' in request.node.callspec.params
-            else ()
-        )
-        from mypy import api
-        result = api.run([*python_version, '.'])
-        if result[2]:
-            print(result[0])
-            filename = result[0].split(':')[0]
-            print_file(Path(filename))
-            pytest.fail("see mypy errors")
+    if (
+        not request.node._report.passed
+        or 'dont_run_mypy' in request.keywords
+        or request.config.getoption("--no-mypy")
+    ):
+        return
+
+    # if we are specifying a Python version in the test, have mypy check for that as well
+    python_version = (
+        ('--python-version', request.node.callspec.params.get('python_version'))
+        if hasattr(request.node, 'callspec')
+        and 'python_version' in request.node.callspec.params
+        else ()
+    )
+    from mypy import api
+    result = api.run([*python_version, '.'])
+    if result[2]:
+        print(result[0])
+        filename = result[0].split(':')[0]
+        print_file(Path(filename))
+        pytest.fail("see mypy errors")
 
 
 @pytest.mark.parametrize("init, expected", [
