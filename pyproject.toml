@@ -68,6 +68,7 @@ tests = [
     "mypy",
     "numpy",
     "ml_dtypes",
+    "jax",
     "jaxtyping",
     "torch",
 ]
