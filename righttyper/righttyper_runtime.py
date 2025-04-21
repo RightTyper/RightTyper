@@ -267,9 +267,13 @@ def search_type(t: type) -> tuple[str, str] | None:
 
         return None
 
-
     if (f := find_in(t.__module__, sys.modules[t.__module__])):
         return normalize_module_name(f[0]), f[1]
+
+    # TODO if runpy is done running the module/script, sys.modules['__main__'] may
+    # point back to RightTyper's main...  figure out a better way to handle it
+    if t.__module__ == '__main__':
+        return normalize_module_name(t.__module__), t.__qualname__
 
     return None
 

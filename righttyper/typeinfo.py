@@ -1,7 +1,8 @@
 from typing import Sequence, Iterator, cast
 from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo
 from .righttyper_utils import get_main_module_fqn
-from collections import Counter
+from collections import Counter, defaultdict
+from .righttyper_runtime import get_type_name
 import collections.abc as abc
 from types import EllipsisType
 
@@ -27,8 +28,7 @@ def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     """Attempts to merge types in a set before forming their union."""
 
     if len(typeinfoset) > 1:
-        if sclass := find_superclass(typeinfoset):
-            return sclass
+        typeinfoset = simplify(typeinfoset)
 
     tr = SimplifyGeneratorsTransformer()
     typeinfoset = set(
@@ -39,52 +39,71 @@ def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     return TypeInfo.from_set(typeinfoset)
 
 
-def find_superclass(typeinfoset: set[TypeInfo]) -> TypeInfo|None:
-    """Finds the most specific common superclass with all the common
-       attributes, if any.
+def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
+    """Simplifies the set by replacing types with supertypes that contains
+       all common attributes.
     """
-    if any(
-        # typing.Union is a "special type" and has no __mro__.  We now
-        # convert that to types.UnionType, but left this check in place
-        # just in case something else lacks the MRO.
-        t.type_obj is None or not hasattr(t.type_obj, "__mro__")
+    # Types we know how to merge
+    mergeable_types = set(
+        t
         for t in typeinfoset
-    ):
-        return None
+        if t.type_obj is not None and hasattr(t.type_obj, "__mro__")
+        if len(t.args) == 0                          # we don't compare arguments yet
+        if not hasattr(t.type_obj, "__orig_class__") # we don't support generics yet
+    )
+
+    if not mergeable_types:
+        return typeinfoset
+
+    other_types = typeinfoset - mergeable_types
 
     # TODO do we want to merge by protocol?  search for protocols in collections.abc types?
-    # TODO we could also merge on portions of the set
 
     # FIXME besides attribute presence, we should check their types/signatures
     # FIXME we should check object attributes, not their classes'
     common_attributes = set.intersection(
-        *(set(dir(cast(TYPE_OBJ_TYPES, t.type_obj))) for t in typeinfoset)
-    )
-
-    # Get the superclasses, if any, that have all the common attributes
-    common_superclasses = set.intersection(
         *(
             set(
-                base
-                for base in cast(TYPE_OBJ_TYPES, t.type_obj).__mro__
-                if common_attributes.issubset(set(dir(base)))
-            )
-            for t in typeinfoset
+                attr
+                for attr in dir(cast(TYPE_OBJ_TYPES, t.type_obj))
+                if getattr(t.type_obj, attr, None) is not None
+                if not attr.startswith("_") or attr.startswith("__")
+            ) for t in mergeable_types
         )
     )
 
-    common_superclasses.discard(object) # not specific enough to be useful
+    # Get the superclasses, if any, that have all the common attributes
+    common_supertypes = defaultdict(list)
+    for t in mergeable_types:
+        for base in cast(TYPE_OBJ_TYPES, t.type_obj).__mro__:
+            if common_attributes.issubset(set(dir(base))):
+                common_supertypes[base].append(t)
 
-    if not common_superclasses:
-        return None
+    # Unless "object" is in the set, it's likely too general to be useful
+    # TODO why aren't the attributes enough to exclude "object" ?
+    if object in common_supertypes and not any(t.type_obj is object for t in mergeable_types):
+        del common_supertypes[object]
 
-    specific = max(
-        common_superclasses,
-        key=lambda cls: cls.__mro__.index(object),
-    )
+#    print("common_supertypes=", {k: [str(t) for t in v] for k, v in common_supertypes.items() if len(v)>1})
 
-    module = specific.__module__ if specific.__module__ != '__main__' else get_main_module_fqn()
-    return TypeInfo(module, specific.__qualname__, type_obj=specific)
+    # Since we want types that are as specific as possible, save the replacements in a separate set,
+    # so that they don't get replaced as well.
+    replacements = set()
+
+    # 'defaultdict' retains insertion order, and 'sorted' is stable, so the first supertypes
+    # on the list, after sorting by how many types they replace, are as specific as possible.
+    for st, types in sorted(common_supertypes.items(), key=lambda item: -len(item[1])):
+        if len(types) == 1:
+            break   # we're not interested in 1-for-1 exchanges
+
+        if any(t in mergeable_types for t in types):
+            mergeable_types -= set(types)
+            replacements.add(get_type_name(st))
+
+    if not replacements:
+        return typeinfoset
+
+    return mergeable_types | replacements | other_types
 
 
 def generalize_jaxtyping(samples: Sequence[tuple[TypeInfo, ...]]) -> Sequence[tuple[TypeInfo, ...]]:

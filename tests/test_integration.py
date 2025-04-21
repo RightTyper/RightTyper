@@ -2254,8 +2254,10 @@ def test_union_superclass(as_module):
     subprocess.run([sys.executable, '-m', 'righttyper', '--output-files', '--overwrite',
                     '--no-sampling', *(('-m', 't') if as_module else ('t.py',))],
                    check=True)
+    output = Path("t.py").read_text()
+    print(output)
 
-    assert "def foo(x: A) -> None:" in Path("t.py").read_text()
+    assert "def foo(x: A) -> None:" in output
 
 
 def test_sampling_overlaps():
