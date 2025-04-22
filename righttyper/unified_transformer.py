@@ -102,7 +102,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self,
         filename: str,
         type_annotations: dict[FuncId, FuncAnnotation],
-        override_annotations: bool,
+        override_annotations: bool, only_update_annotations: bool,
         inline_generics: bool,
         module_name: str|None,
         module_names: list[str],
@@ -110,6 +110,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.filename = filename
         self.type_annotations = type_annotations
         self.override_annotations = override_annotations
+        self.only_update_annotations = only_update_annotations
         self.inline_generics = inline_generics
         self.has_future_annotations = False
         self.module_name = module_name
@@ -373,6 +374,8 @@ class UnifiedTransformer(cst.CSTTransformer):
     
     def _process_parameter(self, parameter: cst.Param, ann: FuncAnnotation) -> cst.Param:
         """Processes a parameter, either returning an updated parameter or the original one."""
+        if self.only_update_annotations and parameter.annotation is None:
+            return parameter
         if (
             not (parameter.annotation is None or self.override_annotations)
             or (annotation := next(
@@ -416,7 +419,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         return new_par
 
     def leave_FunctionDef(
-        self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
+            self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef | cst.FlattenSentinel:
         name = ".".join(self.name_stack[:-1])
         self.name_stack.pop()
@@ -490,7 +493,11 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
 
-            if updated_node.returns is None or self.override_annotations:
+            should_update_ret = (
+            (self.only_update_annotations and updated_node.returns is not None)
+            or (not self.only_update_annotations and (updated_node.returns is None or self.override_annotations))
+            )
+            if should_update_ret:
                 if self._is_valid(ann.retval):
                     annotation_expr = self._get_annotation_expr(ann.retval)
 
