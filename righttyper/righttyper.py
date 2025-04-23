@@ -102,7 +102,6 @@ class Options:
     use_typing_self: bool = False
     use_typing_never: bool = False
     inline_generics: bool = False
-    # Overwrite *only* annotations already present
     only_update_annotations: bool = False
 
 options = Options()
@@ -1166,7 +1165,8 @@ def main(
     verbose: bool,
     overwrite: bool,
     output_files: bool,
-    ignore_annotations: bool, only_update_annotations: bool,
+    ignore_annotations: bool,
+    only_update_annotations: bool,
     generate_stubs: bool,
     infer_shapes: bool,
     srcdir: str,
