@@ -102,6 +102,7 @@ class Options:
     use_typing_self: bool = False
     use_typing_never: bool = False
     inline_generics: bool = False
+    only_update_annotations: bool = False
 
 options = Options()
 
@@ -944,6 +945,7 @@ def process_all_files() -> list[SignatureChanges]:
             options.overwrite,
             module_names,
             options.ignore_annotations,
+            options.only_update_annotations,
             options.inline_generics
         )
         for fname in fnames
@@ -1082,6 +1084,12 @@ class CheckModule(click.ParamType):
     default=False,
 )
 @click.option(
+    "--only-update-annotations",
+    is_flag=True,
+    default=False,
+    help="Overwrite existing annotations but never add new ones.",
+)
+@click.option(
     "--verbose",
     is_flag=True,
     help="Print diagnostic information.",
@@ -1158,6 +1166,7 @@ def main(
     overwrite: bool,
     output_files: bool,
     ignore_annotations: bool,
+    only_update_annotations: bool,
     generate_stubs: bool,
     infer_shapes: bool,
     srcdir: str,
@@ -1222,6 +1231,7 @@ def main(
     options.target_overhead = target_overhead
     options.infer_shapes = infer_shapes
     options.ignore_annotations = ignore_annotations
+    options.only_update_annotations = only_update_annotations
     options.overwrite = overwrite
     options.output_files = output_files
     options.generate_stubs = generate_stubs
