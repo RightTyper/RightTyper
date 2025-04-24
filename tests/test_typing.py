@@ -1,5 +1,5 @@
 from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample
-from righttyper.typeinfo import merged_types, generalize, find_superclass
+from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
 from collections import namedtuple
@@ -379,6 +379,28 @@ def test_merged_types_superclass():
         }
     ))
 
+    assert f"int|{name(A)}" == str(merged_types({
+            TypeInfo.from_type(A),
+            TypeInfo.from_type(D),
+            rt.get_type_name(int),
+        }
+    ))
+
+    assert f"foo.bar|{name(A)}" == str(merged_types({
+            TypeInfo.from_type(A),
+            TypeInfo.from_type(D),
+            TypeInfo("foo", "bar")
+        }
+    ))
+
+    assert f"list[int]|list[typing.Never]|{name(A)}" == str(merged_types({
+            TypeInfo.from_type(A),
+            TypeInfo.from_type(D),
+            rt_get_value_type([1]),
+            rt_get_value_type([])
+        }
+    ))
+
 
 def name(t: type):
     return f"{t.__module__}.{t.__qualname__}"
@@ -389,10 +411,12 @@ def test_merged_types_superclass_checks_attributes():
     class B(A):
         def foo(self): pass
     class C(B):
+        def _shouldnt_matter(self): pass
         def bar(self): pass
     class D(B):
         def bar(self): pass
     class E(B):
+        def _shouldnt_matter(self): pass
         pass
 
     assert f"{name(C)}|{name(D)}" == str(merged_types({
@@ -408,11 +432,49 @@ def test_merged_types_superclass_checks_attributes():
     ))
 
 
+def test_merged_types_superclass_dunder_matters():
+    class A: pass
+    class B(A):
+        pass
+    class C(B):
+        def __foo__(self): pass
+    class D(B):
+        def __foo__(self): pass
+
+    assert f"{name(C)}|{name(D)}" == str(merged_types({
+            TypeInfo.from_type(C),
+            TypeInfo.from_type(D)
+        }
+    ))
+
+
 def test_merged_types_superclass_bare_type():
     # invoking type.mro() raises an exception
-    assert "builtins.int|builtins.type" == str(merged_types({
-            TypeInfo.from_type(int),
-            TypeInfo.from_type(type)
+    assert "int|type" == str(merged_types({
+            rt.get_type_name(int),
+            rt.get_type_name(type)
+        }
+    ))
+
+
+def test_merged_types_superclass_multiple_superclasses():
+    class A: pass
+    class B(A):
+        def foo(self): pass
+    class C(B):
+        pass
+
+    class D: pass
+    class E(D):
+        def foo(self): pass
+    class F(E):
+        pass
+
+    assert f"{name(B)}|{name(E)}" == str(merged_types({
+            TypeInfo.from_type(B),
+            TypeInfo.from_type(C),
+            TypeInfo.from_type(E),
+            TypeInfo.from_type(F),
         }
     ))
 

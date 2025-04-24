@@ -95,12 +95,11 @@ def hint2type(hint) -> TypeInfo:
         return NoneTypeInfo
 
     if (
-        (jx := get_jaxtyping())
-        and (bases := getattr(hint, "__bases__", None))
-        and jx.AbstractArray in bases
+        hint.__module__ == 'jaxtyping' and
+        (array_type := getattr(hint, "array_type", None))
     ):
         return TypeInfo(hint.__module__, hint.__name__.split('[')[0], args=(
-            get_type_name(bases[0]), hint.dim_str
+            get_type_name(array_type), hint.dim_str
         ))
 
     if not hasattr(hint, "__qualname__"): # e.g., typing.TypeVar
@@ -268,9 +267,13 @@ def search_type(t: type) -> tuple[str, str] | None:
 
         return None
 
-
     if (f := find_in(t.__module__, sys.modules[t.__module__])):
         return normalize_module_name(f[0]), f[1]
+
+    # TODO if runpy is done running the module/script, sys.modules['__main__'] may
+    # point back to RightTyper's main...  figure out a better way to handle it
+    if t.__module__ == '__main__':
+        return normalize_module_name(t.__module__), t.__qualname__
 
     return None
 
