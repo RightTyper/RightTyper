@@ -267,7 +267,7 @@ def search_type(t: type) -> tuple[str, str] | None:
 
         return None
 
-    if (f := find_in(t.__module__, sys.modules[t.__module__])):
+    if (m := sys.modules.get(t.__module__)) and (f := find_in(t.__module__, m)):
         return normalize_module_name(f[0]), f[1]
 
     # TODO if runpy is done running the module/script, sys.modules['__main__'] may
