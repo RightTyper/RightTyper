@@ -267,7 +267,7 @@ def search_type(t: type) -> tuple[str, str] | None:
 
         return None
 
-    if (f := find_in(t.__module__, sys.modules[t.__module__])):
+    if (m := sys.modules.get(t.__module__)) and (f := find_in(t.__module__, m)):
         return normalize_module_name(f[0]), f[1]
 
     # TODO if runpy is done running the module/script, sys.modules['__main__'] may
@@ -497,16 +497,13 @@ def get_value_type(
         return ref[0] if len(ref) else None
 
 
-    try:
-        # using getattr or hasattr here can lead to problems when __getattr__ is overriden
-        orig = object.__getattribute__(value, "__orig_class__")
+    # using getattr or hasattr here can lead to problems when __getattr__ is overridden
+    if (orig := inspect.getattr_static(value, "__orig_class__", None)):
         return TypeInfo(orig.__module__, orig.__qualname__,
                         tuple(
                             TypeInfo.from_type(a) for a in orig.__args__
                         )
                )
-    except AttributeError:
-        pass
 
     t = type(value)
     if t is RandomDict:

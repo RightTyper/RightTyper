@@ -1,4 +1,4 @@
-from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample
+from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample, UnknownTypeInfo
 from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
@@ -158,6 +158,13 @@ def test_value_type_iterator(init, name, nextv):
 ])
 def test_type_name_iterator(init, name):
     assert name == str(rt.get_type_name(type(eval(init))))
+
+
+def test_type_name_not_in_sys_modules():
+    t = type('myType', (object,), dict())
+    t.__module__ = 'doesntexist'
+
+    assert rt.get_type_name(t) is UnknownTypeInfo
 
 
 @pytest.mark.filterwarnings("ignore:coroutine .* never awaited")
