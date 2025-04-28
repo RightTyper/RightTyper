@@ -497,16 +497,13 @@ def get_value_type(
         return ref[0] if len(ref) else None
 
 
-    try:
-        # using getattr or hasattr here can lead to problems when __getattr__ is overriden
-        orig = object.__getattribute__(value, "__orig_class__")
+    # using getattr or hasattr here can lead to problems when __getattr__ is overridden
+    if (orig := inspect.getattr_static(value, "__orig_class__", None)):
         return TypeInfo(orig.__module__, orig.__qualname__,
                         tuple(
                             TypeInfo.from_type(a) for a in orig.__args__
                         )
                )
-    except AttributeError:
-        pass
 
     t = type(value)
     if t is RandomDict:

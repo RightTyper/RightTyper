@@ -3325,11 +3325,13 @@ def test_generalize_union_return_not_typevar():
 
 @pytest.mark.dont_run_mypy # unnecessary 
 def test_object_overridden_getattr():
-    # Derived from tqdm.utils.ObjectWrapper: sometimes calls to getattr() lead to infinite recursion
+    # Sometimes dynamic attribute lookups have side effects or, as in the case of
+    # tqdm and rich tests, lead to infinite recursions as their __getattr__ call getattr()
+    # on the same object.
     t = textwrap.dedent("""\
         class Thing:
             def __getattr__(self, name):
-                raise AttributeError
+                raise RuntimeError()
 
         def f(t):
             pass
