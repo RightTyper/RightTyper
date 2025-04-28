@@ -599,7 +599,7 @@ def get_value_type(
                     TypeInfo.from_type(PostponedIteratorArg, args=(src,)),
                 )
             )
-        elif (
+        elif False and ( # FIXME
             t is zip
             and (l := first_referent()) is not None
             and type(l) is tuple
@@ -614,7 +614,7 @@ def get_value_type(
                 )),
             )
             return TypeInfo("typing", "Iterator", args=args)
-        elif (t is enumerate and (l := first_referent()) is not None and isinstance(l, abc.Iterator)):
+        elif False: # FIXME (t is enumerate and (l := first_referent()) is not None and isinstance(l, abc.Iterator)):
             src = recurse(l)
             args = (
                 (src.args[0],) if src.qualname() == "typing.Iterator"
