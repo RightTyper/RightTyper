@@ -599,7 +599,7 @@ def get_value_type(
                     TypeInfo.from_type(PostponedIteratorArg, args=(src,)),
                 )
             )
-        elif False and ( # FIXME
+        elif (
             t is zip
             and (l := first_referent()) is not None
             and type(l) is tuple
@@ -607,17 +607,19 @@ def get_value_type(
         ):
             zip_sources = tuple(recurse(s) for s in l)
             args = (
+                # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
                 TypeInfo.from_type(tuple, module="", args=tuple(
-                    src.args[0] if src.qualname() == "typing.Iterator"
+                    (src.args[0] if src.args else UnknownTypeInfo) if src.qualname() == "typing.Iterator"
                     else TypeInfo.from_type(PostponedIteratorArg, args=(src,))
                     for src in zip_sources
                 )),
             )
             return TypeInfo("typing", "Iterator", args=args)
-        elif False: # FIXME (t is enumerate and (l := first_referent()) is not None and isinstance(l, abc.Iterator)):
+        elif (t is enumerate and (l := first_referent()) is not None and isinstance(l, abc.Iterator)):
             src = recurse(l)
             args = (
-                (src.args[0],) if src.qualname() == "typing.Iterator"
+                # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
+                ((src.args[0] if src.args else UnknownTypeInfo),) if src.qualname() == "typing.Iterator"
                 else (TypeInfo.from_type(PostponedIteratorArg, args=(src,)),)
             )
 

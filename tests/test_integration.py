@@ -88,6 +88,53 @@ def test_builtin_iterator(init, expected):
     """)
 
 
+@pytest.mark.parametrize("init, expected", [
+    ["zip([0], ())", "Iterator[tuple[int, Never]]"],
+    ["enumerate(())", "enumerate[Never]"],
+])
+def test_builtin_iterator_of_empty(init, expected):
+    t = textwrap.dedent(f"""\
+        def f():
+            return {init}
+
+        f()     # don't call next(), as it'd yield StopIteration
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f() -> {expected}: ...
+    """)
+
+
+def test_numpy_iterator():
+    t = textwrap.dedent("""\
+        import numpy as np
+
+        def f():
+            return enumerate(np.arange(1).flat)
+
+        f()
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # TODO this could follow '.base' and retrieve the dtype
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f() -> enumerate[Any]: ...
+    """)
+
+
 def test_getitem_iterator():
     t = textwrap.dedent(f"""\
         class X:
