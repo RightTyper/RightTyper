@@ -203,7 +203,7 @@ class Observations:
     pending_samples: dict[tuple[CodeId, FrameId], Sample] = field(default_factory=dict)
 
     # Completed samples
-    samples: dict[CodeId, set[tuple[TypeInfo, ...]]] = field(default_factory=lambda: defaultdict(set))
+    samples: dict[CodeId, set[tuple[TypeInfo, ...]]] = field(default_factory=dict)
 
 
     def record_function(
@@ -291,6 +291,8 @@ class Observations:
         code_id = CodeId(id(code))
         if (sample := self.pending_samples.get((code_id, frame_id))):
             sample.returns = return_type
+            if code_id not in self.samples:
+                self.samples[code_id] = set()
             self.samples[code_id].add(sample.process())
             del self.pending_samples[(code_id, frame_id)]
             return True
@@ -317,6 +319,8 @@ class Observations:
         # TODO are there other cases we should handle?
         for (code_id, _), sample in self.pending_samples.items():
             if sample.yields:
+                if code_id not in self.samples:
+                    self.samples[code_id] = set()
                 self.samples[code_id].add(sample.process())
 
         def mk_annotation(code_id: CodeId) -> FuncAnnotation|None:
@@ -337,7 +341,7 @@ class Observations:
                     parent_code_id = CodeId(id(parents_func.__code__)) if hasattr(parents_func, "__code__") else None
                     if (
                         parent_code_id
-                        and parent_code_id in self.functions_visited
+                        and parent_code_id in self.samples
                         and (ann := mk_annotation(parent_code_id))
                     ):
                         parents_arg_types = [arg[1] for arg in ann.args]
