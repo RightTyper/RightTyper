@@ -590,15 +590,26 @@ def get_value_type(
             return TypeInfo("typing", "Iterator", args=args)
         elif (
             t is GETITEM_ITER
-            and (l := first_referent())
+            and (l := first_referent()) is not None
             and (getitem := getattr(type(l), "__getitem__", None)) is not None
         ):
-            src = recurse(getitem)
-            assert src.type_obj is abc.Callable
-            return TypeInfo("typing", "Iterator", args=(
-                    TypeInfo.from_type(PostponedIteratorArg, args=(src,)),
+            # If 'getitem' is a Python (non-native) function, we can intercept it;
+            # add a postponed evaluation entry.
+            if type(getitem) in (FunctionType, MethodType):
+                src = recurse(getitem)
+                assert src.type_obj is abc.Callable
+                return TypeInfo("typing", "Iterator", args=(
+                        TypeInfo.from_type(PostponedIteratorArg, args=(src,)),
+                    )
                 )
-            )
+
+            if (l_t := type(l)).__module__ == 'numpy' and l_t.__qualname__ == 'ndarray':
+                # Use __getitem__, as l.dtype contains classes from numpy.dtypes. 
+                return TypeInfo("typing", "Iterator", args=(
+                    (get_type_name(type(getitem(l, 0)), depth+1) if l.size>0 else TypeInfo("typing", "Never")),)
+                )
+
+            return TypeInfo("typing", "Iterator")
         elif (
             t is zip
             and (l := first_referent()) is not None

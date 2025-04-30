@@ -112,6 +112,7 @@ def test_builtin_iterator_of_empty(init, expected):
     """)
 
 
+@pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module')
 def test_numpy_iterator():
     t = textwrap.dedent("""\
         import numpy as np
@@ -158,6 +159,52 @@ def test_getitem_iterator():
 
     assert get_function(code, 'f') == textwrap.dedent("""\
         def f(it: Iterator[bool]) -> None: ...
+    """)
+
+
+@pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module')
+def test_getitem_iterator_numpy():
+    t = textwrap.dedent(f"""\
+        import numpy as np
+
+        def f(it):
+            return next(it)
+
+        f(iter(np.arange(10, dtype=np.int64)))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(it: Iterator[np.int64]) -> np.int64: ...
+    """)
+
+
+@pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module')
+def test_getitem_iterator_numpy_empty():
+    t = textwrap.dedent(f"""\
+        import numpy as np
+
+        def f(it):
+            pass
+
+        f(iter(np.arange(0, dtype=np.int64)))
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(it: Iterator[Never]) -> None: ...
     """)
 
 
