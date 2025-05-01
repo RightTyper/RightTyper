@@ -520,10 +520,10 @@ def test_internal_numpy_type():
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     't.py'], check=True)
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert (m := re.search(r'__array_function__\(self[^,]*, (func[^,]*),', output))
-    assert m.group(1).startswith('func: "numpy.')
-    assert m.group(1).endswith('_ArrayFunctionDispatcher"')
+    f = get_function(code, 'MyArray.__array_function__')
+    assert re.search(r'func: "numpy.[\w\.]*_ArrayFunctionDispatcher"', f)
 
 
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
