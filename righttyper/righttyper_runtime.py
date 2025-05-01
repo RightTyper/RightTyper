@@ -603,11 +603,10 @@ def get_value_type(
                     )
                 )
 
-            if (l_t := type(l)).__module__ == 'numpy' and l_t.__qualname__ == 'ndarray':
-                # Use __getitem__, as l.dtype contains classes from numpy.dtypes. 
-                return TypeInfo("typing", "Iterator", args=(
-                    (get_type_name(type(getitem(l, 0)), depth+1) if l.size>0 else TypeInfo("typing", "Never")),)
-                )
+            if (l_t := type(l)).__module__ == 'numpy' and l_t.__qualname__ == 'ndarray' and l.size > 0:
+                # Use __getitem__, as l.dtype contains classes from numpy.dtypes;
+                # check size, as using typing.Never for size=0 leads to mypy errors
+                return TypeInfo("typing", "Iterator", args=(get_type_name(type(getitem(l, 0)), depth+1),))
 
             return TypeInfo("typing", "Iterator")
         elif (

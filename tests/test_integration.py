@@ -204,7 +204,7 @@ def test_getitem_iterator_numpy_empty():
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent("""\
-        def f(it: Iterator[Never]) -> None: ...
+        def f(it: Iterator) -> None: ...
     """)
 
 
