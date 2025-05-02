@@ -3544,3 +3544,192 @@ def test_typing_union(python_version):
     assert get_function(code, 'g') == textwrap.dedent("""\
         def g(x: Union[list[Any], Callable[[Union[int, str]], Optional[str]]]) -> None: ...
     """)
+
+
+@pytest.mark.parametrize('all_type', ['list', 'tuple'])
+def test_typefinder_name_from_all_preferred(all_type):
+    # C has 4 names:
+    #   - m.foo.C, where it's defined
+    #   - m.C, where it's imported into m
+    #   - m.xyz, declared in '__all__'
+    #   - __main__.m.foo.C
+    #
+    # we want to see it pick m.xyz
+
+    Path("m").mkdir()
+    (Path("m") / "__init__.py").write_text(textwrap.dedent(f"""\
+        from .foo import C
+        __all__ = {"['xyz']" if all_type == "list" else "('xyz',)"}
+        xyz = C
+        """
+    ))
+    (Path("m") / "foo.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+        """
+    ))
+    Path("t.py").write_text(textwrap.dedent("""\
+        import m.foo
+
+        def f(x): pass
+
+        f(m.foo.C())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite',
+                    '--output-files', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: m.xyz) -> None: ...
+    """)
+
+
+def test_typefinder_name_without_underscore_preferred():
+    # C has 5 names:
+    #   - m.foo.C, where it's defined
+    #   - m._C, where it's imported (and defined before m.C)
+    #   - m.C (the alias)
+    #   - __main__.m.foo._C
+    #   - __main__.m.foo.C
+    #
+    # we want to see it pick m.xyzzy
+
+    Path("m").mkdir()
+    (Path("m") / "__init__.py").write_text(textwrap.dedent("""\
+        from .foo import C as _C
+        C = _C
+        """
+    ))
+    (Path("m") / "foo.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+        """
+    ))
+    Path("t.py").write_text(textwrap.dedent("""\
+        import m.foo
+
+        def f(x): pass
+
+        f(m.foo.C())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite',
+                    '--output-files', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: m.C) -> None: ...
+    """)
+
+
+def test_typefinder_mod_without_underscore_preferred():
+    # C has 5 names:
+    #   - _foo.C, where it's defined
+    #   - m._foo.C, where it's imported
+    #   - m.C (the alias)
+    #   - __main__.m._foo.C
+    #   - __main__.m.C
+    #
+    # we want to see it pick m.C
+
+    Path("m").mkdir()
+    (Path("m") / "__init__.py").write_text(textwrap.dedent("""\
+        import _foo
+        C = _foo.C
+        """
+    ))
+    Path("_foo").mkdir()
+    (Path("_foo") / "__init__.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+        """
+    ))
+    Path("t.py").write_text(textwrap.dedent("""\
+        import m
+
+        def f(x): pass
+
+        f(m.C())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite',
+                    '--output-files', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    print(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: m.C) -> None: ...
+    """)
+
+
+def test_typefinder_shorter_name_preferred():
+    # C has two names:
+    #   - m.foo.C, where it's defined
+    #   - m.C, where it's imported
+    #
+    # we want to see it pick m.C
+    Path("m").mkdir()
+    (Path("m") / "__init__.py").write_text(textwrap.dedent("""\
+        from .foo import C
+        """
+    ))
+    (Path("m") / "foo.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+        """
+    ))
+    Path("t.py").write_text(textwrap.dedent("""\
+        import m
+
+        def f(x):
+            pass
+
+        f(m.C())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite',
+                    '--output-files', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: m.C) -> None: ...
+    """)
+
+
+def test_typefinder_defined_in_main():
+    # Also check that we don't just build a map the first time we need it
+    # by checking for a name that is only defined after that
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C1(): pass
+
+        def f(x):
+            pass
+
+        f(C1())
+
+        class C2:
+            pass
+
+        f(C2())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite',
+                    '--output-files', '--no-sampling', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: "C1|C2") -> None: ...
+    """)
+
+
