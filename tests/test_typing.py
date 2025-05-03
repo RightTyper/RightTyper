@@ -107,7 +107,7 @@ def test_get_value_type():
     assert "typing.AsyncGenerator" == get_value_type(async_range(10))
     assert "typing.AsyncGenerator" == get_value_type(aiter(async_range(10)))
 
-    assert f"{__name__}.MyGeneric[builtins.int, builtins.str]" == \
+    assert f"{__name__}.MyGeneric[int, str]" == \
             get_value_type(MyGeneric[int, str]())
 
 

@@ -216,63 +216,161 @@ def normalize_module_name(module_name: str) -> str:
     return module_name
 
 
-@cache
-def search_type(t: type) -> tuple[str, str] | None:
-    """Searches for a given type in its __module__ and any submodules,
-       returning the module and qualified name under which it exist, if any.
-    """
+class TypeFinder:
+    """Maps type objects to the module and qualified name under which they are exported."""
 
-    def is_defined_in(target: type|ModuleType, name_parts: list[str], name_index: int=0) -> bool:
-        """Checks whether a name, given split into name_parts, is defined in a class or module."""
-        if name_index<len(name_parts) and (obj := target.__dict__.get(name_parts[name_index])):
-            if obj is t:
-                return True
+    def __init__(self):
+        self._sys_modules_len = 0
+        self._known_modules: set[str] = set()
+        self._map: dict[type, tuple[list[str], list[str]]] = dict()
+        self._private_map: dict[type, tuple[list[str], list[str]]] = dict()
 
-            if type(obj) in (type, ModuleType):
-                return is_defined_in(obj, name_parts, name_index+1)
+    @staticmethod
+    def _to_strings(r: tuple[list[str], list[str]]) -> tuple[str, str]:
+        return ".".join(r[0]), ".".join(r[1])
 
-        return False
 
-    name_parts = t.__qualname__.split('.')
+    def find(self, t: type) -> tuple[str, str]|None:
+        """Given a type object, return its module and qualified name as strings."""
 
-    # Is it defined where it claims to be?
-    if (
-        '<locals>' in name_parts or (   # we can't fully check local names... trust them?
-            (m := sys.modules.get(t.__module__)) and is_defined_in(m, name_parts)
-        )
-    ):
-        return normalize_module_name(t.__module__), t.__qualname__
+        self._update_map()
 
-    # Try to find it by some other name
-    visited = set()
-    def find_in(m_name: str, target: type|ModuleType, path: list[str] = []) -> tuple[str, str]|None:
-        """Searches for a type in modules and classes, returning the module's name and its qualified name
-           if found.
-        """
-        if target not in visited:
-            visited.add(target)
+        if t.__module__ == '__main__' and t not in self._map and t not in self._private_map:
+            # TODO if running in __main__'s top-level code, the code may not yet have
+            # reached the location where the type is defined.  We could handle this much
+            # better by doing this mapping after execution and using __main__'s dictionary
+            # returned by runpy.
+            # TODO this is invoked after runpy is done running the module/script,
+            # sys.modules['__main__'] may point back to RightTyper's main...
+            # the same change above would resolve this as well.
+            self._add_types_from(sys.modules['__main__'], ['__main__'], [], is_private=False)
 
-            # TODO should we limit this to public names (in __all__, don't start with _, etc.) ?
-            for name, obj in target.__dict__.items():
-                if obj is t:
-                    return m_name, ('.').join(path + [name])
-
-                if type(obj) is type:
-                    if (f := find_in(m_name, obj, path + [name])):
-                        return f
-
-                elif type(obj) is ModuleType and obj.__name__.startswith(m_name):
-                    if (f := find_in(obj.__name__, obj)):
-                        return f
+        if (r := self._map.get(t)) or (r := self._private_map.get(t)):
+            return self._to_strings(r)
 
         return None
 
-    if (m := sys.modules.get(t.__module__)) and (f := find_in(t.__module__, m)):
+
+    def _update_map(self) -> None:
+        """Updates our internal map of types to modules and names."""
+        # We detect changes in sys.modules by changes in its size,
+        # assuming it monotonically increases in size.
+        # TODO change to doing this mapping after execution, when
+        # changes no longer affect us.
+        if len(sys.modules) != self._sys_modules_len:
+            sys_modules = list(sys.modules) # list() in case it changes while we're working
+            for m in sys_modules:
+                if (
+                    m == '__main__'
+                    or m in self._known_modules
+                ):
+                    continue
+
+                self._add_types_from(
+                    sys.modules[m],
+                    m.split('.'), [],
+                    is_private=(m.startswith("_") or "._" in m)
+                )
+                self._known_modules.add(m)
+
+            self._sys_modules_len = len(sys_modules)
+
+
+    def _add_types_from(
+        self,
+        target: type|ModuleType,
+        mod_parts: list[str],
+        name_parts: list[str],
+        *,
+        is_private: bool,
+        objs_in_path: set = set()
+    ) -> None:
+        """Recursively explores a module (or type), updating self._map.
+           'target': the object to explore
+           'mod_parts': the module name, split on '.'
+           'name_parts': the qualified name parts, split on '.'
+           'objs_in_path': set of objects being recursed on, for loop avoidance
+        """
+
+        dunder_all = (
+            set(target.__dict__.get('__all__'))
+            if isinstance(target, ModuleType) and isinstance((da := target.__dict__.get('__all__')), (list, tuple))
+            else None
+        )
+
+        for name, obj in target.__dict__.items():
+            name_is_private = (
+                is_private
+                or (dunder_all is not None and name not in dunder_all)
+                or name.startswith("_")
+            )
+
+            if isinstance(obj, (type, ModuleType)):
+                t = type(obj)
+                new_name_parts = name_parts + [name]
+
+                # Some module objects are really namespaces, like "sys.monitoring"; they
+                # don't show up in sys.modules. We want to process any such, but leave others
+                # to be processed on their own from sys.modules
+                if t is ModuleType and obj.__name__ in sys.modules:
+                    continue
+
+                if t is not ModuleType:
+                    the_map = self._private_map if name_is_private else self._map
+
+                    if (prev := the_map.get(cast(type, obj))):
+                        prev_pkg = prev[0][0]
+                        this_pkg = mod_parts[0]
+                        prev_len = len(prev[0]) + len(prev[1])
+                        this_len = len(mod_parts) + len(new_name_parts)
+
+                    # When a module creates an alias for some other package's type,
+                    # it must first import that dependency; that causes the dependency
+                    # to show up first in sys.modules. Because of this, if a name already
+                    # exists for a type pointing to another package, we don't override it.
+                    # However, within a package, modules often load submodules before
+                    # creating aliases that give types their "official" names. Within the
+                    # same package, we pick the shortest, as shorter names are easier to
+                    # use, and thus more likely to be the intended name.
+                    # We assume that the package is given by the module name's first
+                    # dot-delimited part, which isn't always true (e.g., namespace packages).
+                    # TODO figure out package based on __file__ and/or __path__
+                    if (
+                        not prev
+                        or (
+                            prev_pkg == this_pkg and (
+                                prev_len > this_len
+                                or (prev_len == this_len and new_name_parts[-1] == obj.__name__)
+                            )
+                        )
+                    ):
+                        the_map[cast(type, obj)] = (mod_parts, new_name_parts)
+
+                if obj not in objs_in_path:
+                    self._add_types_from(
+                        cast(type|ModuleType, obj),
+                        mod_parts,
+                        new_name_parts,
+                        is_private=name_is_private,
+                        objs_in_path=objs_in_path | {obj}
+                    )
+
+
+type_finder = TypeFinder()
+
+
+@cache
+def search_type(t: type) -> tuple[str, str] | None:
+    """Searches for a given type in its __module__ and any submodules,
+       returning the module and qualified name under which it exists, if any.
+    """
+
+    # Look up type in map
+    if (f := type_finder.find(t)):
         return normalize_module_name(f[0]), f[1]
 
-    # TODO if runpy is done running the module/script, sys.modules['__main__'] may
-    # point back to RightTyper's main...  figure out a better way to handle it
-    if t.__module__ == '__main__':
+    # Just trust local scope names... can we do better?
+    if '<locals>' in t.__qualname__:
         return normalize_module_name(t.__module__), t.__qualname__
 
     return None
@@ -499,11 +597,8 @@ def get_value_type(
 
     # using getattr or hasattr here can lead to problems when __getattr__ is overridden
     if (orig := inspect.getattr_static(value, "__orig_class__", None)):
-        return TypeInfo(orig.__module__, orig.__qualname__,
-                        tuple(
-                            TypeInfo.from_type(a) for a in orig.__args__
-                        )
-               )
+        assert type(orig) is GenericAlias
+        return hint2type(orig)
 
     t = type(value)
     if t is RandomDict:
@@ -590,16 +685,26 @@ def get_value_type(
             return TypeInfo("typing", "Iterator", args=args)
         elif (
             t is GETITEM_ITER
-            and (l := first_referent())
+            and (l := first_referent()) is not None
             and (getitem := getattr(type(l), "__getitem__", None)) is not None
         ):
-            src = recurse(getitem)
-            assert src.type_obj is abc.Callable
-            return TypeInfo("typing", "Iterator", args=(
-                    TypeInfo.from_type(PostponedIteratorArg, args=(src,)),
+            # If 'getitem' is a Python (non-native) function, we can intercept it;
+            # add a postponed evaluation entry.
+            if type(getitem) in (FunctionType, MethodType):
+                src = recurse(getitem)
+                assert src.type_obj is abc.Callable
+                return TypeInfo("typing", "Iterator", args=(
+                        TypeInfo.from_type(PostponedIteratorArg, args=(src,)),
+                    )
                 )
-            )
-        elif False and ( # FIXME
+
+            if (l_t := type(l)).__module__ == 'numpy' and l_t.__qualname__ == 'ndarray' and l.size > 0:
+                # Use __getitem__, as l.dtype contains classes from numpy.dtypes;
+                # check size, as using typing.Never for size=0 leads to mypy errors
+                return TypeInfo("typing", "Iterator", args=(get_type_name(type(getitem(l, 0)), depth+1),))
+
+            return TypeInfo("typing", "Iterator")
+        elif (
             t is zip
             and (l := first_referent()) is not None
             and type(l) is tuple
@@ -607,17 +712,19 @@ def get_value_type(
         ):
             zip_sources = tuple(recurse(s) for s in l)
             args = (
+                # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
                 TypeInfo.from_type(tuple, module="", args=tuple(
-                    src.args[0] if src.qualname() == "typing.Iterator"
+                    (src.args[0] if src.args else UnknownTypeInfo) if src.qualname() == "typing.Iterator"
                     else TypeInfo.from_type(PostponedIteratorArg, args=(src,))
                     for src in zip_sources
                 )),
             )
             return TypeInfo("typing", "Iterator", args=args)
-        elif False: # FIXME (t is enumerate and (l := first_referent()) is not None and isinstance(l, abc.Iterator)):
+        elif (t is enumerate and (l := first_referent()) is not None and isinstance(l, abc.Iterator)):
             src = recurse(l)
             args = (
-                (src.args[0],) if src.qualname() == "typing.Iterator"
+                # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
+                ((src.args[0] if src.args else UnknownTypeInfo),) if src.qualname() == "typing.Iterator"
                 else (TypeInfo.from_type(PostponedIteratorArg, args=(src,)),)
             )
 
@@ -653,14 +760,14 @@ def get_value_type(
         if (dtype := jx_dtype(value)) is not None:
             shape = " ".join(str(d) for d in value.shape)
             return TypeInfo("jaxtyping", dtype, args=(
-                get_type_name(type(value), depth+1),
+                get_type_name(t, depth+1),
                 f"{shape}"
             ))
 
-    if (t := type(value)).__module__ == 'numpy' and t.__qualname__ == 'ndarray':
+    if t.__module__ == 'numpy' and t.__qualname__ == 'ndarray':
         return TypeInfo("numpy", "ndarray", args=(
             AnyTypeInfo,
             get_type_name(type(value.dtype), depth+1)
         ))
 
-    return get_type_name(type(value), depth+1)
+    return get_type_name(t, depth+1)
