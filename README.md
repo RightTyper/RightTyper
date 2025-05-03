@@ -30,7 +30,7 @@ The graph below presents the overhead of using RightTyper versus two
 previous tools, MonkeyType and PyAnnotate, across a range of
 benchmarks. On average, RightTyper imposes only 30% overhead compared
 to running plain Python ("none"). On one popular package (black),
-RightTyper imposes only 20% overhead, while RightTyper slows down
+RightTyper imposes only 20% overhead, while MonkeyType slows down
 execution by over 37x. In extreme cases, MonkeyType runs over 3,000x
 slower than RightTyper.
 
