@@ -220,9 +220,10 @@ class Sample:
                 def visit(vself, node: TypeInfo) -> TypeInfo:
 #                    if self.self_type: print(f"checking {str(node)} against {str(self.self_type)}")
                     if (
-                        self.self_type and
-                        node.type_obj and
-                        self.self_type.type_obj in node.type_obj.__mro__
+                        self.self_type
+                        and self.self_replacement
+                        and node.type_obj
+                        and self.self_type.type_obj in node.type_obj.__mro__
                     ):
 #                        print(f"replacing {str(node)} with {str(self.self_replacement)}")
                         node = self.self_replacement.replace(is_self=True)
