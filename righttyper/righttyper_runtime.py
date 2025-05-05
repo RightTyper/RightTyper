@@ -21,6 +21,7 @@ from types import (
     MappingProxyType
 )
 from typing import Any, cast, TypeAlias, get_type_hints, get_origin, get_args
+import typing
 from pathlib import Path
 
 from righttyper.random_dict import RandomDict
@@ -306,7 +307,7 @@ class TypeFinder:
                 or name.startswith("_")
             )
 
-            if isinstance(obj, (type, ModuleType)):
+            if isinstance(obj, (type, ModuleType, typing._SpecialForm, typing._BaseGenericAlias)): # type: ignore[attr-defined]
                 t = type(obj)
                 new_name_parts = name_parts + [name]
 
@@ -347,9 +348,9 @@ class TypeFinder:
                     ):
                         the_map[cast(type, obj)] = (mod_parts, new_name_parts)
 
-                if obj not in objs_in_path:
+                if isinstance(obj, type) and obj not in objs_in_path:
                     self._add_types_from(
-                        cast(type|ModuleType, obj),
+                        obj,
                         mod_parts,
                         new_name_parts,
                         is_private=name_is_private,

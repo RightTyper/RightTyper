@@ -710,6 +710,33 @@ def test_method_overriding():
     """)
 
 
+def test_method_overriding_annotated():
+    t = textwrap.dedent("""\
+        from typing import Self, List
+
+        class A:
+            def foo(self: Self, x: List[int]):
+                return len(x)
+
+        class B(A):
+            def foo(self, x):
+                return len(x)
+
+        B().foo([1.0])
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: list[float]|list[int]) -> int: ...
+    """)
+
+
 def test_method_overriding_init_irrelevant():
     t = textwrap.dedent("""\
         class A:
@@ -871,8 +898,10 @@ def test_method_overriding_method_called_indirectly():
 
 def test_method_overriding_inherited():
     Path("t.py").write_text(textwrap.dedent("""\
+        from typing import Self
+
         class A:
-            def foo(self, x: float):
+            def foo(self: Self, x: float):
                 return self
 
         class B(A):
