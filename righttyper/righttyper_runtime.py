@@ -293,8 +293,9 @@ class TypeFinder:
         """
 
         dunder_all = (
-            set(target.__dict__.get('__all__'))
-            if isinstance(target, ModuleType) and isinstance((da := target.__dict__.get('__all__')), (list, tuple))
+            set(da)
+            if isinstance(target, ModuleType)
+            and isinstance((da := target.__dict__.get('__all__')), (list, tuple))
             else None
         )
 
@@ -698,7 +699,7 @@ def get_value_type(
                     )
                 )
 
-            if (l_t := type(l)).__module__ == 'numpy' and l_t.__qualname__ == 'ndarray' and l.size > 0:
+            if (l_t := type(l)).__module__ == 'numpy' and l_t.__qualname__ == 'ndarray' and getattr(l, "size", 0) > 0:
                 # Use __getitem__, as l.dtype contains classes from numpy.dtypes;
                 # check size, as using typing.Never for size=0 leads to mypy errors
                 return TypeInfo("typing", "Iterator", args=(get_type_name(type(getitem(l, 0)), depth+1),))

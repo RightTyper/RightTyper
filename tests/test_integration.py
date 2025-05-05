@@ -523,7 +523,7 @@ def test_internal_numpy_type():
     code = cst.parse_module(output)
 
     f = get_function(code, 'MyArray.__array_function__')
-    assert re.search(r'func: "numpy.[\w\.]*_ArrayFunctionDispatcher"', f)
+    assert re.search(r'func: "numpy.[\w\.]*_ArrayFunctionDispatcher"', str(f))
 
 
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
