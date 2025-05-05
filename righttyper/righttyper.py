@@ -915,11 +915,8 @@ def post_process() -> None:
         output_signatures(sig_changes, f)
 
 
-def process_file_wrapper(args) -> SignatureChanges|BaseException:
-    try:
-        return process_file(*args)
-    except BaseException as e:
-        return e
+def process_file_wrapper(args) -> SignatureChanges:
+    return process_file(*args)
 
 
 def process_all_files() -> list[SignatureChanges]:
@@ -955,12 +952,11 @@ def process_all_files() -> list[SignatureChanges]:
         for fname in fnames
     )
 
-    def process_files() -> abc.Iterator[SignatureChanges|BaseException]:
-        if options.use_multiprocessing:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
-                yield from executor.map(process_file_wrapper, args_gen)
-        else:
-            yield from map(process_file_wrapper, args_gen)
+    if options.use_multiprocessing:
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            results = executor.map(process_file_wrapper, args_gen)
+    else:
+        results = map(process_file_wrapper, args_gen)
 
     # 'rich' is unusable right after running its test suite,
     # so reload it just in case we just did that.
@@ -983,19 +979,10 @@ def process_all_files() -> list[SignatureChanges]:
     ) as progress:
         task1 = progress.add_task(description="", total=len(fnames))
 
-        exception = None
-        for result in process_files():
-            if isinstance(result, BaseException):
-                exception = result
-            else:
-                sig_changes.append(result)
-
+        for result in results:
+            sig_changes.append(result)
             progress.update(task1, advance=1)
             progress.refresh()
-
-        # complete as much of the work as possible before raising
-        if exception:
-            raise exception
 
     return sig_changes
 
