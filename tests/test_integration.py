@@ -3791,10 +3791,13 @@ def test_inconsistent_samples():
         """
     ))
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite',
-                    '--output-files', '--no-sampling', 't.py'], check=True)
+    p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite',
+                        '--output-files', '--no-sampling', 't.py'],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
+
+    assert b'Error' not in p.stdout
 
     # no annotation expected
     assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\
