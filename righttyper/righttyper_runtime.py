@@ -307,7 +307,11 @@ class TypeFinder:
                 or name.startswith("_")
             )
 
-            if isinstance(obj, (type, ModuleType, typing._SpecialForm, typing._BaseGenericAlias)): # type: ignore[attr-defined]
+            if (
+                isinstance(obj, (type, ModuleType))
+                # include typing's special definitions; must be hashable to use as dict key
+                or (target is typing and isinstance(obj, abc.Hashable))
+            ):
                 t = type(obj)
                 new_name_parts = name_parts + [name]
 
