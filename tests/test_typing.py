@@ -3,7 +3,7 @@ from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
 from collections import namedtuple
-from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal, cast
+from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal, cast, Self
 import pytest
 import importlib
 import types
@@ -165,6 +165,24 @@ def test_type_name_not_in_sys_modules():
     t.__module__ = 'doesntexist'
 
     assert rt.get_type_name(t) is UnknownTypeInfo
+
+
+def test_items_from_typing():
+    import typing
+
+    def get_type_name(obj):
+        # mypy ignore non-'type' asks for typing.*
+        return rt.get_type_name(cast(type, obj))
+
+    assert TypeInfo("typing", "Any") == get_type_name(Any)
+    assert TypeInfo("typing", "Self") == get_type_name(Self)
+    assert TypeInfo("typing", "List") == get_type_name(List)
+    assert TypeInfo("typing", "Callable") == get_type_name(Callable)
+    assert TypeInfo("typing", "Sequence") == get_type_name(typing.Sequence)
+    assert TypeInfo("typing", "Never") == get_type_name(typing.Never)
+
+    # the concrete "List[int]" isn't defined anywhere
+    assert UnknownTypeInfo is get_type_name(List[int])
 
 
 @pytest.mark.filterwarnings("ignore:coroutine .* never awaited")
