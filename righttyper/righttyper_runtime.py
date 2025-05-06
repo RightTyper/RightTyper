@@ -309,21 +309,19 @@ class TypeFinder:
 
             if (
                 isinstance(obj, (type, ModuleType))
-                # include typing's special definitions; must be hashable to use as dict key
-                or (target is typing and isinstance(obj, abc.Hashable))
+                # also include typing's special definitions; must be hashable to use as dict key
+                or (target is typing and isinstance(obj, abc.Hashable) and hasattr(obj, "__name__"))
             ):
-                t = type(obj)
-                new_name_parts = name_parts + [name]
-
                 # Some module objects are really namespaces, like "sys.monitoring"; they
                 # don't show up in sys.modules. We want to process any such, but leave others
                 # to be processed on their own from sys.modules
-                if t is ModuleType and obj.__name__ in sys.modules:
+                if isinstance(obj, ModuleType) and obj.__name__ in sys.modules:
                     continue
 
-                if t is not ModuleType:
-                    the_map = self._private_map if name_is_private else self._map
+                new_name_parts = name_parts + [name]
 
+                if not isinstance(obj, ModuleType):
+                    the_map = self._private_map if name_is_private else self._map
                     if (prev := the_map.get(cast(type, obj))):
                         prev_pkg = prev[0][0]
                         this_pkg = mod_parts[0]
@@ -352,7 +350,7 @@ class TypeFinder:
                     ):
                         the_map[cast(type, obj)] = (mod_parts, new_name_parts)
 
-                if isinstance(obj, type) and obj not in objs_in_path:
+                if isinstance(obj, (type, ModuleType)) and obj not in objs_in_path:
                     self._add_types_from(
                         obj,
                         mod_parts,
