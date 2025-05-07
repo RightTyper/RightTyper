@@ -614,13 +614,19 @@ def get_value_type(
         except Exception:
             pass
         return TypeInfo.from_type(dict, module='', args=args)
-    elif t in (dict, collections.defaultdict, collections.OrderedDict, collections.ChainMap):
+    elif t in (
+        dict, collections.defaultdict, collections.OrderedDict, collections.ChainMap,
+        MappingProxyType
+    ):
         if value:
             # it's more efficient to sample a key and then use it than to build .items()
             el = random_item(value)
             args = (recurse(el), recurse(value[el]))
         else:
             args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+
+        if t is MappingProxyType:
+            return TypeInfo(name='MappingProxyType', module='types', type_obj=t, args=args)
         return TypeInfo.from_type(t, t.__module__ if t.__module__ != 'builtins' else '', args=args)
     elif t is list:
         if value:

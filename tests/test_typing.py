@@ -63,6 +63,9 @@ def test_get_value_type():
     assert "dict[str, str]" == get_value_type({'a': 'b'})
     assert "dict[typing.Never, typing.Never]" == get_value_type(dict())
 
+    assert "types.MappingProxyType[str, int]" == get_value_type(types.MappingProxyType({'a': 1}))
+    assert "types.MappingProxyType[typing.Never, typing.Never]" == get_value_type(types.MappingProxyType(dict()))
+
     assert "tuple" == get_value_type(tuple())
     assert "tuple[int, str]" == get_value_type((1, "foo"))
 #    assert "tuple[()]" == get_value_type(tuple())  # FIXME
