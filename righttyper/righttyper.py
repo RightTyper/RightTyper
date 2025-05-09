@@ -347,8 +347,8 @@ class Observations:
                         parents_arg_types = [arg[1] for arg in ann.args]
 
             if (signature := generalize(list(samples))) is None:
-                print(f"Error generalizing {func_info.func_id}: inconsistent samples.\n" +
-                      f"{[tuple(str(t) for t in s) for s in samples]}")
+                logger.info(f"Unable to generalize {func_info.func_id}: inconsistent samples.\n" +
+                            f"{[tuple(str(t) for t in s) for s in samples]}")
                 return None
 
             return FuncAnnotation(

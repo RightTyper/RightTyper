@@ -64,6 +64,7 @@ def runmypy(tmp_cwd, request):
     ["iter(('a', 'b'))", "Iterator[str]"],
     ["iter(tuple(c for c in ('a', 'b')))", "Iterator[str]"],
     ["iter(zip([0], ('a',)))", "Iterator[tuple[int, str]]"],
+    ["zip([0])", "Iterator[tuple[int]]"],
     ["enumerate(('a', 'b'))", "enumerate[str]"],
     ["iter(zip([0], (c for c in ('a',))))", "Iterator[tuple[int, str]]"],
     ["enumerate(c for c in ('a', 'b') if c)", "enumerate[str]"],
@@ -3791,10 +3792,13 @@ def test_inconsistent_samples():
         """
     ))
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite',
-                    '--output-files', '--no-sampling', 't.py'], check=True)
+    p = subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite',
+                        '--output-files', '--no-sampling', 't.py'],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
+
+    assert b'Error' not in p.stdout
 
     # no annotation expected
     assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\

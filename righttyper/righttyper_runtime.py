@@ -307,19 +307,21 @@ class TypeFinder:
                 or name.startswith("_")
             )
 
-            if isinstance(obj, (type, ModuleType, typing._SpecialForm, typing._BaseGenericAlias)): # type: ignore[attr-defined]
-                t = type(obj)
-                new_name_parts = name_parts + [name]
-
+            if (
+                isinstance(obj, (type, ModuleType))
+                # also include typing's special definitions; must be hashable to use as dict key
+                or (target is typing and isinstance(obj, abc.Hashable) and hasattr(obj, "__name__"))
+            ):
                 # Some module objects are really namespaces, like "sys.monitoring"; they
                 # don't show up in sys.modules. We want to process any such, but leave others
                 # to be processed on their own from sys.modules
-                if t is ModuleType and obj.__name__ in sys.modules:
+                if isinstance(obj, ModuleType) and obj.__name__ in sys.modules:
                     continue
 
-                if t is not ModuleType:
-                    the_map = self._private_map if name_is_private else self._map
+                new_name_parts = name_parts + [name]
 
+                if not isinstance(obj, ModuleType):
+                    the_map = self._private_map if name_is_private else self._map
                     if (prev := the_map.get(cast(type, obj))):
                         prev_pkg = prev[0][0]
                         this_pkg = mod_parts[0]
@@ -348,7 +350,7 @@ class TypeFinder:
                     ):
                         the_map[cast(type, obj)] = (mod_parts, new_name_parts)
 
-                if isinstance(obj, type) and obj not in objs_in_path:
+                if isinstance(obj, (type, ModuleType)) and obj not in objs_in_path:
                     self._add_types_from(
                         obj,
                         mod_parts,
@@ -612,13 +614,19 @@ def get_value_type(
         except Exception:
             pass
         return TypeInfo.from_type(dict, module='', args=args)
-    elif t in (dict, collections.defaultdict, collections.OrderedDict, collections.ChainMap):
+    elif t in (
+        dict, collections.defaultdict, collections.OrderedDict, collections.ChainMap,
+        MappingProxyType
+    ):
         if value:
             # it's more efficient to sample a key and then use it than to build .items()
             el = random_item(value)
             args = (recurse(el), recurse(value[el]))
         else:
             args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+
+        if t is MappingProxyType:
+            return TypeInfo(name='MappingProxyType', module='types', type_obj=t, args=args)
         return TypeInfo.from_type(t, t.__module__ if t.__module__ != 'builtins' else '', args=args)
     elif t is list:
         if value:
