@@ -604,7 +604,7 @@ def get_value_type(
     ) -> TypeInfo:
         if (f := find_function(frame, code)):
             try:
-                hints = get_type_hints(f)
+                hints = get_type_hints(f.function_object)
                 if 'return' in hints:
                     return hint2type(hints['return']).replace(code_id=CodeId(id(code)))
             except:
