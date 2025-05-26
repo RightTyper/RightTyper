@@ -460,7 +460,7 @@ def get_overrides(func: FuncContext) -> Iterator[FunctionType]:
             if inspect.isfunction(super_func): yield super_func
 
 
-def get_override_contexts(func: FuncContext | None, code: CodeType | None = None) -> Iterator[CodeType]:
+def get_override_contexts(func: FuncContext) -> Iterator[CodeType]:
     """Find each code instance overridden by the given method.
     
     Args:
@@ -470,11 +470,8 @@ def get_override_contexts(func: FuncContext | None, code: CodeType | None = None
         `CodeType` instances for each method definition overridden by `func`.
         If `func` is `None`, then code is yielded.
     """
-    if code:
-        yield code
-    if func:
-        for override in get_overrides(func):
-            yield override.__code__
+    for override in get_overrides(func):
+        yield override.__code__
 
 
 def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
@@ -546,6 +543,10 @@ def find_function(
                 elif isinstance(obj, type):
                     return find_in(obj.__dict__, index+1)
 
+        # print("==========")
+        # print(code.co_qualname)
+        # print(code.co_filename)
+        # sys.stdout.buffer.write(code.co_code)
         return None
 
 
@@ -562,6 +563,8 @@ def find_function(
         if (m := src2module(code.co_filename)):
             return find_in(m.__dict__)
 
+    # print("----------")
+    # print(code)
     return None
 
 

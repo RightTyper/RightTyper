@@ -297,9 +297,12 @@ class Observations:
             sample.returns = return_type
             if code_id not in self.samples:
                 self.samples[code_id] = set()
-            for overridden_code in get_override_contexts(sample.func_context, code):
-                overridden_code_id = CodeId(id(overridden_code))
-                self.samples[overridden_code_id].add(sample.process())
+            if sample.func_context:
+                for overridden_code in get_override_contexts(sample.func_context):
+                    overridden_code_id = CodeId(id(overridden_code))
+                    self.samples[overridden_code_id].add(sample.process())
+            else:
+                self.samples[code_id].add(sample.process())
             del self.pending_samples[(code_id, frame_id)]
             return True
 
@@ -715,7 +718,7 @@ def process_function_call(
         if (function := find_function(frame, code)):
             return {
                 param_name: get_type(param.default)
-                for param_name, param in inspect.signature(function).parameters.items()
+                for param_name, param in inspect.signature(function.function_object).parameters.items()
                 if param.default != inspect._empty
             }
 
@@ -791,8 +794,10 @@ def process_function_call(
     # and computed only when first recording a function.
     self_type, self_replacement, overrides = get_self_type()
     function_data = find_function(frame, code)
-    for code_instance in get_override_contexts(function_data, code):
-        obs.record_function(code_instance, args, get_defaults, overrides)
+    if function_data:
+        for code_instance in get_override_contexts(function_data):
+            obs.record_function(code_instance, args, get_defaults, overrides)
+    obs.record_function(code, args, get_defaults, overrides)
 
     arg_values = (
         *(get_type(args.locals[arg_name]) for arg_name in args.args),
