@@ -35,6 +35,7 @@ from righttyper.righttyper_process import (
 )
 from righttyper.righttyper_runtime import (
     find_function,
+    get_override_contexts,
     unwrap,
     get_value_type,
     get_type_name,
@@ -56,6 +57,7 @@ from righttyper.righttyper_types import (
     FuncInfo,
     FrameId,
     FuncAnnotation,
+    FuncContext,
     FunctionName,
     FunctionDescriptor,
     TypeInfo,
@@ -211,7 +213,7 @@ class Observations:
         code: CodeType,
         args: inspect.ArgInfo,
         get_defaults: abc.Callable[[], dict[str, TypeInfo]],
-        overrides: FunctionType|FunctionDescriptor|None
+        overrides: FunctionType|FunctionDescriptor|None,
     ) -> None:
         """Records that a function was visited, along with some details about it."""
 
@@ -248,6 +250,7 @@ class Observations:
         arg_types: tuple[TypeInfo, ...],
         self_type: TypeInfo|None,
         self_replacement: TypeInfo|None,
+        func_context: FuncContext|None,
     ) -> None:
         """Records a function start."""
 
@@ -258,6 +261,7 @@ class Observations:
             self_replacement=self_replacement,
             is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
             is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
+            func_context=func_context,
         )
 
 
@@ -293,7 +297,12 @@ class Observations:
             sample.returns = return_type
             if code_id not in self.samples:
                 self.samples[code_id] = set()
-            self.samples[code_id].add(sample.process())
+            if sample.func_context:
+                for overridden_code in get_override_contexts(sample.func_context):
+                    overridden_code_id = CodeId(id(overridden_code))
+                    self.samples[overridden_code_id].add(sample.process())
+            else:
+                self.samples[code_id].add(sample.process())
             del self.pending_samples[(code_id, frame_id)]
             return True
 
@@ -322,6 +331,10 @@ class Observations:
                 if code_id not in self.samples:
                     self.samples[code_id] = set()
                 self.samples[code_id].add(sample.process())
+                if sample.func_context:
+                    for overridden_code in get_override_contexts(sample.func_context):
+                        overridden_code_id = CodeId(id(overridden_code))
+                        self.samples[overridden_code_id].add(sample.process())
 
         def mk_annotation(code_id: CodeId) -> FuncAnnotation|None:
             func_info = self.functions_visited[code_id]
@@ -705,7 +718,7 @@ def process_function_call(
         if (function := find_function(frame, code)):
             return {
                 param_name: get_type(param.default)
-                for param_name, param in inspect.signature(function).parameters.items()
+                for param_name, param in inspect.signature(function.function_object).parameters.items()
                 if param.default != inspect._empty
             }
 
@@ -780,6 +793,10 @@ def process_function_call(
     # TODO self_type, like overrides, could just be saved in record_function,
     # and computed only when first recording a function.
     self_type, self_replacement, overrides = get_self_type()
+    function_data = find_function(frame, code)
+    if function_data:
+        for code_instance in get_override_contexts(function_data):
+            obs.record_function(code_instance, args, get_defaults, overrides)
     obs.record_function(code, args, get_defaults, overrides)
 
     arg_values = (
@@ -803,7 +820,8 @@ def process_function_call(
         FrameId(id(frame)),
         arg_values,
         self_type,
-        self_replacement
+        self_replacement,
+        function_data
     )
 
 

@@ -185,6 +185,12 @@ class FuncInfo:
     overrides: types.FunctionType|FunctionDescriptor|None
 
 
+@dataclass
+class FuncContext:
+    """This is a FunctionType with optional data about which class it is a part of"""
+    function_object: types.FunctionType
+    class_object: type | None
+
 
 @dataclass
 class Sample:
@@ -196,6 +202,7 @@ class Sample:
     is_generator: bool = False
     self_type: TypeInfo | None = None
     self_replacement: TypeInfo | None = None
+    func_context: FuncContext | None = None
 
 
     def process(self) -> tuple[TypeInfo, ...]:

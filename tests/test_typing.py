@@ -1,4 +1,4 @@
-from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample, UnknownTypeInfo
+from righttyper.righttyper_types import FuncContext, TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample, UnknownTypeInfo
 from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
@@ -691,3 +691,22 @@ def test_from_set_with_unions():
         TypeInfo.from_type(str, module=''),
     )
 
+
+def test_override_yields():
+    class A:
+        def foo(self):
+            pass
+
+
+    class B(A):
+        pass
+
+
+    class C(B):
+        def foo(self):
+            pass
+    
+    if isinstance(C.foo, types.FunctionType):
+        c_instance = FuncContext(C.foo, C)
+        overrides_c: set[types.FunctionType] = set(rt.get_overrides(c_instance))
+        assert overrides_c == {A.foo, C.foo}

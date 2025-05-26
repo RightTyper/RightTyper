@@ -3784,7 +3784,8 @@ def test_inconsistent_samples():
                 rt.get_type_name(int),
             ),
             self_type=None,
-            self_replacement=None
+            self_replacement=None,
+            func_context=None
         )
         rt.obs.record_return(
             code=g.__code__, frame_id=rt.FrameId(0), return_type=rt.get_type_name(int)
@@ -3804,3 +3805,44 @@ def test_inconsistent_samples():
     assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\
         def g(a, b): ...
     """)
+    
+
+def test_abstractmethods(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        from abc import ABC, abstractmethod
+        import math
+
+        class Shape(ABC):
+            @abstractmethod
+            def area(self):
+                pass
+
+
+        class Square(Shape):
+            def __init__(self, side_length):
+                super().__init__()
+                self.side_length = side_length
+
+            def area(self):
+                return self.side_length * self.side_length
+
+
+        class Circle(Shape):
+            def __init__(self, radius):
+                super().__init__()
+                self.radius = radius
+
+            def area(self):
+                return self.radius * self.radius * math.pi
+
+
+        print(Square(0.5).area())
+        print(Circle(0.5).area())
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+    assert re.search("@abstractmethod\\s*def area\\(self: Self\\) -> float", output)

@@ -20,7 +20,7 @@ from types import (
     ModuleType,
     MappingProxyType
 )
-from typing import Any, cast, TypeAlias, get_type_hints, get_origin, get_args
+from typing import Any, Iterator, cast, TypeAlias, get_type_hints, get_origin, get_args
 import typing
 from pathlib import Path
 
@@ -30,12 +30,14 @@ from righttyper.righttyper_types import (
     Filename,
     FunctionName,
     FuncId,
+    FuncContext,
     T,
     TypeInfo,
     NoneTypeInfo,
     AnyTypeInfo,
     UnknownTypeInfo
 )
+from righttyper.righttyper_types import types
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 
 
@@ -442,6 +444,36 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     return UnknownTypeInfo
 
 
+def get_overrides(func: FuncContext) -> Iterator[FunctionType]:
+    """Returns each method overridden by the given method.
+    
+    Args:
+        func: A `FunctionType` instance.
+    Yields:
+        `FunctionType` instances for each method definition overridden by `func`.
+    """
+    yield func.function_object
+    if func.class_object:
+        for ancestor in func.class_object.__mro__:
+            super_func = getattr(ancestor, func.function_object.__name__, None)
+            if super_func: super_func = unwrap(super_func)
+            if inspect.isfunction(super_func): yield super_func
+
+
+def get_override_contexts(func: FuncContext) -> Iterator[CodeType]:
+    """Find each code instance overridden by the given method.
+    
+    Args:
+        func: An optional `FunctionType` instance.
+        code: An optional backup `CodeType` instance.
+    Yields:
+        `CodeType` instances for each method definition overridden by `func`.
+        If `func` is `None`, then code is yielded.
+    """
+    for override in get_overrides(func):
+        yield override.__code__
+
+
 def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
     """Like isinstance(), but returns the type matched."""
     for t in types:
@@ -481,12 +513,12 @@ def src2module(src: str) -> ModuleType|None:
 def find_function(
     caller_frame: FrameType,
     code: CodeType
-) -> abc.Callable|None:
+) -> FuncContext | None:
     """Attempts to map back from a code object to the function that uses it."""
 
     parts = code.co_qualname.split('.')
 
-    def find_in(namespace: dict|MappingProxyType, index: int=0) -> FunctionType|None:
+    def find_in(namespace: dict|MappingProxyType, index: int=0) -> FuncContext | None:
         if index < len(parts):
             name = parts[index]
             if (
@@ -504,13 +536,17 @@ def find_function(
                     and (obj := unwrap(obj))
                     and getattr(obj, "__code__", None) is code
                 ):
-                    return obj
+                    return FuncContext(obj, None)
 
                 if type(obj) is dict:
                     return find_in(obj, index+1)
                 elif isinstance(obj, type):
                     return find_in(obj.__dict__, index+1)
 
+        # print("==========")
+        # print(code.co_qualname)
+        # print(code.co_filename)
+        # sys.stdout.buffer.write(code.co_code)
         return None
 
 
@@ -527,6 +563,8 @@ def find_function(
         if (m := src2module(code.co_filename)):
             return find_in(m.__dict__)
 
+    # print("----------")
+    # print(code)
     return None
 
 
@@ -566,7 +604,7 @@ def get_value_type(
     ) -> TypeInfo:
         if (f := find_function(frame, code)):
             try:
-                hints = get_type_hints(f)
+                hints = get_type_hints(f.function_object)
                 if 'return' in hints:
                     return hint2type(hints['return']).replace(code_id=CodeId(id(code)))
             except:
