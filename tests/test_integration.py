@@ -3784,7 +3784,8 @@ def test_inconsistent_samples():
                 rt.get_type_name(int),
             ),
             self_type=None,
-            self_replacement=None
+            self_replacement=None,
+            func_context=None
         )
         rt.obs.record_return(
             code=g.__code__, frame_id=rt.FrameId(0), return_type=rt.get_type_name(int)
