@@ -2433,7 +2433,7 @@ def test_no_return():
     assert "def gen() -> Iterator[int]:" in output
 
 
-@pytest.mark.parametrize("python_version", ["3.11", "3.12"])
+@pytest.mark.parametrize("python_version", ["3.9", "3.11", "3.12"])
 def test_generic_simple(python_version):
     t = textwrap.dedent(
         """\
@@ -2449,7 +2449,7 @@ def test_generic_simple(python_version):
                     f'--python-version={python_version}', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    if python_version == "3.11":
+    if python_version != "3.12":
         assert re.search('from typing import.*TypeVar', output)
         assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
         assert "def add(a: rt_T1, b: rt_T1) -> rt_T1" in output

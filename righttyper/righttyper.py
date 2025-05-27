@@ -463,7 +463,8 @@ class Observations:
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
 
-                if node.type_obj is UnionType:
+                # if typevar_index is nonzero, the union will be replaced by a typevar
+                if node.type_obj is UnionType and not node.typevar_index:
                     has_none = node.args[-1] == NoneTypeInfo
                     non_none_count = len(node.args) - int(has_none)
                     if non_none_count > 1:
