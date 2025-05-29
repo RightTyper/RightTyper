@@ -237,36 +237,36 @@ class Observations:
         )
 
 
-    def record_yield(self, code: CodeType, frame_id: FrameId, yield_type: TypeInfo) -> bool:
+    def record_yield(self, code: CodeType, frame_id: FrameId, yield_value: Any) -> bool:
         """Records a yield."""
 
         # print(f"record_yield {code.co_qualname}")
         if (sample := self.pending_traces.get((CodeId(id(code)), frame_id))):
-            sample.yields.add(yield_type)
+            sample.yields.add(get_value_type(yield_value))
             return True
 
         return False
 
 
-    def record_send(self, code: CodeType, frame_id: FrameId, send_type: TypeInfo) -> bool:
+    def record_send(self, code: CodeType, frame_id: FrameId, send_value: Any) -> bool:
         """Records a send."""
 
         # print(f"record_send {code.co_qualname}")
         if (sample := self.pending_traces.get((CodeId(id(code)), frame_id))):
-            sample.sends.add(send_type)
+            sample.sends.add(get_value_type(send_value))
             return True
 
         return False
 
 
-    def record_return(self, code: CodeType, frame_id: FrameId, return_type: TypeInfo) -> bool:
+    def record_return(self, code: CodeType, frame_id: FrameId, return_value: Any) -> bool:
         """Records a return."""
 
         # print(f"record_return {code.co_qualname}")
 
         code_id = CodeId(id(code))
         if (sample := self.pending_traces.get((code_id, frame_id))):
-            sample.returns = return_type
+            sample.returns = get_value_type(return_value)
             if code_id not in self.traces:
                 self.traces[code_id] = Counter()
             self.traces[code_id].update((sample.process(),))
@@ -513,7 +513,7 @@ def send_handler(code: CodeType, frame_id: FrameId, arg0: Any) -> None:
     obs.record_send(
         code,
         frame_id, 
-        get_value_type(arg0)
+        arg0
     )
 
 
@@ -661,12 +661,10 @@ def process_yield_or_return(
         frame = frame.f_back
 
     if frame:
-        typeinfo = get_value_type(return_value)
-
         if event_type == sys.monitoring.events.PY_YIELD:
-            found = obs.record_yield(code, FrameId(id(frame)), typeinfo)
+            found = obs.record_yield(code, FrameId(id(frame)), return_value)
         else:
-            found = obs.record_return(code, FrameId(id(frame)), typeinfo)
+            found = obs.record_return(code, FrameId(id(frame)), return_value)
 
         del frame
 
@@ -805,9 +803,7 @@ def in_instrumentation_code() -> bool:
         while f and countdown > 0:
             # using torch dynamo, f_code can apparently be a dict...
             if isinstance(f.f_code, CodeType) and f.f_code in instrumentation_functions_code:
-                # In instrumentation code
-                return True
-                break
+                return True # In instrumentation code
             f = f.f_back
             countdown -= 1
     return False
