@@ -20,7 +20,7 @@ from types import (
     ModuleType,
     MappingProxyType
 )
-from typing import Any, cast, TypeAlias, get_type_hints, get_origin, get_args
+from typing import Any, cast, TypeAlias, get_type_hints, get_origin, get_args, Callable
 import typing
 from pathlib import Path
 
@@ -37,6 +37,7 @@ from righttyper.righttyper_types import (
     UnknownTypeInfo
 )
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
+from .options import options
 
 
 @cache
@@ -534,11 +535,229 @@ class PostponedIteratorArg:
     """Type used to postpone evaluating generator-based iterators"""
 
 
+def _type_for_generator(
+    obj: GeneratorType|AsyncGeneratorType|CoroutineType,
+    type_obj: type,
+    frame: FrameType,
+    code: CodeType,
+) -> TypeInfo:
+    if (f := find_function(frame, code)):
+        try:
+            hints = get_type_hints(f)
+            if 'return' in hints:
+                return hint2type(hints['return']).replace(code_id=CodeId(id(code)))
+        except:
+            pass
+
+    return TypeInfo.from_type(type_obj, module="typing", code_id=CodeId(id(code)))
+
+
+def _random_item[T](container: abc.Collection[T]) -> T:
+    """Randomly samples from a container."""
+    # Unbounded, islice's running time seems to be O(N); we arbitrarily bound to 1,000 items
+    # to keep the overhead low (similar to list's O(1), in fact)
+    n = random.randint(0, min(options.container_sample_limit, len(container)-1))
+    return next(itertools.islice(container, n, None))
+
+
+def _first_referent(value: Any) -> object|None:
+    """Returns the first object 'value' refers to, if any."""
+    import gc
+    ref = gc.get_referents(value)
+    return ref[0] if len(ref) else None
+
+
+def _handle_tuple(value: Any, depth: int) -> TypeInfo:
+    if value:
+        args = tuple(get_value_type(fld, depth+1) for fld in value)
+    else:
+        args = tuple()  # FIXME this should yield "tuple[()]"
+    return TypeInfo.from_type(tuple, module='', args=args)
+
+
+def _handle_dict(value: Any, depth: int) -> TypeInfo:
+    t = type(value)
+    if value:
+        # it's more efficient to sample a key and then use it than to build .items()
+        el = _random_item(value)
+        args = (get_value_type(el, depth+1), get_value_type(value[el], depth+1))
+    else:
+        args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+
+    if t is MappingProxyType:
+        return TypeInfo(name='MappingProxyType', module='types', type_obj=t, args=args)
+    return TypeInfo.from_type(t, t.__module__ if t.__module__ != 'builtins' else '', args=args)
+
+
+def _handle_randomdict(value: Any, depth: int) -> TypeInfo:
+    args: tuple[TypeInfo, ...] = ()
+    try:
+        if value:
+            el = value.random_item()
+            args = tuple(get_value_type(fld, depth+1) for fld in el)
+        else:
+            args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+    except Exception:
+        pass
+    return TypeInfo.from_type(dict, module='', args=args)
+
+
+def _handle_list(value: Any, depth: int) -> TypeInfo:
+    if value:
+        el = value[random.randint(0, len(value)-1)] # this is O(1), much faster than islice()
+        args = (get_value_type(el, depth+1),)
+    else:
+        args = (TypeInfo("typing", "Never"),)
+    return TypeInfo.from_type(list, module='', args=args)
+
+
+def _handle_set(value: Any, depth: int) -> TypeInfo:
+    t = type(value)
+    # note that deque is-a Sequence, but its integer indexing is O(N)
+    if value:
+        el = _random_item(value)
+        args = (get_value_type(el, depth+1),)
+    else:
+        args = (TypeInfo("typing", "Never"),)
+    return TypeInfo.from_type(t, module='', args=args)
+
+
+def _handle_int_iter(value: Any, depth: int) -> TypeInfo:
+    return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(int, module=""),))
+
+def _handle_dict_keyiter(value: Any, depth: int) -> TypeInfo|None:
+    if type(d := _first_referent(value)) is dict:
+        return TypeInfo("typing", "Iterator", args=(get_value_type(d, depth+1).args[0],))
+    return None
+
+def _handle_dict_valueiter(value: Any, depth: int) -> TypeInfo|None:
+    if type(d := _first_referent(value)) is dict:
+        return TypeInfo("typing", "Iterator", args=(get_value_type(d, depth+1).args[1],))
+    return None
+
+def _handle_dict_itemiter(value: Any, depth: int) -> TypeInfo|None:
+    if type(d := _first_referent(value)) is dict:
+        return TypeInfo("typing", "Iterator", args=(
+                   TypeInfo.from_type(tuple, module="", args=get_value_type(d, depth+1).args),)
+               )
+    return None
+
+def _handle_list_iter(value: Any, depth: int) -> TypeInfo|None:
+    if type(l := _first_referent(value)) is list:
+        return TypeInfo("typing", "Iterator", args=get_value_type(l, depth+1).args)
+    return None
+
+def _handle_set_iter(value: Any, depth: int) -> TypeInfo|None:
+    if type(s := _first_referent(value)) is set:
+        return TypeInfo("typing", "Iterator", args=get_value_type(s, depth+1).args)
+    return None
+
+def _handle_tuple_iter(value: Any, depth: int) -> TypeInfo|None:
+    if type(t := _first_referent(value)) is tuple:
+        if t:
+            el = t[random.randint(0, len(t)-1)] # this is O(1), much faster than islice()
+            args = (get_value_type(el, depth+1),)
+        else:
+            args = (TypeInfo("typing", "Never"),)
+        return TypeInfo("typing", "Iterator", args=args)
+    return None
+
+def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
+    if (
+        (obj := _first_referent(value)) is not None
+        and (getitem := getattr(type(obj), "__getitem__", None)) is not None
+    ):
+        # If 'getitem' is a Python (non-native) function, we can intercept it;
+        # add a postponed evaluation entry.
+        if type(getitem) in (FunctionType, MethodType):
+            src = get_value_type(getitem, depth+1)
+            assert src.type_obj is abc.Callable
+            return TypeInfo("typing", "Iterator", args=(
+                    TypeInfo.from_type(PostponedIteratorArg, args=(src,)),
+                )
+            )
+
+        if (
+            (obj_t := type(obj)).__module__ == 'numpy'
+            and obj_t.__qualname__ == 'ndarray'
+            and getattr(obj, "size", 0) > 0
+        ):
+            # Use __getitem__, as obj.dtype contains classes from numpy.dtypes;
+            # check size, as using typing.Never for size=0 leads to mypy errors
+            return TypeInfo("typing", "Iterator", args=(get_type_name(type(getitem(obj, 0)), depth+1),))
+
+        return TypeInfo("typing", "Iterator")
+    return None
+
+def _handle_zip(value: Any, depth: int) -> TypeInfo|None:
+    if (
+        type(t := _first_referent(value)) is tuple
+        and all(isinstance(s, abc.Iterator) for s in t)  # note a generator also IS-A abc.Iterator
+    ):
+        zip_sources = tuple(get_value_type(s, depth+1) for s in t)
+        args = (
+            # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
+            TypeInfo.from_type(tuple, module="", args=tuple(
+                (src.args[0] if src.args else UnknownTypeInfo) if src.qualname() == "typing.Iterator"
+                else TypeInfo.from_type(PostponedIteratorArg, args=(src,))
+                for src in zip_sources
+            )),
+        )
+        return TypeInfo("typing", "Iterator", args=args)
+    return None
+
+def _handle_enumerate(value: Any, depth: int) -> TypeInfo|None:
+    if (
+        (l := _first_referent(value)) is not None
+        and isinstance(l, abc.Iterator)
+    ):
+        src = get_value_type(l, depth+1)
+        args = (
+            # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
+            ((src.args[0] if src.args else UnknownTypeInfo),) if src.qualname() == "typing.Iterator"
+            else (TypeInfo.from_type(PostponedIteratorArg, args=(src,)),)
+        )
+
+        return TypeInfo.from_type(enumerate, module="", args=args)
+    return None
+
+_type2handler: dict[type, Callable[[Any, int], TypeInfo|None]] = {
+    NoneType: lambda value, depth: NoneTypeInfo,
+    tuple: _handle_tuple,
+    list: _handle_list,
+    RandomDict: _handle_randomdict,
+    dict: _handle_dict,
+    collections.defaultdict: _handle_dict,
+    collections.OrderedDict: _handle_dict,
+    collections.ChainMap: _handle_dict,
+    MappingProxyType: _handle_dict,
+    set: _handle_set,
+    frozenset: _handle_set,
+    collections.Counter: _handle_set,
+    # note that deque is-a Sequence, but its integer indexing is O(N)
+    collections.deque: _handle_set,
+    re.Pattern: lambda value, depth: TypeInfo.from_type(type(value), args=(get_value_type(value.pattern, depth+1),)),
+    re.Match: lambda value, depth: TypeInfo.from_type(type(value), args=(get_value_type(value.group(), depth+1),)),
+    RANGE_ITER: _handle_int_iter,
+    LONGRANGE_ITER: _handle_int_iter,
+    BYTES_ITER: _handle_int_iter,
+    BYTEARRAY_ITER: _handle_int_iter,
+    DICT_KEYITER: _handle_dict_keyiter,
+    DICT_VALUEITER: _handle_dict_valueiter,
+    DICT_ITEMITER: _handle_dict_itemiter,
+    LIST_ITER: _handle_list_iter,
+    LIST_REVERSED_ITER: _handle_list_iter,
+    SET_ITER: _handle_set_iter,
+    STR_ITER: lambda value, depth: TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(str, module=""),)),
+    TUPLE_ITER: _handle_tuple_iter,
+    GETITEM_ITER: _handle_getitem_iter,
+    zip: _handle_zip,
+    enumerate: _handle_enumerate,
+}
+
+
 def get_value_type(
     value: Any,
-    *,
-    container_sample_limit: int,
-    use_jaxtyping: bool,
     depth: int = 0
 ) -> TypeInfo:
     """
@@ -554,219 +773,56 @@ def get_value_type(
         print(f"Warning: RightTyper failed to compute the type of {value}.")
         return UnknownTypeInfo
 
-    t: type|None
+    t: type = type(value)
     args: tuple[TypeInfo|str|ellipsis, ...]
 
-
-    def type_for_generator(
-        obj: GeneratorType|AsyncGeneratorType|CoroutineType,
-        type_obj: type,
-        frame: FrameType,
-        code: CodeType,
-    ) -> TypeInfo:
-        if (f := find_function(frame, code)):
-            try:
-                hints = get_type_hints(f)
-                if 'return' in hints:
-                    return hint2type(hints['return']).replace(code_id=CodeId(id(code)))
-            except:
-                pass
-
-        return TypeInfo.from_type(type_obj, module="typing", code_id=CodeId(id(code)))
-
-
-    def recurse(v: Any) -> TypeInfo:
-        return get_value_type(
-            v,
-            use_jaxtyping=use_jaxtyping,
-            container_sample_limit=container_sample_limit,
-            depth=depth+1
-        )
-
-
-    def random_item[T](container: abc.Collection[T]) -> T:
-        """Randomly samples from a container."""
-        # Unbounded, islice's running time seems to be O(N); we arbitrarily bound to 1,000 items
-        # to keep the overhead low (similar to list's O(1), in fact)
-        n = random.randint(0, min(container_sample_limit, len(container)-1))
-        return next(itertools.islice(container, n, None))
-
-
-    def first_referent() -> object|None:
-        """Returns the first object 'value' refers to, if any."""
-        import gc
-        ref = gc.get_referents(value)
-        return ref[0] if len(ref) else None
-
+    if (h := _type2handler.get(type(value))):
+        if (ti := h(value, depth)) is not None:
+            return ti
 
     # using getattr or hasattr here can lead to problems when __getattr__ is overridden
     if (orig := inspect.getattr_static(value, "__orig_class__", None)):
         assert type(orig) is GenericAlias
         return hint2type(orig)
 
-    t = type(value)
-    if t is RandomDict:
-        args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
-        try:
-            if value:
-                el = value.random_item()
-                args = tuple(recurse(fld) for fld in el)
-        except Exception:
-            pass
-        return TypeInfo.from_type(dict, module='', args=args)
-    elif t in (
-        dict, collections.defaultdict, collections.OrderedDict, collections.ChainMap,
-        MappingProxyType
-    ):
-        if value:
-            # it's more efficient to sample a key and then use it than to build .items()
-            el = random_item(value)
-            args = (recurse(el), recurse(value[el]))
-        else:
-            args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
-
-        if t is MappingProxyType:
-            return TypeInfo(name='MappingProxyType', module='types', type_obj=t, args=args)
-        return TypeInfo.from_type(t, t.__module__ if t.__module__ != 'builtins' else '', args=args)
-    elif t is list:
-        if value:
-            el = value[random.randint(0, len(value)-1)] # this is O(1), much faster than islice()
-            args = (recurse(el),)
-        else:
-            args = (TypeInfo("typing", "Never"),)
-        return TypeInfo.from_type(t, module='', args=args)
-    elif t in (set, frozenset, collections.Counter, collections.deque):
-        # note that deque is-a Sequence, but its integer indexing is O(N)
-        if value:
-            el = random_item(value)
-            args = (recurse(el),)
-        else:
-            args = (TypeInfo("typing", "Never"),)
-        return TypeInfo.from_type(t, module='', args=args)
-    elif t is tuple:
-        if value:
-            args = tuple(recurse(fld) for fld in value)
-        else:
-            args = tuple()  # FIXME this should yield "tuple[()]"
-        return TypeInfo.from_type(t, module='', args=args)
-    elif t is re.Pattern:
-        return TypeInfo.from_type(t, args=(recurse(value.pattern),))
-    elif t is re.Match:
-        return TypeInfo.from_type(t, args=(recurse(value.group()),))
-    elif isinstance(value, (FunctionType, MethodType)):
+    if isinstance(value, (FunctionType, MethodType)):
         return type_from_annotations(value)
     elif isinstance(value, GeneratorType):
-        return type_for_generator(value, abc.Generator, value.gi_frame, value.gi_code)
+        return _type_for_generator(value, abc.Generator, value.gi_frame, value.gi_code)
     elif isinstance(value, AsyncGeneratorType):
-        return type_for_generator(value, abc.AsyncGenerator, value.ag_frame, value.ag_code)
+        return _type_for_generator(value, abc.AsyncGenerator, value.ag_frame, value.ag_code)
     elif isinstance(value, CoroutineType):
-        return type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
+        return _type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
     elif isinstance(value, type) and value is not type:
         return TypeInfo("", "type", args=(get_type_name(value, depth+1),), type_obj=t)
     elif t.__module__ == "builtins":
-        if t is NoneType:
-            return NoneTypeInfo
-        elif t in (RANGE_ITER, LONGRANGE_ITER, BYTES_ITER, BYTEARRAY_ITER):
-            return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(int, module=""),))
-        elif (t is DICT_KEYITER and (d := first_referent()) is not None and type(d) is dict):
-            return TypeInfo("typing", "Iterator", args=(recurse(d).args[0],))
-        elif (t is DICT_VALUEITER and (d := first_referent()) is not None and type(d) is dict):
-            return TypeInfo("typing", "Iterator", args=(recurse(d).args[1],))
-        elif (t is DICT_ITEMITER and (d := first_referent()) is not None and type(d) is dict):
-            return TypeInfo("typing", "Iterator", args=(
-                       TypeInfo.from_type(tuple, module="", args=recurse(d).args),)
-                   )
-        elif (
-            t in (LIST_ITER, LIST_REVERSED_ITER)
-            and (l := first_referent()) is not None
-            and type(l) is list
-        ):
-            return TypeInfo("typing", "Iterator", args=recurse(l).args)
-        elif (t is SET_ITER and (l := first_referent()) is not None and type(l) is set):
-            return TypeInfo("typing", "Iterator", args=recurse(l).args)
-        elif t is STR_ITER:
-            return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(str, module=""),))
-        elif (t is TUPLE_ITER and (l := first_referent()) is not None and type(l) is tuple):
-            if l:
-                el = l[random.randint(0, len(l)-1)] # this is O(1), much faster than islice()
-                args = (recurse(el),)
-            else:
-                args = (TypeInfo("typing", "Never"),)
-            return TypeInfo("typing", "Iterator", args=args)
-        elif (
-            t is GETITEM_ITER
-            and (l := first_referent()) is not None
-            and (getitem := getattr(type(l), "__getitem__", None)) is not None
-        ):
-            # If 'getitem' is a Python (non-native) function, we can intercept it;
-            # add a postponed evaluation entry.
-            if type(getitem) in (FunctionType, MethodType):
-                src = recurse(getitem)
-                assert src.type_obj is abc.Callable
-                return TypeInfo("typing", "Iterator", args=(
-                        TypeInfo.from_type(PostponedIteratorArg, args=(src,)),
-                    )
-                )
-
-            if (l_t := type(l)).__module__ == 'numpy' and l_t.__qualname__ == 'ndarray' and getattr(l, "size", 0) > 0:
-                # Use __getitem__, as l.dtype contains classes from numpy.dtypes;
-                # check size, as using typing.Never for size=0 leads to mypy errors
-                return TypeInfo("typing", "Iterator", args=(get_type_name(type(getitem(l, 0)), depth+1),))
-
-            return TypeInfo("typing", "Iterator")
-        elif (
-            t is zip
-            and (l := first_referent()) is not None
-            and type(l) is tuple
-            and all(isinstance(s, abc.Iterator) for s in l)  # note a generator also IS-A abc.Iterator
-        ):
-            zip_sources = tuple(recurse(s) for s in l)
-            args = (
-                # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
-                TypeInfo.from_type(tuple, module="", args=tuple(
-                    (src.args[0] if src.args else UnknownTypeInfo) if src.qualname() == "typing.Iterator"
-                    else TypeInfo.from_type(PostponedIteratorArg, args=(src,))
-                    for src in zip_sources
-                )),
-            )
-            return TypeInfo("typing", "Iterator", args=args)
-        elif (t is enumerate and (l := first_referent()) is not None and isinstance(l, abc.Iterator)):
-            src = recurse(l)
-            args = (
-                # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
-                ((src.args[0] if src.args else UnknownTypeInfo),) if src.qualname() == "typing.Iterator"
-                else (TypeInfo.from_type(PostponedIteratorArg, args=(src,)),)
-            )
-
-            return TypeInfo.from_type(t, module="", args=args)
-        elif in_builtins_import(cast(type, t)):
+        if in_builtins_import(t):
             return TypeInfo.from_type(t, module="") # these are "well known", so no module name needed
-        elif (name := from_types_import(cast(type, t))):
+        elif (name := from_types_import(t)):
             return TypeInfo(module="types", name=name, type_obj=t)
         elif (view := _is_instance(value, (abc.KeysView, abc.ValuesView))):
             # no name in "builtins" or "types" modules, so use abc protocol
             if value:
-                el = random_item(value)
-                args = (recurse(el),)
+                el = _random_item(value)
+                args = (get_value_type(el, depth+1),)
             else:
                 args = (TypeInfo("typing", "Never"),)
             return TypeInfo("typing", view.__qualname__, args=args)
         elif isinstance(value, abc.ItemsView):
             # no name in "builtins" or "types" modules, so use abc protocol
             if value:
-                el = random_item(value)
-                args = (recurse(el[0]), recurse(el[1]))
+                el = _random_item(value)
+                args = (get_value_type(el[0], depth+1), get_value_type(el[1], depth+1))
             else:
                 args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
             return TypeInfo("typing", "ItemsView", args=args)
         elif t.__name__ == 'async_generator_wrapped_value':
-            if (l := first_referent()) is not None:
-                return recurse(l)
+            if (l := _first_referent(value)) is not None:
+                return get_value_type(l, depth+1)
 
             return UnknownTypeInfo
 
-
-    if use_jaxtyping and hasattr(value, "dtype") and hasattr(value, "shape"):
+    if options.infer_shapes and hasattr(value, "dtype") and hasattr(value, "shape"):
         if (dtype := jx_dtype(value)) is not None:
             shape = " ".join(str(d) for d in value.shape)
             return TypeInfo("jaxtyping", dtype, args=(

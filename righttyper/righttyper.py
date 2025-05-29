@@ -81,31 +81,7 @@ from righttyper.righttyper_alarm import (
     ThreadAlarm,
 )
 
-@dataclass
-class Options:
-    script_dir: str = ""
-    include_files_pattern: str = ""
-    include_all: bool = False
-    include_functions_pattern: tuple[str, ...] = tuple()
-    target_overhead: float = 5.0
-    infer_shapes: bool = False
-    ignore_annotations: bool = False
-    overwrite: bool = False
-    output_files: bool = False
-    generate_stubs: bool = False
-    srcdir: str = ""
-    use_multiprocessing: bool = True
-    sampling: bool = True
-    replace_dict: bool = False
-    container_sample_limit: int = 1000
-    use_typing_union: bool = False
-    use_typing_self: bool = False
-    use_typing_never: bool = False
-    inline_generics: bool = False
-    only_update_annotations: bool = False
-
-options = Options()
-
+from .options import options
 
 logger = logging.getLogger("righttyper")
 
@@ -519,11 +495,7 @@ def send_handler(code: CodeType, frame_id: FrameId, arg0: Any) -> None:
     obs.record_send(
         code,
         frame_id, 
-        get_value_type(
-            arg0,
-            container_sample_limit=options.container_sample_limit,
-            use_jaxtyping=options.infer_shapes
-        )
+        get_value_type(arg0)
     )
 
 
@@ -671,11 +643,7 @@ def process_yield_or_return(
         frame = frame.f_back
 
     if frame:
-        typeinfo = get_value_type(
-            return_value,
-            container_sample_limit=options.container_sample_limit,
-            use_jaxtyping=options.infer_shapes
-        )
+        typeinfo = get_value_type(return_value)
 
         if event_type == sys.monitoring.events.PY_YIELD:
             found = obs.record_yield(code, FrameId(id(frame)), typeinfo)
@@ -694,18 +662,10 @@ def process_function_call(
     frame: FrameType,
 ) -> None:
 
-    def get_type(v: Any) -> TypeInfo:
-        return get_value_type(
-            v,
-            container_sample_limit=options.container_sample_limit,
-            use_jaxtyping=options.infer_shapes
-        )
-
-
     def get_defaults() -> dict[str, TypeInfo]:
         if (function := find_function(frame, code)):
             return {
-                param_name: get_type(param.default)
+                param_name: get_value_type(param.default)
                 for param_name, param in inspect.signature(function).parameters.items()
                 if param.default != inspect._empty
             }
@@ -784,16 +744,16 @@ def process_function_call(
     obs.record_function(code, args, get_defaults, overrides)
 
     arg_values = (
-        *(get_type(args.locals[arg_name]) for arg_name in args.args),
+        *(get_value_type(args.locals[arg_name]) for arg_name in args.args),
         *(
             (TypeInfo.from_set({
-                get_type(val) for val in args.locals[args.varargs]
+                get_value_type(val) for val in args.locals[args.varargs]
             }),)
             if args.varargs else ()
         ),
         *(
             (TypeInfo.from_set({
-                get_type(val) for val in args.locals[args.keywords].values()
+                get_value_type(val) for val in args.locals[args.keywords].values()
             }),)
             if args.keywords else ()
         )

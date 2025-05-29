@@ -7,16 +7,21 @@ from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List
 import pytest
 import importlib
 import types
-from functools import partial
+import righttyper.options as options
 
-rt_get_value_type = partial(rt.get_value_type, container_sample_limit=1000, use_jaxtyping=False)
-
+rt_get_value_type = rt.get_value_type
 
 def get_value_type(v, **kwargs) -> str:
     return str(rt_get_value_type(v, **kwargs))
 
 def type_from_annotations(*args, **kwargs) -> str:
     return str(rt.type_from_annotations(*args, **kwargs))
+
+
+def save_options():
+    saved = options.options
+    yield
+    options.options = saved
 
 
 class IterableClass(abc.Iterable):
@@ -232,24 +237,28 @@ def test_get_value_type_namedtuple_local():
 @pytest.mark.skipif((importlib.util.find_spec('numpy') is None or
                      importlib.util.find_spec('jaxtyping') is None),
                     reason='missing modules')
-def test_get_value_type_numpy_jaxtyping():
+def test_get_value_type_numpy_jaxtyping(save_options):
     import numpy as np
 
-    assert 'jaxtyping.Float64[numpy.ndarray, "0"]' == get_value_type(np.array([], np.float64), use_jaxtyping=True)
+    options.options.infer_shapes=True
+
+    assert 'jaxtyping.Float64[numpy.ndarray, "0"]' == get_value_type(np.array([], np.float64))
     assert 'jaxtyping.Float16[numpy.ndarray, "1 1 1"]' == \
-            get_value_type(np.array([[[1]]], np.float16), use_jaxtyping=True)
+            get_value_type(np.array([[[1]]], np.float16))
 
 
 @pytest.mark.skipif((importlib.util.find_spec('torch') is None or
                      importlib.util.find_spec('jaxtyping') is None),
                     reason='missing modules')
-def test_get_value_type_torch_jaxtyping():
+def test_get_value_type_torch_jaxtyping(save_options):
     import torch
 
+    options.options.infer_shapes=True
+
     assert 'jaxtyping.Float64[torch.Tensor, "0"]' == \
-            get_value_type(torch.tensor([], dtype=torch.float64), use_jaxtyping=True)
+            get_value_type(torch.tensor([], dtype=torch.float64))
     assert 'jaxtyping.Int32[torch.Tensor, "2 1"]' == \
-            get_value_type(torch.tensor([[1],[2]], dtype=torch.int32), use_jaxtyping=True)
+            get_value_type(torch.tensor([[1],[2]], dtype=torch.int32))
 
 
 def test_type_from_annotations():
