@@ -3804,3 +3804,27 @@ def test_inconsistent_samples():
     assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\
         def g(a, b): ...
     """)
+
+
+@pytest.mark.dont_run_mypy  # would fail due to f("foo") calls
+def test_use_top_pct():
+    t = textwrap.dedent(f"""\
+        def f(x):
+            return x
+
+        for i in range(10):
+            f(i)
+        f("foo")
+        f("foo")
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', '--use-top-pct=80', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(x: int) -> int: ...
+    """)

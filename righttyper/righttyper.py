@@ -14,7 +14,7 @@ import typeshed_client as ts
 
 
 import collections.abc as abc
-from collections import defaultdict
+from collections import defaultdict, Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType, AsyncGeneratorType, UnionType
@@ -175,11 +175,11 @@ class Observations:
     # Visited functions' and information about them
     functions_visited: dict[CodeId, FuncInfo] = field(default_factory=dict)
 
-    # Started, but not (yet) completed samples
-    pending_samples: dict[tuple[CodeId, FrameId], Sample] = field(default_factory=dict)
+    # Started, but not (yet) completed traces
+    pending_traces: dict[tuple[CodeId, FrameId], Sample] = field(default_factory=dict)
 
-    # Completed samples
-    samples: dict[CodeId, set[tuple[TypeInfo, ...]]] = field(default_factory=dict)
+    # Completed traces
+    traces: dict[CodeId, Counter[tuple[TypeInfo, ...]]] = field(default_factory=dict)
 
 
     def record_function(
@@ -228,7 +228,7 @@ class Observations:
         """Records a function start."""
 
         # print(f"record_start {code.co_qualname} {arg_types}")
-        self.pending_samples[(CodeId(id(code)), frame_id)] = Sample(
+        self.pending_traces[(CodeId(id(code)), frame_id)] = Sample(
             arg_types,
             self_type=self_type,
             self_replacement=self_replacement,
@@ -241,7 +241,7 @@ class Observations:
         """Records a yield."""
 
         # print(f"record_yield {code.co_qualname}")
-        if (sample := self.pending_samples.get((CodeId(id(code)), frame_id))):
+        if (sample := self.pending_traces.get((CodeId(id(code)), frame_id))):
             sample.yields.add(yield_type)
             return True
 
@@ -252,7 +252,7 @@ class Observations:
         """Records a send."""
 
         # print(f"record_send {code.co_qualname}")
-        if (sample := self.pending_samples.get((CodeId(id(code)), frame_id))):
+        if (sample := self.pending_traces.get((CodeId(id(code)), frame_id))):
             sample.sends.add(send_type)
             return True
 
@@ -265,12 +265,12 @@ class Observations:
         # print(f"record_return {code.co_qualname}")
 
         code_id = CodeId(id(code))
-        if (sample := self.pending_samples.get((code_id, frame_id))):
+        if (sample := self.pending_traces.get((code_id, frame_id))):
             sample.returns = return_type
-            if code_id not in self.samples:
-                self.samples[code_id] = set()
-            self.samples[code_id].add(sample.process())
-            del self.pending_samples[(code_id, frame_id)]
+            if code_id not in self.traces:
+                self.traces[code_id] = Counter()
+            self.traces[code_id].update((sample.process(),))
+            del self.pending_traces[(code_id, frame_id)]
             return True
 
         return False
@@ -279,29 +279,47 @@ class Observations:
     def _transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
 
-        for sample_set in self.samples.values():
-            for s in list(sample_set):
-                sprime = tuple(tr.visit(t) for t in s)
+        for trace_counter in self.traces.values():
+            for trace, count in list(trace_counter.items()):
+                trace_prime = tuple(tr.visit(t) for t in trace)
                 # Use identity rather than ==, as only non-essential attributes may have changed
-                if any(old is not new for old, new in zip(s, sprime)):
-                    sample_set.remove(s)
-                    sample_set.add(sprime)
+                if any(old is not new for old, new in zip(trace, trace_prime)):
+                    del trace_counter[trace]
+                    trace_counter[trace_prime] = count
 
 
     def collect_annotations(self: Self) -> dict[FuncId, FuncAnnotation]:
         """Collects function type annotations from the observed types."""
 
-        # Finish samples for any generators that are still unfinished
+        # Finish traces for any generators that are still unfinished
         # TODO are there other cases we should handle?
-        for (code_id, _), sample in self.pending_samples.items():
+        for (code_id, _), sample in self.pending_traces.items():
             if sample.yields:
-                if code_id not in self.samples:
-                    self.samples[code_id] = set()
-                self.samples[code_id].add(sample.process())
+                if code_id not in self.traces:
+                    self.traces[code_id] = Counter()
+                self.traces[code_id].update((sample.process(),))
+
+
+        def most_common_traces(code_id: CodeId) -> list[tuple[TypeInfo, ...]]:
+            """Returns the top X% most common call traces."""
+            counter = self.traces[code_id]
+
+            threshold = sum(counter.values()) * options.use_top_pct / 100
+            cumulative = 0
+
+            traces = list()
+            for trace, count in self.traces[code_id].most_common():
+                if cumulative >= threshold:
+                    break
+                cumulative += count
+                traces.append(trace)
+
+            return traces
+
 
         def mk_annotation(code_id: CodeId) -> FuncAnnotation|None:
             func_info = self.functions_visited[code_id]
-            samples = self.samples[code_id]
+            traces = most_common_traces(code_id)
 
             parents_arg_types = None
             if func_info.overrides:
@@ -317,14 +335,14 @@ class Observations:
                     parent_code_id = CodeId(id(parents_func.__code__)) if hasattr(parents_func, "__code__") else None
                     if (
                         parent_code_id
-                        and parent_code_id in self.samples
+                        and parent_code_id in self.traces
                         and (ann := mk_annotation(parent_code_id))
                     ):
                         parents_arg_types = [arg[1] for arg in ann.args]
 
-            if (signature := generalize(list(samples))) is None:
-                logger.info(f"Unable to generalize {func_info.func_id}: inconsistent samples.\n" +
-                            f"{[tuple(str(t) for t in s) for s in samples]}")
+            if (signature := generalize(traces)) is None:
+                logger.info(f"Unable to generalize {func_info.func_id}: inconsistent traces.\n" +
+                            f"{[tuple(str(t) for t in s) for s in traces]}")
                 return None
 
             return FuncAnnotation(
@@ -361,7 +379,7 @@ class Observations:
                 node = super().visit(node)
 
                 # if 'args' is there, the function is already annotated
-                if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.samples:
+                if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.traces:
                     # TODO we only need the retval, can we avoid computing the entire annotation?
                     if (ann := mk_annotation(node.code_id)):
                         func_info = self.functions_visited[node.code_id]
@@ -483,7 +501,7 @@ class Observations:
                 args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
                 retval=finalize(annotation.retval)
             )
-            for code_id in self.samples
+            for code_id in self.traces
             if (annotation := mk_annotation(code_id)) is not None
         }
 
@@ -977,6 +995,7 @@ class CheckModule(click.ParamType):
     context_settings={
         "allow_extra_args": True,
         "ignore_unknown_options": True,
+        "show_default": True
     }
 )
 @click.argument(
@@ -1071,7 +1090,7 @@ class CheckModule(click.ParamType):
 @click.option(
     "--sampling/--no-sampling",
     default=options.sampling,
-    help=f"Whether to sample calls and types or to use every one seen.",
+    help=f"Whether to sample calls or to use every one.",
     show_default=True,
 )
 @click.option(
@@ -1106,6 +1125,12 @@ class CheckModule(click.ParamType):
     default="3.12",
     help="Python version for which to emit annotations.",
 )
+@click.option(
+    "--use-top-pct",
+    type=click.IntRange(1, 100),
+    default=options.use_top_pct,
+    help="Only use the X% most common call traces.",
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def main(
     script: str,
@@ -1129,7 +1154,8 @@ def main(
     signal_wakeup: bool,
     replace_dict: bool,
     container_sample_limit: int,
-    python_version: str|tuple[int, ...]
+    python_version: str|tuple[int, ...],
+    use_top_pct: int
 ) -> None:
 
     if type_coverage:
@@ -1196,6 +1222,7 @@ def main(
     options.use_typing_self = python_version >= (3, 11)
     options.use_typing_never = python_version >= (3, 11)
     options.inline_generics = python_version >= (3, 12)
+    options.use_top_pct = use_top_pct
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)

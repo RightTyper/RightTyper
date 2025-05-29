@@ -22,5 +22,6 @@ class Options:
     use_typing_never: bool = False
     inline_generics: bool = False
     only_update_annotations: bool = False
+    use_top_pct: int = 80
 
 options = Options()
