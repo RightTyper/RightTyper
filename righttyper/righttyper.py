@@ -625,8 +625,7 @@ def yield_handler(
         found = obs.record_yield(code, FrameId(id(frame)), yield_value)
         del frame
 
-    # If the frame wasn't found, keep the event enabled, as this event may be from another
-    # invocation whose start we missed.
+    # Keep the event enabled until we receive it for a frame whose trace we're recording.
     return sys.monitoring.DISABLE if (options.sampling and found) else None
 
 
@@ -662,8 +661,7 @@ def return_handler(
         found = obs.record_return(code, FrameId(id(frame)), return_value)
         del frame
 
-    # If the frame wasn't found, keep the event enabled, as this event may be from another
-    # invocation whose start we missed.
+    # Keep the event enabled until we receive it for a frame whose trace we're recording.
     return sys.monitoring.DISABLE if (options.sampling and found) else None
 
 
