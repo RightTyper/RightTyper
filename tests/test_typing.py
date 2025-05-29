@@ -18,6 +18,7 @@ def type_from_annotations(*args, **kwargs) -> str:
     return str(rt.type_from_annotations(*args, **kwargs))
 
 
+@pytest.fixture
 def save_options():
     saved = options.options
     yield
