@@ -596,53 +596,15 @@ def call_handler(
 def yield_handler(
     code: CodeType,
     instruction_offset: int,
-    return_value: Any,
-) -> object:
-    # We do the same thing for yields and exits.
-    return process_yield_or_return(
-        code,
-        instruction_offset,
-        return_value,
-        sys.monitoring.events.PY_YIELD,
-    )
-
-
-def return_handler(
-    code: CodeType,
-    instruction_offset: int,
-    return_value: Any,
-) -> object:
-    return process_yield_or_return(
-        code,
-        instruction_offset,
-        return_value,
-        sys.monitoring.events.PY_RETURN,
-    )
-
-
-def process_yield_or_return(
-    code: CodeType,
-    instruction_offset: int,
-    return_value: Any,
-    event_type: int,
-) -> object:
+    yield_value: Any,
+) -> Any:
     """
-    Processes a yield or return event for a function.
-    Function to gather statistics on a function call and determine
-    whether it should be excluded from profiling, when the function exits.
-
-    - If the function name is in the excluded list, it will disable the monitoring right away.
-    - Otherwise, it calculates the execution time of the function, adds the type of the return value to a set for that function,
-      and then disables the monitoring if appropriate.
+    Processes a yield event for a function.
 
     Args:
     code (CodeType): code object of the function.
     instruction_offset (int): position of the current instruction.
-    return_value (Any): return value of the function.
-    event_type (int): if this is a PY_RETURN (regular return) or a PY_YIELD (yield)
-
-    Returns:
-    int: indicator whether to continue the monitoring, always returns sys.monitoring.DISABLE in this function.
+    yield_value (Any): return value of the function.
     """
     # Check if the function name is in the excluded list
     if should_skip_function(
@@ -654,18 +616,50 @@ def process_yield_or_return(
     ):
         return sys.monitoring.DISABLE
 
+    frame = inspect.currentframe()
+    while frame and frame.f_code is not code:
+        frame = frame.f_back
+
     found = False
+    if frame:
+        found = obs.record_yield(code, FrameId(id(frame)), yield_value)
+        del frame
+
+    # If the frame wasn't found, keep the event enabled, as this event may be from another
+    # invocation whose start we missed.
+    return sys.monitoring.DISABLE if (options.sampling and found) else None
+
+
+def return_handler(
+    code: CodeType,
+    instruction_offset: int,
+    return_value: Any,
+) -> Any:
+    """
+    Processes a return event for a function.
+
+    Args:
+    code (CodeType): code object of the function.
+    instruction_offset (int): position of the current instruction.
+    return_value (Any): return value of the function.
+    """
+    # Check if the function name is in the excluded list
+    if should_skip_function(
+        code,
+        options.script_dir,
+        options.include_all,
+        options.include_files_pattern,
+        options.include_functions_pattern
+    ):
+        return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
     while frame and frame.f_code is not code:
         frame = frame.f_back
 
+    found = False
     if frame:
-        if event_type == sys.monitoring.events.PY_YIELD:
-            found = obs.record_yield(code, FrameId(id(frame)), return_value)
-        else:
-            found = obs.record_return(code, FrameId(id(frame)), return_value)
-
+        found = obs.record_return(code, FrameId(id(frame)), return_value)
         del frame
 
     # If the frame wasn't found, keep the event enabled, as this event may be from another
