@@ -25,6 +25,10 @@ class RightTyperLoader(ExecutionLoader):
             return self.orig_loader.get_resource_reader(fullname)
         return None
 
+    # for compatibility with older (deprecated) resource loading
+    def get_data(self, path):
+        return self.orig_loader.get_data(path)
+
     def get_filename(self, fullname: str) -> str:
         return str(self.path)
 
