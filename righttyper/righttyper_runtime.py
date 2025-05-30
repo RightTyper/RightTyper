@@ -518,7 +518,7 @@ def find_function(
     if '<locals>' in parts:
         # Python re-creates the function object dynamically with each invocation;
         # look for it on the stack.
-        if caller_frame.f_back:
+        if caller_frame and caller_frame.f_back:
             after_locals = len(parts) - parts[::-1].index('<locals>')
             parts = parts[after_locals:]
             return find_in(caller_frame.f_back.f_locals)
