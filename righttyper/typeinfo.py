@@ -1,5 +1,5 @@
 from typing import Sequence, Iterator, cast
-from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo
+from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo, CallTrace
 from .righttyper_utils import get_main_module_fqn
 from collections import Counter, defaultdict
 from .righttyper_runtime import get_type_name
@@ -106,7 +106,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     return mergeable_types | replacements | other_types
 
 
-def generalize_jaxtyping(samples: Sequence[tuple[TypeInfo, ...]]) -> Sequence[tuple[TypeInfo, ...]]:
+def generalize_jaxtyping(samples: Sequence[CallTrace]) -> Sequence[CallTrace]:
     # Ensure all samples are consistent (the same number of arguments)
     if any(len(t) != len(samples[0]) for t in samples[1:]):
         return samples
@@ -172,7 +172,7 @@ def generalize_jaxtyping(samples: Sequence[tuple[TypeInfo, ...]]) -> Sequence[tu
     return list(tuple(t) for t in zip(*results))
 
 
-def generalize(samples: Sequence[tuple[TypeInfo, ...]]) -> list[TypeInfo]|None:
+def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
     """
     Processes a sequence of samples observed for function parameters and return values, looking
     for patterns that can be replaced with type variables or, if does not detect a pattern,

@@ -27,8 +27,6 @@ from typing import (
 
 import click
 
-# Disabled for now
-# from righttyper import replace_dicts
 from righttyper.righttyper_process import (
     process_file,
     SignatureChanges
@@ -61,7 +59,8 @@ from righttyper.righttyper_types import (
     TypeInfo,
     NoneTypeInfo,
     AnyTypeInfo,
-    Sample,
+    CallTrace,
+    PendingCallTrace,
     UnknownTypeInfo
 )
 from righttyper.typeinfo import (
@@ -176,10 +175,10 @@ class Observations:
     functions_visited: dict[CodeId, FuncInfo] = field(default_factory=dict)
 
     # Started, but not (yet) completed traces
-    pending_traces: dict[tuple[CodeId, FrameId], Sample] = field(default_factory=dict)
+    pending_traces: dict[tuple[CodeId, FrameId], PendingCallTrace] = field(default_factory=dict)
 
     # Completed traces
-    traces: dict[CodeId, Counter[tuple[TypeInfo, ...]]] = field(default_factory=dict)
+    traces: dict[CodeId, Counter[CallTrace]] = field(default_factory=dict)
 
 
     def record_function(
@@ -228,7 +227,7 @@ class Observations:
         """Records a function start."""
 
         # print(f"record_start {code.co_qualname} {arg_types}")
-        self.pending_traces[(CodeId(id(code)), frame_id)] = Sample(
+        self.pending_traces[(CodeId(id(code)), frame_id)] = PendingCallTrace(
             arg_types,
             self_type=self_type,
             self_replacement=self_replacement,
@@ -241,8 +240,8 @@ class Observations:
         """Records a yield."""
 
         # print(f"record_yield {code.co_qualname}")
-        if (sample := self.pending_traces.get((CodeId(id(code)), frame_id))):
-            sample.yields.add(get_value_type(yield_value))
+        if (tr := self.pending_traces.get((CodeId(id(code)), frame_id))):
+            tr.yields.add(get_value_type(yield_value))
             return True
 
         return False
@@ -252,8 +251,8 @@ class Observations:
         """Records a send."""
 
         # print(f"record_send {code.co_qualname}")
-        if (sample := self.pending_traces.get((CodeId(id(code)), frame_id))):
-            sample.sends.add(get_value_type(send_value))
+        if (tr := self.pending_traces.get((CodeId(id(code)), frame_id))):
+            tr.sends.add(get_value_type(send_value))
             return True
 
         return False
@@ -265,11 +264,11 @@ class Observations:
         # print(f"record_return {code.co_qualname}")
 
         code_id = CodeId(id(code))
-        if (sample := self.pending_traces.get((code_id, frame_id))):
-            sample.returns = get_value_type(return_value)
+        if (tr := self.pending_traces.get((code_id, frame_id))):
+            tr.returns = get_value_type(return_value)
             if code_id not in self.traces:
                 self.traces[code_id] = Counter()
-            self.traces[code_id].update((sample.process(),))
+            self.traces[code_id].update((tr.process(),))
             del self.pending_traces[(code_id, frame_id)]
             return True
 
@@ -293,14 +292,14 @@ class Observations:
 
         # Finish traces for any generators that are still unfinished
         # TODO are there other cases we should handle?
-        for (code_id, _), sample in self.pending_traces.items():
-            if sample.yields:
+        for (code_id, _), tr in self.pending_traces.items():
+            if tr.yields:
                 if code_id not in self.traces:
                     self.traces[code_id] = Counter()
-                self.traces[code_id].update((sample.process(),))
+                self.traces[code_id].update((tr.process(),))
 
 
-        def most_common_traces(code_id: CodeId) -> list[tuple[TypeInfo, ...]]:
+        def most_common_traces(code_id: CodeId) -> list[CallTrace]:
             """Returns the top X% most common call traces."""
             counter = self.traces[code_id]
 

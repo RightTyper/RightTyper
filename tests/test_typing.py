@@ -1,4 +1,4 @@
-from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, Sample, UnknownTypeInfo
+from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, PendingCallTrace, UnknownTypeInfo
 from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
@@ -524,33 +524,33 @@ generator_ti = lambda *a: TypeInfo.from_type(abc.Generator, module="typing", arg
 iterator_ti = lambda *a: TypeInfo("typing", "Iterator", tuple(a))
 union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.UnionType)
 
-def generate_sample(func: Callable, *args) -> Sample:
+def generate_sample(func: Callable, *args) -> PendingCallTrace:
     import righttyper.righttyper_runtime as rt
 
     res = func(*args)
-    sample = Sample(tuple(rt_get_value_type(arg) for arg in args))
+    tr = PendingCallTrace(tuple(rt_get_value_type(arg) for arg in args))
     if type(res).__name__ == "generator":
-        sample.is_generator = True
+        tr.is_generator = True
         try:
             while True:
                 nex = next(res) # this can fail
-                sample.yields.add(rt_get_value_type(nex))
+                tr.yields.add(rt_get_value_type(nex))
         except StopIteration as e:
             if e.value is not None:
-                sample.returns = rt_get_value_type(e.value)
+                tr.returns = rt_get_value_type(e.value)
     else:
-        sample.returns = rt_get_value_type(res)
+        tr.returns = rt_get_value_type(res)
 
-    return sample
+    return tr
 
 
 def test_sample_process_simple():
     def dog(a):
         return a
 
-    sample = generate_sample(dog, "hi")
-    assert sample == Sample((str_ti,), returns=str_ti)
-    assert generalize([sample.process()]) == [str_ti, str_ti]
+    tr = generate_sample(dog, "hi")
+    assert tr == PendingCallTrace((str_ti,), returns=str_ti)
+    assert generalize([tr.process()]) == [str_ti, str_ti]
 
 
 def test_sample_process_generator():
@@ -558,9 +558,9 @@ def test_sample_process_generator():
         yield a
         return b
 
-    sample = generate_sample(dog, 1, "hi")
-    assert sample == Sample((int_ti, str_ti,), {int_ti}, returns=str_ti, is_generator=True)
-    assert generalize([sample.process()]) == [int_ti, str_ti, generator_ti(int_ti, NoneTypeInfo, str_ti)]
+    tr = generate_sample(dog, 1, "hi")
+    assert tr == PendingCallTrace((int_ti, str_ti,), {int_ti}, returns=str_ti, is_generator=True)
+    assert generalize([tr.process()]) == [int_ti, str_ti, generator_ti(int_ti, NoneTypeInfo, str_ti)]
 
 
 def test_sample_process_generator_noyield():
@@ -568,9 +568,9 @@ def test_sample_process_generator_noyield():
         return b
         yield 
 
-    sample = generate_sample(dog, 1, "hi")
-    assert sample == Sample((int_ti, str_ti,), returns=str_ti, is_generator=True)
-    assert generalize([sample.process()]) == [int_ti, str_ti, generator_ti(NoneTypeInfo, NoneTypeInfo, str_ti)]
+    tr = generate_sample(dog, 1, "hi")
+    assert tr == PendingCallTrace((int_ti, str_ti,), returns=str_ti, is_generator=True)
+    assert generalize([tr.process()]) == [int_ti, str_ti, generator_ti(NoneTypeInfo, NoneTypeInfo, str_ti)]
 
 
 def test_sample_process_iterator_union():
@@ -578,18 +578,18 @@ def test_sample_process_iterator_union():
         yield a
         yield b
 
-    sample = generate_sample(dog, 1, "hi")
-    assert sample == Sample((int_ti, str_ti,), yields={int_ti, str_ti}, is_generator=True)
-    assert generalize([sample.process()]) == [int_ti, str_ti, iterator_ti(union_ti(int_ti, str_ti))]
+    tr = generate_sample(dog, 1, "hi")
+    assert tr == PendingCallTrace((int_ti, str_ti,), yields={int_ti, str_ti}, is_generator=True)
+    assert generalize([tr.process()]) == [int_ti, str_ti, iterator_ti(union_ti(int_ti, str_ti))]
 
 
 def test_sample_process_iterator():
     def dog(a):
         yield a
 
-    sample = generate_sample(dog, "hi")
-    assert sample == Sample((str_ti,), yields={str_ti}, is_generator=True)
-    assert generalize([sample.process()]) == [str_ti, iterator_ti((str_ti))]
+    tr = generate_sample(dog, "hi")
+    assert tr == PendingCallTrace((str_ti,), yields={str_ti}, is_generator=True)
+    assert generalize([tr.process()]) == [str_ti, iterator_ti((str_ti))]
 
 
 def test_sample_process_generator_union():
@@ -598,9 +598,9 @@ def test_sample_process_generator_union():
         yield b
         return c
 
-    sample = generate_sample(dog, 1, "hi", True)
-    assert sample == Sample((int_ti, str_ti, bool_ti,), yields={int_ti, str_ti}, returns=bool_ti, is_generator=True)
-    assert generalize([sample.process()]) == [int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), NoneTypeInfo, bool_ti)]
+    tr = generate_sample(dog, 1, "hi", True)
+    assert tr == PendingCallTrace((int_ti, str_ti, bool_ti,), yields={int_ti, str_ti}, returns=bool_ti, is_generator=True)
+    assert generalize([tr.process()]) == [int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), NoneTypeInfo, bool_ti)]
 
 
 T = TypeVar("T")

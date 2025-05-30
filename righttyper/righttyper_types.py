@@ -47,7 +47,7 @@ class TypeInfo:
     typevar_name: str|None = field(default=None, compare=False) # TODO delete me?
 
     # Indicates equivalence to typing.Self. Note that is_self may be true for one
-    # type (class) in one sample, but false for the exact same type in another,
+    # type (class) in one trace, but false for the exact same type in another,
     # so that is_self matters for equivalence
     is_self: bool = field(default=False, compare=True)
 
@@ -185,9 +185,10 @@ class FuncInfo:
     overrides: types.FunctionType|FunctionDescriptor|None
 
 
+CallTrace: TypeAlias = tuple[TypeInfo, ...]
 
 @dataclass
-class Sample:
+class PendingCallTrace:
     args: tuple[TypeInfo, ...]
     yields: set[TypeInfo] = field(default_factory=set)
     sends: set[TypeInfo] = field(default_factory=set)
@@ -198,7 +199,7 @@ class Sample:
     self_replacement: TypeInfo | None = None
 
 
-    def process(self) -> tuple[TypeInfo, ...]:
+    def process(self) -> CallTrace:
         retval = self.returns
 
         if self.is_generator:
