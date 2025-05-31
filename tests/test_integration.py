@@ -2433,7 +2433,7 @@ def test_no_return():
     assert "def gen() -> Iterator[int]:" in output
 
 
-@pytest.mark.parametrize("python_version", ["3.11", "3.12"])
+@pytest.mark.parametrize("python_version", ["3.9", "3.11", "3.12"])
 def test_generic_simple(python_version):
     t = textwrap.dedent(
         """\
@@ -2449,7 +2449,7 @@ def test_generic_simple(python_version):
                     f'--python-version={python_version}', '--no-sampling', 't.py'], check=True)
     output = Path("t.py").read_text()
 
-    if python_version == "3.11":
+    if python_version != "3.12":
         assert re.search('from typing import.*TypeVar', output)
         assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
         assert "def add(a: rt_T1, b: rt_T1) -> rt_T1" in output
@@ -3787,7 +3787,7 @@ def test_inconsistent_samples():
             self_replacement=None
         )
         rt.obs.record_return(
-            code=g.__code__, frame_id=rt.FrameId(0), return_type=rt.get_type_name(int)
+            code=g.__code__, frame_id=rt.FrameId(0), return_value=1
         )
         """
     ))
@@ -3803,4 +3803,28 @@ def test_inconsistent_samples():
     # no annotation expected
     assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\
         def g(a, b): ...
+    """)
+
+
+@pytest.mark.dont_run_mypy  # would fail due to f("foo") calls
+def test_use_top_pct():
+    t = textwrap.dedent(f"""\
+        def f(x):
+            return x
+
+        for i in range(10):
+            f(i)
+        f("foo")
+        f("foo")
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-sampling', '--use-top-pct=80', 't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(x: int) -> int: ...
     """)
