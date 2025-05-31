@@ -223,7 +223,7 @@ class PendingCallTrace:
                     if (
                         self.self_type
                         and self.self_replacement
-                        and node.type_obj
+                        and hasattr(node.type_obj, "__mro__")
                         and self.self_type.type_obj in node.type_obj.__mro__
                     ):
 #                        print(f"replacing {str(node)} with {str(self.self_replacement)}")

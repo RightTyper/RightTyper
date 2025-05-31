@@ -327,6 +327,33 @@ def test_callable_from_annotations():
     assert "def f(x: int | float, y: None) -> float:" in output
 
 
+def test_callable_from_annotations_typing_special():
+    t = textwrap.dedent("""\
+        import typing
+
+        class C:
+            def f(self, x: int, y) -> typing.NoReturn:
+                while True:
+                    pass
+
+            def g(self):
+                return self.f
+
+        C().g()
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'C.g') == textwrap.dedent("""\
+        def g(self: Self) -> Callable[[int, Any], NoReturn]: ...
+    """)
+
+
 def test_callable_from_annotation_generic_alias():
     t = textwrap.dedent("""\
         def f() -> list[int]:   # list[int] is a GenericAlias
