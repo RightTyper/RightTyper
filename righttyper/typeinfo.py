@@ -1,10 +1,10 @@
 from typing import Sequence, Iterator, cast
-from .righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo, CallTrace
-from .righttyper_utils import get_main_module_fqn
 from collections import Counter, defaultdict
-from .righttyper_runtime import get_type_name
 import collections.abc as abc
 from types import EllipsisType
+from righttyper.righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo, CallTrace
+from righttyper.righttyper_utils import get_main_module_fqn
+from righttyper.righttyper_runtime import get_type_name
 
 
 # TODO integrate these into TypeInfo?

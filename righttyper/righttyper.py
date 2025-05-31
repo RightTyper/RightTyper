@@ -80,7 +80,7 @@ from righttyper.righttyper_alarm import (
     ThreadAlarm,
 )
 
-from .options import options
+from righttyper.options import options
 
 logger = logging.getLogger("righttyper")
 
@@ -300,7 +300,7 @@ class Observations:
 
 
         def most_common_traces(code_id: CodeId) -> list[CallTrace]:
-            """Returns the top X% most common call traces."""
+            """Returns the top X% most common call traces, turning type checking into anomaly detection."""
             counter = self.traces[code_id]
 
             threshold = sum(counter.values()) * options.use_top_pct / 100
@@ -456,8 +456,9 @@ class Observations:
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
 
-                # if typevar_index is nonzero, the union will be replaced by a typevar
-                if node.type_obj is UnionType and not node.typevar_index:
+                # Typevar nodes may be UnionType; there's no need to replace them, and
+                # replacing them would prevent RightTyper from annotating as typevars.
+                if node.type_obj is UnionType and not node.is_typevar():
                     has_none = node.args[-1] == NoneTypeInfo
                     non_none_count = len(node.args) - int(has_none)
                     if non_none_count > 1:
