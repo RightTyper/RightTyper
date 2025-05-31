@@ -765,6 +765,33 @@ def test_method_overriding_annotated():
     """)
 
 
+def test_method_overriding_annotated_with_literal():
+    t = textwrap.dedent("""\
+        from typing import Self, Literal
+
+        class A:
+            def foo(self: Self, x: Literal[10, 20]):
+                return x // 10
+
+        class B(A):
+            def foo(self, x):
+                return int(x) // 10 + 1
+
+        B().foo(1.0)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: float|int) -> int: ...
+    """)
+
+
 def test_method_overriding_init_irrelevant():
     t = textwrap.dedent("""\
         class A:
