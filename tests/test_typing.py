@@ -644,12 +644,15 @@ def test_hint2type_list():
     ))
 
 
-def test_hint2type_string():
-    t = rt.hint2type(Literal["a", "b"])
-    assert t == TypeInfo.from_type(cast(type, Literal), args=(
-        "a",
-        "b"
-    ))
+def test_hint2type_literal():
+    def foo(
+        x: Literal[10, 20],
+        y: Literal[True, "lies"],
+    ): pass
+
+    hints = get_type_hints(foo)
+    assert "int" == str(rt.hint2type(hints['x']))
+    assert "bool|str" == str(rt.hint2type(hints['y']))
 
 
 def test_hint2type_unions():
