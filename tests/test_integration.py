@@ -327,6 +327,33 @@ def test_callable_from_annotations():
     assert "def f(x: int | float, y: None) -> float:" in output
 
 
+def test_callable_from_annotations_typing_special():
+    t = textwrap.dedent("""\
+        import typing
+
+        class C:
+            def f(self, x: int, y) -> typing.NoReturn:
+                while True:
+                    pass
+
+            def g(self):
+                return self.f
+
+        C().g()
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'C.g') == textwrap.dedent("""\
+        def g(self: Self) -> Callable[[int, Any], NoReturn]: ...
+    """)
+
+
 def test_callable_from_annotation_generic_alias():
     t = textwrap.dedent("""\
         def f() -> list[int]:   # list[int] is a GenericAlias
@@ -735,6 +762,33 @@ def test_method_overriding_annotated():
 
     assert get_function(code, 'B.foo') == textwrap.dedent("""\
         def foo(self: Self, x: list[float]|list[int]) -> int: ...
+    """)
+
+
+def test_method_overriding_annotated_with_literal():
+    t = textwrap.dedent("""\
+        from typing import Self, Literal
+
+        class A:
+            def foo(self: Self, x: Literal[10, 20]):
+                return x // 10
+
+        class B(A):
+            def foo(self, x):
+                return int(x) // 10 + 1
+
+        B().foo(1.0)
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    't.py'], check=True)
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: float|int) -> int: ...
     """)
 
 

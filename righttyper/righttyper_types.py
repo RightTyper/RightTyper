@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace, field
-from typing import NewType, TypeVar, Self, TypeAlias, List, Iterator
+from typing import NewType, TypeVar, Self, TypeAlias, List, Iterator, cast
 import collections.abc as abc
 import types
 
@@ -223,8 +223,8 @@ class PendingCallTrace:
                     if (
                         self.self_type
                         and self.self_replacement
-                        and node.type_obj
-                        and self.self_type.type_obj in node.type_obj.__mro__
+                        and hasattr(node.type_obj, "__mro__")
+                        and self.self_type.type_obj in cast(type, node.type_obj).__mro__
                     ):
 #                        print(f"replacing {str(node)} with {str(self.self_replacement)}")
                         node = self.self_replacement.replace(is_self=True)

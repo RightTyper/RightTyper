@@ -80,10 +80,14 @@ def hint2type(hint) -> TypeInfo:
 
         return hint2type(hint)
 
-
     if (origin := get_origin(hint)):
         if origin is typing.Union:
             return TypeInfo.from_set({hint2type(a) for a in get_args(hint)})
+
+        # FIXME TypeInfo args can't hold non-str Literal values; for now,
+        # convert to a union of their types
+        if origin is typing.Literal:
+            return TypeInfo.from_set({get_value_type(a) for a in get_args(hint)})
 
         return TypeInfo.from_type(
                     origin,
@@ -93,12 +97,15 @@ def hint2type(hint) -> TypeInfo:
                     )
                 )
 
-    if type(hint) is NoneType:
+    if hint is None:
         return NoneTypeInfo
 
+    if not hasattr(hint, "__module__"):
+        return UnknownTypeInfo
+
     if (
-        hint.__module__ == 'jaxtyping' and
-        (array_type := getattr(hint, "array_type", None))
+        hint.__module__ == 'jaxtyping'
+        and (array_type := getattr(hint, "array_type", None))
     ):
         return TypeInfo(hint.__module__, hint.__name__.split('[')[0], args=(
             get_type_name(array_type), hint.dim_str
@@ -107,7 +114,7 @@ def hint2type(hint) -> TypeInfo:
     if not hasattr(hint, "__qualname__"): # e.g., typing.TypeVar
         return TypeInfo(name=hint.__name__, module=hint.__module__)
 
-    return get_type_name(hint)
+    return get_type_name(hint)  # requires __module__ and __qualname__
 
 
 def type_from_annotations(func: abc.Callable) -> TypeInfo:
