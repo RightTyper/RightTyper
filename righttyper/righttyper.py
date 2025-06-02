@@ -902,16 +902,14 @@ def process_all_files() -> list[SignatureChanges]:
         return []
 
     type_annotations = obs.collect_annotations()
-    module_names = [*sys.modules.keys(), get_main_module_fqn()]
 
     args_gen = (
         (
             fname,
+            type_annotations,
             options.output_files,
             options.generate_stubs,
-            type_annotations,
             options.overwrite,
-            module_names,
             options.ignore_annotations,
             options.only_update_annotations,
             options.inline_generics
