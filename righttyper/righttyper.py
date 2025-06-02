@@ -977,11 +977,28 @@ class CheckModule(click.ParamType):
         return ""
 
 
-@click.command(
+@click.group(
+    context_settings={
+        "show_default": True
+    }
+)
+@click.option(
+    "--verbose",
+    is_flag=True,
+    help="Print diagnostic information.",
+)
+@click.version_option(
+    version=importlib.metadata.version(TOOL_NAME),
+    prog_name=TOOL_NAME,
+)
+def cli(verbose: bool):
+    debug_print_set_level(verbose)
+
+
+@cli.command(
     context_settings={
         "allow_extra_args": True,
         "ignore_unknown_options": True,
-        "show_default": True
     }
 )
 @click.argument(
@@ -1047,19 +1064,10 @@ class CheckModule(click.ParamType):
     help="Overwrite existing annotations but never add new ones.",
 )
 @click.option(
-    "--verbose",
-    is_flag=True,
-    help="Print diagnostic information.",
-)
-@click.option(
     "--generate-stubs",
     is_flag=True,
     help="Generate stub files (.pyi).",
     default=False,
-)
-@click.version_option(
-    version=importlib.metadata.version(TOOL_NAME),
-    prog_name=TOOL_NAME,
 )
 @click.option(
     "--target-overhead",
@@ -1078,15 +1086,6 @@ class CheckModule(click.ParamType):
     default=options.sampling,
     help=f"Whether to sample calls or to use every one.",
     show_default=True,
-)
-@click.option(
-    "--type-coverage",
-    nargs=2,
-    type=(
-        click.Choice(["by-directory", "by-file", "summary"]),
-        click.Path(exists=True, file_okay=True),
-    ),
-    help="Rather than run a script or module, report a choice of 'by-directory', 'by-file' or 'summary' type annotation coverage for the given path.",
 )
 @click.option(
     "--signal-wakeup/--thread-wakeup",
@@ -1118,14 +1117,13 @@ class CheckModule(click.ParamType):
     help="Only use the X% most common call traces.",
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def main(
+def run(
     script: str,
     module: str,
     args: list[str],
     all_files: bool,
     include_files: str,
     include_functions: tuple[str, ...],
-    verbose: bool,
     overwrite: bool,
     output_files: bool,
     ignore_annotations: bool,
@@ -1136,28 +1134,12 @@ def main(
     target_overhead: float,
     use_multiprocessing: bool,
     sampling: bool,
-    type_coverage: tuple[str, str],
     signal_wakeup: bool,
     replace_dict: bool,
     container_sample_limit: int,
     python_version: str|tuple[int, ...],
     use_top_pct: int
 ) -> None:
-
-    if type_coverage:
-        from . import annotation_coverage as cov
-        cov_type, path = type_coverage
-
-        cache = cov.analyze_all_directories(path)
-
-        if cov_type == "by-directory":
-            cov.print_directory_summary(cache)
-        elif cov_type == "by-file":
-            cov.print_file_summary(cache)
-        else:
-            cov.print_annotation_summary()
-
-        return
 
     if module:
         args = [*((script,) if script else ()), *args]  # script, if any, is really the 1st module arg
@@ -1187,7 +1169,6 @@ def main(
 
     python_version = tuple(int(n) for n in python_version.split('.'))
 
-    debug_print_set_level(verbose)
     options.script_dir = os.path.dirname(os.path.realpath(script))
     options.include_files_pattern = include_files
     options.include_all = all_files
@@ -1228,3 +1209,30 @@ def main(
         reset_monitoring()
         alarm.stop()
         post_process()
+
+
+@cli.command()
+@click.option(
+    "--type", 'cov_type',
+    type=click.Choice(["by-directory", "by-file", "summary"]),
+    default='summary',
+    help="Select coverage type.",
+)
+@click.argument(
+    "path",
+    type=click.Path(exists=True, file_okay=True),
+)
+def coverage(
+    cov_type: str,
+    path: Path
+):
+    from . import annotation_coverage as cov
+
+    cache = cov.analyze_all_directories(path)
+
+    if cov_type == "by-directory":
+        cov.print_directory_summary(cache)
+    elif cov_type == "by-file":
+        cov.print_file_summary(cache)
+    else:
+        cov.print_annotation_summary()
