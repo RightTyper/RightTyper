@@ -78,11 +78,10 @@ def correct_indentation_issues(file_contents: str) -> str:
 
 def process_file(
     filename: Filename,
+    type_annotations: dict[FuncId, FuncAnnotation],
     output_files: bool,
     generate_stubs: bool,
-    type_annotations: dict[FuncId, FuncAnnotation],
     overwrite: bool,
-    module_names: list[str],
     ignore_annotations: bool = False,
     only_update_annotations: bool = False,
     inline_generics: bool = False,
@@ -107,8 +106,7 @@ def process_file(
 
     transformer = UnifiedTransformer(
         filename, type_annotations, ignore_annotations, only_update_annotations, inline_generics,
-        module_name=source_to_module_fqn(pathlib.Path(filename)),
-        module_names=module_names
+        module_name=source_to_module_fqn(pathlib.Path(filename))
     )
 
     try:
