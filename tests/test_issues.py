@@ -26,6 +26,7 @@ def test_issue_22(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', 'run', 't.py'])
+    subprocess.run([sys.executable, '-m', 'righttyper', 'process', '--overwrite', '--output-files'])
     
     assert "def extracted_function(A: list[int]) -> bool" in Path("t.py").read_text()

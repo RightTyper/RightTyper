@@ -37,7 +37,7 @@ from righttyper.righttyper_types import (
     UnknownTypeInfo
 )
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
-from .options import options
+from righttyper.options import run_options as options
 
 
 @cache
