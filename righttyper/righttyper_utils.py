@@ -105,6 +105,7 @@ def skip_this_file(
     return should_skip
 
 
+# TODO compare to https://mypy.readthedocs.io/en/stable/running_mypy.html#mapping-file-paths-to-modules
 def _source_relative_to_pkg(file: Path) -> Path|None:
     """Returns a Python source file's path relative to its package"""
     try:
