@@ -1,6 +1,10 @@
 # RightTyper
 
-![Downloads](https://static.pepy.tech/badge/righttyper)[![Downloads](https://static.pepy.tech/badge/righttyper/month)](https://pepy.tech/project/righttyper) 
+![pyversions](https://img.shields.io/pypi/pyversions/righttyper?logo=python&logoColor=FBE072)
+[![pypi](https://img.shields.io/pypi/v/righttyper?color=blue)](https://pypi.org/project/righttyper/)
+![Downloads](https://static.pepy.tech/badge/righttyper)
+[![Downloads](https://static.pepy.tech/badge/righttyper/month)](https://pepy.tech/project/righttyper)
+![tests](https://github.com/righttyper/righttyper/workflows/tests/badge.svg)
 
 RightTyper is a Python tool that generates types for your function
 arguments and return values. RightTyper lets your code run at nearly full speed with
