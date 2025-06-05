@@ -36,7 +36,7 @@ build-backend = "setuptools.build_meta"
 [tool.righttyper_setup]
 # dev builds dynamically add to the version, so it must be defined
 # seperately; setup.py puts it together.
-version = "0.0.11"
+version = "0.0.12"
 
 [project]
 name = "righttyper"
