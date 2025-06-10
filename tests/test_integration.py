@@ -582,8 +582,8 @@ def test_default_arg():
         def func(n=None):
             return n+1 if n else 0
 
-        def func2(n=5):
-            return n+1
+        def func2(n="5"):
+            return int(n)+1
 
         func(1)
         func2(1.0)
@@ -597,7 +597,7 @@ def test_default_arg():
 
     assert "def func(n: int|None=None) -> int" in output
 
-    assert "def func2(n: float=5) -> float" in output
+    assert "def func2(n: float|str=\"5\") -> int" in output
 
 
 def test_default_in_private_method():
