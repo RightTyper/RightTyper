@@ -3900,3 +3900,31 @@ def test_numeric_subtypes(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "def foo(x: float) -> None:" in output
+
+
+def test_numeric_hierarchy(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A(float):
+            pass
+
+        class B(int):
+            pass
+
+        def foo(x):
+            print(x)
+        
+        foo(A())
+        foo(B())
+
+        # note that this is needed due to the stricter type merging
+        # rules introduced in ac9c94a
+        foo(1.0)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+
+    assert "def foo(x: float) -> None:" in output

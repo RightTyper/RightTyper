@@ -68,9 +68,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
         ```
              float int
                 |   |
-                B   C
-                 \\ /
-                  A
+                A   B
         ```
         And we are given [A, B, float, C, int]
 
@@ -82,9 +80,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
                 | \\
                 |  int
                 |   |
-                B   C
-                 \\ /
-                  A
+                A   B
         ```
 
         This method returns a new mro that is consistent with this type hierarchy
