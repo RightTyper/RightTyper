@@ -70,7 +70,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
                 |   |
                 A   B
         ```
-        And we are given [A, B, float, C, int]
+        And we are given [A, float] for A and [B, int] for B
 
         According to [PEP 3141](https://peps.python.org/pep-3141/), this type hierarchy is equivalent to
         ```
@@ -84,6 +84,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
         ```
 
         This method returns a new mro that is consistent with this type hierarchy
+        ([A, float, complex] for A and [B, int, float, complex] for B)
         """
         new_mro = [mro_type for mro_type in mro if mro_type not in {int, float, complex, object}]
         numerics = [mro_type for mro_type in mro if mro_type in {int, float, complex, object}]
