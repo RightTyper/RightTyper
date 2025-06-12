@@ -1248,9 +1248,9 @@ def process(
         sys.exit(1)
 
     # Copy run options, but be careful not to replace instance, as there may be
-    # multiple references to it (e.g., through from .options import ...)
+    # multiple references to it (e.g., through "from .options import ...")
     global run_options
-    for key, value in asdict(run_options).items():
+    for key, value in asdict(pkl['run_options']).items():
         setattr(run_options, key, value)
 
     sig_changes = process_files(
