@@ -1096,37 +1096,67 @@ def cli(verbose: bool):
     default=run_options.use_top_pct,
     help="Only use the X% most common call traces.",
 )
+@click.option(
+    "--process",
+    default=False,
+    is_flag=True,
+    hidden=True,
+    help="Rather than save collected data, process it right away."
+)
+# --- the options below mirror those of 'process', for compatibility only ---
+@click.option(
+    "--output-files/--no-output-files",
+    help="Output annotated files (possibly overwriting, if specified).",
+    default=False,
+    show_default=True,
+    hidden=True
+)
+@click.option(
+    "--overwrite/--no-overwrite",
+    help="Overwrite files with type information.",
+    default=False,
+    show_default=True,
+    hidden=True
+)
+@click.option(
+    "--only-update-annotations",
+    is_flag=True,
+    default=False,
+    help="Overwrite existing annotations but never add new ones.",
+    hidden=True
+)
+@click.option(
+    "--generate-stubs",
+    is_flag=True,
+    default=False,
+    help="Generate stub files (.pyi).",
+    hidden=True
+)
+@click.option(
+    "--use-multiprocessing/--no-use-multiprocessing",
+    default=True,
+    hidden=True,
+    help="Whether to use multiprocessing.",
+)
+# --- end of compatibility options ---
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
     script: str,
-    module: str,
     args: list[str],
-    all_files: bool,
-    include_files: str,
-    include_functions: tuple[str, ...],
-    ignore_annotations: bool,
-    infer_shapes: bool,
-    srcdir: str,
-    target_overhead: float,
-    sampling: bool,
-    signal_wakeup: bool,
-    replace_dict: bool,
-    container_sample_limit: int,
-    python_version: str,
-    use_top_pct: int
+    **kwargs
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
-    if module:
+    if kwargs['module']:
         args = [*((script,) if script else ()), *args]  # script, if any, is really the 1st module arg
-        script = module
+        script = kwargs['module']
     elif script:
         if not os.path.isfile(script):
             raise click.UsageError(f"\"{script}\" is not a file.")
     else:
         raise click.UsageError("Either -m/--module must be provided, or a script be passed.")
 
-    if infer_shapes:
+    if kwargs['infer_shapes']:
         # Check for required packages for shape inference
         found_package = defaultdict(bool)
         packages = ["jaxtyping"]
@@ -1143,26 +1173,26 @@ def run(
                     print(f" * {package}")
             sys.exit(1)
 
-    target = tuple(int(n) for n in python_version.split('.'))
+    target = tuple(int(n) for n in kwargs['python_version'].split('.'))
 
     run_options.script_dir = os.path.dirname(os.path.realpath(script))
-    run_options.include_files_pattern = include_files
-    run_options.include_all = all_files
-    run_options.include_functions_pattern = include_functions
-    run_options.target_overhead = target_overhead
-    run_options.infer_shapes = infer_shapes
-    run_options.ignore_annotations = ignore_annotations
-    run_options.srcdir = srcdir
-    run_options.sampling = sampling
-    run_options.replace_dict = replace_dict
-    run_options.container_sample_limit = container_sample_limit
+    run_options.include_files_pattern = kwargs['include_files']
+    run_options.include_all = kwargs['all_files']
+    run_options.include_functions_pattern = kwargs['include_functions']
+    run_options.target_overhead = kwargs['target_overhead']
+    run_options.infer_shapes = kwargs['infer_shapes']
+    run_options.ignore_annotations = kwargs['ignore_annotations']
+    run_options.srcdir = kwargs['srcdir']
+    run_options.sampling = kwargs['sampling']
+    run_options.replace_dict = kwargs['replace_dict']
+    run_options.container_sample_limit = kwargs['container_sample_limit']
     run_options.use_typing_union = target < (3, 10)
     run_options.use_typing_self = target >= (3, 11)
     run_options.use_typing_never = target >= (3, 11)
     run_options.inline_generics = target >= (3, 12)
-    run_options.use_top_pct = use_top_pct
+    run_options.use_top_pct = kwargs['use_top_pct']
 
-    alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
+    alarm_cls = SignalAlarm if kwargs['signal_wakeup'] else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
 
     try:
@@ -1175,7 +1205,7 @@ def run(
         )
         sys.monitoring.restart_events()
         alarm.start()
-        execute_script_or_module(script, bool(module), args)
+        execute_script_or_module(script, is_module=bool(kwargs['module']), args=args)
     finally:
         reset_monitoring()
         alarm.stop()
@@ -1198,11 +1228,33 @@ def run(
             'run_options': run_options
         }
 
-        with open(PKL_FILE_NAME, "wb") as f:
-            pickle.dump(results, f)
+        if kwargs['process']:
+            process_results(results, kwargs)
+        else:
+            with open(PKL_FILE_NAME, "wb") as f:
+                pickle.dump(results, f)
+
+            print(f"Collected types saved to {PKL_FILE_NAME}.")
+
+
+def process_results(results: dict[str, Any], options: dict[str, Any]):
+    sig_changes = process_files(
+        results['files'],
+        results['type_annotations'],
+        results['run_options'],
+        options['output_files'],
+        options['generate_stubs'],
+        options['overwrite'],
+        options['only_update_annotations'],
+        options['use_multiprocessing']
+    )
+
+    with open(f"{TOOL_NAME}.out", "w+") as f:
+        output_signatures(sig_changes, f)
 
 
 @cli.command()
+# note -- when modifying options here, also update hidden versions in run()
 @click.option(
     "--output-files/--no-output-files",
     help="Output annotated files (possibly overwriting, if specified).",
@@ -1233,13 +1285,7 @@ def run(
     hidden=True,
     help="Whether to use multiprocessing.",
 )
-def process(
-    output_files: bool,
-    overwrite: bool,
-    only_update_annotations: bool,
-    generate_stubs: bool,
-    use_multiprocessing: bool,
-):
+def process(**kwargs):
     """Processes type information collected with the 'run' command."""
 
     try:
@@ -1259,19 +1305,7 @@ def process(
     for key, value in asdict(pkl['run_options']).items():
         setattr(run_options, key, value)
 
-    sig_changes = process_files(
-        pkl['files'],
-        pkl['type_annotations'],
-        pkl['run_options'],
-        output_files,
-        generate_stubs,
-        overwrite,
-        only_update_annotations,
-        use_multiprocessing
-    )
-
-    with open(f"{TOOL_NAME}.out", "w+") as f:
-        output_signatures(sig_changes, f)
+    process_results(pkl, kwargs)
 
 
 @cli.command()
