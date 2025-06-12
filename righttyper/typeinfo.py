@@ -86,8 +86,11 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
         This method returns a new mro that is consistent with this type hierarchy
         ([A, float, complex] for A and [B, int, float, complex] for B)
         """
-        new_mro = [mro_type for mro_type in mro if mro_type not in {int, float, complex, object}]
-        numerics = [mro_type for mro_type in mro if mro_type in {int, float, complex, object}]
+        numeric_hierarchy = frozenset({int, float, complex, object})
+        numerics = [mro_type for mro_type in mro if mro_type in numeric_hierarchy]
+        if len(numerics) <= 1:
+            return mro
+        new_mro = [mro_type for mro_type in mro if mro_type not in numeric_hierarchy]
         tower_index = min([int, float, complex, object].index(mro_type) for mro_type in numerics)
         new_mro.extend([int, float, complex, object][tower_index:])
         return tuple(new_mro)
