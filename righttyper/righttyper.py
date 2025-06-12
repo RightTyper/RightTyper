@@ -85,6 +85,8 @@ from righttyper.righttyper_alarm import (
 from righttyper.options import RunOptions, run_options
 
 logger = logging.getLogger("righttyper")
+PKL_FILE_NAME = f"{TOOL_NAME}.pkl"
+PKL_FILE_VERSION = 1
 
 
 def get_inline_arg_types(
@@ -199,7 +201,7 @@ class Observations:
                 if modname == "__main__":
                     modname = get_main_module_fqn()
             else:
-                modname = source_to_module_fqn(code.co_filename)
+                modname = source_to_module_fqn(Path(code.co_filename))
 
             self.source_to_module_name[code.co_filename] = modname
 
@@ -904,7 +906,7 @@ def process_file_wrapper(args) -> SignatureChanges:
 
 
 def process_files(
-    files: list[list[str, str]],
+    files: list[list[str]],
     type_annotations: dict[FuncId, FuncAnnotation],
     run_options: RunOptions,
     output_files: bool,
@@ -1190,13 +1192,13 @@ def run(
         )
 
         results = {
-            'version': 1,
+            'version': PKL_FILE_VERSION,
             'files': [[f, obs.source_to_module_name.get(f)] for f in file_names],
             'type_annotations': obs.collect_annotations(),
             'run_options': run_options
         }
 
-        with open(f"{TOOL_NAME}.pkl", "wb") as f:
+        with open(PKL_FILE_NAME, "wb") as f:
             pickle.dump(results, f)
 
 
@@ -1238,13 +1240,17 @@ def process(
     generate_stubs: bool,
     use_multiprocessing: bool,
 ):
-    """Processes results from the 'run' command."""
+    """Processes type information collected with the 'run' command."""
 
-    with open(f"{TOOL_NAME}.pkl", "rb") as f:
-        pkl = pickle.load(f)
+    try:
+        with open(PKL_FILE_NAME, "rb") as f:
+            pkl = pickle.load(f)
+    except FileNotFoundError:
+        print(f"Error: No '{PKL_FILE_NAME}' found to process.")
+        sys.exit(1)
 
-    if pkl.get('version') != 1:
-        print(f"Unsupported {TOOL_NAME}.pkl version")
+    if pkl.get('version') != PKL_FILE_VERSION:
+        print(f"Error: Unsupported {PKL_FILE_NAME} version: {pkl.get('version')}, expected {PKL_FILE_VERSION}")
         sys.exit(1)
 
     # Copy run options, but be careful not to replace instance, as there may be
