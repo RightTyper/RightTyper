@@ -744,6 +744,35 @@ def test_method_overriding_annotated():
     """)
 
 
+@pytest.mark.dont_run_mypy # fails because ModuleType[str] is wrong
+def test_method_overriding_annotated_invalid():
+    t = textwrap.dedent("""\
+        from __future__ import annotations
+        from types import ModuleType
+        from typing import Self, List
+
+        class A:
+            def foo(self: Self, x: ModuleType[str]):    # module isn't subscriptable
+                return len(x)
+
+        class B(A):
+            def foo(self, x):
+                return len(x)
+
+        B().foo([1.0])
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: list[float]) -> int: ...
+    """)
+
+
 def test_method_overriding_annotated_with_literal():
     t = textwrap.dedent("""\
         from typing import Self, Literal
