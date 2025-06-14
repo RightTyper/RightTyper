@@ -3928,3 +3928,72 @@ def test_numeric_hierarchy(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "def foo(x: float) -> None:" in output
+
+
+def test_overload_preserve_unannotated(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> str:
+            ...
+        @overload
+        def foo(bar: str) -> int:
+            ...
+        def foo(bar):
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+
+        foo(1)
+        foo("world")
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+
+    # If overloads are present and are not overriding annotations, we should
+    # leave the function alone.
+    assert "def foo(bar)" in output
+    assert "@overload" in output
+
+
+def test_overload_rewrite_annotated(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> str:
+            ...
+        @overload
+        def foo(bar: str) -> int:
+            ...
+        def foo(bar: int|str|bool) -> int|str|bool:
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+            elif isinstance(bar, bool):
+                return not bar
+
+        foo(1)
+        foo("world")
+        foo(True)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+
+    # In our current iteration, we need to make sure that foo is annotated and
+    # that the old overloads are deleted.
+    # Since we haven't implemented overload generation, this is done with
+    # unions.
+    assert "def foo(bar: int|str|bool) -> int|str|bool:" in output
+    assert "@overload" not in output
