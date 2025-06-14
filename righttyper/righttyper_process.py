@@ -120,7 +120,11 @@ def process_file(
 
     changes = transformer.get_signature_changes()
 
-    if output_files and changes:
+    # Currently, because of override handling, it is possible to have a file
+    # with no signature changes which also includes relevant changes.
+    # TODO: find another way to remedy this.
+    # if output_files and changes:
+    if output_files:
         if overwrite:
             with open(filename + ".bak", "w") as file:
                 file.write(source)
