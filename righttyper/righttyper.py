@@ -1071,7 +1071,7 @@ def cli(verbose: bool):
     "--signal-wakeup/--thread-wakeup",
     default=not platform.system() == "Windows",
     hidden=True,
-    help="Whether to use signal-based wakeups or thead-based wakeups."
+    help="Whether to use signal-based wakeups or thread-based wakeups."
 )
 @click.option(
     "--replace-dict/--no-replace-dict",
