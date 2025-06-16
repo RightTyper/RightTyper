@@ -9,7 +9,6 @@ class RunOptions:
     target_overhead: float = 5.0
     infer_shapes: bool = False
     ignore_annotations: bool = False
-    srcdir: str = ""
     sampling: bool = True
     replace_dict: bool = False
     container_sample_limit: int = 1000

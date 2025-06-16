@@ -1044,12 +1044,6 @@ def cli(verbose: bool):
     help="Produce tensor shape annotations (compatible with jaxtyping).",
 )
 @click.option(
-    "--srcdir",
-    type=click.Path(exists=True, file_okay=False),
-    default=os.getcwd(),
-    help="Use this directory as the base for imports.",
-)
-@click.option(
     "--ignore-annotations",
     is_flag=True,
     help="Ignore existing annotations and overwrite with type information.",
@@ -1182,7 +1176,6 @@ def run(
     run_options.target_overhead = kwargs['target_overhead']
     run_options.infer_shapes = kwargs['infer_shapes']
     run_options.ignore_annotations = kwargs['ignore_annotations']
-    run_options.srcdir = kwargs['srcdir']
     run_options.sampling = kwargs['sampling']
     run_options.replace_dict = kwargs['replace_dict']
     run_options.container_sample_limit = kwargs['container_sample_limit']
