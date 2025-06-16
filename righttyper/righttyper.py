@@ -1169,7 +1169,16 @@ def run(
 
     target = tuple(int(n) for n in kwargs['python_version'].split('.'))
 
-    run_options.script_dir = os.path.dirname(os.path.realpath(script))
+    if kwargs['module'] and (spec := importlib.util.find_spec(kwargs['module'])):
+        if not spec.origin:
+            print("Unable to determine root directory for module")
+            # TODO offer option to override/set this
+            sys.exit(1)
+
+        run_options.script_dir = os.path.dirname(os.path.realpath(spec.origin))
+    else:
+        run_options.script_dir = os.path.dirname(os.path.realpath(script))
+
     run_options.include_files_pattern = kwargs['include_files']
     run_options.include_all = kwargs['all_files']
     run_options.include_functions_pattern = kwargs['include_functions']
