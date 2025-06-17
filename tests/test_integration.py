@@ -1198,7 +1198,7 @@ def test_class_name_in_test(tmp_cwd):
         """
     ))
 
-    rt_run('-m', 'pytest', '--srcdir', '.', '-s', 'tests')
+    rt_run('-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
@@ -1220,7 +1220,7 @@ def test_class_name_in_test_subdir(tmp_cwd):
         """
     ))
 
-    rt_run('-m', 'pytest', '--srcdir', '.', '-s', 'tests')
+    rt_run('-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "sub" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output

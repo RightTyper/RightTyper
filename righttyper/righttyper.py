@@ -1022,14 +1022,19 @@ def cli(verbose: bool):
     type=CheckModule(),
 )
 @click.option(
+    "--root",
+    type=click.Path(exists=True, file_okay=False),
+    help="Process only files under the given directory.  If omitted, the script's directory (or, for -m, the current directory) is used.",
+)
+@click.option(
     "--all-files",
     is_flag=True,
-    help="Process any files encountered, including in libraries (except for those specified in --include-files)",
+    help="Process any files encountered, including libraries (except for those specified in --include-files)",
 )
 @click.option(
     "--include-files",
     type=str,
-    help="Include only files matching the given pattern.",
+    help="Process only files matching the given pattern.",
 )
 @click.option(
     "--include-functions",
@@ -1042,11 +1047,6 @@ def cli(verbose: bool):
     default=False,
     show_default=True,
     help="Produce tensor shape annotations (compatible with jaxtyping).",
-)
-@click.option(
-    "--srcdir",
-    type=click.Path(exists=True, file_okay=False),
-    help="Only examine files under the given directory. If omitted, the script or module directory is used.",
 )
 @click.option(
     "--ignore-annotations",
@@ -1174,17 +1174,12 @@ def run(
 
     target = tuple(int(n) for n in kwargs['python_version'].split('.'))
 
-    if kwargs['srcdir']:
-        run_options.script_dir = os.path.realpath(kwargs['srcdir'])
+    if kwargs['root']:
+        run_options.script_dir = os.path.realpath(kwargs['root'])
+    elif kwargs['module']:
+        run_options.script_dir = os.getcwd()
     else:
-        if kwargs['module'] and (spec := importlib.util.find_spec(kwargs['module'])):
-            if not spec.origin:
-                print("Unable to determine root directory for module; please specify --srcdir")
-                sys.exit(1)
-
-            run_options.script_dir = os.path.dirname(os.path.realpath(spec.origin))
-        else:
-            run_options.script_dir = os.path.dirname(os.path.realpath(script))
+        run_options.script_dir = os.path.dirname(os.path.realpath(script))
 
     run_options.include_files_pattern = kwargs['include_files']
     run_options.include_all = kwargs['all_files']
