@@ -1044,6 +1044,11 @@ def cli(verbose: bool):
     help="Produce tensor shape annotations (compatible with jaxtyping).",
 )
 @click.option(
+    "--srcdir",
+    type=click.Path(exists=True, file_okay=False),
+    help="Only examine files under the given directory. If omitted, the script or module directory is used.",
+)
+@click.option(
     "--ignore-annotations",
     is_flag=True,
     help="Ignore existing annotations and overwrite with type information.",
@@ -1169,15 +1174,17 @@ def run(
 
     target = tuple(int(n) for n in kwargs['python_version'].split('.'))
 
-    if kwargs['module'] and (spec := importlib.util.find_spec(kwargs['module'])):
-        if not spec.origin:
-            print("Unable to determine root directory for module")
-            # TODO offer option to override/set this
-            sys.exit(1)
-
-        run_options.script_dir = os.path.dirname(os.path.realpath(spec.origin))
+    if kwargs['srcdir']:
+        run_options.script_dir = os.path.realpath(kwargs['srcdir'])
     else:
-        run_options.script_dir = os.path.dirname(os.path.realpath(script))
+        if kwargs['module'] and (spec := importlib.util.find_spec(kwargs['module'])):
+            if not spec.origin:
+                print("Unable to determine root directory for module; please specify --srcdir")
+                sys.exit(1)
+
+            run_options.script_dir = os.path.dirname(os.path.realpath(spec.origin))
+        else:
+            run_options.script_dir = os.path.dirname(os.path.realpath(script))
 
     run_options.include_files_pattern = kwargs['include_files']
     run_options.include_all = kwargs['all_files']

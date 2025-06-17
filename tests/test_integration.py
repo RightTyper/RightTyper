@@ -1198,7 +1198,7 @@ def test_class_name_in_test(tmp_cwd):
         """
     ))
 
-    rt_run('-m', 'pytest', '-s', 'tests')
+    rt_run('-m', 'pytest', '--srcdir', '.', '-s', 'tests')
     output = (tmp_cwd / "tests" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
@@ -1220,7 +1220,7 @@ def test_class_name_in_test_subdir(tmp_cwd):
         """
     ))
 
-    rt_run('-m', 'pytest', '-s', 'tests')
+    rt_run('-m', 'pytest', '--srcdir', '.', '-s', 'tests')
     output = (tmp_cwd / "tests" / "sub" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
@@ -3795,3 +3795,41 @@ def test_numeric_hierarchy(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "def foo(x: float) -> None:" in output
+
+
+def test_enum_class():
+    Path("t.py").write_text(textwrap.dedent("""\
+        from enum import Enum
+
+        class Decision(Enum):
+            NO = 0
+            YES = 1
+            MAYBE = 2
+
+            @classmethod
+            def from_str(cls, s):
+                if s == 'no': return cls.NO
+                if s == 'yes': return cls.YES
+                return cls.MAYBE
+
+        def f():
+            return Decision.from_str('yes')
+
+        f()
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f() -> Decision: ...
+    """)
+
+    # If we used 'Self' here, mypy would report:
+    # error: Incompatible return value type (got "Decision", expected "Self")  [return-value]
+    assert get_function(code, 'Decision.from_str') == textwrap.dedent("""\
+        @classmethod
+        def from_str(cls: "type[Decision]", s: str) -> "Decision": ...
+    """)
