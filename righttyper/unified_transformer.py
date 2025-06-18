@@ -12,6 +12,7 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     FunctionName,
     TypeInfo,
+    ExtendedFunctionDef
 )
 
 
@@ -116,7 +117,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.has_future_annotations = False
         self.module_name = module_name
         self.module_names = sorted(module_names, key=lambda name: -name.count('.'))
-        self.change_list: list[tuple[FunctionName, cst.FunctionDef, cst.FunctionDef]] = []
+        self.change_list: list[tuple[FunctionName, ExtendedFunctionDef, ExtendedFunctionDef]] = []
 
     def _module_for(self, name: str) -> tuple[str, str]:
         """Splits a dot name in its module and qualified name parts."""
@@ -493,7 +494,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             if not existing_annotations and len(self.overload_stack[-1]) != 0:
                 return cst.FlattenSentinel([*self.overload_stack[-1], updated_node])
 
-            pre_function: list[cst.CSTNode] = []
+            pre_function: list[cst.SimpleStatementLine | cst.BaseCompoundStatement] = []
             argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
 
             # Do existing annotations overlap with typevar args/return ?
@@ -582,11 +583,10 @@ class UnifiedTransformer(cst.CSTTransformer):
                     body=updated_node.body.with_changes(
                         header=cst.TrailingWhitespace()))
 
-            # FIXME this doesn't capture any non-inline typevar definitions
-            self.change_list.append((key.func_name, original_node, updated_node))
 
             # Append overloads
             overloads = self.overload_stack[-1]
+            old_overloads = overloads
             self.overload_stack[-1] = []
             # TODO Generate new overloads.
             # If any type annotations exist already, wipe the existing overloads
@@ -606,7 +606,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                     pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:first_comment])
                     updated_node = updated_node.with_changes(leading_lines=leading_lines[first_comment:])
 
-                return cst.FlattenSentinel([*pre_function, updated_node])
+            original_function_def = ExtendedFunctionDef(old_overloads, original_node)
+            updated_function_def = ExtendedFunctionDef(pre_function, updated_node)
+            self.change_list.append((key.func_name, original_function_def, updated_function_def))
+            
+            return cst.FlattenSentinel([*pre_function, updated_node]) if pre_function else updated_node
 
         return updated_node
 
@@ -865,7 +869,7 @@ def list_rindex(lst: list, item: object) -> int:
         return 0
 
 
-def format_signature(f: cst.FunctionDef) -> str:
+def format_signature(f: ExtendedFunctionDef) -> str:
     """Formats the signature of a function."""
 
     class BodyRemover(cst.CSTTransformer):
@@ -881,8 +885,10 @@ def format_signature(f: cst.FunctionDef) -> str:
         ) -> cst.RemovalSentinel:
             return cst.RemoveFromParent()
 
-    bodyless = typing.cast(cst.FunctionDef, f.visit(BodyRemover()))
-    sig = cst.Module([bodyless]).code.strip()
+    # Here, we remove the body from the primary function and convert the whole
+    # sequence (prefix, primary) into a string
+    bodyless = typing.cast(cst.FunctionDef, f.primary.visit(BodyRemover()))
+    sig = cst.Module([*f.prefix, bodyless]).code.strip()
 
     # It's easier to let libcst generate "pass" for an empty body and then remove it
     # than to find a way to have it emit a bodyless function...
