@@ -2144,7 +2144,7 @@ def test_generics_defined_simple():
 
 
 def test_overload_preserve():
-    code = cst.parse_module(textwrap.dedent("""\
+    input_code = cst.parse_module(textwrap.dedent("""\
         from typing import overload
 
         @overload
@@ -2163,7 +2163,7 @@ def test_overload_preserve():
     """))
     T1 = TypeInfo.from_type(str)
     T2 = TypeInfo.from_type(int)
-    f = get_funcid('foo.py', code, 'foo')
+    f = get_funcid('foo.py', input_code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
@@ -2180,8 +2180,8 @@ def test_overload_preserve():
             module_names=['foo'],
         )
 
-    code = t.transform_code(code)
-    assert "@overload" in "\n".join(get_function_all(code, "foo"))
+    output_code = t.transform_code(input_code)
+    assert input_code.code == output_code.code
 
 
 def test_overload_remove():
@@ -2222,5 +2222,14 @@ def test_overload_remove():
         )
 
     code = t.transform_code(code)
-    print("\n".join(get_function_all(code, "foo")))
-    assert "@overload" not in "\n".join(get_function_all(code, "foo"))
+    functions = get_function_all(code, "foo")
+    assert len(functions) == 1
+    assert functions[0].strip() == textwrap.dedent("""
+        def foo(bar: int|str) -> int|str:
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+            elif isinstance(bar, bool):
+                return not bar
+        """).strip()

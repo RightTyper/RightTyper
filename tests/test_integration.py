@@ -7,9 +7,11 @@ import importlib.util
 import re
 import libcst as cst
 
-from test_transformer import get_function as t_get_function
+from test_transformer import (get_function as t_get_function,
+                              get_function_all as t_get_function_all)
 from functools import partial
 get_function = partial(t_get_function, body=False)
+get_function_all = partial(t_get_function_all, body=False)
 
 
 @pytest.fixture(scope='function')
@@ -3931,7 +3933,7 @@ def test_numeric_hierarchy(tmp_cwd):
 
 
 def test_overload_preserve_unannotated(tmp_cwd):
-    Path("t.py").write_text(textwrap.dedent("""\
+    text = textwrap.dedent("""\
         from typing import overload
 
         @overload
@@ -3949,7 +3951,8 @@ def test_overload_preserve_unannotated(tmp_cwd):
         foo(1)
         foo("world")
         """
-    ))
+    )
+    Path("t.py").write_text(text)
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
                     '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
@@ -3958,8 +3961,7 @@ def test_overload_preserve_unannotated(tmp_cwd):
 
     # If overloads are present and are not overriding annotations, we should
     # leave the function alone.
-    assert "def foo(bar)" in output
-    assert "@overload" in output
+    assert output == text
 
 
 def test_overload_rewrite_annotated(tmp_cwd):
@@ -3990,13 +3992,17 @@ def test_overload_rewrite_annotated(tmp_cwd):
                     '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
 
     output = Path("t.py").read_text()
+    print(output)
+    code = cst.parse_module(output)
+
+    function_list = get_function_all(code, "foo")
 
     # In our current iteration, we need to make sure that foo is annotated and
     # that the old overloads are deleted.
     # Since we haven't implemented overload generation, this is done with
     # unions.
-    assert "def foo(bar: int|str|bool) -> int|str|bool:" in output
-    assert "@overload" not in output
+    assert len(function_list) == 1
+    assert function_list[0].strip() == "def foo(bar: int|str|bool) -> int|str|bool: ..."
 
 
 def test_capture_non_inline_typevar():
