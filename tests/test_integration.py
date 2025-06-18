@@ -4016,8 +4016,9 @@ def test_capture_non_inline_typevar():
     output = Path("righttyper.out").read_text()
 
     res = textwrap.dedent("""\
-        - def add(a, b):
         + rt_T1 = TypeVar("rt_T1", int, str)
+          # comment and emptyline
+        - def add(a, b):
         + def add(a: rt_T1, b: rt_T1) -> rt_T1:
         """)
 
