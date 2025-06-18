@@ -3997,3 +3997,28 @@ def test_overload_rewrite_annotated(tmp_cwd):
     # unions.
     assert "def foo(bar: int|str|bool) -> int|str|bool:" in output
     assert "@overload" not in output
+
+
+def test_capture_non_inline_typevar():
+    t = textwrap.dedent("""\
+        ...
+        # comment and emptyline
+        def add(a, b):
+            return a + b
+        add(1, 2)
+        add("a", "b")
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--python-version=3.11', '--no-sampling', 't.py'], check=True)
+    output = Path("righttyper.out").read_text()
+
+    res = textwrap.dedent("""\
+        - def add(a, b):
+        + rt_T1 = TypeVar("rt_T1", int, str)
+        + def add(a: rt_T1, b: rt_T1) -> rt_T1:
+        """)
+
+    assert res in output
