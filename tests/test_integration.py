@@ -7,9 +7,11 @@ import importlib.util
 import re
 import libcst as cst
 
-from test_transformer import get_function as t_get_function
+from test_transformer import (get_function as t_get_function,
+                              get_function_all as t_get_function_all)
 from functools import partial
 get_function = partial(t_get_function, body=False)
+get_function_all = partial(t_get_function_all, body=False)
 
 
 @pytest.fixture(scope='function')
@@ -3928,3 +3930,102 @@ def test_numeric_hierarchy(tmp_cwd):
     output = Path("t.py").read_text()
 
     assert "def foo(x: float) -> None:" in output
+
+
+def test_overload_preserve_unannotated(tmp_cwd):
+    text = textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> str:
+            ...
+        @overload
+        def foo(bar: str) -> int:
+            ...
+        def foo(bar):
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+
+        foo(1)
+        foo("world")
+        """
+    )
+    Path("t.py").write_text(text)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+
+    # If overloads are present and are not overriding annotations, we should
+    # leave the function alone.
+    assert output == text
+
+
+def test_overload_rewrite_annotated(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> str:
+            ...
+        @overload
+        def foo(bar: str) -> int:
+            ...
+        def foo(bar: int|str|bool) -> int|str|bool:
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+            elif isinstance(bar, bool):
+                return not bar
+
+        foo(1)
+        foo("world")
+        foo(True)
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
+
+    output = Path("t.py").read_text()
+    print(output)
+    code = cst.parse_module(output)
+
+    function_list = get_function_all(code, "foo")
+
+    # In our current iteration, we need to make sure that foo is annotated and
+    # that the old overloads are deleted.
+    # Since we haven't implemented overload generation, this is done with
+    # unions.
+    assert len(function_list) == 1
+    assert function_list[0].strip() == "def foo(bar: int|str|bool) -> int|str|bool: ..."
+
+
+def test_capture_non_inline_typevar():
+    t = textwrap.dedent("""\
+        ...
+        # comment and emptyline
+        def add(a, b):
+            return a + b
+        add(1, 2)
+        add("a", "b")
+        """)
+
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--python-version=3.11', '--no-sampling', 't.py'], check=True)
+    output = Path("righttyper.out").read_text()
+
+    res = textwrap.dedent("""\
+        + rt_T1 = TypeVar("rt_T1", int, str)
+          # comment and emptyline
+        - def add(a, b):
+        + def add(a: rt_T1, b: rt_T1) -> rt_T1:
+        """)
+
+    assert res in output

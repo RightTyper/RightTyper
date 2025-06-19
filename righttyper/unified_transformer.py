@@ -12,6 +12,7 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     FunctionName,
     TypeInfo,
+    ExtendedFunctionDef
 )
 
 
@@ -116,7 +117,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.has_future_annotations = False
         self.module_name = module_name
         self.module_names = sorted(module_names, key=lambda name: -name.count('.'))
-        self.change_list: list[tuple[FunctionName, cst.FunctionDef, cst.FunctionDef]] = []
+        self.change_list: list[tuple[FunctionName, ExtendedFunctionDef, ExtendedFunctionDef]] = []
 
     def _module_for(self, name: str) -> tuple[str, str]:
         """Splits a dot name in its module and qualified name parts."""
@@ -277,6 +278,17 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         self.module_generic_index = 1
 
+        # Since overloads must be consecutive, we don't need to keep track of
+        # multiple concurrent overloaded functions within each namespace.
+
+        # The current list of overloads that have been collected in each scope.
+        # Note that this is a stack since namespaces can be nested
+        # (e.g. classes).
+        self.overload_stack: list[list[cst.FunctionDef]] = [[]]
+        # The current list of overloaded function names that have in each scope.
+        # For instance, 
+        self.overload_name_stack: list[str] = [""]
+
         return True
 
 
@@ -335,6 +347,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.append(node.name.value)
         self.used_names.append(self.used_names[name_source] | used_names(node))
+        self.overload_stack.append([])
+        self.overload_name_stack.append("")
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
@@ -342,6 +356,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.known_names.add(".".join(self.name_stack))
         self.name_stack.pop()
         self.used_names.pop()
+        self.overload_stack.pop()
+        self.overload_name_stack.pop()
         return updated_node
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
@@ -421,7 +437,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def leave_FunctionDef(
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
-    ) -> cst.FunctionDef | cst.FlattenSentinel:
+    ) -> cst.FunctionDef | cst.FlattenSentinel | cst.RemovalSentinel:
         name = ".".join(self.name_stack[:-1])
         self.name_stack.pop()
         self.name_stack.pop()
@@ -433,25 +449,60 @@ class UnifiedTransformer(cst.CSTTransformer):
         )
         key = FuncId(Filename(self.filename), first_line, FunctionName(name))
 
+        # If we encounter a function whose name doesn't match the current
+        # overload sequence, we discard the overload stack and update the
+        # current overload sequence.
+        # This also has the side effect of cleaning up orphan overload
+        # signatures, which is good.
+        if name != self.overload_name_stack[-1]:
+            self.overload_stack[-1] = []
+            self.overload_name_stack[-1] = name
+        # We collect the literal names of the decorators of the functions, while
+        # ignoring complex expressions.
+        decorator_names = [
+            decorator.decorator.value for decorator in updated_node.decorators
+            if isinstance(decorator.decorator, cst.Name)
+        ]
+        # If our function is an overload signature, we append it to the overload
+        # list.
+        # NOTE: This check technically misses if @overload is aliased or used as
+        # the result of an expression, but not even mypy handles that.
+        if "overload" in decorator_names:
+            self.overload_stack[-1].append(original_node)
+            return cst.RemoveFromParent()
+
         if ann := typing.cast(FuncAnnotation, self.type_annotations.get(key)):  # cast to make mypy happy
-            pre_function = []
+            # Do any type annotations exist currently?
+            existing_annotations = (
+                original_node.returns is not None or
+                any(par.annotation is not None
+                    for par in typing.cast(typing.Iterator[cst.Param],
+                                           cstm.findall(original_node.params,
+                                                        cstm.Param()))))
+
+            # In the case that we have an unannotated function with overloads,
+            # wo do not modify the function.
+            if not existing_annotations and len(self.overload_stack[-1]) != 0:
+                return cst.FlattenSentinel([*self.overload_stack[-1], updated_node])
+
+            pre_function: list[cst.SimpleStatementLine | cst.BaseCompoundStatement] = []
             argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
 
             # Do existing annotations overlap with typevar args/return ?
-            typevar_overlap = not self.override_annotations and (
-                    (updated_node.returns is not None and ann.retval.is_typevar()) or
-                    any (
-                        par.annotation is not None and
-                        par.name.value in argmap and
-                        argmap[par.name.value].is_typevar()
-                        for par in typing.cast(typing.Iterator[cst.Param], cstm.findall(updated_node.params, cstm.Param()))
-                    )
+            typevar_overlap = (
+                (updated_node.returns is not None and ann.retval.is_typevar()) or
+                any (
+                    par.annotation is not None and
+                    par.name.value in argmap and
+                    argmap[par.name.value].is_typevar()
+                    for par in typing.cast(typing.Iterator[cst.Param], cstm.findall(updated_node.params, cstm.Param()))
                 )
+            )
 
             del argmap
 
             # We don't yet support merging type_parameters
-            if not typevar_overlap and updated_node.type_parameters is None:
+            if (not typevar_overlap or self.override_annotations) and updated_node.type_parameters is None:
                 ann, generics = self._process_generics(ann)
 
                 if self.inline_generics:
@@ -523,8 +574,17 @@ class UnifiedTransformer(cst.CSTTransformer):
                     body=updated_node.body.with_changes(
                         header=cst.TrailingWhitespace()))
 
-            # FIXME this doesn't capture any non-inline typevar definitions
-            self.change_list.append((key.func_name, original_node, updated_node))
+
+            # Append overloads
+            overloads = self.overload_stack[-1]
+            old_overloads = overloads
+            self.overload_stack[-1] = []
+            # TODO Generate new overloads.
+            # If any type annotations exist already, wipe the existing overloads
+            # and remake them.
+            if existing_annotations:
+                overloads = []
+            pre_function.extend(overloads)
 
             if pre_function:
                 leading_lines = updated_node.leading_lines
@@ -537,9 +597,15 @@ class UnifiedTransformer(cst.CSTTransformer):
                     pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:first_comment])
                     updated_node = updated_node.with_changes(leading_lines=leading_lines[first_comment:])
 
-                return cst.FlattenSentinel([*pre_function, updated_node])
+            original_function_def = ExtendedFunctionDef(old_overloads, original_node)
+            updated_function_def = ExtendedFunctionDef(pre_function, updated_node)
+            self.change_list.append((key.func_name, original_function_def, updated_function_def))
+            
+            return cst.FlattenSentinel([*pre_function, updated_node]) if pre_function else updated_node
 
-        return updated_node
+        overloads = self.overload_stack[-1]
+        self.overload_stack[-1] = []
+        return cst.FlattenSentinel([*overloads, updated_node]) if overloads else updated_node
 
     # ConstructImportTransformer logic
     def leave_Module(
@@ -796,7 +862,7 @@ def list_rindex(lst: list, item: object) -> int:
         return 0
 
 
-def format_signature(f: cst.FunctionDef) -> str:
+def format_signature(f: ExtendedFunctionDef) -> str:
     """Formats the signature of a function."""
 
     class BodyRemover(cst.CSTTransformer):
@@ -812,8 +878,10 @@ def format_signature(f: cst.FunctionDef) -> str:
         ) -> cst.RemovalSentinel:
             return cst.RemoveFromParent()
 
-    bodyless = typing.cast(cst.FunctionDef, f.visit(BodyRemover()))
-    sig = cst.Module([bodyless]).code.strip()
+    # Here, we remove the body from the primary function and convert the whole
+    # sequence (prefix, primary) into a string
+    bodyless = typing.cast(cst.FunctionDef, f.primary.visit(BodyRemover()))
+    sig = cst.Module([*f.prefix, bodyless]).code.strip()
 
     # It's easier to let libcst generate "pass" for an empty body and then remove it
     # than to find a way to have it emit a bodyless function...
