@@ -469,16 +469,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         # the result of an expression, but not even mypy handles that.
         if "overload" in decorator_names:
             self.overload_stack[-1].append(original_node)
-            # Since key points to the overload signature, and not the actual
-            # function referenced in type_annotations, we need to do this
-            # fuzzy search.
-            is_called = ((key.file_name, key.func_name) in
-                         (type_annotation.file_name, type_annotation.func_name)
-                         for type_annotation in self.type_annotations)
-            if is_called:
-                return cst.RemoveFromParent()
-            else:
-                return updated_node
+            return cst.RemoveFromParent()
 
         if ann := typing.cast(FuncAnnotation, self.type_annotations.get(key)):  # cast to make mypy happy
             # Do any type annotations exist currently?
@@ -612,7 +603,9 @@ class UnifiedTransformer(cst.CSTTransformer):
             
             return cst.FlattenSentinel([*pre_function, updated_node]) if pre_function else updated_node
 
-        return updated_node
+        overloads = self.overload_stack[-1]
+        self.overload_stack[-1] = []
+        return cst.FlattenSentinel([*overloads, updated_node]) if overloads else updated_node
 
     # ConstructImportTransformer logic
     def leave_Module(
