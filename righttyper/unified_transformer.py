@@ -364,6 +364,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.extend([node.name.value, "<locals>"])
         self.used_names.append(self.used_names[name_source] | used_names(node))
+        self.overload_stack.append([])
+        self.overload_name_stack.append("")
         return True
 
     def _get_annotation_expr(self, annotation: TypeInfo) -> cst.BaseExpression:
@@ -442,6 +444,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.name_stack.pop()
         self.name_stack.pop()
         self.used_names.pop()
+        self.overload_stack.pop()
+        self.overload_name_stack.pop()
 
         first_line = min(
             self.get_metadata(PositionProvider, node).start.line
