@@ -461,17 +461,23 @@ class UnifiedTransformer(cst.CSTTransformer):
         if name != self.overload_name_stack[-1]:
             self.overload_stack[-1] = []
             self.overload_name_stack[-1] = name
-        # We collect the literal names of the decorators of the functions, while
-        # ignoring complex expressions.
-        decorator_names = [
-            decorator.decorator.value for decorator in updated_node.decorators
+
+        is_overload = any(
+            decorator.decorator.value == "overload"
+            for decorator in updated_node.decorators
             if isinstance(decorator.decorator, cst.Name)
-        ]
+        )
+        # We also look for qualified references to typing.overload
+        is_overload = is_overload | any(
+            decorator.decorator.attr.value == "overload"
+            for decorator in updated_node.decorators
+            if isinstance(decorator.decorator, cst.Attribute)
+        )
         # If our function is an overload signature, we append it to the overload
         # list.
         # NOTE: This check technically misses if @overload is aliased or used as
         # the result of an expression, but not even mypy handles that.
-        if "overload" in decorator_names:
+        if is_overload:
             self.overload_stack[-1].append(original_node)
             return cst.RemoveFromParent()
 

@@ -2233,3 +2233,54 @@ def test_overload_remove():
             elif isinstance(bar, bool):
                 return not bar
         """).strip()
+
+
+def test_overload_aliased():
+    code = cst.parse_module(textwrap.dedent("""\
+        import typing
+
+        @typing.overload
+        def foo(bar: int) -> str:
+            ...
+        @typing.overload
+        def foo(bar: str) -> int:
+            ...
+        def foo(bar: int|str) -> int|str:
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+            elif isinstance(bar, bool):
+                return not bar
+    """))
+    T1 = TypeInfo.from_type(str)
+    T2 = TypeInfo.from_type(int)
+    f = get_funcid('foo.py', code, 'foo')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: FuncAnnotation(
+                    [
+                        (ArgumentName("bar"), T1),
+                    ],
+                    T2,
+                ),},
+            override_annotations=False,
+            only_update_annotations=False,
+            inline_generics=False,
+            module_name='foo',
+            module_names=['foo'],
+        )
+
+    code = t.transform_code(code)
+    functions = get_function_all(code, "foo")
+    assert len(functions) == 1
+    assert functions[0].strip() == textwrap.dedent("""
+        def foo(bar: int|str) -> int|str:
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+            elif isinstance(bar, bool):
+                return not bar
+        """).strip()
