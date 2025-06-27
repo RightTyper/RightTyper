@@ -482,21 +482,10 @@ class UnifiedTransformer(cst.CSTTransformer):
             return cst.RemoveFromParent()
 
         if ann := typing.cast(FuncAnnotation, self.type_annotations.get(key)):  # cast to make mypy happy
-            # Do any type annotations exist currently?
-            existing_annotations = (
-                original_node.returns is not None or
-                any(par.annotation is not None
-                    for par in typing.cast(typing.Iterator[cst.Param],
-                                           cstm.findall(original_node.params,
-                                                        cstm.Param()))))
-
-            # In the case that we have an unannotated function with overloads,
-            # wo do not modify the function.
-            if not existing_annotations and len(self.overload_stack[-1]) != 0:
-                return cst.FlattenSentinel([*self.overload_stack[-1], updated_node])
-
             pre_function: list[cst.SimpleStatementLine | cst.BaseCompoundStatement] = []
             argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
+            overloads = self.overload_stack[-1]
+            self.overload_stack[-1] = []
 
             # Do existing annotations overlap with typevar args/return ?
             typevar_overlap = (
@@ -507,7 +496,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                     argmap[par.name.value].is_typevar()
                     for par in typing.cast(typing.Iterator[cst.Param], cstm.findall(updated_node.params, cstm.Param()))
                 )
-            )
+            ) or overloads != []
 
             del argmap
 
@@ -553,11 +542,12 @@ class UnifiedTransformer(cst.CSTTransformer):
                 def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
                     return self._process_parameter(updated_node, ann)
 
-            updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
+            if overloads == [] or self.override_annotations:
+                updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
 
             should_update_ret = (
             (self.only_update_annotations and updated_node.returns is not None)
-            or (not self.only_update_annotations and (updated_node.returns is None or self.override_annotations))
+            or (not self.only_update_annotations and ((overloads == [] and updated_node.returns is None) or self.override_annotations))
             )
             if should_update_ret:
                 if self._is_valid(ann.retval):
@@ -585,14 +575,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                         header=cst.TrailingWhitespace()))
 
 
-            # Append overloads
-            overloads = self.overload_stack[-1]
-            old_overloads = overloads
-            self.overload_stack[-1] = []
             # TODO Generate new overloads.
-            # If any type annotations exist already, wipe the existing overloads
+            # If any override_annotations is set, wipe the existing overloads
             # and remake them.
-            if existing_annotations:
+            original_overloads = overloads
+            if self.override_annotations:
                 overloads = []
             pre_function.extend(overloads)
 
@@ -607,7 +594,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                     pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:first_comment])
                     updated_node = updated_node.with_changes(leading_lines=leading_lines[first_comment:])
 
-            original_function_def = ExtendedFunctionDef(old_overloads, original_node)
+            original_function_def = ExtendedFunctionDef(original_overloads, original_node)
             updated_function_def = ExtendedFunctionDef(pre_function, updated_node)
             self.change_list.append((key.func_name, original_function_def, updated_function_def))
             
