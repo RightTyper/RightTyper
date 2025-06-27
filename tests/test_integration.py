@@ -3932,7 +3932,7 @@ def test_numeric_hierarchy(tmp_cwd):
     assert "def foo(x: float) -> None:" in output
 
 
-def test_overload_preserve_unannotated(tmp_cwd):
+def test_overload_no_ignore_annotation(tmp_cwd):
     text = textwrap.dedent("""\
         from typing import overload
 
@@ -3964,7 +3964,7 @@ def test_overload_preserve_unannotated(tmp_cwd):
     assert output == text
 
 
-def test_overload_rewrite_annotated(tmp_cwd):
+def test_overload_ignore_annotation(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         from typing import overload
 
@@ -3974,22 +3974,20 @@ def test_overload_rewrite_annotated(tmp_cwd):
         @overload
         def foo(bar: str) -> int:
             ...
-        def foo(bar: int|str|bool) -> int|str|bool:
+        def foo(bar):
             if isinstance(bar, int):
                 return "hello"
             elif isinstance(bar, str):
                 return 2
-            elif isinstance(bar, bool):
-                return not bar
 
         foo(1)
         foo("world")
-        foo(True)
         """
     ))
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
+                    '--no-use-multiprocessing', '--no-sampling', '--ignore-annotations', '-m', 't'],
+                    check=True)
 
     output = Path("t.py").read_text()
     print(output)
@@ -4002,7 +4000,7 @@ def test_overload_rewrite_annotated(tmp_cwd):
     # Since we haven't implemented overload generation, this is done with
     # unions.
     assert len(function_list) == 1
-    assert function_list[0].strip() == "def foo(bar: int|str|bool) -> int|str|bool: ..."
+    assert function_list[0].strip() == "def foo(bar: int|str) -> int|str: ..."
 
 
 def test_capture_non_inline_typevar():

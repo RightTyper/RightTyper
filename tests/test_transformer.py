@@ -2161,17 +2161,15 @@ def test_overload_preserve():
             elif isinstance(bar, bool):
                 return not bar
     """))
-    T1 = TypeInfo.from_type(str)
-    T2 = TypeInfo.from_type(int)
-    f = get_funcid('foo.py', input_code, 'foo')
+    foo = get_funcid('foo.py', input_code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                f: FuncAnnotation(
+                foo: FuncAnnotation(
                     [
-                        (ArgumentName("bar"), T1),
+                        (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
                     ],
-                    T2,
+                    TypeInfo.from_type(int, module=""),
                 ),},
             override_annotations=False,
             only_update_annotations=False,
@@ -2194,7 +2192,7 @@ def test_overload_remove():
         @overload
         def foo(bar: str) -> int:
             ...
-        def foo(bar: int|str) -> int|str:
+        def foo(bar):
             if isinstance(bar, int):
                 return "hello"
             elif isinstance(bar, str):
@@ -2202,19 +2200,19 @@ def test_overload_remove():
             elif isinstance(bar, bool):
                 return not bar
     """))
-    T1 = TypeInfo.from_type(str)
-    T2 = TypeInfo.from_type(int)
-    f = get_funcid('foo.py', code, 'foo')
+    
+    
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                f: FuncAnnotation(
+                foo: FuncAnnotation(
                     [
-                        (ArgumentName("bar"), T1),
+                        (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
                     ],
-                    T2,
+                    TypeInfo.from_type(int, module=""),
                 ),},
-            override_annotations=False,
+            override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
             module_name='foo',
@@ -2225,7 +2223,7 @@ def test_overload_remove():
     functions = get_function_all(code, "foo")
     assert len(functions) == 1
     assert functions[0].strip() == textwrap.dedent("""
-        def foo(bar: int|str) -> int|str:
+        def foo(bar: str) -> int:
             if isinstance(bar, int):
                 return "hello"
             elif isinstance(bar, str):
@@ -2250,22 +2248,18 @@ def test_overload_aliased():
                 return "hello"
             elif isinstance(bar, str):
                 return 2
-            elif isinstance(bar, bool):
-                return not bar
     """))
-    T1 = TypeInfo.from_type(str)
-    T2 = TypeInfo.from_type(int)
-    f = get_funcid('foo.py', code, 'foo')
+    foo = get_funcid('foo.py', code, 'foo')
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                f: FuncAnnotation(
+                foo: FuncAnnotation(
                     [
-                        (ArgumentName("bar"), T1),
+                        (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
                     ],
-                    T2,
+                    TypeInfo.from_type(int, module=""),
                 ),},
-            override_annotations=False,
+            override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
             module_name='foo',
@@ -2276,11 +2270,9 @@ def test_overload_aliased():
     functions = get_function_all(code, "foo")
     assert len(functions) == 1
     assert functions[0].strip() == textwrap.dedent("""
-        def foo(bar: int|str) -> int|str:
+        def foo(bar: str) -> int:
             if isinstance(bar, int):
                 return "hello"
             elif isinstance(bar, str):
                 return 2
-            elif isinstance(bar, bool):
-                return not bar
         """).strip()
