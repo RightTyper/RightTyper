@@ -33,7 +33,7 @@ On average, RightTyper imposes only 30% overhead compared to running plain Pytho
 On running the tests of a popular package (black), RightTyper imposes only 20% overhead, while MonkeyType slows down execution by over 6x.
 In extreme cases, MonkeyType runs over 270x slower than RightTyper.
 
-![Overhead](https://github.com/RightTyper/RightTyper/blob/main/docs/benchmark_comparison_execution_times.png)
+![Overhead](docs/benchmark_comparison_execution_times.png)
 
 ## Usage
 
