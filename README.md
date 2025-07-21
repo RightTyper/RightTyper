@@ -6,17 +6,15 @@
 [![Downloads](https://static.pepy.tech/badge/righttyper/month)](https://pepy.tech/project/righttyper)
 ![tests](https://github.com/righttyper/righttyper/workflows/tests/badge.svg)
 
-RightTyper is a Python tool that generates types for your function
-arguments and return values. RightTyper lets your code run at nearly full speed with
-almost no memory overhead. As a result, you won't experience slow
-downs in your code or large memory consumption while using it,
-allowing you to integrate it with your standard tests and development
-process. By virtue of its design, and in a significant departure from previous approaches,
-RightTyper only captures the most commonly used types,
+RightTyper is a Python tool that generates types for your function arguments and return values.
+RightTyper lets your code run at nearly full speed with almost no memory overhead.
+As a result, you won't experience slow downs in your code or large memory consumption while using it,
+allowing you to integrate it with your standard tests and development process.
+By virtue of its design, and in a significant departure from previous approaches, RightTyper only captures the most commonly used types,
 letting a type checker like `mypy` detect possibly incorrect type mismatches in your code.
 
-You can run RightTyper with arbitrary Python programs and it will generate
-types for every function that gets executed. It works great in combination with [pytest](https://docs.pytest.org/):
+You can run RightTyper with arbitrary Python programs and it will generate types for every function that gets executed.
+It works great in combination with [pytest](https://docs.pytest.org/):
 
 ```bash
 python3 -m righttyper -m pytest --continue-on-collection-errors /your/test/dir
@@ -30,13 +28,10 @@ In addition to generating types, RightTyper has the following features:
 
 ## Performance Comparison
 
-The graph below presents the overhead of using RightTyper versus two
-previous tools, MonkeyType and PyAnnotate, across a range of
-benchmarks. On average, RightTyper imposes only 30% overhead compared
-to running plain Python ("none"). On one popular package (black),
-RightTyper imposes only 20% overhead, while MonkeyType slows down
-execution by over 37x. In extreme cases, MonkeyType runs over 3,000x
-slower than RightTyper.
+The graph below presents the overhead of using RightTyper versus two previous tools, PyAnnotate and MonkeyType, across a range of benchmarks.
+On average, RightTyper imposes only 30% overhead compared to running plain Python.
+On running the tests of a popular package (black), RightTyper imposes only 20% overhead, while MonkeyType slows down execution by over 6x.
+In extreme cases, MonkeyType runs over 270x slower than RightTyper.
 
 ![Overhead](https://github.com/RightTyper/RightTyper/blob/main/docs/benchmark_comparison_execution_times.png)
 
