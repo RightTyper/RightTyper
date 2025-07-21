@@ -7,8 +7,8 @@
 ![tests](https://github.com/righttyper/righttyper/workflows/tests/badge.svg)
 
 RightTyper is a Python tool that generates types for your function arguments and return values.
-RightTyper lets your code run at nearly full speed with almost no memory overhead.
-As a result, you won't experience slow downs in your code or large memory consumption while using it,
+RightTyper lets your code run at nearly full speed (around 30% overhead) and little memory overhead.
+As a result, you won't experience slowdowns in your code or large memory consumption while using it,
 allowing you to integrate it with your standard tests and development process.
 By virtue of its design, and in a significant departure from previous approaches, RightTyper only captures the most commonly used types,
 letting a type checker like `mypy` detect possibly incorrect type mismatches in your code.
