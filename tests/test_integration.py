@@ -3932,8 +3932,8 @@ def test_numeric_hierarchy(tmp_cwd):
     assert "def foo(x: float) -> None:" in output
 
 
-def test_overload_no_ignore_annotation(tmp_cwd):
-    text = textwrap.dedent("""\
+def test_overload_no_ignore_annotations(tmp_cwd):
+    pre_annotation = textwrap.dedent("""\
         from typing import overload
 
         @overload
@@ -3950,21 +3950,18 @@ def test_overload_no_ignore_annotation(tmp_cwd):
 
         foo(1)
         foo("world")
-        """
-    )
-    Path("t.py").write_text(text)
-
+    """)
+    Path("t.py").write_text(pre_annotation)
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
+                    '--no-use-multiprocessing', '--no-sampling', '--only-update-annotations', '-m',
+                    't'],
+                    check=True)
 
-    output = Path("t.py").read_text()
-
-    # If overloads are present and are not overriding annotations, we should
-    # leave the function alone.
-    assert output == text
+    post_annotation = Path("t.py").read_text()
+    assert pre_annotation == post_annotation
 
 
-def test_overload_ignore_annotation(tmp_cwd):
+def test_overload_ignore_annotations(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         from typing import overload
 
@@ -3990,7 +3987,6 @@ def test_overload_ignore_annotation(tmp_cwd):
                     check=True)
 
     output = Path("t.py").read_text()
-    print(output)
     code = cst.parse_module(output)
 
     function_list = get_function_all(code, "foo")
@@ -4001,6 +3997,123 @@ def test_overload_ignore_annotation(tmp_cwd):
     # unions.
     assert len(function_list) == 1
     assert function_list[0].strip() == "def foo(bar: int|str) -> int|str: ..."
+
+
+def test_overload_only_update_annotations(tmp_cwd):
+    pre_annotation = textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> str:
+            ...
+        @overload
+        def foo(bar: str) -> int:
+            ...
+        def foo(bar):
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+
+        foo(1)
+        foo("world")
+    """)
+    Path("t.py").write_text(pre_annotation)
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '--only-update-annotations', '-m',
+                    't'],
+                    check=True)
+
+    post_annotation = Path("t.py").read_text()
+    assert pre_annotation == post_annotation
+
+
+def test_overload_no_ignore_annotations_generic(tmp_cwd):
+    pre_annotation = textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> int:
+            ...
+        @overload
+        def foo(bar: str) -> str:
+            ...
+        def foo(bar):
+            return bar
+
+        foo(1)
+        foo("world")
+    """)
+    Path("t.py").write_text(pre_annotation)
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '--only-update-annotations', '-m',
+                    't'],
+                    check=True)
+
+    post_annotation = Path("t.py").read_text()
+    assert pre_annotation == post_annotation
+
+
+def test_overload_ignore_annotations_generic(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> int:
+            ...
+        @overload
+        def foo(bar: str) -> str:
+            ...
+        def foo(bar):
+            return bar
+
+        foo(1)
+        foo("world")
+        """
+    ))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '--ignore-annotations', '-m', 't'],
+                    check=True)
+
+    output = Path("t.py").read_text()
+    print(output)
+    code = cst.parse_module(output)
+
+    function_list = get_function_all(code, "foo")
+
+    # In our current iteration, we need to make sure that foo is annotated and
+    # that the old overloads are deleted.
+    # Since we haven't implemented overload generation, this is done with
+    # unions.
+    assert len(function_list) == 1
+    assert function_list[0].strip() == "def foo[T1: (int, str)](bar: T1) -> T1: ..."
+
+
+def test_overload_only_update_annotations_generic(tmp_cwd):
+    pre_annotation = textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> int:
+            ...
+        @overload
+        def foo(bar: str) -> str:
+            ...
+        def foo(bar):
+            return bar
+
+        foo(1)
+        foo("world")
+    """)
+    Path("t.py").write_text(pre_annotation)
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '--only-update-annotations', '-m',
+                    't'],
+                    check=True)
+
+    post_annotation = Path("t.py").read_text()
+    assert pre_annotation == post_annotation
 
 
 def test_capture_non_inline_typevar():
