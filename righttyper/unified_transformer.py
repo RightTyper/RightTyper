@@ -496,12 +496,12 @@ class UnifiedTransformer(cst.CSTTransformer):
                         argmap[par.name.value].is_typevar()
                         for par in typing.cast(typing.Iterator[cst.Param], cstm.findall(updated_node.params, cstm.Param()))
                     )
-            ) or overloads != []
+            )
 
             del argmap
 
             # We don't yet support merging type_parameters
-            if not typevar_overlap and updated_node.type_parameters is None:
+            if (overloads == [] or self.override_annotations) and not typevar_overlap and updated_node.type_parameters is None:
                 ann, generics = self._process_generics(ann)
 
                 if self.inline_generics:
@@ -547,8 +547,8 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             should_update_ret = (
             (self.only_update_annotations and updated_node.returns is not None)
-            or (not self.only_update_annotations and ((overloads == [] and updated_node.returns is None) or self.override_annotations))
-            )
+            or (not self.only_update_annotations and (updated_node.returns is None or self.override_annotations))
+            ) and (overloads == [] or self.override_annotations)
             if should_update_ret:
                 if self._is_valid(ann.retval):
                     annotation_expr = self._get_annotation_expr(ann.retval)
