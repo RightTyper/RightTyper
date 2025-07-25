@@ -4116,6 +4116,49 @@ def test_overload_only_update_annotations_generic(tmp_cwd):
     assert pre_annotation == post_annotation
 
 
+def test_overload_alias(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        import typing as alias1, typing as alias2
+        from typing import overload as alias3, overload as alias4
+
+        @alias1.overload
+        def foo(x: int, y: int):
+            ...
+        @alias2.overload
+        def foo(x: int, y: str):
+            ...
+        @alias3
+        def foo(x: str, y: int):
+            ...
+        @alias4
+        def foo(x: str, y: str):
+            ...
+        def foo(x, y):
+            pass
+
+        foo(1, 1)
+        foo(1, "a")
+        foo("a", 1)
+        foo("a", "a")
+    """))
+
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '--ignore-annotations', '-m', 't'],
+                    check=True)
+
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    function_list = get_function_all(code, "foo")
+
+    # In our current iteration, we need to make sure that foo is annotated and
+    # that the old overloads are deleted.
+    # Since we haven't implemented overload generation, this is done with
+    # unions.
+    assert len(function_list) == 1
+    assert function_list[0].strip() == "def foo(x: int|str, y: int|str) -> None: ..."
+
+
 def test_capture_non_inline_typevar():
     t = textwrap.dedent("""\
         ...
