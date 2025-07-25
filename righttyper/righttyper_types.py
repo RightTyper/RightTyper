@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace, field
-from typing import NewType, Sequence, TypeVar, Self, TypeAlias, List, Iterator, cast
+from typing import NewType, TypeVar, Self, TypeAlias, List, Iterator, cast
 import collections.abc as abc
 import types
 import libcst as cst
@@ -28,15 +28,6 @@ class FuncId:
 class FuncAnnotation:
     args: list[tuple[ArgumentName, TypeInfo]]   # TODO: make me a map?
     retval: TypeInfo
-
-
-@dataclass(eq=True, frozen=True)
-class ExtendedFunctionDef:
-    # The list of CST elements before the actual `FunctionDef` node which are
-    # associated with that node
-    prefix: Sequence[cst.SimpleStatementLine | cst.BaseCompoundStatement]
-    # The primary `FunctionDef` node
-    primary: cst.FunctionDef
 
 
 # Valid non-None TypeInfo.type_obj types: allows static casting

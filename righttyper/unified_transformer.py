@@ -1,6 +1,7 @@
 import typing
 import builtins
 import collections.abc as abc
+from dataclasses import dataclass
 import libcst as cst
 import libcst.matchers as cstm
 from libcst.metadata import MetadataWrapper, PositionProvider
@@ -11,9 +12,17 @@ from righttyper.righttyper_types import (
     FuncId,
     FuncAnnotation,
     FunctionName,
-    TypeInfo,
-    ExtendedFunctionDef
+    TypeInfo
 )
+
+
+@dataclass(eq=True, frozen=True)
+class ExtendedFunctionDef:
+    # The list of CST elements before the actual `FunctionDef` node which are
+    # associated with that node
+    prefix: typing.Sequence[cst.SimpleStatementLine | cst.BaseCompoundStatement]
+    # The primary `FunctionDef` node
+    primary: cst.FunctionDef
 
 
 _BUILTIN_TYPES : frozenset[str] = frozenset({
