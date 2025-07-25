@@ -245,6 +245,17 @@ class UnifiedTransformer(cst.CSTTransformer):
         
         return (updated_ann, tr.generics)
                     
+    def _is_overload(self, decorator: cst.Decorator):
+        """Test if the given decorator is an `@overload` decorator.
+        
+        Note that this is not a perfect test -- it is based on `self.aliases`
+        and only handles global includes and aliases thereof."""
+        if isinstance(decorator.decorator, cst.Name):
+            return decorator.decorator.value == self.aliases["typing.overload"]
+        if isinstance(decorator.decorator, cst.Attribute) and isinstance(decorator.decorator.value, cst.Name):
+            typing_alias = self.aliases["typing"] if "typing" in self.aliases else "typing"
+            return decorator.decorator.value.value == typing_alias and decorator.decorator.attr.value == "overload"
+        return False
 
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
@@ -470,17 +481,9 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.overload_stack[-1] = []
             self.overload_name_stack[-1] = name
 
-        is_overload = any(
-            decorator.decorator.value == "overload"
-            for decorator in updated_node.decorators
-            if isinstance(decorator.decorator, cst.Name)
-        )
-        # We also look for qualified references to typing.overload
-        is_overload = is_overload | any(
-            decorator.decorator.attr.value == "overload"
-            for decorator in updated_node.decorators
-            if isinstance(decorator.decorator, cst.Attribute)
-        )
+        is_overload = any(self._is_overload(decorator)
+                          for decorator in updated_node.decorators)
+
         # If our function is an overload signature, we append it to the overload
         # list.
         # NOTE: This check technically misses if @overload is aliased or used as
