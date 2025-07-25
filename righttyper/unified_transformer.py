@@ -285,8 +285,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         # Note that this is a stack since namespaces can be nested
         # (e.g. classes).
         self.overload_stack: list[list[cst.FunctionDef]] = [[]]
-        # The current list of overloaded function names that have in each scope.
-        # For instance, 
+        # The current list of overloaded function names that are in each scope.
         self.overload_name_stack: list[str] = [""]
 
         return True
