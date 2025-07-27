@@ -27,6 +27,8 @@ In addition to generating types, RightTyper has the following features:
 * It efficiently computes type annotation "coverage" for a file or directory of files
 * It infers shape annotations for NumPy/JAX/PyTorch tensors, compatible with [`jaxtyping`](https://docs.kidger.site/jaxtyping/) and [`beartype`](https://github.com/beartype/beartype) or [`typeguard`](https://typeguard.readthedocs.io/en/latest/).
 
+For details about how RightTyper works, please see the following paper: **[RightTyper: Effective and Efficient Type Annotation for Python](https://www.arxiv.org/abs/2507.16051)**.
+
 
 ## Performance Comparison
 
