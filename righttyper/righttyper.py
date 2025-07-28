@@ -1138,7 +1138,8 @@ def cli(verbose: bool):
     "--only-collect",
     default=False,
     is_flag=True,
-    help=f"Rather than immediately process collect data, save it to {PKL_FILE_NAME}."
+    help=f"Rather than immediately process collect data, save it to {PKL_FILE_NAME}." +\
+          " You can later process using RightTyper's \"process\" command."
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(

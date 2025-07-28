@@ -141,7 +141,9 @@ Options:
   --use-top-pct INTEGER RANGE     Only use the X% most common call traces.
                                   [default: 80; 1<=x<=100]
   --only-collect                  Rather than immediately process collect
-                                  data, save it to righttyper.rt.
+                                  data, save it to righttyper.rt. You can
+                                  later process using RightTyper's "process"
+                                  command.
   --help                          Show this message and exit.
 ```
 
