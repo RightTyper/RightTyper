@@ -17,7 +17,7 @@ You can run RightTyper with arbitrary Python programs and it will generate types
 It works great in combination with [pytest](https://docs.pytest.org/):
 
 ```bash
-python3 -m righttyper -m pytest --continue-on-collection-errors /your/test/dir
+python3 -m righttyper run -m pytest --continue-on-collection-errors /your/test/dir
 ```
 
 In addition to generating types, RightTyper has the following features:
