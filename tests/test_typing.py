@@ -8,6 +8,7 @@ import pytest
 import importlib
 import types
 import righttyper.options as options
+from enum import Enum
 
 rt_get_value_type = rt.get_value_type
 
@@ -226,6 +227,15 @@ class NamedTupleClass:
 def test_get_value_type_namedtuple_nonlocal():
     # namedtuple's __qualname__ also doesn't contain the enclosing class name...
     assert f"{__name__}.NamedTupleClass.P" == get_value_type(NamedTupleClass.P())
+
+
+class Decision(Enum):
+    NO = 0
+    MAYBE = 1
+    YES = 2
+
+def test_get_value_type_enum():
+    assert f"{__name__}.Decision" == get_value_type(Decision.MAYBE)
 
 
 @pytest.mark.xfail(reason="How to best solve this?")

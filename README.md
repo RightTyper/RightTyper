@@ -6,20 +6,18 @@
 [![Downloads](https://static.pepy.tech/badge/righttyper/month)](https://pepy.tech/project/righttyper)
 ![tests](https://github.com/righttyper/righttyper/workflows/tests/badge.svg)
 
-RightTyper is a Python tool that generates types for your function
-arguments and return values. RightTyper lets your code run at nearly full speed with
-almost no memory overhead. As a result, you won't experience slow
-downs in your code or large memory consumption while using it,
-allowing you to integrate it with your standard tests and development
-process. By virtue of its design, and in a significant departure from previous approaches,
-RightTyper only captures the most commonly used types,
+RightTyper is a Python tool that generates types for your function arguments and return values.
+RightTyper lets your code run at nearly full speed (around 30% overhead) and little memory overhead.
+As a result, you won't experience slowdowns in your code or large memory consumption while using it,
+allowing you to integrate it with your standard tests and development process.
+By virtue of its design, and in a significant departure from previous approaches, RightTyper only captures the most commonly used types,
 letting a type checker like `mypy` detect possibly incorrect type mismatches in your code.
 
-You can run RightTyper with arbitrary Python programs and it will generate
-types for every function that gets executed. It works great in combination with [pytest](https://docs.pytest.org/):
+You can run RightTyper with arbitrary Python programs and it will generate types for every function that gets executed.
+It works great in combination with [pytest](https://docs.pytest.org/):
 
 ```bash
-python3 -m righttyper -m pytest --continue-on-collection-errors /your/test/dir
+python3 -m righttyper run -m pytest --continue-on-collection-errors /your/test/dir
 ```
 
 In addition to generating types, RightTyper has the following features:
@@ -27,18 +25,17 @@ In addition to generating types, RightTyper has the following features:
 * It efficiently computes type annotation "coverage" for a file or directory of files
 * It infers shape annotations for NumPy/JAX/PyTorch tensors, compatible with [`jaxtyping`](https://docs.kidger.site/jaxtyping/) and [`beartype`](https://github.com/beartype/beartype) or [`typeguard`](https://typeguard.readthedocs.io/en/latest/).
 
+For details about how RightTyper works, please see the following paper: **[RightTyper: Effective and Efficient Type Annotation for Python](https://www.arxiv.org/abs/2507.16051)**.
+
 
 ## Performance Comparison
 
-The graph below presents the overhead of using RightTyper versus two
-previous tools, MonkeyType and PyAnnotate, across a range of
-benchmarks. On average, RightTyper imposes only 30% overhead compared
-to running plain Python ("none"). On one popular package (black),
-RightTyper imposes only 20% overhead, while MonkeyType slows down
-execution by over 37x. In extreme cases, MonkeyType runs over 3,000x
-slower than RightTyper.
+The graph below presents the overhead of using RightTyper versus two previous tools, PyAnnotate and MonkeyType, across a range of benchmarks.
+On average, RightTyper imposes only 30% overhead compared to running plain Python.
+On running the tests of a popular package (black), RightTyper imposes only 20% overhead, while MonkeyType slows down execution by over 6x.
+In extreme cases, MonkeyType runs over 270x slower than RightTyper.
 
-![Overhead](https://github.com/RightTyper/RightTyper/blob/main/docs/benchmark_comparison_execution_times.png)
+![Overhead](docs/benchmark_comparison_execution_times.png)
 
 ## Usage
 
@@ -48,10 +45,10 @@ Install RightTyper from `pip` as usual:
 python3 -m pip install righttyper
 ```
 
-To use RightTyper, simply run your script with `python3 -m righttyper` instead of `python3`:
+To use RightTyper, simply run your script with `python3 -m righttyper run` instead of `python3`:
 
 ```bash
-python3 -m righttyper your_script.py [args...]
+python3 -m righttyper run your_script.py [args...]
 ```
 
 This will execute `your_script.py` with RightTyper's monitoring
@@ -81,32 +78,38 @@ fooq
 To add type hints directly to your code, use this command:
 
 ```bash
-python3 -m righttyper --output-files --overwrite your_script.py [args...]
+python3 -m righttyper run --output-files --overwrite your_script.py [args...]
 ```
 
 To do the same with `pytest`:
 
 ```bash
-python3 -m righttyper --output-files --overwrite -m pytest [pytest-args...]
+python3 -m righttyper run --output-files --overwrite -m pytest [pytest-args...]
 ```
 
-Below is the full list of options:
+Below is the full list of options for the run command:
 
 ```
-Usage: python -m righttyper [OPTIONS] [SCRIPT] [ARGS]...
+$ python3.12 -m righttyper run --help
+Usage: python -m righttyper run [OPTIONS] [SCRIPT] [ARGS]...
+
+  Runs a given script or module, collecting type information.
 
 Options:
   -m, --module MODULE             Run the given module instead of a script.
-  --all-files                     Process any files encountered, including in
+  --all-files                     Process any files encountered, including
                                   libraries (except for those specified in
                                   --include-files)
-  --include-files TEXT            Include only files matching the given
+  --include-files TEXT            Process only files matching the given
                                   pattern.
   --include-functions TEXT        Only annotate functions matching the given
                                   pattern.
   --infer-shapes                  Produce tensor shape annotations (compatible
                                   with jaxtyping).
-  --srcdir DIRECTORY              Use this directory as the base for imports.
+  --root DIRECTORY                Process only files under the given
+                                  directory.  If omitted, the script's
+                                  directory (or, for -m, the current
+                                  directory) is used.
   --overwrite / --no-overwrite    Overwrite files with type information.
                                   [default: no-overwrite]
   --output-files / --no-output-files
@@ -115,19 +118,32 @@ Options:
                                   output-files]
   --ignore-annotations            Ignore existing annotations and overwrite
                                   with type information.
-  --verbose                       Print diagnostic information.
+  --only-update-annotations       Overwrite existing annotations but never add
+                                  new ones.
   --generate-stubs                Generate stub files (.pyi).
-  --version                       Show the version and exit.
   --target-overhead FLOAT         Target overhead, as a percentage (e.g., 5).
-  --sampling / --no-sampling      Whether to sample calls and types or to use
-                                  every one seen.  [default: sampling]
-  --inline-generics               Declare type variables inline for generics
-                                  rather than separately.
-  --type-coverage <CHOICE PATH>...
-                                  Rather than run a script or module, report a
-                                  choice of 'by-directory', 'by-file' or
-                                  'summary' type annotation coverage for the
-                                  given path.
+                                  [default: 5.0]
+  --use-multiprocessing / --no-use-multiprocessing
+                                  Whether to use multiprocessing.  [default:
+                                  use-multiprocessing]
+  --sampling / --no-sampling      Whether to sample calls or to use every one.
+                                  [default: sampling]
+  --replace-dict / --no-replace-dict
+                                  Whether to replace 'dict' to enable
+                                  efficient, statistically correct samples.
+                                  [default: no-replace-dict]
+  --container-sample-limit INTEGER
+                                  Number of container elements to sample.
+                                  [default: 1000]
+  --python-version [3.9|3.10|3.11|3.12|3.13]
+                                  Python version for which to emit
+                                  annotations.  [default: 3.12]
+  --use-top-pct INTEGER RANGE     Only use the X% most common call traces.
+                                  [default: 80; 1<=x<=100]
+  --only-collect                  Rather than immediately process collect
+                                  data, save it to righttyper.rt. You can
+                                  later process using RightTyper's "process"
+                                  command.
   --help                          Show this message and exit.
 ```
 

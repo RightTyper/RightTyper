@@ -115,8 +115,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         override_annotations: bool,
         only_update_annotations: bool,
         inline_generics: bool,
-        module_name: str|None,
-        module_names: list[str],
+        module_name: str|None
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
@@ -125,17 +124,29 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.inline_generics = inline_generics
         self.has_future_annotations = False
         self.module_name = module_name
-        self.module_names = sorted(module_names, key=lambda name: -name.count('.'))
         self.change_list: list[tuple[FunctionName, ExtendedFunctionDef, ExtendedFunctionDef]] = []
+
+        # TODO Ideally we'd use TypeInfo.module and avoid this as well as _module_for
+        def iter_types(t: TypeInfo):
+            yield t
+            for arg in t.args:
+                if type(arg) is TypeInfo:
+                    yield from iter_types(arg)
+
+        self.name2module: dict[str, str] = {
+            t.qualname(): t.module
+            for ann in type_annotations.values()
+            for root in [arg[1] for arg in ann.args] + [ann.retval]
+            for t in iter_types(root)
+        }
 
     def _module_for(self, name: str) -> tuple[str, str]:
         """Splits a dot name in its module and qualified name parts."""
-        # TODO Ideally we'd want to avoid this and just use the type(x).__module__ information
-        # we get from the live objects
+        if name.startswith("builtins."):
+            return 'builtins', name[9:]
 
-        for m in self.module_names:
-            if name.startswith(m) and (len(name) == len(m) or name[len(m)] == '.'):
-                return m, name[len(m)+1:]
+        if (m := self.name2module.get(name)):
+            return m, name[len(m)+1:]
 
         return '', name
 

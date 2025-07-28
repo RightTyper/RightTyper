@@ -2,6 +2,8 @@ from dataclasses import dataclass
 
 @dataclass
 class Options:
+    """Options for the run command."""
+
     script_dir: str = ""
     include_files_pattern: str = ""
     include_all: bool = False
@@ -12,7 +14,6 @@ class Options:
     overwrite: bool = False
     output_files: bool = False
     generate_stubs: bool = False
-    srcdir: str = ""
     use_multiprocessing: bool = True
     sampling: bool = True
     replace_dict: bool = False
