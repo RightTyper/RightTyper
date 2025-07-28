@@ -78,13 +78,13 @@ fooq
 To add type hints directly to your code, use this command:
 
 ```bash
-python3 -m righttyper --output-files --overwrite run your_script.py [args...]
+python3 -m righttyper run --output-files --overwrite your_script.py [args...]
 ```
 
 To do the same with `pytest`:
 
 ```bash
-python3 -m righttyper --output-files --overwrite run -m pytest [pytest-args...]
+python3 -m righttyper run --output-files --overwrite -m pytest [pytest-args...]
 ```
 
 Below is the full list of options for the run command:
