@@ -4,7 +4,6 @@ from dataclasses import dataclass, replace, field
 from typing import NewType, TypeVar, Self, TypeAlias, List, Iterator, cast
 import collections.abc as abc
 import types
-import libcst as cst
 
 T = TypeVar("T")
 
