@@ -82,11 +82,11 @@ from righttyper.righttyper_alarm import (
     ThreadAlarm,
 )
 
-from righttyper.options import RunOptions, run_options
+from righttyper.options import Options, options
 
 logger = logging.getLogger("righttyper")
-PKL_FILE_NAME = f"{TOOL_NAME}.pkl"
-PKL_FILE_VERSION = 1
+PKL_FILE_NAME = f"{TOOL_NAME}.rt"
+PKL_FILE_VERSION = 2
 
 
 def get_inline_arg_types(
@@ -328,7 +328,7 @@ class Observations:
             """Returns the top X% most common call traces, turning type checking into anomaly detection."""
             counter = self.traces[code_id]
 
-            threshold = sum(counter.values()) * run_options.use_top_pct / 100
+            threshold = sum(counter.values()) * options.use_top_pct / 100
             cumulative = 0
 
             traces = list()
@@ -350,7 +350,7 @@ class Observations:
                 parents_func = func_info.overrides
 
                 if (
-                    run_options.ignore_annotations
+                    options.ignore_annotations
                     or not (
                         (parents_arg_types := get_inline_arg_types(parents_func, func_info.args))
                         or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
@@ -403,7 +403,7 @@ class Observations:
                 node = super().visit(node)
 
                 # if 'args' is there, the function is already annotated
-                if node.code_id and (run_options.ignore_annotations or not node.args) and node.code_id in self.traces:
+                if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.traces:
                     # TODO we only need the retval, can we avoid computing the entire annotation?
                     if (ann := mk_annotation(node.code_id)):
                         func_info = self.functions_visited[node.code_id]
@@ -462,7 +462,7 @@ class Observations:
 
                 return super().visit(node)
 
-        if run_options.use_typing_self:
+        if options.use_typing_self:
             self._transform_types(SelfT())
 
         class NeverSayNeverT(TypeInfo.Transformer):
@@ -473,7 +473,7 @@ class Observations:
 
                 return super().visit(node)
 
-        if not run_options.use_typing_never:
+        if not options.use_typing_never:
             self._transform_types(NeverSayNeverT())
 
         class TypingUnionT(TypeInfo.Transformer):
@@ -512,7 +512,7 @@ class Observations:
 
         clear = ClearTypeObjTransformer()
 
-        if run_options.use_typing_union:
+        if options.use_typing_union:
             tu = TypingUnionT()
 
             def finalize(t: TypeInfo) -> TypeInfo:
@@ -574,10 +574,10 @@ def enter_handler(code: CodeType, offset: int) -> Any:
     """
     if should_skip_function(
         code,
-        run_options.script_dir,
-        run_options.include_all,
-        run_options.include_files_pattern,
-        run_options.include_functions_pattern
+        options.script_dir,
+        options.include_all,
+        options.include_files_pattern,
+        options.include_functions_pattern
     ):
         return sys.monitoring.DISABLE
 
@@ -589,7 +589,7 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         process_function_call(code, frame)
         del frame
 
-    return sys.monitoring.DISABLE if run_options.sampling else None
+    return sys.monitoring.DISABLE if options.sampling else None
 
 
 def call_handler(
@@ -602,10 +602,10 @@ def call_handler(
     if isinstance(callable, FunctionType) and isinstance(getattr(callable, "__code__", None), CodeType):
         if not should_skip_function(
             code,
-            run_options.script_dir,
-            run_options.include_all,
-            run_options.include_files_pattern,
-            run_options.include_functions_pattern,
+            options.script_dir,
+            options.include_all,
+            options.include_files_pattern,
+            options.include_functions_pattern,
         ):
             sys.monitoring.set_local_events(
                 TOOL_ID,
@@ -634,10 +634,10 @@ def yield_handler(
     # Check if the function name is in the excluded list
     if should_skip_function(
         code,
-        run_options.script_dir,
-        run_options.include_all,
-        run_options.include_files_pattern,
-        run_options.include_functions_pattern
+        options.script_dir,
+        options.include_all,
+        options.include_files_pattern,
+        options.include_functions_pattern
     ):
         return sys.monitoring.DISABLE
 
@@ -651,7 +651,7 @@ def yield_handler(
         del frame
 
     # Keep the event enabled until we receive it for a frame whose trace we're recording.
-    return sys.monitoring.DISABLE if (run_options.sampling and found) else None
+    return sys.monitoring.DISABLE if (options.sampling and found) else None
 
 
 def return_handler(
@@ -670,10 +670,10 @@ def return_handler(
     # Check if the function name is in the excluded list
     if should_skip_function(
         code,
-        run_options.script_dir,
-        run_options.include_all,
-        run_options.include_files_pattern,
-        run_options.include_functions_pattern
+        options.script_dir,
+        options.include_all,
+        options.include_files_pattern,
+        options.include_functions_pattern
     ):
         return sys.monitoring.DISABLE
 
@@ -687,7 +687,7 @@ def return_handler(
         del frame
 
     # Keep the event enabled until we receive it for a frame whose trace we're recording.
-    return sys.monitoring.DISABLE if (run_options.sampling and found) else None
+    return sys.monitoring.DISABLE if (options.sampling and found) else None
 
 
 def process_function_call(
@@ -847,7 +847,7 @@ def restart_sampling() -> None:
     instrumentation_overhead = (
         sample_count_instrumentation / sample_count_total
     )
-    if instrumentation_overhead <= run_options.target_overhead / 100.0:
+    if instrumentation_overhead <= options.target_overhead / 100.0:
         # Instrumentation overhead is low enough: restart instrumentation.
         sys.monitoring.restart_events()
 
@@ -860,14 +860,14 @@ def execute_script_or_module(
     try:
         sys.argv = [script, *args]
         if is_module:
-            with loader.ImportManager(replace_dict=run_options.replace_dict):
+            with loader.ImportManager(replace_dict=options.replace_dict):
                 runpy.run_module(
                     script,
                     run_name="__main__",
                     alter_sys=True,
                 )
         else:
-            with loader.ImportManager(replace_dict=run_options.replace_dict):
+            with loader.ImportManager(replace_dict=options.replace_dict):
                 runpy.run_path(script, run_name="__main__")
 
     except SystemExit as e:
@@ -901,6 +901,16 @@ def output_signatures(
             print("".join(diffs), file=file)
 
 
+def process_collected(collected: dict[str, Any]):
+    sig_changes = process_files(
+        collected['files'],
+        collected['type_annotations']
+    )
+
+    with open(f"{TOOL_NAME}.out", "w+") as f:
+        output_signatures(sig_changes, f)
+
+
 def process_file_wrapper(args) -> SignatureChanges:
     return process_file(*args)
 
@@ -908,12 +918,6 @@ def process_file_wrapper(args) -> SignatureChanges:
 def process_files(
     files: list[list[str]],
     type_annotations: dict[FuncId, FuncAnnotation],
-    run_options: RunOptions,
-    output_files: bool,
-    generate_stubs: bool,
-    overwrite: bool,
-    only_update_annotations: bool,
-    use_multiprocessing: bool
 ) -> list[SignatureChanges]:
     if not files:
         return []
@@ -923,21 +927,27 @@ def process_files(
             file[0],    # path
             file[1],    # module_name
             type_annotations,
-            output_files,
-            generate_stubs,
-            overwrite,
-            run_options.ignore_annotations,
-            only_update_annotations,
-            run_options.inline_generics
+            options.output_files,
+            options.generate_stubs,
+            options.overwrite,
+            options.ignore_annotations,
+            options.only_update_annotations,
+            options.inline_generics
         )
         for file in files
     )
 
-    if use_multiprocessing:
+    if options.use_multiprocessing:
         with concurrent.futures.ProcessPoolExecutor() as executor:
             results = executor.map(process_file_wrapper, args_gen)
     else:
         results = map(process_file_wrapper, args_gen)
+
+    # 'rich' is unusable right after running its test suite,
+    # so reload it just in case we just did that.
+    if 'rich' in sys.modules:
+        importlib.reload(sys.modules['rich'])
+        importlib.reload(sys.modules['rich.progress'])
 
     import rich.progress
     from rich.table import Column
@@ -986,7 +996,6 @@ class CheckModule(click.ParamType):
         )
         return ""
 
-
 @click.group(
     context_settings={
         "show_default": True
@@ -1022,11 +1031,6 @@ def cli(verbose: bool):
     type=CheckModule(),
 )
 @click.option(
-    "--root",
-    type=click.Path(exists=True, file_okay=False),
-    help="Process only files under the given directory.  If omitted, the script's directory (or, for -m, the current directory) is used.",
-)
-@click.option(
     "--all-files",
     is_flag=True,
     help="Process any files encountered, including libraries (except for those specified in --include-files)",
@@ -1049,20 +1053,54 @@ def cli(verbose: bool):
     help="Produce tensor shape annotations (compatible with jaxtyping).",
 )
 @click.option(
+    "--root",
+    type=click.Path(exists=True, file_okay=False),
+    help="Process only files under the given directory.  If omitted, the script's directory (or, for -m, the current directory) is used.",
+)
+@click.option(
+    "--overwrite/--no-overwrite",
+    help="Overwrite files with type information.",
+    default=False,
+    show_default=True,
+)
+@click.option(
+    "--output-files/--no-output-files",
+    help="Output annotated files (possibly overwriting, if specified).",
+    default=False,
+    show_default=True,
+)
+@click.option(
     "--ignore-annotations",
     is_flag=True,
     help="Ignore existing annotations and overwrite with type information.",
     default=False,
 )
 @click.option(
+    "--only-update-annotations",
+    is_flag=True,
+    default=False,
+    help="Overwrite existing annotations but never add new ones.",
+)
+@click.option(
+    "--generate-stubs",
+    is_flag=True,
+    help="Generate stub files (.pyi).",
+    default=False,
+)
+@click.option(
     "--target-overhead",
     type=float,
-    default=run_options.target_overhead,
+    default=options.target_overhead,
     help="Target overhead, as a percentage (e.g., 5).",
 )
 @click.option(
+    "--use-multiprocessing/--no-use-multiprocessing",
+    default=True,
+    help="Whether to use multiprocessing.",
+)
+@click.option(
     "--sampling/--no-sampling",
-    default=run_options.sampling,
+    default=options.sampling,
     help=f"Whether to sample calls or to use every one.",
     show_default=True,
 )
@@ -1080,82 +1118,65 @@ def cli(verbose: bool):
 @click.option(
     "--container-sample-limit",
     type=int,
-    default=run_options.container_sample_limit,
+    default=options.container_sample_limit,
     help="Number of container elements to sample.",
 )
 @click.option(
     "--python-version",
     type=click.Choice(["3.9", "3.10", "3.11", "3.12", "3.13"]),
     default="3.12",
+    callback=lambda ctx, param, value: tuple(int(n) for n in value.split('.')),
     help="Python version for which to emit annotations.",
 )
 @click.option(
     "--use-top-pct",
     type=click.IntRange(1, 100),
-    default=run_options.use_top_pct,
+    default=options.use_top_pct,
     help="Only use the X% most common call traces.",
 )
 @click.option(
-    "--process",
+    "--only-collect",
     default=False,
     is_flag=True,
-    hidden=True,
-    help="Rather than save collected data, process it right away."
+    help=f"Rather than immediately process collect data, save it to {PKL_FILE_NAME}."
 )
-# --- the options below mirror those of 'process', for compatibility only ---
-@click.option(
-    "--output-files/--no-output-files",
-    help="Output annotated files (possibly overwriting, if specified).",
-    default=False,
-    show_default=True,
-    hidden=True
-)
-@click.option(
-    "--overwrite/--no-overwrite",
-    help="Overwrite files with type information.",
-    default=False,
-    show_default=True,
-    hidden=True
-)
-@click.option(
-    "--only-update-annotations",
-    is_flag=True,
-    default=False,
-    help="Overwrite existing annotations but never add new ones.",
-    hidden=True
-)
-@click.option(
-    "--generate-stubs",
-    is_flag=True,
-    default=False,
-    help="Generate stub files (.pyi).",
-    hidden=True
-)
-@click.option(
-    "--use-multiprocessing/--no-use-multiprocessing",
-    default=True,
-    hidden=True,
-    help="Whether to use multiprocessing.",
-)
-# --- end of compatibility options ---
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
     script: str,
+    module: str,
     args: list[str],
-    **kwargs
+    all_files: bool,
+    include_files: str,
+    include_functions: tuple[str, ...],
+    overwrite: bool,
+    output_files: bool,
+    ignore_annotations: bool,
+    only_update_annotations: bool,
+    generate_stubs: bool,
+    infer_shapes: bool,
+    root: str,
+    target_overhead: float,
+    use_multiprocessing: bool,
+    sampling: bool,
+    signal_wakeup: bool,
+    replace_dict: bool,
+    container_sample_limit: int,
+    python_version: tuple[int, ...],
+    use_top_pct: int,
+    only_collect: bool
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
-    if kwargs['module']:
+    if module:
         args = [*((script,) if script else ()), *args]  # script, if any, is really the 1st module arg
-        script = kwargs['module']
+        script = module
     elif script:
         if not os.path.isfile(script):
             raise click.UsageError(f"\"{script}\" is not a file.")
     else:
         raise click.UsageError("Either -m/--module must be provided, or a script be passed.")
 
-    if kwargs['infer_shapes']:
+    if infer_shapes:
         # Check for required packages for shape inference
         found_package = defaultdict(bool)
         packages = ["jaxtyping"]
@@ -1172,31 +1193,34 @@ def run(
                     print(f" * {package}")
             sys.exit(1)
 
-    target = tuple(int(n) for n in kwargs['python_version'].split('.'))
-
-    if kwargs['root']:
-        run_options.script_dir = os.path.realpath(kwargs['root'])
-    elif kwargs['module']:
-        run_options.script_dir = os.getcwd()
+    if root:
+        options.script_dir = os.path.realpath(root)
+    elif module:
+        options.script_dir = os.getcwd()
     else:
-        run_options.script_dir = os.path.dirname(os.path.realpath(script))
+        options.script_dir = os.path.dirname(os.path.realpath(script))
 
-    run_options.include_files_pattern = kwargs['include_files']
-    run_options.include_all = kwargs['all_files']
-    run_options.include_functions_pattern = kwargs['include_functions']
-    run_options.target_overhead = kwargs['target_overhead']
-    run_options.infer_shapes = kwargs['infer_shapes']
-    run_options.ignore_annotations = kwargs['ignore_annotations']
-    run_options.sampling = kwargs['sampling']
-    run_options.replace_dict = kwargs['replace_dict']
-    run_options.container_sample_limit = kwargs['container_sample_limit']
-    run_options.use_typing_union = target < (3, 10)
-    run_options.use_typing_self = target >= (3, 11)
-    run_options.use_typing_never = target >= (3, 11)
-    run_options.inline_generics = target >= (3, 12)
-    run_options.use_top_pct = kwargs['use_top_pct']
+    options.include_files_pattern = include_files
+    options.include_all = all_files
+    options.include_functions_pattern = include_functions
+    options.target_overhead = target_overhead
+    options.infer_shapes = infer_shapes
+    options.ignore_annotations = ignore_annotations
+    options.only_update_annotations = only_update_annotations
+    options.overwrite = overwrite
+    options.output_files = output_files
+    options.generate_stubs = generate_stubs
+    options.use_multiprocessing = use_multiprocessing
+    options.sampling = sampling
+    options.replace_dict = replace_dict
+    options.container_sample_limit = container_sample_limit
+    options.use_typing_union = python_version < (3, 10)
+    options.use_typing_self = python_version >= (3, 11)
+    options.use_typing_never = python_version >= (3, 11)
+    options.inline_generics = python_version >= (3, 12)
+    options.use_top_pct = use_top_pct
 
-    alarm_cls = SignalAlarm if kwargs['signal_wakeup'] else ThreadAlarm
+    alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
 
     try:
@@ -1209,7 +1233,7 @@ def run(
         )
         sys.monitoring.restart_events()
         alarm.start()
-        execute_script_or_module(script, is_module=bool(kwargs['module']), args=args)
+        execute_script_or_module(script, is_module=bool(module), args=args)
     finally:
         reset_monitoring()
         alarm.stop()
@@ -1219,77 +1243,30 @@ def run(
             for t in obs.functions_visited.values()
             if not skip_this_file(
                 t.func_id.file_name,
-                run_options.script_dir,
-                run_options.include_all,
-                run_options.include_files_pattern
+                options.script_dir,
+                options.include_all,
+                options.include_files_pattern
             )
         )
 
-        results = {
+        collected = {
             'version': PKL_FILE_VERSION,
             'files': [[f, obs.source_to_module_name.get(f)] for f in file_names],
             'type_annotations': obs.collect_annotations(),
-            'run_options': run_options
+            'options': options
         }
 
-        if kwargs['process']:
-            process_results(results, kwargs)
-        else:
+        if only_collect:
             with open(PKL_FILE_NAME, "wb") as f:
-                pickle.dump(results, f)
+                pickle.dump(collected, f)
 
             print(f"Collected types saved to {PKL_FILE_NAME}.")
-
-
-def process_results(results: dict[str, Any], options: dict[str, Any]):
-    sig_changes = process_files(
-        results['files'],
-        results['type_annotations'],
-        results['run_options'],
-        options['output_files'],
-        options['generate_stubs'],
-        options['overwrite'],
-        options['only_update_annotations'],
-        options['use_multiprocessing']
-    )
-
-    with open(f"{TOOL_NAME}.out", "w+") as f:
-        output_signatures(sig_changes, f)
+        else:
+            process_collected(collected)
 
 
 @cli.command()
-# note -- when modifying options here, also update hidden versions in run()
-@click.option(
-    "--output-files/--no-output-files",
-    help="Output annotated files (possibly overwriting, if specified).",
-    default=False,
-    show_default=True,
-)
-@click.option(
-    "--overwrite/--no-overwrite",
-    help="Overwrite files with type information.",
-    default=False,
-    show_default=True,
-)
-@click.option(
-    "--only-update-annotations",
-    is_flag=True,
-    default=False,
-    help="Overwrite existing annotations but never add new ones.",
-)
-@click.option(
-    "--generate-stubs",
-    is_flag=True,
-    default=False,
-    help="Generate stub files (.pyi).",
-)
-@click.option(
-    "--use-multiprocessing/--no-use-multiprocessing",
-    default=True,
-    hidden=True,
-    help="Whether to use multiprocessing.",
-)
-def process(**kwargs):
+def process():
     """Processes type information collected with the 'run' command."""
 
     try:
@@ -1305,11 +1282,11 @@ def process(**kwargs):
 
     # Copy run options, but be careful not to replace instance, as there may be
     # multiple references to it (e.g., through "from .options import ...")
-    global run_options
-    for key, value in asdict(pkl['run_options']).items():
-        setattr(run_options, key, value)
+    global options
+    for key, value in asdict(pkl['options']).items():
+        setattr(options, key, value)
 
-    process_results(pkl, kwargs)
+    process_collected(pkl)
 
 
 @cli.command()

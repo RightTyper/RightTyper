@@ -45,13 +45,11 @@ jobs:
 
     - working-directory: ./rich
       run: |
-        timeout -s SIGINT 2m python3 -m righttyper run -m pytest
-        timeout -s SIGINT 2m python3 -m righttyper process --output-files --overwrite --no-use-multiprocessing
+        timeout -s SIGINT 2m python3 -m righttyper run --output-files --overwrite --no-use-multiprocessing -m pytest
         python3 -m pytest  # will the tests still run?
         git restore .
 
     - working-directory: ./rich
       run: |
-        timeout -s SIGINT 2m python3 -m righttyper run -m pytest
-        timeout -s SIGINT 2m python3 -m righttyper process --output-files --overwrite
+        timeout -s SIGINT 2m python3 -m righttyper run --output-files --overwrite -m pytest
         python3 -m pytest  # will the tests still run?

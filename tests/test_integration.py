@@ -49,10 +49,14 @@ def runmypy(tmp_cwd, request):
         pytest.fail("see mypy errors")
 
 
-def rt_run(*args, process_args=[]):
-    subprocess.run([sys.executable, '-m', 'righttyper', 'run', *args], check=True)
-    subprocess.run([sys.executable, '-m', 'righttyper', 'process',
-                    '--output-files', '--overwrite', *process_args], check=True)
+def rt_run(*args, capture: bool = False):
+    run_args = [sys.executable, '-m', 'righttyper', 'run', '--output-files', '--overwrite', *args]
+
+    if capture:
+        p = subprocess.run(run_args, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return str(p.stdout, 'utf-8')
+    else:
+        subprocess.run(run_args, check=True)
 
 
 @pytest.mark.parametrize("init, expected", [
@@ -1507,11 +1511,8 @@ def test_send_generator(as_module):
 
     Path("t.py").write_text(t)
 
-    p = subprocess.run([sys.executable, '-m', 'righttyper', 'run', *(('-m', 't') if as_module else ('t.py',))],
-                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    assert '[10.0, 15.0]' in str(p.stdout, 'utf-8')
-
-    subprocess.run([sys.executable, '-m', 'righttyper', 'process', '--overwrite', '--output-files'], check=True)
+    stdout = rt_run(*(('-m', 't') if as_module else ('t.py',)), capture=True)
+    assert '[10.0, 15.0]' in stdout
     output = Path("t.py").read_text()
 
     assert "def gen() -> Generator[float, int, None]:" in output
@@ -1546,11 +1547,8 @@ def test_send_async_generator(as_module):
 
     Path("t.py").write_text(t)
 
-    p = subprocess.run([sys.executable, '-m', 'righttyper', 'run', *(('-m', 't') if as_module else ('t.py',))],
-                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    assert '[10.0, 15.0]' in str(p.stdout, 'utf-8')
-
-    subprocess.run([sys.executable, '-m', 'righttyper', 'process', '--overwrite', '--output-files'], check=True)
+    stdout = rt_run(*(('-m', 't') if as_module else ('t.py',)), capture=True)
+    assert '[10.0, 15.0]' in stdout
     output = Path("t.py").read_text()
 
     assert "def gen() -> AsyncGenerator[float, int]:" in output
@@ -1574,11 +1572,8 @@ def test_send_not_generator():
 
     Path("t.py").write_text(t)
 
-    p = subprocess.run([sys.executable, '-m', 'righttyper', 'run', 't.py'],
-                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    assert "[10.0, 10]" in str(p.stdout, 'utf-8')
-
-    subprocess.run([sys.executable, '-m', 'righttyper', 'process', '--overwrite', '--output-files'], check=True)
+    stdout = rt_run('t.py', capture=True)
+    assert "[10.0, 10]" in stdout
     output = Path("t.py").read_text()
 
     assert "def send(self: Self, x: int) -> float:" in output
@@ -1607,11 +1602,8 @@ def test_send_bound():
 
     Path("t.py").write_text(t)
 
-    p = subprocess.run([sys.executable, '-m', 'righttyper', 'run', 't.py'],
-                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    assert '[10.0, 15.0]' in str(p.stdout, 'utf-8')
-
-    subprocess.run([sys.executable, '-m', 'righttyper', 'process', '--overwrite', '--output-files'], check=True)
+    stdout = rt_run('t.py', capture=True)
+    assert '[10.0, 15.0]' in stdout
     output = Path("t.py").read_text()
 
     assert "def gen() -> Generator[float, int, None]:" in output
@@ -1687,7 +1679,7 @@ def test_generate_stubs():
         """
     ))
 
-    rt_run('t.py', process_args=['--generate-stubs'])
+    rt_run('t.py', '--generate-stubs')
     output = Path("m.pyi").read_text()
     # FIXME this assertion is brittle
     assert output == textwrap.dedent("""\
@@ -3712,13 +3704,8 @@ def test_inconsistent_samples():
         """
     ))
 
-    p = subprocess.run([sys.executable, '-m', 'righttyper', 'run', '--no-sampling', 't.py'],
-                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    assert b'Error' not in p.stdout
-
-    p = subprocess.run([sys.executable, '-m', 'righttyper', 'process', '--overwrite', '--output-files'],
-                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    assert b'Error' not in p.stdout
+    stdout = rt_run('--no-sampling', 't.py', capture=True)
+    assert 'Error' not in stdout
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3761,9 +3748,7 @@ def test_numeric_subtypes(tmp_cwd):
         """
     ))
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
-
+    rt_run('--no-sampling', '-m', 't')
     output = Path("t.py").read_text()
 
     assert "def foo(x: float) -> None:" in output
@@ -3789,9 +3774,7 @@ def test_numeric_hierarchy(tmp_cwd):
         """
     ))
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '-m', 't'], check=True)
-
+    rt_run('--no-sampling', '-m', 't')
     output = Path("t.py").read_text()
 
     assert "def foo(x: float) -> None:" in output

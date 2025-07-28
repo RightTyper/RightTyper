@@ -21,9 +21,9 @@ def type_from_annotations(*args, **kwargs) -> str:
 
 @pytest.fixture
 def save_options():
-    saved = options.run_options
+    saved = options.options
     yield
-    options.run_options = saved
+    options.options = saved
 
 
 class IterableClass(abc.Iterable):
@@ -251,7 +251,7 @@ def test_get_value_type_namedtuple_local():
 def test_get_value_type_numpy_jaxtyping(save_options):
     import numpy as np
 
-    options.run_options.infer_shapes=True
+    options.options.infer_shapes=True
 
     assert 'jaxtyping.Float64[numpy.ndarray, "0"]' == get_value_type(np.array([], np.float64))
     assert 'jaxtyping.Float16[numpy.ndarray, "1 1 1"]' == \
@@ -264,7 +264,7 @@ def test_get_value_type_numpy_jaxtyping(save_options):
 def test_get_value_type_torch_jaxtyping(save_options):
     import torch
 
-    options.run_options.infer_shapes=True
+    options.options.infer_shapes=True
 
     assert 'jaxtyping.Float64[torch.Tensor, "0"]' == \
             get_value_type(torch.tensor([], dtype=torch.float64))

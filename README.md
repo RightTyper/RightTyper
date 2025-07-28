@@ -45,10 +45,10 @@ Install RightTyper from `pip` as usual:
 python3 -m pip install righttyper
 ```
 
-To use RightTyper, simply run your script with `python3 -m righttyper` instead of `python3`:
+To use RightTyper, simply run your script with `python3 -m righttyper run` instead of `python3`:
 
 ```bash
-python3 -m righttyper your_script.py [args...]
+python3 -m righttyper run your_script.py [args...]
 ```
 
 This will execute `your_script.py` with RightTyper's monitoring
@@ -78,32 +78,38 @@ fooq
 To add type hints directly to your code, use this command:
 
 ```bash
-python3 -m righttyper --output-files --overwrite your_script.py [args...]
+python3 -m righttyper --output-files --overwrite run your_script.py [args...]
 ```
 
 To do the same with `pytest`:
 
 ```bash
-python3 -m righttyper --output-files --overwrite -m pytest [pytest-args...]
+python3 -m righttyper --output-files --overwrite run -m pytest [pytest-args...]
 ```
 
-Below is the full list of options:
+Below is the full list of options for the run command:
 
 ```
-Usage: python -m righttyper [OPTIONS] [SCRIPT] [ARGS]...
+$ python3.12 -m righttyper run --help
+Usage: python -m righttyper run [OPTIONS] [SCRIPT] [ARGS]...
+
+  Runs a given script or module, collecting type information.
 
 Options:
   -m, --module MODULE             Run the given module instead of a script.
-  --all-files                     Process any files encountered, including in
+  --all-files                     Process any files encountered, including
                                   libraries (except for those specified in
                                   --include-files)
-  --include-files TEXT            Include only files matching the given
+  --include-files TEXT            Process only files matching the given
                                   pattern.
   --include-functions TEXT        Only annotate functions matching the given
                                   pattern.
   --infer-shapes                  Produce tensor shape annotations (compatible
                                   with jaxtyping).
-  --srcdir DIRECTORY              Use this directory as the base for imports.
+  --root DIRECTORY                Process only files under the given
+                                  directory.  If omitted, the script's
+                                  directory (or, for -m, the current
+                                  directory) is used.
   --overwrite / --no-overwrite    Overwrite files with type information.
                                   [default: no-overwrite]
   --output-files / --no-output-files
@@ -112,19 +118,30 @@ Options:
                                   output-files]
   --ignore-annotations            Ignore existing annotations and overwrite
                                   with type information.
-  --verbose                       Print diagnostic information.
+  --only-update-annotations       Overwrite existing annotations but never add
+                                  new ones.
   --generate-stubs                Generate stub files (.pyi).
-  --version                       Show the version and exit.
   --target-overhead FLOAT         Target overhead, as a percentage (e.g., 5).
-  --sampling / --no-sampling      Whether to sample calls and types or to use
-                                  every one seen.  [default: sampling]
-  --inline-generics               Declare type variables inline for generics
-                                  rather than separately.
-  --type-coverage <CHOICE PATH>...
-                                  Rather than run a script or module, report a
-                                  choice of 'by-directory', 'by-file' or
-                                  'summary' type annotation coverage for the
-                                  given path.
+                                  [default: 5.0]
+  --use-multiprocessing / --no-use-multiprocessing
+                                  Whether to use multiprocessing.  [default:
+                                  use-multiprocessing]
+  --sampling / --no-sampling      Whether to sample calls or to use every one.
+                                  [default: sampling]
+  --replace-dict / --no-replace-dict
+                                  Whether to replace 'dict' to enable
+                                  efficient, statistically correct samples.
+                                  [default: no-replace-dict]
+  --container-sample-limit INTEGER
+                                  Number of container elements to sample.
+                                  [default: 1000]
+  --python-version [3.9|3.10|3.11|3.12|3.13]
+                                  Python version for which to emit
+                                  annotations.  [default: 3.12]
+  --use-top-pct INTEGER RANGE     Only use the X% most common call traces.
+                                  [default: 80; 1<=x<=100]
+  --only-collect                  Rather than immediately process collect
+                                  data, save it to righttyper.rt.
   --help                          Show this message and exit.
 ```
 

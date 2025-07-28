@@ -11,6 +11,6 @@ if __name__ == "__main__":
         # backwards compatibility for subcommand-less run & process
         first_nonopt = next(iter((arg for arg in sys.argv[1:] if not arg.startswith("-"))), None)
         if first_nonopt not in cli.commands and '--help' not in sys.argv:
-            sys.argv[1:1] = ['run', '--process']
+            sys.argv[1:1] = ['run']
 
     cli()
