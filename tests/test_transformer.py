@@ -1990,8 +1990,7 @@ def test_overload_preserve():
             override_annotations=False,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo',
-            module_names=['foo'],
+            module_name='foo'
         )
 
     output_code = t.transform_code(input_code)
@@ -2031,8 +2030,7 @@ def test_overload_remove():
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo',
-            module_names=['foo'],
+            module_name='foo'
         )
 
     code = t.transform_code(code)
@@ -2078,8 +2076,7 @@ def test_overload_aliased():
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo',
-            module_names=['foo'],
+            module_name='foo'
         )
 
     code = t.transform_code(code)
