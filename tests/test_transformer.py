@@ -57,6 +57,43 @@ def find_function(m: cst.Module, name: str) -> tuple[cst.FunctionDef, int]|None:
     return v.found
 
 
+def find_function_all(m: cst.Module, name: str) -> list[tuple[cst.FunctionDef, int]]:
+    class V(cst.CSTVisitor):
+        METADATA_DEPENDENCIES = (PositionProvider,)
+
+        def __init__(self):
+            self.found = []
+            self.name_stack = []
+
+        def visit_ClassDef(self, node: cst.ClassDef):
+            self.name_stack.append(node.name.value)
+
+        def leave_ClassDef(self, node: cst.ClassDef):
+            self.name_stack.pop()
+
+        def visit_FunctionDef(self, node: cst.FunctionDef):
+            self.name_stack.append(node.name.value)
+            qual_name = ".".join(self.name_stack)
+            self.name_stack.append("<locals>")
+            if qual_name == name:
+                first_line = min(
+                    self.get_metadata(PositionProvider, node).start.line
+                    for node in (node, *node.decorators)
+                )
+
+                self.found.append((node, first_line))
+
+        def leave_FunctionDef(self, node: cst.FunctionDef):
+            self.name_stack.pop()
+            self.name_stack.pop()
+
+    wrapper = MetadataWrapper(m)
+    v = V()
+    wrapper.visit(v)
+
+    return v.found
+
+
 def get_function(m: cst.Module, funcname: str, body=True) -> str|None:
     """Returns the given function as a string, if found in 'm'"""
     if (f := find_function(m, funcname)):
@@ -71,6 +108,20 @@ def get_function(m: cst.Module, funcname: str, body=True) -> str|None:
             ]).code
 
     return None
+
+
+def get_function_all(m: cst.Module, funcname: str, body=True) -> list[str]:
+    """Returns the given function as a string, if found in 'm'"""
+    strings: list[str] = []
+    for f, line_no in find_function_all(m, funcname):
+        if body:
+            strings.append(cst.Module([f]).code.lstrip('\n'))
+        else:
+            strings.append(
+                cst.Module([f.with_changes(
+                    body=cst.SimpleStatementSuite([cst.Expr(cst.Ellipsis())]),
+                    leading_lines=[])]).code)
+    return strings
 
 
 def get_funcid(filename: str, m: cst.Module, funcname: str) -> FuncId:
@@ -1906,3 +1957,135 @@ def test_generics_defined_simple():
         def add(a: rt_T1, b: rt_T1) -> rt_T1:
             return a + b
     """)
+
+
+def test_overload_preserve():
+    input_code = cst.parse_module(textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> str:
+            ...
+        @overload
+        def foo(bar: str) -> int:
+            ...
+        def foo(bar):
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+            elif isinstance(bar, bool):
+                return not bar
+    """))
+    foo = get_funcid('foo.py', input_code, 'foo')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: FuncAnnotation(
+                    [
+                        (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
+                    ],
+                    TypeInfo.from_type(int, module=""),
+                ),},
+            override_annotations=False,
+            only_update_annotations=False,
+            inline_generics=False,
+            module_name='foo'
+        )
+
+    output_code = t.transform_code(input_code)
+    assert input_code.code == output_code.code
+
+
+def test_overload_remove():
+    code = cst.parse_module(textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> str:
+            ...
+        @overload
+        def foo(bar: str) -> int:
+            ...
+        def foo(bar):
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+            elif isinstance(bar, bool):
+                return not bar
+    """))
+    
+    
+    foo = get_funcid('foo.py', code, 'foo')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: FuncAnnotation(
+                    [
+                        (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
+                    ],
+                    TypeInfo.from_type(int, module=""),
+                ),},
+            override_annotations=True,
+            only_update_annotations=False,
+            inline_generics=False,
+            module_name='foo'
+        )
+
+    code = t.transform_code(code)
+    functions = get_function_all(code, "foo")
+    assert len(functions) == 1
+    assert functions[0].strip() == textwrap.dedent("""
+        def foo(bar: str) -> int:
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+            elif isinstance(bar, bool):
+                return not bar
+        """).strip()
+
+
+def test_overload_aliased():
+    code = cst.parse_module(textwrap.dedent("""\
+        import typing
+
+        @typing.overload
+        def foo(bar: int) -> str:
+            ...
+        @typing.overload
+        def foo(bar: str) -> int:
+            ...
+        def foo(bar: int|str) -> int|str:
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+    """))
+    foo = get_funcid('foo.py', code, 'foo')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: FuncAnnotation(
+                    [
+                        (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
+                    ],
+                    TypeInfo.from_type(int, module=""),
+                ),},
+            override_annotations=True,
+            only_update_annotations=False,
+            inline_generics=False,
+            module_name='foo'
+        )
+
+    code = t.transform_code(code)
+    functions = get_function_all(code, "foo")
+    assert len(functions) == 1
+    assert functions[0].strip() == textwrap.dedent("""
+        def foo(bar: str) -> int:
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+        """).strip()
