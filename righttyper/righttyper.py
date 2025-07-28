@@ -11,11 +11,12 @@ import signal
 import sys
 import platform
 import typeshed_client as ts
+import pickle
 
 
 import collections.abc as abc
 from collections import defaultdict, Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType, AsyncGeneratorType, UnionType
 import typing
@@ -72,7 +73,8 @@ from righttyper.righttyper_utils import (
     TOOL_NAME,
     debug_print_set_level,
     skip_this_file,
-    get_main_module_fqn
+    source_to_module_fqn,
+    get_main_module_fqn,
 )
 import righttyper.loader as loader
 from righttyper.righttyper_alarm import (
@@ -80,9 +82,11 @@ from righttyper.righttyper_alarm import (
     ThreadAlarm,
 )
 
-from righttyper.options import options
+from righttyper.options import Options, options
 
 logger = logging.getLogger("righttyper")
+PKL_FILE_NAME = f"{TOOL_NAME}.rt"
+PKL_FILE_VERSION = 2
 
 
 def get_inline_arg_types(
@@ -97,7 +101,9 @@ def get_inline_arg_types(
     try:
         if not (hints := typing.get_type_hints(parents_func)):
             return None
-    except NameError:
+    except (NameError, TypeError) as e:
+        logger.info(f"Error getting type hints for {parents_func} " + 
+                    f"({parents_func.__annotations__}): {e}.\n")
         return None
 
     return (
@@ -179,6 +185,25 @@ class Observations:
 
     # Completed traces
     traces: dict[CodeId, Counter[CallTrace]] = field(default_factory=dict)
+
+    # Mapping of sources to their module names
+    # TODO handle cases where modules are loaded more than once, e.g. through pytest
+    source_to_module_name: dict[str, str|None] = field(default_factory=dict)
+
+
+    def record_module(
+        self,
+        code: CodeType,
+        frame: FrameType
+    ) -> None:
+        if code.co_filename not in self.source_to_module_name:
+            if (modname := frame.f_globals.get('__name__', None)):
+                if modname == "__main__":
+                    modname = get_main_module_fqn()
+            else:
+                modname = source_to_module_fqn(Path(code.co_filename))
+
+            self.source_to_module_name[code.co_filename] = modname
 
 
     def record_function(
@@ -670,6 +695,8 @@ def process_function_call(
     frame: FrameType,
 ) -> None:
 
+    obs.record_module(code, frame)
+
     def get_defaults() -> dict[str, TypeInfo]:
         if (function := find_function(frame, code)):
             return {
@@ -679,7 +706,6 @@ def process_function_call(
             }
 
         return {}
-
 
     args = inspect.getargvalues(frame)
 
@@ -875,8 +901,11 @@ def output_signatures(
             print("".join(diffs), file=file)
 
 
-def post_process() -> None:
-    sig_changes = process_all_files()
+def process_collected(collected: dict[str, Any]):
+    sig_changes = process_files(
+        collected['files'],
+        collected['type_annotations']
+    )
 
     with open(f"{TOOL_NAME}.out", "w+") as f:
         output_signatures(sig_changes, f)
@@ -886,37 +915,26 @@ def process_file_wrapper(args) -> SignatureChanges:
     return process_file(*args)
 
 
-def process_all_files() -> list[SignatureChanges]:
-    fnames = set(
-        t.func_id.file_name
-        for t in obs.functions_visited.values()
-        if not skip_this_file(
-            t.func_id.file_name,
-            options.script_dir,
-            options.include_all,
-            options.include_files_pattern
-        )
-    )
-
-    if len(fnames) == 0:
+def process_files(
+    files: list[list[str]],
+    type_annotations: dict[FuncId, FuncAnnotation],
+) -> list[SignatureChanges]:
+    if not files:
         return []
-
-    type_annotations = obs.collect_annotations()
-    module_names = [*sys.modules.keys(), get_main_module_fqn()]
 
     args_gen = (
         (
-            fname,
+            file[0],    # path
+            file[1],    # module_name
+            type_annotations,
             options.output_files,
             options.generate_stubs,
-            type_annotations,
             options.overwrite,
-            module_names,
             options.ignore_annotations,
             options.only_update_annotations,
             options.inline_generics
         )
-        for fname in fnames
+        for file in files
     )
 
     if options.use_multiprocessing:
@@ -944,7 +962,7 @@ def process_all_files() -> list[SignatureChanges]:
         expand=True,
         auto_refresh=False,
     ) as progress:
-        task1 = progress.add_task(description="", total=len(fnames))
+        task1 = progress.add_task(description="", total=len(files))
 
         for result in results:
             sig_changes.append(result)
@@ -978,12 +996,28 @@ class CheckModule(click.ParamType):
         )
         return ""
 
+@click.group(
+    context_settings={
+        "show_default": True
+    }
+)
+@click.option(
+    "--verbose",
+    is_flag=True,
+    help="Print diagnostic information.",
+)
+@click.version_option(
+    version=importlib.metadata.version(TOOL_NAME),
+    prog_name=TOOL_NAME,
+)
+def cli(verbose: bool):
+    debug_print_set_level(verbose)
 
-@click.command(
+
+@cli.command(
     context_settings={
         "allow_extra_args": True,
         "ignore_unknown_options": True,
-        "show_default": True
     }
 )
 @click.argument(
@@ -999,12 +1033,12 @@ class CheckModule(click.ParamType):
 @click.option(
     "--all-files",
     is_flag=True,
-    help="Process any files encountered, including in libraries (except for those specified in --include-files)",
+    help="Process any files encountered, including libraries (except for those specified in --include-files)",
 )
 @click.option(
     "--include-files",
     type=str,
-    help="Include only files matching the given pattern.",
+    help="Process only files matching the given pattern.",
 )
 @click.option(
     "--include-functions",
@@ -1019,10 +1053,9 @@ class CheckModule(click.ParamType):
     help="Produce tensor shape annotations (compatible with jaxtyping).",
 )
 @click.option(
-    "--srcdir",
+    "--root",
     type=click.Path(exists=True, file_okay=False),
-    default=os.getcwd(),
-    help="Use this directory as the base for imports.",
+    help="Process only files under the given directory.  If omitted, the script's directory (or, for -m, the current directory) is used.",
 )
 @click.option(
     "--overwrite/--no-overwrite",
@@ -1049,19 +1082,10 @@ class CheckModule(click.ParamType):
     help="Overwrite existing annotations but never add new ones.",
 )
 @click.option(
-    "--verbose",
-    is_flag=True,
-    help="Print diagnostic information.",
-)
-@click.option(
     "--generate-stubs",
     is_flag=True,
     help="Generate stub files (.pyi).",
     default=False,
-)
-@click.version_option(
-    version=importlib.metadata.version(TOOL_NAME),
-    prog_name=TOOL_NAME,
 )
 @click.option(
     "--target-overhead",
@@ -1072,7 +1096,6 @@ class CheckModule(click.ParamType):
 @click.option(
     "--use-multiprocessing/--no-use-multiprocessing",
     default=True,
-    hidden=True,
     help="Whether to use multiprocessing.",
 )
 @click.option(
@@ -1082,19 +1105,10 @@ class CheckModule(click.ParamType):
     show_default=True,
 )
 @click.option(
-    "--type-coverage",
-    nargs=2,
-    type=(
-        click.Choice(["by-directory", "by-file", "summary"]),
-        click.Path(exists=True, file_okay=True),
-    ),
-    help="Rather than run a script or module, report a choice of 'by-directory', 'by-file' or 'summary' type annotation coverage for the given path.",
-)
-@click.option(
     "--signal-wakeup/--thread-wakeup",
     default=not platform.system() == "Windows",
     hidden=True,
-    help="Whether to use signal-based wakeups or thead-based wakeups."
+    help="Whether to use signal-based wakeups or thread-based wakeups."
 )
 @click.option(
     "--replace-dict/--no-replace-dict",
@@ -1111,6 +1125,7 @@ class CheckModule(click.ParamType):
     "--python-version",
     type=click.Choice(["3.9", "3.10", "3.11", "3.12", "3.13"]),
     default="3.12",
+    callback=lambda ctx, param, value: tuple(int(n) for n in value.split('.')),
     help="Python version for which to emit annotations.",
 )
 @click.option(
@@ -1119,47 +1134,39 @@ class CheckModule(click.ParamType):
     default=options.use_top_pct,
     help="Only use the X% most common call traces.",
 )
+@click.option(
+    "--only-collect",
+    default=False,
+    is_flag=True,
+    help=f"Rather than immediately process collect data, save it to {PKL_FILE_NAME}." +\
+          " You can later process using RightTyper's \"process\" command."
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def main(
+def run(
     script: str,
     module: str,
     args: list[str],
     all_files: bool,
     include_files: str,
     include_functions: tuple[str, ...],
-    verbose: bool,
     overwrite: bool,
     output_files: bool,
     ignore_annotations: bool,
     only_update_annotations: bool,
     generate_stubs: bool,
     infer_shapes: bool,
-    srcdir: str,
+    root: str,
     target_overhead: float,
     use_multiprocessing: bool,
     sampling: bool,
-    type_coverage: tuple[str, str],
     signal_wakeup: bool,
     replace_dict: bool,
     container_sample_limit: int,
-    python_version: str|tuple[int, ...],
-    use_top_pct: int
+    python_version: tuple[int, ...],
+    use_top_pct: int,
+    only_collect: bool
 ) -> None:
-
-    if type_coverage:
-        from . import annotation_coverage as cov
-        cov_type, path = type_coverage
-
-        cache = cov.analyze_all_directories(path)
-
-        if cov_type == "by-directory":
-            cov.print_directory_summary(cache)
-        elif cov_type == "by-file":
-            cov.print_file_summary(cache)
-        else:
-            cov.print_annotation_summary()
-
-        return
+    """Runs a given script or module, collecting type information."""
 
     if module:
         args = [*((script,) if script else ()), *args]  # script, if any, is really the 1st module arg
@@ -1187,10 +1194,13 @@ def main(
                     print(f" * {package}")
             sys.exit(1)
 
-    python_version = tuple(int(n) for n in python_version.split('.'))
+    if root:
+        options.script_dir = os.path.realpath(root)
+    elif module:
+        options.script_dir = os.getcwd()
+    else:
+        options.script_dir = os.path.dirname(os.path.realpath(script))
 
-    debug_print_set_level(verbose)
-    options.script_dir = os.path.dirname(os.path.realpath(script))
     options.include_files_pattern = include_files
     options.include_all = all_files
     options.include_functions_pattern = include_functions
@@ -1201,7 +1211,6 @@ def main(
     options.overwrite = overwrite
     options.output_files = output_files
     options.generate_stubs = generate_stubs
-    options.srcdir = srcdir
     options.use_multiprocessing = use_multiprocessing
     options.sampling = sampling
     options.replace_dict = replace_dict
@@ -1225,8 +1234,86 @@ def main(
         )
         sys.monitoring.restart_events()
         alarm.start()
-        execute_script_or_module(script, bool(module), args)
+        execute_script_or_module(script, is_module=bool(module), args=args)
     finally:
         reset_monitoring()
         alarm.stop()
-        post_process()
+
+        file_names = set(
+            t.func_id.file_name
+            for t in obs.functions_visited.values()
+            if not skip_this_file(
+                t.func_id.file_name,
+                options.script_dir,
+                options.include_all,
+                options.include_files_pattern
+            )
+        )
+
+        collected = {
+            'version': PKL_FILE_VERSION,
+            'files': [[f, obs.source_to_module_name.get(f)] for f in file_names],
+            'type_annotations': obs.collect_annotations(),
+            'options': options
+        }
+
+        if only_collect:
+            with open(PKL_FILE_NAME, "wb") as f:
+                pickle.dump(collected, f)
+
+            print(f"Collected types saved to {PKL_FILE_NAME}.")
+        else:
+            process_collected(collected)
+
+
+@cli.command()
+def process():
+    """Processes type information collected with the 'run' command."""
+
+    try:
+        with open(PKL_FILE_NAME, "rb") as f:
+            pkl = pickle.load(f)
+    except FileNotFoundError:
+        print(f"Error: No '{PKL_FILE_NAME}' found to process.")
+        sys.exit(1)
+
+    if pkl.get('version') != PKL_FILE_VERSION:
+        print(f"Error: Unsupported {PKL_FILE_NAME} version: {pkl.get('version')}, expected {PKL_FILE_VERSION}")
+        sys.exit(1)
+
+    # Copy run options, but be careful not to replace instance, as there may be
+    # multiple references to it (e.g., through "from .options import ...")
+    global options
+    for key, value in asdict(pkl['options']).items():
+        setattr(options, key, value)
+
+    process_collected(pkl)
+
+
+@cli.command()
+@click.option(
+    "--type", 'cov_type',
+    type=click.Choice(["by-directory", "by-file", "summary"]),
+    default='summary',
+    help="Select coverage type.",
+)
+@click.argument(
+    "path",
+    type=click.Path(exists=True, file_okay=False),
+)
+def coverage(
+    cov_type: str,
+    path: Path
+):
+    """Computes annotation coverage."""
+
+    from . import annotation_coverage as cov
+
+    cache = cov.analyze_all_directories(str(path))
+
+    if cov_type == "by-directory":
+        cov.print_directory_summary(cache)
+    elif cov_type == "by-file":
+        cov.print_file_summary(cache)
+    else:
+        cov.print_annotation_summary()
