@@ -3850,61 +3850,23 @@ def test_overload_no_ignore_annotations(tmp_cwd):
 
 
 def test_overload_ignore_annotations(tmp_cwd):
-    Path("t.py").write_text(textwrap.dedent("""\
-        from typing import overload
-
-        @overload
-        def foo(bar: int) -> str:
-            ...
-        @overload
-        def foo(bar: str) -> int:
-            ...
-        def foo(bar):
-            if isinstance(bar, int):
-                return "hello"
-            elif isinstance(bar, str):
-                return 2
-
-        foo(1)
-        foo("world")
-        """
-    ))
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--ignore-annotations', '-m', 't'],
-                    check=True)
-
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-
-    function_list = get_function_all(code, "foo")
-
-    # In our current iteration, we need to make sure that foo is annotated and
-    # that the old overloads are deleted.
-    # Since we haven't implemented overload generation, this is done with
-    # unions.
-    assert len(function_list) == 1
-    assert function_list[0].strip() == "def foo(bar: int|str) -> int|str: ..."
-
-
-def test_overload_only_update_annotations(tmp_cwd):
     pre_annotation = textwrap.dedent("""\
         from typing import overload
 
         @overload
-        def foo(bar: int) -> str:
+        def foo(bar: bytes, baz) -> str:
             ...
         @overload
-        def foo(bar: str) -> int:
+        def foo(bar: str, baz) -> int:
             ...
-        def foo(bar):
+        def foo(bar, baz):
             if isinstance(bar, int):
                 return "hello"
             elif isinstance(bar, str):
                 return 2
 
-        foo(1)
-        foo("world")
+        foo(1, 1)
+        foo("world", "hello")
     """)
     Path("t.py").write_text(pre_annotation)
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -3913,7 +3875,49 @@ def test_overload_only_update_annotations(tmp_cwd):
                     check=True)
 
     post_annotation = Path("t.py").read_text()
-    assert pre_annotation == post_annotation
+    post_annotation_code = cst.parse_module(post_annotation)
+
+    function_list = get_function_all(post_annotation_code, "foo")
+    assert len(function_list) == 3
+    assert function_list[0].strip() == "def foo(bar: int, baz: int) -> str: ..."
+    assert function_list[1].strip() == "def foo(bar: str, baz: str) -> int: ..."
+    assert function_list[2].strip() == "def foo(bar, baz): ..."
+
+
+def test_overload_only_update_annotations(tmp_cwd):
+    pre_annotation = textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: bytes, baz) -> str:
+            ...
+        @overload
+        def foo(bar: str, baz) -> int:
+            ...
+        def foo(bar, baz):
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+
+        foo(1, 1)
+        foo("world", "hello")
+    """)
+    Path("t.py").write_text(pre_annotation)
+    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
+                    '--no-use-multiprocessing', '--no-sampling', '--only-update-annotations', '-m',
+                    't'],
+                    check=True)
+
+    post_annotation = Path("t.py").read_text()
+    post_annotation_code = cst.parse_module(post_annotation)
+
+    function_list = get_function_all(post_annotation_code, "foo")
+    assert len(function_list) == 4
+    assert function_list[0].strip() == "def foo(bar: bytes, baz) -> str: ..."
+    assert function_list[1].strip() == "def foo(bar: int, baz: int) -> str: ..."
+    assert function_list[2].strip() == "def foo(bar: str, baz: str) -> int: ..."
+    assert function_list[3].strip() == "def foo(bar, baz): ..."
 
 
 def test_overload_no_ignore_annotations_generic(tmp_cwd):
@@ -4063,7 +4067,6 @@ def test_overload_module_alias(tmp_cwd):
             pass
 
         foo("1", 1)
-        foo(1, "a")
     """))
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -4080,7 +4083,7 @@ def test_overload_module_alias(tmp_cwd):
     # Since we haven't implemented overload generation, this is done with
     # unions.
     assert len(function_list) == 1
-    assert function_list[0].strip() == "def foo(x: int|str, y: int|str) -> None: ..."
+    assert function_list[0].strip() == "def foo(x: str, y: int) -> None: ..."
 
 
 def test_overload_decorator_alias(tmp_cwd):
@@ -4097,7 +4100,6 @@ def test_overload_decorator_alias(tmp_cwd):
             pass
 
         foo("1", 1)
-        foo(1, "a")
     """))
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -4114,7 +4116,7 @@ def test_overload_decorator_alias(tmp_cwd):
     # Since we haven't implemented overload generation, this is done with
     # unions.
     assert len(function_list) == 1
-    assert function_list[0].strip() == "def foo(x: int|str, y: int|str) -> None: ..."
+    assert function_list[0].strip() == "def foo(x: str, y: int) -> None: ..."
 
 
 def test_overload_module_import(tmp_cwd):
@@ -4131,7 +4133,6 @@ def test_overload_module_import(tmp_cwd):
             pass
 
         foo("1", 1)
-        foo(1, "a")
     """))
 
     subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
@@ -4148,7 +4149,7 @@ def test_overload_module_import(tmp_cwd):
     # Since we haven't implemented overload generation, this is done with
     # unions.
     assert len(function_list) == 1
-    assert function_list[0].strip() == "def foo(x: int|str, y: int|str) -> None: ..."
+    assert function_list[0].strip() == "def foo(x: str, y: int) -> None: ..."
 
 
 def test_capture_non_inline_typevar():
