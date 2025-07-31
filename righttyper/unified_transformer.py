@@ -495,8 +495,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         is_overload = any(self._is_overload(decorator)
                           for decorator in updated_node.decorators)
 
-        # If our function is an overload signature, we append it to the overload
-        # list.
+        # If our function is an overload signature, we append it to the overload list.
         # NOTE: This check technically misses if @overload is aliased or used as
         # the result of an expression, but not even mypy handles that.
         if is_overload:
@@ -522,87 +521,91 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             del argmap
 
-            # We don't yet support merging type_parameters
-            if (overloads == [] or self.override_annotations) and not typevar_overlap and updated_node.type_parameters is None:
-                ann, generics = self._process_generics(ann)
-
-                if self.inline_generics:
-                    our_params = []
-                    for generic in generics.values():
-                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
-                        our_params.append(cst.TypeParam(param=cst.TypeVar(
-                            name=cst.Name(value=str(generic)),
-                            bound=cst.Tuple(elements=[
-                                cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
-                                for arg in generic.args
-                            ])
-                        )))
-
-                    if our_params:
-                        updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
-                            params=our_params
-                        ))
-
-                else:
-                    for generic in generics.values():
-                        assert generic.typevar_name is not None
-                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
-                        pre_function.append(cst.SimpleStatementLine(body=[
-                            cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
-                                       value=cst.Call(func=cst.Name("TypeVar"), args=[
-                                           cst.Arg(value=cst.SimpleString(_quote(str(generic)))),
-                                           *(cst.Arg(value=self._get_annotation_expr(
-                                               typing.cast(TypeInfo, arg)))
-                                             for arg in generic.args
-                                            )
-                                       ])
-                            )
-                        ]))
-                        self.unknown_types.add("TypeVar")
-
-            class ParamChanger(cst.CSTTransformer):
-                def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
-                    return self._process_parameter(updated_node, ann)
-
+            # We don't yet support updating overloads; if they are present and not being removed, leave the function alone.
             if overloads == [] or self.override_annotations:
+                # We don't yet support merging type parameters
+                if not typevar_overlap and updated_node.type_parameters is None:
+                    ann, generics = self._process_generics(ann)
+
+                    if self.inline_generics:
+                        # add type parameters
+                        type_params = []
+                        for generic in generics.values():
+                            assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                            type_params.append(cst.TypeParam(param=cst.TypeVar(
+                                name=cst.Name(value=str(generic)),
+                                bound=cst.Tuple(elements=[
+                                    cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
+                                    for arg in generic.args
+                                ])
+                            )))
+
+                        if type_params:
+                            updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
+                                params=type_params
+                            ))
+
+                    else:
+                        # define typevars
+                        for generic in generics.values():
+                            assert generic.typevar_name is not None
+                            assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                            pre_function.append(cst.SimpleStatementLine(body=[
+                                cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
+                                           value=cst.Call(func=cst.Name("TypeVar"), args=[
+                                               cst.Arg(value=cst.SimpleString(_quote(str(generic)))),
+                                               *(cst.Arg(value=self._get_annotation_expr(
+                                                   typing.cast(TypeInfo, arg)))
+                                                 for arg in generic.args
+                                                )
+                                           ])
+                                )
+                            ]))
+                            self.unknown_types.add("TypeVar")
+
+                # Now update the parameters
+                class ParamChanger(cst.CSTTransformer):
+                    def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
+                        return self._process_parameter(updated_node, ann)
+
                 updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
 
-            should_update_ret = (
-            (self.only_update_annotations and updated_node.returns is not None)
-            or (not self.only_update_annotations and (updated_node.returns is None or self.override_annotations))
-            ) and (overloads == [] or self.override_annotations)
-            if should_update_ret:
-                if self._is_valid(ann.retval):
-                    annotation_expr = self._get_annotation_expr(ann.retval)
+                should_update_ret = (
+                    self.override_annotations
+                    or (self.only_update_annotations and updated_node.returns is not None)
+                    or (not self.only_update_annotations and updated_node.returns is None)
+                )
+                if should_update_ret:
+                    if self._is_valid(ann.retval):
+                        annotation_expr = self._get_annotation_expr(ann.retval)
 
-                    updated_node = updated_node.with_changes(
-                        returns=cst.Annotation(annotation=annotation_expr),
-                    )
-
-                    # remove "(...) -> retval"-style type hint comment
-                    if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
-                        and _TYPE_HINT_COMMENT_FUNC.match(comment)):
                         updated_node = updated_node.with_changes(
-                            body=updated_node.body.with_changes(
-                                body=(updated_node.body.body[0].with_changes(leading_lines=[]),
-                                      *updated_node.body.body[1:])
-                            )
+                            returns=cst.Annotation(annotation=annotation_expr),
                         )
 
-            # remove single-line type hint comment in the same line as the 'def'
-            if ((comment := _get_str_attr(updated_node, "body.header.comment.value"))
-                and _TYPE_HINT_COMMENT_FUNC.match(comment)):
-                updated_node = updated_node.with_changes(
-                    body=updated_node.body.with_changes(
-                        header=cst.TrailingWhitespace()))
+                        # remove "(...) -> retval"-style type hint comment
+                        if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
+                            and _TYPE_HINT_COMMENT_FUNC.match(comment)):
+                            updated_node = updated_node.with_changes(
+                                body=updated_node.body.with_changes(
+                                    body=(updated_node.body.body[0].with_changes(leading_lines=[]),
+                                          *updated_node.body.body[1:])
+                                )
+                            )
+
+                # remove single-line type hint comment in the same line as the 'def'
+                if ((comment := _get_str_attr(updated_node, "body.header.comment.value"))
+                    and _TYPE_HINT_COMMENT_FUNC.match(comment)):
+                    updated_node = updated_node.with_changes(
+                        body=updated_node.body.with_changes(
+                            header=cst.TrailingWhitespace()))
 
 
-            # TODO Generate new overloads.
-            # If any override_annotations is set, wipe the existing overloads
-            # and remake them.
             original_overloads = overloads
             if self.override_annotations:
-                overloads = []
+                overloads = []      # overloads are annotations, so wipe them
+
+            # TODO Generate new overloads.
             pre_function.extend(overloads)
 
             if pre_function:

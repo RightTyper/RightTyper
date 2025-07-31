@@ -1177,6 +1177,9 @@ def run(
     else:
         raise click.UsageError("Either -m/--module must be provided, or a script be passed.")
 
+    if ignore_annotations and only_update_annotations:
+        raise click.UsageError("Options --ignore-annotations and --only-update-annotations are mutually exclusive.")
+
     if infer_shapes:
         # Check for required packages for shape inference
         found_package = defaultdict(bool)

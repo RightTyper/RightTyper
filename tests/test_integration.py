@@ -3819,8 +3819,12 @@ def test_enum_class():
         def from_str(cls: "type[Decision]", s: str) -> "Decision": ...
     """)
 
-    
-def test_overload_no_ignore_annotations(tmp_cwd):
+
+@pytest.mark.parametrize("options", [
+    (),
+    ("--only-update-annotations",)
+])
+def test_overloads_retained_as_is(tmp_cwd, options):
     pre_annotation = textwrap.dedent("""\
         from typing import overload
 
@@ -3840,10 +3844,7 @@ def test_overload_no_ignore_annotations(tmp_cwd):
         foo("world")
     """)
     Path("t.py").write_text(pre_annotation)
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--only-update-annotations', '-m',
-                    't'],
-                    check=True)
+    rt_run("--no-sampling", *(options), "t.py")
 
     post_annotation = Path("t.py").read_text()
     assert pre_annotation == post_annotation
@@ -3870,9 +3871,7 @@ def test_overload_ignore_annotations(tmp_cwd):
         """
     ))
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--ignore-annotations', '-m', 't'],
-                    check=True)
+    rt_run("--no-sampling", "--ignore-annotations", "t.py")
 
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
@@ -3887,36 +3886,11 @@ def test_overload_ignore_annotations(tmp_cwd):
     assert function_list[0].strip() == "def foo(bar: int|str) -> int|str: ..."
 
 
-def test_overload_only_update_annotations(tmp_cwd):
-    pre_annotation = textwrap.dedent("""\
-        from typing import overload
-
-        @overload
-        def foo(bar: int) -> str:
-            ...
-        @overload
-        def foo(bar: str) -> int:
-            ...
-        def foo(bar):
-            if isinstance(bar, int):
-                return "hello"
-            elif isinstance(bar, str):
-                return 2
-
-        foo(1)
-        foo("world")
-    """)
-    Path("t.py").write_text(pre_annotation)
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--only-update-annotations', '-m',
-                    't'],
-                    check=True)
-
-    post_annotation = Path("t.py").read_text()
-    assert pre_annotation == post_annotation
-
-
-def test_overload_no_ignore_annotations_generic(tmp_cwd):
+@pytest.mark.parametrize("options", [
+    (),
+    ("--only-update-annotations",)
+])
+def test_overloads_retained_as_is_generic(tmp_cwd, options):
     pre_annotation = textwrap.dedent("""\
         from typing import overload
 
@@ -3933,10 +3907,7 @@ def test_overload_no_ignore_annotations_generic(tmp_cwd):
         foo("world")
     """)
     Path("t.py").write_text(pre_annotation)
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--only-update-annotations', '-m',
-                    't'],
-                    check=True)
+    rt_run("--no-sampling", *(options), "t.py")
 
     post_annotation = Path("t.py").read_text()
     assert pre_annotation == post_annotation
@@ -3960,9 +3931,7 @@ def test_overload_ignore_annotations_generic(tmp_cwd):
         """
     ))
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--ignore-annotations', '-m', 't'],
-                    check=True)
+    rt_run("--no-sampling", "--ignore-annotations", "t.py")
 
     output = Path("t.py").read_text()
     print(output)
@@ -3976,32 +3945,6 @@ def test_overload_ignore_annotations_generic(tmp_cwd):
     # unions.
     assert len(function_list) == 1
     assert function_list[0].strip() == "def foo[T1: (int, str)](bar: T1) -> T1: ..."
-
-
-def test_overload_only_update_annotations_generic(tmp_cwd):
-    pre_annotation = textwrap.dedent("""\
-        from typing import overload
-
-        @overload
-        def foo(bar: int) -> int:
-            ...
-        @overload
-        def foo(bar: str) -> str:
-            ...
-        def foo(bar):
-            return bar
-
-        foo(1)
-        foo("world")
-    """)
-    Path("t.py").write_text(pre_annotation)
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--only-update-annotations', '-m',
-                    't'],
-                    check=True)
-
-    post_annotation = Path("t.py").read_text()
-    assert pre_annotation == post_annotation
 
 
 # Currently, we don't handle multiple aliases of the same module.
@@ -4032,9 +3975,7 @@ def test_overload_alias_multiple(tmp_cwd):
         foo("a", "a")
     """))
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--ignore-annotations', '-m', 't'],
-                    check=True)
+    rt_run("--no-sampling", "--ignore-annotations", "t.py")
 
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
@@ -4049,14 +3990,19 @@ def test_overload_alias_multiple(tmp_cwd):
     assert function_list[0].strip() == "def foo(x: int|str, y: int|str) -> None: ..."
 
 
-def test_overload_module_alias(tmp_cwd):
-    Path("t.py").write_text(textwrap.dedent("""\
-        import typing as alias
+@pytest.mark.parametrize("impoht, decorator", [
+    ("import typing", "@typing.overload"),
+    ("import typing as alias", "@alias.overload"),
+    ("from typing import overload as alias", "@alias"),
+])
+def test_overload_alias(tmp_cwd, impoht, decorator):
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        {impoht}
 
-        @alias.overload
+        {decorator}
         def foo(x: str, y: int):
             ...
-        @alias.overload
+        {decorator}
         def foo(x: int, y: str):
             ...
         def foo(x, y):
@@ -4066,77 +4012,7 @@ def test_overload_module_alias(tmp_cwd):
         foo(1, "a")
     """))
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--ignore-annotations', '-m', 't'],
-                    check=True)
-
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-
-    function_list = get_function_all(code, "foo")
-
-    # In our current iteration, we need to make sure that foo is annotated and
-    # that the old overloads are deleted.
-    # Since we haven't implemented overload generation, this is done with
-    # unions.
-    assert len(function_list) == 1
-    assert function_list[0].strip() == "def foo(x: int|str, y: int|str) -> None: ..."
-
-
-def test_overload_decorator_alias(tmp_cwd):
-    Path("t.py").write_text(textwrap.dedent("""\
-        from typing import overload as alias
-
-        @alias
-        def foo(x: str, y: int):
-            ...
-        @alias
-        def foo(x: int, y: str):
-            ...
-        def foo(x, y):
-            pass
-
-        foo("1", 1)
-        foo(1, "a")
-    """))
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--ignore-annotations', '-m', 't'],
-                    check=True)
-
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-
-    function_list = get_function_all(code, "foo")
-
-    # In our current iteration, we need to make sure that foo is annotated and
-    # that the old overloads are deleted.
-    # Since we haven't implemented overload generation, this is done with
-    # unions.
-    assert len(function_list) == 1
-    assert function_list[0].strip() == "def foo(x: int|str, y: int|str) -> None: ..."
-
-
-def test_overload_module_import(tmp_cwd):
-    Path("t.py").write_text(textwrap.dedent("""\
-        import typing
-
-        @typing.overload
-        def foo(x: str, y: int):
-            ...
-        @typing.overload
-        def foo(x: int, y: str):
-            ...
-        def foo(x, y):
-            pass
-
-        foo("1", 1)
-        foo(1, "a")
-    """))
-
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--no-use-multiprocessing', '--no-sampling', '--ignore-annotations', '-m', 't'],
-                    check=True)
+    rt_run("--no-sampling", "--ignore-annotations", "t.py")
 
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
@@ -4163,8 +4039,7 @@ def test_capture_non_inline_typevar():
 
     Path("t.py").write_text(t)
 
-    subprocess.run([sys.executable, '-m', 'righttyper', '--overwrite', '--output-files',
-                    '--python-version=3.11', '--no-sampling', 't.py'], check=True)
+    rt_run("--no-sampling", "--python-version=3.11", "t.py")
     output = Path("righttyper.out").read_text()
 
     res = textwrap.dedent("""\
