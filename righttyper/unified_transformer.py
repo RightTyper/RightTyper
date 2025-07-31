@@ -1,6 +1,7 @@
 import typing
 import builtins
 import collections.abc as abc
+from dataclasses import dataclass
 import libcst as cst
 import libcst.matchers as cstm
 from libcst.metadata import MetadataWrapper, PositionProvider
@@ -11,8 +12,17 @@ from righttyper.righttyper_types import (
     FuncId,
     FuncAnnotation,
     FunctionName,
-    TypeInfo,
+    TypeInfo
 )
+
+
+@dataclass(eq=True, frozen=True)
+class ExtendedFunctionDef:
+    # The list of CST elements before the actual `FunctionDef` node which are
+    # associated with that node
+    prefix: typing.Sequence[cst.SimpleStatementLine | cst.BaseCompoundStatement]
+    # The primary `FunctionDef` node
+    primary: cst.FunctionDef
 
 
 _BUILTIN_TYPES : frozenset[str] = frozenset({
@@ -114,7 +124,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.inline_generics = inline_generics
         self.has_future_annotations = False
         self.module_name = module_name
-        self.change_list: list[tuple[FunctionName, cst.FunctionDef, cst.FunctionDef]] = []
+        self.change_list: list[tuple[FunctionName, ExtendedFunctionDef, ExtendedFunctionDef]] = []
 
         # TODO Ideally we'd use TypeInfo.module and avoid this as well as _module_for
         def iter_types(t: TypeInfo):
@@ -246,6 +256,17 @@ class UnifiedTransformer(cst.CSTTransformer):
         
         return (updated_ann, tr.generics)
                     
+    def _is_overload(self, decorator: cst.Decorator):
+        """Test if the given decorator is an `@overload` decorator.
+        
+        Note that this is not a perfect test -- it is based on `self.aliases`
+        and only handles global includes and aliases thereof."""
+        if isinstance(decorator.decorator, cst.Name):
+            return decorator.decorator.value == self.aliases["typing.overload"]
+        if isinstance(decorator.decorator, cst.Attribute) and isinstance(decorator.decorator.value, cst.Name):
+            typing_alias = self.aliases["typing"] if "typing" in self.aliases else "typing"
+            return decorator.decorator.value.value == typing_alias and decorator.decorator.attr.value == "overload"
+        return False
 
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
@@ -287,6 +308,16 @@ class UnifiedTransformer(cst.CSTTransformer):
         )
 
         self.module_generic_index = 1
+
+        # Since overloads must be consecutive, we don't need to keep track of
+        # multiple concurrent overloaded functions within each namespace.
+
+        # The current list of overloads that have been collected in each scope.
+        # Note that this is a stack since namespaces can be nested
+        # (e.g. classes).
+        self.overload_stack: list[list[cst.FunctionDef]] = [[]]
+        # The current list of overloaded function names that are in each scope.
+        self.overload_name_stack: list[str] = [""]
 
         return True
 
@@ -346,6 +377,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.append(node.name.value)
         self.used_names.append(self.used_names[name_source] | used_names(node))
+        self.overload_stack.append([])
+        self.overload_name_stack.append("")
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
@@ -353,12 +386,16 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.known_names.add(".".join(self.name_stack))
         self.name_stack.pop()
         self.used_names.pop()
+        self.overload_stack.pop()
+        self.overload_name_stack.pop()
         return updated_node
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
         name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.extend([node.name.value, "<locals>"])
         self.used_names.append(self.used_names[name_source] | used_names(node))
+        self.overload_stack.append([])
+        self.overload_name_stack.append("")
         return True
 
     def _get_annotation_expr(self, annotation: TypeInfo) -> cst.BaseExpression:
@@ -432,11 +469,13 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def leave_FunctionDef(
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
-    ) -> cst.FunctionDef | cst.FlattenSentinel:
+    ) -> cst.FunctionDef | cst.FlattenSentinel | cst.RemovalSentinel:
         name = ".".join(self.name_stack[:-1])
         self.name_stack.pop()
         self.name_stack.pop()
         self.used_names.pop()
+        self.overload_stack.pop()
+        self.overload_name_stack.pop()
 
         first_line = min(
             self.get_metadata(PositionProvider, node).start.line
@@ -444,9 +483,30 @@ class UnifiedTransformer(cst.CSTTransformer):
         )
         key = FuncId(Filename(self.filename), first_line, FunctionName(name))
 
+        # If we encounter a function whose name doesn't match the current
+        # overload sequence, we discard the overload stack and update the
+        # current overload sequence.
+        # This also has the side effect of cleaning up orphan overload
+        # signatures, which is good.
+        if name != self.overload_name_stack[-1]:
+            self.overload_stack[-1] = []
+            self.overload_name_stack[-1] = name
+
+        is_overload = any(self._is_overload(decorator)
+                          for decorator in updated_node.decorators)
+
+        # If our function is an overload signature, we append it to the overload list.
+        # NOTE: This check technically misses if @overload is aliased or used as
+        # the result of an expression, but not even mypy handles that.
+        if is_overload:
+            self.overload_stack[-1].append(original_node)
+            return cst.RemoveFromParent()
+
         if ann := typing.cast(FuncAnnotation, self.type_annotations.get(key)):  # cast to make mypy happy
-            pre_function = []
+            pre_function: list[cst.SimpleStatementLine | cst.BaseCompoundStatement] = []
             argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
+            overloads = self.overload_stack[-1]
+            self.overload_stack[-1] = []
 
             # Do existing annotations overlap with typevar args/return ?
             typevar_overlap = not self.override_annotations and (
@@ -457,85 +517,96 @@ class UnifiedTransformer(cst.CSTTransformer):
                         argmap[par.name.value].is_typevar()
                         for par in typing.cast(typing.Iterator[cst.Param], cstm.findall(updated_node.params, cstm.Param()))
                     )
-                )
+            )
 
             del argmap
 
-            # We don't yet support merging type_parameters
-            if not typevar_overlap and updated_node.type_parameters is None:
-                ann, generics = self._process_generics(ann)
+            # We don't yet support updating overloads; if they are present and not being removed, leave the function alone.
+            if overloads == [] or self.override_annotations:
+                # We don't yet support merging type parameters
+                if not typevar_overlap and updated_node.type_parameters is None:
+                    ann, generics = self._process_generics(ann)
 
-                if self.inline_generics:
-                    our_params = []
-                    for generic in generics.values():
-                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
-                        our_params.append(cst.TypeParam(param=cst.TypeVar(
-                            name=cst.Name(value=str(generic)),
-                            bound=cst.Tuple(elements=[
-                                cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
-                                for arg in generic.args
-                            ])
-                        )))
+                    if self.inline_generics:
+                        # add type parameters
+                        type_params = []
+                        for generic in generics.values():
+                            assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                            type_params.append(cst.TypeParam(param=cst.TypeVar(
+                                name=cst.Name(value=str(generic)),
+                                bound=cst.Tuple(elements=[
+                                    cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
+                                    for arg in generic.args
+                                ])
+                            )))
 
-                    if our_params:
-                        updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
-                            params=our_params
-                        ))
+                        if type_params:
+                            updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
+                                params=type_params
+                            ))
 
-                else:
-                    for generic in generics.values():
-                        assert generic.typevar_name is not None
-                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
-                        pre_function.append(cst.SimpleStatementLine(body=[
-                            cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
-                                       value=cst.Call(func=cst.Name("TypeVar"), args=[
-                                           cst.Arg(value=cst.SimpleString(_quote(str(generic)))),
-                                           *(cst.Arg(value=self._get_annotation_expr(
-                                               typing.cast(TypeInfo, arg)))
-                                             for arg in generic.args
-                                            )
-                                       ])
-                            )
-                        ]))
-                        self.unknown_types.add("TypeVar")
+                    else:
+                        # define typevars
+                        for generic in generics.values():
+                            assert generic.typevar_name is not None
+                            assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                            pre_function.append(cst.SimpleStatementLine(body=[
+                                cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
+                                           value=cst.Call(func=cst.Name("TypeVar"), args=[
+                                               cst.Arg(value=cst.SimpleString(_quote(str(generic)))),
+                                               *(cst.Arg(value=self._get_annotation_expr(
+                                                   typing.cast(TypeInfo, arg)))
+                                                 for arg in generic.args
+                                                )
+                                           ])
+                                )
+                            ]))
+                            self.unknown_types.add("TypeVar")
 
-            class ParamChanger(cst.CSTTransformer):
-                def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
-                    return self._process_parameter(updated_node, ann)
+                # Now update the parameters
+                class ParamChanger(cst.CSTTransformer):
+                    def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
+                        return self._process_parameter(updated_node, ann)
 
-            updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
+                updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
 
-            should_update_ret = (
-            (self.only_update_annotations and updated_node.returns is not None)
-            or (not self.only_update_annotations and (updated_node.returns is None or self.override_annotations))
-            )
-            if should_update_ret:
-                if self._is_valid(ann.retval):
-                    annotation_expr = self._get_annotation_expr(ann.retval)
+                should_update_ret = (
+                    self.override_annotations
+                    or (self.only_update_annotations and updated_node.returns is not None)
+                    or (not self.only_update_annotations and updated_node.returns is None)
+                )
+                if should_update_ret:
+                    if self._is_valid(ann.retval):
+                        annotation_expr = self._get_annotation_expr(ann.retval)
 
-                    updated_node = updated_node.with_changes(
-                        returns=cst.Annotation(annotation=annotation_expr),
-                    )
-
-                    # remove "(...) -> retval"-style type hint comment
-                    if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
-                        and _TYPE_HINT_COMMENT_FUNC.match(comment)):
                         updated_node = updated_node.with_changes(
-                            body=updated_node.body.with_changes(
-                                body=(updated_node.body.body[0].with_changes(leading_lines=[]),
-                                      *updated_node.body.body[1:])
-                            )
+                            returns=cst.Annotation(annotation=annotation_expr),
                         )
 
-            # remove single-line type hint comment in the same line as the 'def'
-            if ((comment := _get_str_attr(updated_node, "body.header.comment.value"))
-                and _TYPE_HINT_COMMENT_FUNC.match(comment)):
-                updated_node = updated_node.with_changes(
-                    body=updated_node.body.with_changes(
-                        header=cst.TrailingWhitespace()))
+                        # remove "(...) -> retval"-style type hint comment
+                        if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
+                            and _TYPE_HINT_COMMENT_FUNC.match(comment)):
+                            updated_node = updated_node.with_changes(
+                                body=updated_node.body.with_changes(
+                                    body=(updated_node.body.body[0].with_changes(leading_lines=[]),
+                                          *updated_node.body.body[1:])
+                                )
+                            )
 
-            # FIXME this doesn't capture any non-inline typevar definitions
-            self.change_list.append((key.func_name, original_node, updated_node))
+                # remove single-line type hint comment in the same line as the 'def'
+                if ((comment := _get_str_attr(updated_node, "body.header.comment.value"))
+                    and _TYPE_HINT_COMMENT_FUNC.match(comment)):
+                    updated_node = updated_node.with_changes(
+                        body=updated_node.body.with_changes(
+                            header=cst.TrailingWhitespace()))
+
+
+            original_overloads = overloads
+            if self.override_annotations:
+                overloads = []      # overloads are annotations, so wipe them
+                # TODO Generate new overloads.
+
+            pre_function.extend(overloads)
 
             if pre_function:
                 leading_lines = updated_node.leading_lines
@@ -548,9 +619,15 @@ class UnifiedTransformer(cst.CSTTransformer):
                     pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:first_comment])
                     updated_node = updated_node.with_changes(leading_lines=leading_lines[first_comment:])
 
-                return cst.FlattenSentinel([*pre_function, updated_node])
+            original_function_def = ExtendedFunctionDef(original_overloads, original_node)
+            updated_function_def = ExtendedFunctionDef(pre_function, updated_node)
+            self.change_list.append((key.func_name, original_function_def, updated_function_def))
+            
+            return cst.FlattenSentinel([*pre_function, updated_node]) if pre_function else updated_node
 
-        return updated_node
+        overloads = self.overload_stack[-1]
+        self.overload_stack[-1] = []
+        return cst.FlattenSentinel([*overloads, updated_node]) if overloads else updated_node
 
     # ConstructImportTransformer logic
     def leave_Module(
@@ -807,7 +884,7 @@ def list_rindex(lst: list, item: object) -> int:
         return 0
 
 
-def format_signature(f: cst.FunctionDef) -> str:
+def format_signature(f: ExtendedFunctionDef) -> str:
     """Formats the signature of a function."""
 
     class BodyRemover(cst.CSTTransformer):
@@ -823,8 +900,10 @@ def format_signature(f: cst.FunctionDef) -> str:
         ) -> cst.RemovalSentinel:
             return cst.RemoveFromParent()
 
-    bodyless = typing.cast(cst.FunctionDef, f.visit(BodyRemover()))
-    sig = cst.Module([bodyless]).code.strip()
+    # Here, we remove the body from the primary function and convert the whole
+    # sequence (prefix, primary) into a string
+    bodyless = typing.cast(cst.FunctionDef, f.primary.visit(BodyRemover()))
+    sig = cst.Module([*f.prefix, bodyless]).code.strip()
 
     # It's easier to let libcst generate "pass" for an empty body and then remove it
     # than to find a way to have it emit a bodyless function...

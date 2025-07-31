@@ -7,9 +7,11 @@ import importlib.util
 import re
 import libcst as cst
 
-from test_transformer import get_function as t_get_function
+from test_transformer import (get_function as t_get_function,
+                              get_function_all as t_get_function_all)
 from functools import partial
 get_function = partial(t_get_function, body=False)
+get_function_all = partial(t_get_function_all, body=False)
 
 
 @pytest.fixture(scope='function')
@@ -3779,7 +3781,7 @@ def test_numeric_hierarchy(tmp_cwd):
 
     assert "def foo(x: float) -> None:" in output
 
-
+    
 def test_enum_class():
     Path("t.py").write_text(textwrap.dedent("""\
         from enum import Enum
@@ -3816,3 +3818,235 @@ def test_enum_class():
         @classmethod
         def from_str(cls: "type[Decision]", s: str) -> "Decision": ...
     """)
+
+
+@pytest.mark.parametrize("options", [
+    (),
+    ("--only-update-annotations",)
+])
+def test_overloads_retained_as_is(tmp_cwd, options):
+    pre_annotation = textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> str:
+            ...
+        @overload
+        def foo(bar: str) -> int:
+            ...
+        def foo(bar):
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+
+        foo(1)
+        foo("world")
+    """)
+    Path("t.py").write_text(pre_annotation)
+    rt_run("--no-sampling", *(options), "t.py")
+
+    post_annotation = Path("t.py").read_text()
+    assert pre_annotation == post_annotation
+
+
+def test_overload_ignore_annotations(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> str:
+            ...
+        @overload
+        def foo(bar: str) -> int:
+            ...
+        def foo(bar):
+            if isinstance(bar, int):
+                return "hello"
+            elif isinstance(bar, str):
+                return 2
+
+        foo(1)
+        foo("world")
+        """
+    ))
+
+    rt_run("--no-sampling", "--ignore-annotations", "t.py")
+
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    function_list = get_function_all(code, "foo")
+
+    # In our current iteration, we need to make sure that foo is annotated and
+    # that the old overloads are deleted.
+    # Since we haven't implemented overload generation, this is done with
+    # unions.
+    assert len(function_list) == 1
+    assert function_list[0].strip() == "def foo(bar: int|str) -> int|str: ..."
+
+
+@pytest.mark.parametrize("options", [
+    (),
+    ("--only-update-annotations",)
+])
+def test_overloads_retained_as_is_generic(tmp_cwd, options):
+    pre_annotation = textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> int:
+            ...
+        @overload
+        def foo(bar: str) -> str:
+            ...
+        def foo(bar):
+            return bar
+
+        foo(1)
+        foo("world")
+    """)
+    Path("t.py").write_text(pre_annotation)
+    rt_run("--no-sampling", *(options), "t.py")
+
+    post_annotation = Path("t.py").read_text()
+    assert pre_annotation == post_annotation
+
+
+def test_overload_ignore_annotations_generic(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def foo(bar: int) -> int:
+            ...
+        @overload
+        def foo(bar: str) -> str:
+            ...
+        def foo(bar):
+            return bar
+
+        foo(1)
+        foo("world")
+        """
+    ))
+
+    rt_run("--no-sampling", "--ignore-annotations", "t.py")
+
+    output = Path("t.py").read_text()
+    print(output)
+    code = cst.parse_module(output)
+
+    function_list = get_function_all(code, "foo")
+
+    # In our current iteration, we need to make sure that foo is annotated and
+    # that the old overloads are deleted.
+    # Since we haven't implemented overload generation, this is done with
+    # unions.
+    assert len(function_list) == 1
+    assert function_list[0].strip() == "def foo[T1: (int, str)](bar: T1) -> T1: ..."
+
+
+# Currently, we don't handle multiple aliases of the same module.
+@pytest.mark.xfail()
+def test_overload_alias_multiple(tmp_cwd):
+    Path("t.py").write_text(textwrap.dedent("""\
+        import typing as alias1, typing as alias2
+        from typing import overload as alias3, overload as alias4
+
+        @alias1.overload
+        def foo(x: int, y: int):
+            ...
+        @alias2.overload
+        def foo(x: int, y: str):
+            ...
+        @alias3
+        def foo(x: str, y: int):
+            ...
+        @alias4
+        def foo(x: str, y: str):
+            ...
+        def foo(x, y):
+            pass
+
+        foo(1, 1)
+        foo(1, "a")
+        foo("a", 1)
+        foo("a", "a")
+    """))
+
+    rt_run("--no-sampling", "--ignore-annotations", "t.py")
+
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    function_list = get_function_all(code, "foo")
+
+    # In our current iteration, we need to make sure that foo is annotated and
+    # that the old overloads are deleted.
+    # Since we haven't implemented overload generation, this is done with
+    # unions.
+    assert len(function_list) == 1
+    assert function_list[0].strip() == "def foo(x: int|str, y: int|str) -> None: ..."
+
+
+@pytest.mark.parametrize("impoht, decorator", [
+    ("import typing", "@typing.overload"),
+    ("import typing as alias", "@alias.overload"),
+    ("from typing import overload as alias", "@alias"),
+])
+def test_overload_alias(tmp_cwd, impoht, decorator):
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        {impoht}
+
+        {decorator}
+        def foo(x: str, y: int):
+            ...
+        {decorator}
+        def foo(x: int, y: str):
+            ...
+        def foo(x, y):
+            pass
+
+        foo("1", 1)
+        foo(1, "a")
+    """))
+
+    rt_run("--no-sampling", "--ignore-annotations", "t.py")
+
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    function_list = get_function_all(code, "foo")
+
+    # In our current iteration, we need to make sure that foo is annotated and
+    # that the old overloads are deleted.
+    # Since we haven't implemented overload generation, this is done with
+    # unions.
+    assert len(function_list) == 1
+    assert function_list[0].strip() == "def foo(x: int|str, y: int|str) -> None: ..."
+
+
+def test_capture_non_inline_typevar():
+    t = textwrap.dedent("""\
+        ...
+        # comment and emptyline
+        def add(a, b):
+            return a + b
+        add(1, 2)
+        add("a", "b")
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run("--no-sampling", "--python-version=3.11", "t.py")
+    output = Path("righttyper.out").read_text()
+
+    res = textwrap.dedent("""\
+        + rt_T1 = TypeVar("rt_T1", int, str)
+          # comment and emptyline
+        - def add(a, b):
+        + def add(a: rt_T1, b: rt_T1) -> rt_T1:
+        """)
+
+    assert res in output
