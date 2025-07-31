@@ -604,8 +604,8 @@ class UnifiedTransformer(cst.CSTTransformer):
             original_overloads = overloads
             if self.override_annotations:
                 overloads = []      # overloads are annotations, so wipe them
+                # TODO Generate new overloads.
 
-            # TODO Generate new overloads.
             pre_function.extend(overloads)
 
             if pre_function:
