@@ -135,6 +135,9 @@ Options:
   --container-sample-limit INTEGER
                                   Number of container elements to sample.
                                   [default: 1000]
+  --type-depth-limit TEXT         Maximum depth (types within types) for
+                                  generic types; 'none' to disable.  [default:
+                                  none]
   --python-version [3.9|3.10|3.11|3.12|3.13]
                                   Python version for which to emit
                                   annotations.  [default: 3.12]

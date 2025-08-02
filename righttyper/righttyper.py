@@ -499,6 +499,25 @@ class Observations:
 
                 return node
 
+        class DepthLimitT(TypeInfo.Transformer):
+            """Limits the depth of types (types within generic types)."""
+            def __init__(vself):
+                vself._level = -1
+
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                try:
+                    vself._level += 1
+                    print(f"{vself._level=} {node.name=}")
+
+                    if node.args and vself._level == options.type_depth_limit:
+                        return node.replace(args=())
+
+                    return super().visit(node)
+                finally:
+                    vself._level -= 1
+
+        if options.type_depth_limit is not None:
+            self._transform_types(DepthLimitT())
 
         class ClearTypeObjTransformer(TypeInfo.Transformer):
             """Clears type_obj on all TypeInfo: annotations are pickled by 'multiprocessing',
@@ -996,6 +1015,17 @@ class CheckModule(click.ParamType):
         )
         return ""
 
+def parse_none_or_ge_zero(value) -> int|None:
+    if value.lower() == "none":
+        return None
+    try:
+        ivalue = int(value)
+        if ivalue < 0:
+            raise click.BadParameter("must be ≥ 0 or 'none'")
+        return ivalue
+    except ValueError:
+        raise click.BadParameter("must be an integer ≥ 0 or 'none'")
+
 @click.group(
     context_settings={
         "show_default": True
@@ -1122,6 +1152,13 @@ def cli(verbose: bool):
     help="Number of container elements to sample.",
 )
 @click.option(
+    "--type-depth-limit",
+    default="none",
+    callback=lambda ctx, param, value: parse_none_or_ge_zero(value),
+    show_default=True,
+    help="Maximum depth (types within types) for generic types; 'none' to disable.",
+)
+@click.option(
     "--python-version",
     type=click.Choice(["3.9", "3.10", "3.11", "3.12", "3.13"]),
     default="3.12",
@@ -1164,7 +1201,8 @@ def run(
     container_sample_limit: int,
     python_version: tuple[int, ...],
     use_top_pct: int,
-    only_collect: bool
+    only_collect: bool,
+    type_depth_limit: int|None
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
@@ -1223,6 +1261,7 @@ def run(
     options.use_typing_never = python_version >= (3, 11)
     options.inline_generics = python_version >= (3, 12)
     options.use_top_pct = use_top_pct
+    options.type_depth_limit = type_depth_limit
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)

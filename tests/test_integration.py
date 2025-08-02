@@ -4050,3 +4050,28 @@ def test_capture_non_inline_typevar():
         """)
 
     assert res in output
+
+
+@pytest.mark.parametrize("options, ann", [
+    (("--type-depth-limit", "0"), "tuple"),
+    (("--type-depth-limit", "1"), "tuple[int, tuple]"),
+    (("--type-depth-limit", "none"), "tuple[int, tuple[int, tuple[int, tuple[int]]]]"),
+    ((), "tuple[int, tuple[int, tuple[int, tuple[int]]]]")
+])
+def test_type_depth_limit(options, ann):
+    t = textwrap.dedent("""\
+        def foo(x):
+            pass
+
+        foo((0, (1, (2, (3,)))))
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run(*options, "t.py")
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent(f"""\
+        def foo(x: {ann}) -> None: ...
+    """)
