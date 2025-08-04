@@ -208,7 +208,7 @@ def generalize_jaxtyping(samples: Sequence[CallTrace]) -> Sequence[CallTrace]:
     return list(tuple(t) for t in zip(*results))
 
 
-def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
+def generalize(samples: Sequence[CallTrace]) -> list[list[TypeInfo]]:
     """
     Processes a sequence of samples observed for function parameters and return values, looking
     for patterns that can be replaced with type variables or, if does not detect a pattern,
@@ -222,7 +222,7 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
 
     # Ensure all samples are consistent (the same number of arguments)
     if any(len(t) != len(samples[0]) for t in samples[1:]):
-        return None
+        return [[*signature] for signature in samples]
 
     samples = generalize_jaxtyping(samples)
 
@@ -271,6 +271,11 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
     for types in transposed:
         occurrences.update([s for s in expand_types(types)])
 
+    if occurrences:
+        ((most_common_pattern, most_common_pattern_count),) = occurrences.most_common(1) 
+        if most_common_pattern_count <= 1:
+            return [[*signature] for signature in samples]
+
     # Rebuild the argument list, defining and replacing type patterns with a type variable.
     typevars: dict[tuple[TypeInfo, ...], TypeInfo] = {}
 
@@ -296,4 +301,4 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
 
         return merged_types(set(types))
 
-    return [rebuild(types) for types in transposed]
+    return [[rebuild(types) for types in transposed]]
