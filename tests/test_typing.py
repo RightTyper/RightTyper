@@ -534,6 +534,7 @@ generator_ti = lambda *a: TypeInfo.from_type(abc.Generator, module="typing", arg
 iterator_ti = lambda *a: TypeInfo("typing", "Iterator", tuple(a))
 union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.UnionType)
 
+
 def generate_sample(func: Callable, *args) -> PendingCallTrace:
     import righttyper.righttyper_runtime as rt
 
@@ -714,3 +715,7 @@ def test_from_set_with_unions():
         TypeInfo.from_type(str, module=''),
     )
 
+
+def test_uniontype():
+    assert "int|str" == str(union_ti(int_ti, str_ti))
+    assert "types.UnionType" == str(union_ti())

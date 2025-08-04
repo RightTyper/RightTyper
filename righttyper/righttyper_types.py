@@ -58,7 +58,7 @@ class TypeInfo:
 
         # We can't use type_obj here because we need to clear them before using 'multiprocessing',
         # since type objects aren't pickleable
-        if (self.module, self.name) == ('types', 'UnionType'): # FIXME subclass?
+        if (self.module, self.name) == ('types', 'UnionType') and self.args: # FIXME subclass?
             return "|".join(str(a) for a in self.args)
         
         if self.args or self.name == '':
