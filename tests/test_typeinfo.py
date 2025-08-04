@@ -9,7 +9,12 @@ def ti(name: str, **kwargs) -> TypeInfo:
 
 
 def generalize(samples):
-    result = righttyper.typeinfo.generalize(samples)
+    first_result = righttyper.typeinfo.generalize(samples)
+    result = None
+    if all(len(t) == len(first_result[0]) for t in first_result[1:]):
+        transposed = list(zip(*first_result))
+        result = [righttyper.typeinfo.merged_types(set(types)) for types in transposed] # type: ignore
+
     if result:
         class Renamer(TypeInfo.Transformer):
             def visit(vself, node: TypeInfo) -> TypeInfo:
