@@ -18,6 +18,7 @@ class Options:
     sampling: bool = True
     replace_dict: bool = False
     container_sample_limit: int = 1000
+    type_depth_limit: int|None = None
     use_typing_union: bool = False
     use_typing_self: bool = False
     use_typing_never: bool = False

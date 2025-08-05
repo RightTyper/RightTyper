@@ -58,7 +58,7 @@ class TypeInfo:
 
         # We can't use type_obj here because we need to clear them before using 'multiprocessing',
         # since type objects aren't pickleable
-        if (self.module, self.name) == ('types', 'UnionType'): # FIXME subclass?
+        if (self.module, self.name) == ('types', 'UnionType') and self.args: # FIXME subclass?
             return "|".join(str(a) for a in self.args)
         
         if self.args or self.name == '':
@@ -82,6 +82,11 @@ class TypeInfo:
     def list(args: "list[TypeInfo|str|ellipsis]") -> "TypeInfo":
         """Builds a list argument, such as the first argument of a Callable"""
         return TypeInfo('', '', args=tuple(args))   # FIXME subclass?
+
+
+    def is_list(self) -> bool:
+        """Returns whether this TypeInfo is really a list of types, created by our 'list' factory method above."""
+        return self.name == '' and self.module == ''
 
 
     @staticmethod

@@ -499,6 +499,37 @@ class Observations:
 
                 return node
 
+        class DepthLimitT(TypeInfo.Transformer):
+            """Limits the depth of types (types within generic types)."""
+            def __init__(vself, limit: int):
+                vself._limit = limit
+                vself._level = -1
+                vself._maxLevel = -1
+
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                # Don't count lists (such as the arguments in a Callable) as a level,
+                # as it's not really a new type.
+                if node.is_list():
+                    return super().visit(node)
+
+                try:
+                    vself._level += 1
+                    vself._maxLevel = max(vself._maxLevel, vself._level)
+
+                    t = super().visit(node)
+
+                    if vself._maxLevel > vself._limit:
+                        # for containers, we can simply delete arguments (they default to Any)
+                        if (
+                            (type(t.type_obj) is type and issubclass(t.type_obj, abc.Container))
+                            or t.type_obj is abc.Callable
+                        ):
+                            vself._maxLevel = vself._level
+                            return t.replace(args=())
+
+                    return t
+                finally:
+                    vself._level -= 1
 
         class ClearTypeObjTransformer(TypeInfo.Transformer):
             """Clears type_obj on all TypeInfo: annotations are pickled by 'multiprocessing',
@@ -509,17 +540,20 @@ class Observations:
                     node = node.replace(type_obj=None)
                 return super().visit(node)
 
+        finalizers: list[TypeInfo.Transformer] = []
 
-        clear = ClearTypeObjTransformer()
+        if options.type_depth_limit is not None:
+            finalizers.append(DepthLimitT(options.type_depth_limit))
 
         if options.use_typing_union:
-            tu = TypingUnionT()
+            finalizers.append(TypingUnionT())
 
-            def finalize(t: TypeInfo) -> TypeInfo:
-                return clear.visit(tu.visit(t))
-        else:
-            def finalize(t: TypeInfo) -> TypeInfo:
-                return clear.visit(t)
+        finalizers.append(ClearTypeObjTransformer())
+
+        def finalize(t: TypeInfo) -> TypeInfo:
+            for f in finalizers:
+                t = f.visit(t)
+            return t
 
         return {
             self.functions_visited[code_id].func_id: FuncAnnotation(
@@ -996,6 +1030,17 @@ class CheckModule(click.ParamType):
         )
         return ""
 
+def parse_none_or_ge_zero(value) -> int|None:
+    if value.lower() == "none":
+        return None
+    try:
+        ivalue = int(value)
+        if ivalue < 0:
+            raise click.BadParameter("must be ≥ 0 or 'none'")
+        return ivalue
+    except ValueError:
+        raise click.BadParameter("must be an integer ≥ 0 or 'none'")
+
 @click.group(
     context_settings={
         "show_default": True
@@ -1122,6 +1167,13 @@ def cli(verbose: bool):
     help="Number of container elements to sample.",
 )
 @click.option(
+    "--type-depth-limit",
+    default="none",
+    callback=lambda ctx, param, value: parse_none_or_ge_zero(value),
+    show_default=True,
+    help="Maximum depth (types within types) for generic types; 'none' to disable.",
+)
+@click.option(
     "--python-version",
     type=click.Choice(["3.9", "3.10", "3.11", "3.12", "3.13"]),
     default="3.12",
@@ -1164,7 +1216,8 @@ def run(
     container_sample_limit: int,
     python_version: tuple[int, ...],
     use_top_pct: int,
-    only_collect: bool
+    only_collect: bool,
+    type_depth_limit: int|None
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
@@ -1223,6 +1276,7 @@ def run(
     options.use_typing_never = python_version >= (3, 11)
     options.inline_generics = python_version >= (3, 12)
     options.use_top_pct = use_top_pct
+    options.type_depth_limit = type_depth_limit
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
