@@ -503,21 +503,32 @@ class Observations:
             """Limits the depth of types (types within generic types)."""
             def __init__(vself):
                 vself._level = -1
+                vself._maxLevel = -1
 
             def visit(vself, node: TypeInfo) -> TypeInfo:
+                # Don't count lists (such as the arguments in a Callable) as a level,
+                # as it's not really a new type.
+                if node.is_list():
+                    return super().visit(node)
+
                 try:
                     vself._level += 1
-                    print(f"{vself._level=} {node.name=}")
+                    vself._maxLevel = max(vself._maxLevel, vself._level)
 
-                    if node.args and vself._level == options.type_depth_limit:
-                        return node.replace(args=())
+                    t = super().visit(node)
 
-                    return super().visit(node)
+                    if vself._maxLevel > options.type_depth_limit:
+                        # for containers, we can simply delete arguments (they default to Any)
+                        if (
+                            (type(t.type_obj) is type and issubclass(t.type_obj, abc.Container))
+                            or t.type_obj is abc.Callable
+                        ):
+                            vself._maxLevel = vself._level
+                            return t.replace(args=())
+
+                    return t
                 finally:
                     vself._level -= 1
-
-        if options.type_depth_limit is not None:
-            self._transform_types(DepthLimitT())
 
         class ClearTypeObjTransformer(TypeInfo.Transformer):
             """Clears type_obj on all TypeInfo: annotations are pickled by 'multiprocessing',
@@ -528,17 +539,20 @@ class Observations:
                     node = node.replace(type_obj=None)
                 return super().visit(node)
 
+        finalizers = []
 
-        clear = ClearTypeObjTransformer()
+        if options.type_depth_limit is not None:
+            finalizers.append(DepthLimitT())
 
         if options.use_typing_union:
-            tu = TypingUnionT()
+            finalizers.append(TypingUnionT())
 
-            def finalize(t: TypeInfo) -> TypeInfo:
-                return clear.visit(tu.visit(t))
-        else:
-            def finalize(t: TypeInfo) -> TypeInfo:
-                return clear.visit(t)
+        finalizers.append(ClearTypeObjTransformer())
+
+        def finalize(t: TypeInfo) -> TypeInfo:
+            for f in finalizers:
+                t = f.visit(t)
+            return t
 
         return {
             self.functions_visited[code_id].func_id: FuncAnnotation(

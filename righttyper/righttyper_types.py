@@ -84,6 +84,11 @@ class TypeInfo:
         return TypeInfo('', '', args=tuple(args))   # FIXME subclass?
 
 
+    def is_list(self) -> bool:
+        """Returns whether this TypeInfo is really a list of types, created by our 'list' factory method above."""
+        return self.name == '' and self.module == ''
+
+
     @staticmethod
     def from_type(t: TYPE_OBJ_TYPES, module: str|None = None, **kwargs) -> "TypeInfo":
         if t == types.NoneType:

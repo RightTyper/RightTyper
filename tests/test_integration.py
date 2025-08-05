@@ -4052,26 +4052,74 @@ def test_capture_non_inline_typevar():
     assert res in output
 
 
-@pytest.mark.parametrize("options, ann", [
-    (("--type-depth-limit", "0"), "tuple"),
-    (("--type-depth-limit", "1"), "tuple[int, tuple]"),
-    (("--type-depth-limit", "none"), "tuple[int, tuple[int, tuple[int, tuple[int]]]]"),
-    ((), "tuple[int, tuple[int, tuple[int, tuple[int]]]]")
+@pytest.mark.parametrize("typ, options, ann", [
+    ("(0,(1,(2,(3,))))", ("--type-depth-limit", "0"), "tuple"),
+    ("(0,(1,(2,(3,))))", ("--type-depth-limit", "1"), "tuple[int, tuple]"),
+    ("(0,(1,(2,(3,))))", ("--type-depth-limit", "none"), "tuple[int, tuple[int, tuple[int, tuple[int]]]]"),
+    ("(0,(1,(2,(3,))))", (), "tuple[int, tuple[int, tuple[int, tuple[int]]]]"),
+    ("[[[[3]]]]", ("--type-depth-limit", "1"), "list[list]"),
+    ("{0:{1:{2:2}}}", ("--type-depth-limit", "1"), "dict[int, dict]"),
+    ("[{1}]", ("--type-depth-limit", "1"), "list[set]"),
+    ("foo", ("--type-depth-limit", "0"), "Callable"),
+    ("foo", ("--type-depth-limit", "1"), "Callable[[Callable], None]"),
 ])
-def test_type_depth_limit(options, ann):
-    t = textwrap.dedent("""\
+def test_type_depth_limit(typ, options, ann):
+    t = textwrap.dedent(f"""\
         def foo(x):
             pass
 
-        foo((0, (1, (2, (3,)))))
+        foo({typ})
         """)
 
     Path("t.py").write_text(t)
 
-    rt_run(*options, "t.py")
+    rt_run("--no-sampling", *options, "t.py")
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
     assert get_function(code, 'foo') == textwrap.dedent(f"""\
         def foo(x: {ann}) -> None: ...
+    """)
+
+
+@pytest.mark.parametrize("python_version", ["3.9", "3.12"])
+def test_type_depth_limit_union(python_version):
+    # in 3.9, it's Union[...], whereas 3.10+ it's a|b|...
+    t = textwrap.dedent(f"""\
+        def foo(x):
+            pass
+
+        foo(['foo'])
+        foo([5])
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run("--no-sampling", "--type-depth-limit=1", f"--python-version={python_version}", "t.py")
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent(f"""\
+        def foo(x: list) -> None: ...
+    """)
+
+
+@pytest.mark.parametrize("python_version", ["3.9", "3.12"])
+def test_type_depth_limit_union_deeper(python_version):
+    t = textwrap.dedent("""\
+        def foo(x):
+            pass
+
+        foo([{'foo',}])
+        foo([('bar',)])
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run("--no-sampling", "--type-depth-limit=1", f"--python-version={python_version}", "t.py")
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent(f"""\
+        def foo(x: list) -> None: ...
     """)
