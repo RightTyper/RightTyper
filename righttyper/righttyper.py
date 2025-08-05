@@ -501,7 +501,8 @@ class Observations:
 
         class DepthLimitT(TypeInfo.Transformer):
             """Limits the depth of types (types within generic types)."""
-            def __init__(vself):
+            def __init__(vself, limit: int):
+                vself._limit = limit
                 vself._level = -1
                 vself._maxLevel = -1
 
@@ -517,7 +518,7 @@ class Observations:
 
                     t = super().visit(node)
 
-                    if vself._maxLevel > options.type_depth_limit:
+                    if vself._maxLevel > vself._limit:
                         # for containers, we can simply delete arguments (they default to Any)
                         if (
                             (type(t.type_obj) is type and issubclass(t.type_obj, abc.Container))
@@ -539,10 +540,10 @@ class Observations:
                     node = node.replace(type_obj=None)
                 return super().visit(node)
 
-        finalizers = []
+        finalizers: list[TypeInfo.Transformer] = []
 
         if options.type_depth_limit is not None:
-            finalizers.append(DepthLimitT())
+            finalizers.append(DepthLimitT(options.type_depth_limit))
 
         if options.use_typing_union:
             finalizers.append(TypingUnionT())
