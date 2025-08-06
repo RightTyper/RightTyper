@@ -29,7 +29,6 @@ For details about how RightTyper works, please see the following paper: **[Right
 
 
 ## Performance Comparison
-
 The graph below presents the overhead of using RightTyper versus two previous tools, PyAnnotate and MonkeyType, across a range of benchmarks.
 On average, RightTyper imposes only 30% overhead compared to running plain Python.
 On running the tests of a popular package (black), RightTyper imposes only 20% overhead, while MonkeyType slows down execution by over 6x.
@@ -38,7 +37,6 @@ In extreme cases, MonkeyType runs over 270x slower than RightTyper.
 ![Overhead](docs/benchmark_comparison_execution_times.png)
 
 ## Usage
-
 Install RightTyper from `pip` as usual:
 
 ```bash
@@ -87,6 +85,14 @@ To do the same with `pytest`:
 python3 -m righttyper run --output-files --overwrite -m pytest [pytest-args...]
 ```
 
+### Type ergonomics
+RightTyper may infer types that include deeply nested generics.
+While such precise types improve recall in type checking, they can be difficult for developers to read and understand.
+To improve the ergonomics of such annotations, RightTyper offers a `--type-depth-limit` option to specify the maximum
+number of levels to include in type.
+For example, with `--type-depth-limit=1`, a type inferred as `list[tuple[tuple[int, int]]]` would be emitted as `list[tuple]` instead.
+
+### Option overview
 Below is the full list of options for the run command:
 
 ```
