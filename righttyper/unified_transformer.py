@@ -506,14 +506,16 @@ class UnifiedTransformer(cst.CSTTransformer):
             overloads = self.overload_stack[-1]
             self.overload_stack[-1] = []
 
-            for ann in generated_overloads:
-                new_function = original_node.deep_clone()
-                my_new_params = cst.Parameters(params=[
-                    cst.Param(cst.Name(f"t_{i}"), cst.Annotation(self._get_annotation_expr(tp)))
-                    for i, tp in enumerate(ann[:-1])])
-                new_function = new_function.with_changes(params=my_new_params, returns=cst.Annotation(self._get_annotation_expr(ann[-1])), decorators=[cst.Decorator(cst.Name("overload"))])
-                pre_function.append(new_function)
+            if "typing.overload" in self.aliases:
+                overload_decorator_name = self.aliases["typing.overload"]
+            elif "typing" in self.aliases:
+                overload_decorator_name = f"{self.aliases["typing"]}.overload"
+            else:
+                overload_decorator_name = f"overload"
+                
+            has_multiple_overloads = len(generated_overloads) > 1
 
+            for ann in generated_overloads:
                 # argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
 
                 # Do existing annotations overlap with typevar args/return ?
@@ -528,6 +530,8 @@ class UnifiedTransformer(cst.CSTTransformer):
                 # )
 
                 # del argmap
+
+                new_function = original_node.deep_clone()
 
                 # We don't yet support merging type_parameters
                 if (overloads == [] or self.override_annotations) and updated_node.type_parameters is None:
@@ -546,7 +550,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                             )))
 
                         if our_params:
-                            updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
+                            new_function = new_function.with_changes(type_parameters=cst.TypeParameters(
                                 params=our_params
                             ))
 
@@ -566,6 +570,13 @@ class UnifiedTransformer(cst.CSTTransformer):
                                 )
                             ]))
                             self.unknown_types.add("TypeVar")
+
+                my_new_params = cst.Parameters(params=[
+                    cst.Param(cst.Name(f"t_{i}"), cst.Annotation(self._get_annotation_expr(tp)))
+                    for i, tp in enumerate(ann[:-1])])
+                new_function = new_function.with_changes(params=my_new_params, returns=cst.Annotation(self._get_annotation_expr(ann[-1])), decorators=[cst.Decorator(cst.Name(overload_decorator_name))])
+
+                pre_function.append(new_function)
 
                 # class ParamChanger(cst.CSTTransformer):
                 #     def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
