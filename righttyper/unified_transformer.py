@@ -545,6 +545,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 # del argmap
 
                 new_function = original_node.deep_clone()
+                new_function = new_function.with_changes(body = cst.IndentedBlock([cst.SimpleStatementLine([cst.Expr(cst.Ellipsis())])]))
 
                 # We don't yet support merging type_parameters
                 if (overloads == [] or self.override_annotations) and updated_node.type_parameters is None:
