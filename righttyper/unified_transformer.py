@@ -512,9 +512,9 @@ class UnifiedTransformer(cst.CSTTransformer):
             overloads = self.overload_stack[-1]
             self.overload_stack[-1] = []
 
-            if "typing.overload" in self.aliases:
+            if "typing.overload" in self.aliases and self.aliases["typing.overload"] in self.known_names:
                 overload_decorator_name = self.aliases["typing.overload"]
-            elif "typing" in self.aliases:
+            elif "typing" in self.aliases and self.aliases["typing"] in self.known_names:
                 overload_decorator_name = f"{self.aliases["typing"]}.overload"
             else:
                 overload_decorator_name = f"overload"
