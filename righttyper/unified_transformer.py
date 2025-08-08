@@ -111,7 +111,7 @@ class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
         self,
         filename: str,
-        type_annotations: dict[FuncId, FuncAnnotation],
+        type_annotations: dict[FuncId, list[list[TypeInfo]]],
         override_annotations: bool,
         only_update_annotations: bool,
         inline_generics: bool,
@@ -135,8 +135,9 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         self.name2module: dict[str, str] = {
             t.qualname(): t.module
-            for ann in type_annotations.values()
-            for root in [arg[1] for arg in ann.args] + [ann.retval]
+            for signature in type_annotations.values()
+            for ann in signature
+            for root in ann
             for t in iter_types(root)
         }
 
@@ -225,7 +226,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 yield t
 
 
-    def _process_generics(self, ann: FuncAnnotation) -> tuple[FuncAnnotation, dict[int, TypeInfo]]:
+    def _process_generics(self, ann: list[TypeInfo]) -> tuple[list[TypeInfo], dict[int, TypeInfo]]:
         """Transforms an annotation, defining type variables and using them."""
 
         class RenameGenericsTransformer(TypeInfo.Transformer):
@@ -249,10 +250,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 return vself.generics[node.typevar_index]
 
         tr = RenameGenericsTransformer()
-        updated_ann = FuncAnnotation(
-            [(name, tr.visit(ti)) for name, ti in ann.args],
-            tr.visit(ann.retval)
-        )
+        updated_ann = [tr.visit(ti) for ti in ann]
         
         return (updated_ann, tr.generics)
                     
@@ -503,91 +501,100 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.overload_stack[-1].append(original_node)
             return cst.RemoveFromParent()
 
-        if ann := typing.cast(FuncAnnotation, self.type_annotations.get(key)):  # cast to make mypy happy
+        if generated_overloads := self.type_annotations.get(key):  # cast to make mypy happy
             pre_function: list[cst.SimpleStatementLine | cst.BaseCompoundStatement] = []
-            argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
             overloads = self.overload_stack[-1]
             self.overload_stack[-1] = []
 
-            # Do existing annotations overlap with typevar args/return ?
-            typevar_overlap = not self.override_annotations and (
-                    (updated_node.returns is not None and ann.retval.is_typevar()) or
-                    any (
-                        par.annotation is not None and
-                        par.name.value in argmap and
-                        argmap[par.name.value].is_typevar()
-                        for par in typing.cast(typing.Iterator[cst.Param], cstm.findall(updated_node.params, cstm.Param()))
-                    )
-            )
+            for ann in generated_overloads:
+                new_function = original_node.deep_clone()
+                my_new_params = cst.Parameters(params=[
+                    cst.Param(cst.Name(f"t_{i}"), cst.Annotation(self._get_annotation_expr(tp)))
+                    for i, tp in enumerate(ann[:-1])])
+                new_function = new_function.with_changes(params=my_new_params, returns=cst.Annotation(self._get_annotation_expr(ann[-1])), decorators=[cst.Decorator(cst.Name("overload"))])
+                pre_function.append(new_function)
 
-            del argmap
+                # argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
 
-            # We don't yet support merging type_parameters
-            if (overloads == [] or self.override_annotations) and not typevar_overlap and updated_node.type_parameters is None:
-                ann, generics = self._process_generics(ann)
+                # Do existing annotations overlap with typevar args/return ?
+                # typevar_overlap = not self.override_annotations and (
+                #         (updated_node.returns is not None and ann.retval.is_typevar()) or
+                #         any (
+                #             par.annotation is not None and
+                #             par.name.value in argmap and
+                #             argmap[par.name.value].is_typevar()
+                #             for par in typing.cast(typing.Iterator[cst.Param], cstm.findall(updated_node.params, cstm.Param()))
+                #         )
+                # )
 
-                if self.inline_generics:
-                    our_params = []
-                    for generic in generics.values():
-                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
-                        our_params.append(cst.TypeParam(param=cst.TypeVar(
-                            name=cst.Name(value=str(generic)),
-                            bound=cst.Tuple(elements=[
-                                cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
-                                for arg in generic.args
-                            ])
-                        )))
+                # del argmap
 
-                    if our_params:
-                        updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
-                            params=our_params
-                        ))
+                # We don't yet support merging type_parameters
+                if (overloads == [] or self.override_annotations) and updated_node.type_parameters is None:
+                    ann, generics = self._process_generics(ann)
 
-                else:
-                    for generic in generics.values():
-                        assert generic.typevar_name is not None
-                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
-                        pre_function.append(cst.SimpleStatementLine(body=[
-                            cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
-                                       value=cst.Call(func=cst.Name("TypeVar"), args=[
-                                           cst.Arg(value=cst.SimpleString(_quote(str(generic)))),
-                                           *(cst.Arg(value=self._get_annotation_expr(
-                                               typing.cast(TypeInfo, arg)))
-                                             for arg in generic.args
-                                            )
-                                       ])
-                            )
-                        ]))
-                        self.unknown_types.add("TypeVar")
+                    if self.inline_generics:
+                        our_params = []
+                        for generic in generics.values():
+                            assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                            our_params.append(cst.TypeParam(param=cst.TypeVar(
+                                name=cst.Name(value=str(generic)),
+                                bound=cst.Tuple(elements=[
+                                    cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
+                                    for arg in generic.args
+                                ])
+                            )))
 
-            class ParamChanger(cst.CSTTransformer):
-                def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
-                    return self._process_parameter(updated_node, ann)
+                        if our_params:
+                            updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
+                                params=our_params
+                            ))
 
-            if overloads == [] or self.override_annotations:
-                updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
+                    else:
+                        for generic in generics.values():
+                            assert generic.typevar_name is not None
+                            assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                            pre_function.append(cst.SimpleStatementLine(body=[
+                                cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
+                                        value=cst.Call(func=cst.Name("TypeVar"), args=[
+                                            cst.Arg(value=cst.SimpleString(_quote(str(generic)))),
+                                            *(cst.Arg(value=self._get_annotation_expr(
+                                                typing.cast(TypeInfo, arg)))
+                                                for arg in generic.args
+                                                )
+                                        ])
+                                )
+                            ]))
+                            self.unknown_types.add("TypeVar")
 
-            should_update_ret = (
-            (self.only_update_annotations and updated_node.returns is not None)
-            or (not self.only_update_annotations and (updated_node.returns is None or self.override_annotations))
-            ) and (overloads == [] or self.override_annotations)
-            if should_update_ret:
-                if self._is_valid(ann.retval):
-                    annotation_expr = self._get_annotation_expr(ann.retval)
+                # class ParamChanger(cst.CSTTransformer):
+                #     def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
+                #         return self._process_parameter(updated_node, ann)
 
-                    updated_node = updated_node.with_changes(
-                        returns=cst.Annotation(annotation=annotation_expr),
-                    )
+                # if overloads == [] or self.override_annotations:
+                #     updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
 
-                    # remove "(...) -> retval"-style type hint comment
-                    if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
-                        and _TYPE_HINT_COMMENT_FUNC.match(comment)):
-                        updated_node = updated_node.with_changes(
-                            body=updated_node.body.with_changes(
-                                body=(updated_node.body.body[0].with_changes(leading_lines=[]),
-                                      *updated_node.body.body[1:])
-                            )
-                        )
+                # should_update_ret = (
+                # (self.only_update_annotations and updated_node.returns is not None)
+                # or (not self.only_update_annotations and (updated_node.returns is None or self.override_annotations))
+                # ) and (overloads == [] or self.override_annotations)
+                # if should_update_ret:
+                #     if self._is_valid(ann.retval):
+                #         annotation_expr = self._get_annotation_expr(ann.retval)
+
+                #         updated_node = updated_node.with_changes(
+                #             returns=cst.Annotation(annotation=annotation_expr),
+                #         )
+
+                #         # remove "(...) -> retval"-style type hint comment
+                #         if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
+                #             and _TYPE_HINT_COMMENT_FUNC.match(comment)):
+                #             updated_node = updated_node.with_changes(
+                #                 body=updated_node.body.with_changes(
+                #                     body=(updated_node.body.body[0].with_changes(leading_lines=[]),
+                #                           *updated_node.body.body[1:])
+                #                 )
+                #             )
 
             # remove single-line type hint comment in the same line as the 'def'
             if ((comment := _get_str_attr(updated_node, "body.header.comment.value"))

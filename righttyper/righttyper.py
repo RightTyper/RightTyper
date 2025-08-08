@@ -312,8 +312,10 @@ class Observations:
                     trace_counter[trace_prime] = count
 
 
-    def collect_annotations(self: Self) -> dict[FuncId, FuncAnnotation]:
-        """Collects function type annotations from the observed types."""
+    def collect_annotations(self: Self) -> dict[FuncId, list[list[TypeInfo | None]]]:
+        """Collects function type annotations from the observed types.
+           Also returns the all call signatures.
+           TODO: Refactor this to be nicer."""
 
         # Finish traces for any generators that are still unfinished
         # TODO are there other cases we should handle?
@@ -341,54 +343,28 @@ class Observations:
             return traces
 
 
-        def mk_annotation(code_id: CodeId) -> FuncAnnotation|None:
+        def mk_annotation(code_id: CodeId) -> list[list[TypeInfo | None]]:
             func_info = self.functions_visited[code_id]
-            traces = most_common_traces(code_id)
+            traces: list[list[TypeInfo | None]] = [[*trace] for trace in most_common_traces(code_id)]
 
+            # MyPy flags this for type variance issues, but we know that the output is never mutated.
+            traces = generalize(traces) # type: ignore
             parents_arg_types = None
             if func_info.overrides:
                 parents_func = func_info.overrides
-
+                if parents_arg_types := get_inline_arg_types(parents_func, func_info.args):
+                    traces.append(parents_arg_types)
+                if parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args):
+                    traces.append(parents_arg_types)
+                parent_code_id = CodeId(id(parents_func.__code__)) if hasattr(parents_func, "__code__") else None
                 if (
-                    options.ignore_annotations
-                    or not (
-                        (parents_arg_types := get_inline_arg_types(parents_func, func_info.args))
-                        or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
-                    )
+                    parent_code_id
+                    and parent_code_id in self.traces
                 ):
-                    parent_code_id = CodeId(id(parents_func.__code__)) if hasattr(parents_func, "__code__") else None
-                    if (
-                        parent_code_id
-                        and parent_code_id in self.traces
-                        and (ann := mk_annotation(parent_code_id))
-                    ):
-                        parents_arg_types = [arg[1] for arg in ann.args]
+                    traces += mk_annotation(parent_code_id)
 
-            if (signature := generalize(traces)) is None:
-                logger.info(f"Unable to generalize {func_info.func_id}: inconsistent traces.\n" +
-                            f"{[tuple(str(t) for t in s) for s in traces]}")
-                return None
+            return traces
 
-            return FuncAnnotation(
-                args=[
-                    (
-                        arg.arg_name,
-                        merged_types({
-                            signature[i],
-                            *((arg.default,) if arg.default is not None else ()),
-                            # by building sets with the parent's types, we prevent arg. type narrowing
-                            *((parents_arg_types[i],) if (
-                                  parents_arg_types
-                                  and len(parents_arg_types) == len(func_info.args)
-                                  and parents_arg_types[i] is not None
-                                ) else ()
-                             )
-                        })
-                    )
-                    for i, arg in enumerate(func_info.args)
-                ],
-                retval=signature[-1]
-            )
 
         class NonSelfCloningT(TypeInfo.Transformer):
             """Clones the given TypeInfo tree, clearing all 'is_self' flags,
@@ -405,26 +381,27 @@ class Observations:
                 # if 'args' is there, the function is already annotated
                 if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.traces:
                     # TODO we only need the retval, can we avoid computing the entire annotation?
-                    if (ann := mk_annotation(node.code_id)):
+                    overloads = mk_annotation(node.code_id)
+                    for ann in overloads:
                         func_info = self.functions_visited[node.code_id]
                         # Clone (rather than link to) types from Callable, Generator, etc.,
                         # clearing is_self, as these types may be later replaced with typing.Self.
                         if node.type_obj is abc.Callable:
                             node = node.replace(args=(
                                 TypeInfo.list([
-                                    NonSelfCloningT().visit(a[1]) for a in ann.args[int(node.is_bound):]
+                                    NonSelfCloningT().visit(a) for a in ann[int(node.is_bound):-1] if a
                                 ])
                                 if not (func_info.varargs or func_info.kwargs) else
                                 ...,
-                                NonSelfCloningT().visit(ann.retval)
+                                NonSelfCloningT().visit(ann[-1]) if ann[-1] else None
                             ))
                         elif node.type_obj in (abc.Generator, abc.AsyncGenerator):
-                            node = NonSelfCloningT().visit(ann.retval)
+                            node = NonSelfCloningT().visit(ann[-1])if ann[-1] else None
                         elif node.type_obj is abc.Coroutine:
                             node = node.replace(args=(
                                 NoneTypeInfo,
                                 NoneTypeInfo,
-                                NonSelfCloningT().visit(ann.retval)
+                                NonSelfCloningT().visit(ann[-1]) if ann[-1] else None
                             ))
 
                 return node
@@ -522,12 +499,8 @@ class Observations:
                 return clear.visit(t)
 
         return {
-            self.functions_visited[code_id].func_id: FuncAnnotation(
-                args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
-                retval=finalize(annotation.retval)
-            )
+            self.functions_visited[code_id].func_id: [[finalize(info) if info else None for info in signature] for signature in mk_annotation(code_id)]
             for code_id in self.traces
-            if (annotation := mk_annotation(code_id)) is not None
         }
 
 

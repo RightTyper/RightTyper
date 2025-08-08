@@ -9,6 +9,7 @@ from righttyper.righttyper_types import (
     FuncId,
     FuncAnnotation,
     FunctionName,
+    TypeInfo,
 )
 from righttyper.righttyper_utils import (
     debug_print,
@@ -79,7 +80,7 @@ def correct_indentation_issues(file_contents: str) -> str:
 def process_file(
     filename: Filename,
     module_name: str,
-    type_annotations: dict[FuncId, FuncAnnotation],
+    type_annotations: dict[FuncId, list[list[TypeInfo]]],
     output_files: bool,
     generate_stubs: bool,
     overwrite: bool,
