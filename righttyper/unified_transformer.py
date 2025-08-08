@@ -317,6 +317,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         # The current list of overloaded function names that are in each scope.
         self.overload_name_stack: list[str] = [""]
 
+        self.added_overload_import: list[bool] = [False]
+
         return True
 
 
@@ -377,6 +379,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         self.overload_stack.append([])
         self.overload_name_stack.append("")
+        self.added_overload_import.append(False)
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
@@ -386,6 +389,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.pop()
         self.overload_stack.pop()
         self.overload_name_stack.pop()
+        self.added_overload_import.pop()
         return updated_node
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
@@ -394,6 +398,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         self.overload_stack.append([])
         self.overload_name_stack.append("")
+        self.added_overload_import.append(False)
         return True
 
     def _get_annotation_expr(self, annotation: TypeInfo) -> cst.BaseExpression:
@@ -474,6 +479,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.pop()
         self.overload_stack.pop()
         self.overload_name_stack.pop()
+        self.added_overload_import.pop()
 
         first_line = min(
             self.get_metadata(PositionProvider, node).start.line
@@ -512,6 +518,8 @@ class UnifiedTransformer(cst.CSTTransformer):
                 overload_decorator_name = f"{self.aliases["typing"]}.overload"
             else:
                 overload_decorator_name = f"overload"
+                if not any(self.added_overload_import):
+                    self.added_overload_import[-1] = True
                 
             has_multiple_overloads = len(generated_overloads) > 1
 
