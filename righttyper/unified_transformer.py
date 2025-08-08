@@ -520,6 +520,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                 overload_decorator_name = f"overload"
                 if not any(self.added_overload_import):
                     self.added_overload_import[-1] = True
+                    pre_function.append(
+                        cst.SimpleStatementLine([
+                            cst.ImportFrom(cst.Name("typing"), [cst.ImportAlias(cst.Name("overload"))])
+                        ]))
+
                 
             has_multiple_overloads = len(generated_overloads) > 1
 
