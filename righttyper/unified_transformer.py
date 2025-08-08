@@ -512,21 +512,23 @@ class UnifiedTransformer(cst.CSTTransformer):
             overloads = self.overload_stack[-1]
             self.overload_stack[-1] = []
 
-            if "typing.overload" in self.aliases and self.aliases["typing.overload"] in self.known_names:
-                overload_decorator_name = self.aliases["typing.overload"]
-            elif "typing" in self.aliases and self.aliases["typing"] in self.known_names:
-                overload_decorator_name = f"{self.aliases["typing"]}.overload"
-            else:
-                overload_decorator_name = f"overload"
-                if not any(self.added_overload_import):
-                    self.added_overload_import[-1] = True
-                    pre_function.append(
-                        cst.SimpleStatementLine([
-                            cst.ImportFrom(cst.Name("typing"), [cst.ImportAlias(cst.Name("overload"))])
-                        ]))
-
-                
             has_multiple_overloads = len(generated_overloads) > 1
+
+            # This logic generates a really hard-to-parse control flow that can probably be refactored:
+            # overload_decorator_name shouldn't be used outside its scope like this.
+            if has_multiple_overloads:
+                if "typing.overload" in self.aliases and self.aliases["typing.overload"] in self.known_names:
+                    overload_decorator_name = self.aliases["typing.overload"]
+                elif "typing" in self.aliases and self.aliases["typing"] in self.known_names:
+                    overload_decorator_name = f"{self.aliases["typing"]}.overload"
+                else:
+                    overload_decorator_name = f"overload"
+                    if not any(self.added_overload_import):
+                        self.added_overload_import[-1] = True
+                        pre_function.append(
+                            cst.SimpleStatementLine([
+                                cst.ImportFrom(cst.Name("typing"), [cst.ImportAlias(cst.Name("overload"))])
+                            ]))
 
             for ann in generated_overloads:
                 # argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
@@ -544,8 +546,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
                 # del argmap
 
-                new_function = original_node.deep_clone()
-                new_function = new_function.with_changes(body = cst.IndentedBlock([cst.SimpleStatementLine([cst.Expr(cst.Ellipsis())])]))
+                target_node = updated_node.deep_clone()
 
                 # We don't yet support merging type_parameters
                 if (overloads == [] or self.override_annotations) and updated_node.type_parameters is None:
@@ -564,7 +565,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                             )))
 
                         if our_params:
-                            new_function = new_function.with_changes(type_parameters=cst.TypeParameters(
+                            target_node = target_node.with_changes(type_parameters=cst.TypeParameters(
                                 params=our_params
                             ))
 
@@ -585,12 +586,16 @@ class UnifiedTransformer(cst.CSTTransformer):
                             ]))
                             self.unknown_types.add("TypeVar")
 
-                my_new_params = cst.Parameters(params=[
-                    cst.Param(cst.Name(f"t_{i}"), cst.Annotation(self._get_annotation_expr(tp)))
-                    for i, tp in enumerate(ann[:-1])])
-                new_function = new_function.with_changes(params=my_new_params, returns=cst.Annotation(self._get_annotation_expr(ann[-1])), decorators=[cst.Decorator(cst.Name(overload_decorator_name))])
 
-                pre_function.append(new_function)
+                if has_multiple_overloads:
+                    my_new_params = cst.Parameters(params=[
+                        cst.Param(cst.Name(f"t_{i}"), cst.Annotation(self._get_annotation_expr(tp)))
+                        for i, tp in enumerate(ann[:-1])])
+                    target_node = target_node.with_changes(body = cst.IndentedBlock([cst.SimpleStatementLine([cst.Expr(cst.Ellipsis())])]))
+                    target_node = target_node.with_changes(params=my_new_params, returns=cst.Annotation(self._get_annotation_expr(ann[-1])), decorators=[cst.Decorator(cst.Name(overload_decorator_name))])
+                    pre_function.append(target_node)
+                else:
+                    updated_node = target_node
 
                 # class ParamChanger(cst.CSTTransformer):
                 #     def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
