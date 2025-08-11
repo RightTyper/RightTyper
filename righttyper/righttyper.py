@@ -343,19 +343,14 @@ class Observations:
             return traces
 
 
-        def mk_annotation(code_id: CodeId) -> list[list[TypeInfo | None]]:
+        def mk_annotation(code_id: CodeId) -> list[list[TypeInfo]]:
             func_info = self.functions_visited[code_id]
-            traces: list[list[TypeInfo | None]] = [[*trace] for trace in most_common_traces(code_id)]
+            traces: list[list[TypeInfo]] = [[*trace] for trace in most_common_traces(code_id)]
 
             # MyPy flags this for type variance issues, but we know that the output is never mutated.
             traces = generalize(traces) # type: ignore
-            parents_arg_types = None
             if func_info.overrides:
                 parents_func = func_info.overrides
-                if parents_arg_types := get_inline_arg_types(parents_func, func_info.args):
-                    traces.append(parents_arg_types)
-                if parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args):
-                    traces.append(parents_arg_types)
                 parent_code_id = CodeId(id(parents_func.__code__)) if hasattr(parents_func, "__code__") else None
                 if (
                     parent_code_id
@@ -393,15 +388,15 @@ class Observations:
                                 ])
                                 if not (func_info.varargs or func_info.kwargs) else
                                 ...,
-                                NonSelfCloningT().visit(ann[-1]) if ann[-1] else None
+                                NonSelfCloningT().visit(ann[-1])
                             ))
                         elif node.type_obj in (abc.Generator, abc.AsyncGenerator):
-                            node = NonSelfCloningT().visit(ann[-1])if ann[-1] else None
+                            node = NonSelfCloningT().visit(ann[-1])
                         elif node.type_obj is abc.Coroutine:
                             node = node.replace(args=(
                                 NoneTypeInfo,
                                 NoneTypeInfo,
-                                NonSelfCloningT().visit(ann[-1]) if ann[-1] else None
+                                NonSelfCloningT().visit(ann[-1])
                             ))
 
                 return node
