@@ -14,6 +14,7 @@ class Options:
     overwrite: bool = False
     output_files: bool = False
     generate_stubs: bool = False
+    json_output: bool = False
     use_multiprocessing: bool = True
     sampling: bool = True
     replace_dict: bool = False

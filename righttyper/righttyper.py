@@ -12,6 +12,8 @@ import sys
 import platform
 import typeshed_client as ts
 import pickle
+import datetime
+import json
 
 
 import collections.abc as abc
@@ -936,13 +938,54 @@ def output_signatures(
 
 
 def process_collected(collected: dict[str, Any]):
-    sig_changes = process_files(
+    sig_changes: list[SignatureChanges] = process_files(
         collected['files'],
         collected['type_annotations']
     )
 
-    with open(f"{TOOL_NAME}.out", "w+") as f:
-        output_signatures(sig_changes, f)
+    if options.json_output:
+        data = {
+            'meta': {
+                'software': TOOL_NAME,
+                'version': importlib.metadata.version(TOOL_NAME),
+                'timestamp': datetime.datetime.now().isoformat(),
+            },
+            'files': dict()
+        }
+
+        file2module = {file: module for file, module in collected['files']}
+        file_func2sigs = {
+            (file, funcname): (old_sig, new_sig)
+            for file, changes in sig_changes
+            for funcname, old_sig, new_sig in changes
+        }
+
+        for funcid in sorted(collected['type_annotations']):
+            if funcid.file_name not in data['files']:
+                entry = data['files'][funcid.file_name] = {
+                    'module': file2module.get(funcid.file_name),
+                    'functions': dict()
+                }
+
+            if funcid.func_name in entry['functions']:
+                continue  # TODO handle multiple first_code_line
+
+            ann = collected['type_annotations'][funcid]
+            entry['functions'][funcid.func_name] = {
+                'args': {a[0]: str(a[1]) for a in ann.args},
+                'retval': str(ann.retval)
+            }
+
+            if changes := file_func2sigs.get((funcid.file_name, funcid.func_name)):
+                entry['functions'][funcid.func_name]['old_sig'] = changes[0]
+                entry['functions'][funcid.func_name]['new_sig'] = changes[1]
+
+        with open(f"{TOOL_NAME}.json", "w") as f:
+            json.dump(data, f)
+
+    else:
+        with open(f"{TOOL_NAME}.out", "w+") as f:
+            output_signatures(sig_changes, f)
 
 
 def process_file_wrapper(args) -> SignatureChanges:
@@ -1133,6 +1176,12 @@ def cli(verbose: bool):
     default=False,
 )
 @click.option(
+    "--json-output",
+    default=options.json_output,
+    is_flag=True,
+    help=f"Output inferences in JSON, instead of writing {TOOL_NAME}.out."
+)
+@click.option(
     "--target-overhead",
     type=float,
     default=options.target_overhead,
@@ -1206,6 +1255,7 @@ def run(
     ignore_annotations: bool,
     only_update_annotations: bool,
     generate_stubs: bool,
+    json_output: bool,
     infer_shapes: bool,
     root: str,
     target_overhead: float,
@@ -1267,6 +1317,7 @@ def run(
     options.overwrite = overwrite
     options.output_files = output_files
     options.generate_stubs = generate_stubs
+    options.json_output = json_output
     options.use_multiprocessing = use_multiprocessing
     options.sampling = sampling
     options.replace_dict = replace_dict

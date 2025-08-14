@@ -127,6 +127,8 @@ Options:
   --only-update-annotations       Overwrite existing annotations but never add
                                   new ones.
   --generate-stubs                Generate stub files (.pyi).
+  --json-output                   Output inferences in JSON, instead of
+                                  writing righttyper.out.
   --target-overhead FLOAT         Target overhead, as a percentage (e.g., 5).
                                   [default: 5.0]
   --use-multiprocessing / --no-use-multiprocessing
