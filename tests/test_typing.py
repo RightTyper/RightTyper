@@ -3,7 +3,7 @@ from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
 from collections import namedtuple
-from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal, cast, Self
+from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal, cast, Self, Never
 import pytest
 import importlib
 import types
@@ -668,14 +668,14 @@ def test_hint2type_literal():
 
 def test_hint2type_unions():
     t = rt.hint2type(Union[int, str])
-    assert t.qualname() == "types.UnionType"
+    assert t.fullname() == "types.UnionType"
     assert t.args == (
         TypeInfo.from_type(int, module=''),
         TypeInfo.from_type(str, module=''),
     )
 
     t = rt.hint2type(Optional[str])
-    assert t.qualname() == "types.UnionType"
+    assert t.fullname() == "types.UnionType"
     assert t.args == (
         TypeInfo.from_type(str, module=''),
         NoneTypeInfo
@@ -699,17 +699,28 @@ def test_hint2type_jaxtyping():
 
 
 def test_from_set_with_unions():
-    t = merged_types({
+    t = TypeInfo.from_set({
             TypeInfo.from_set({
                 TypeInfo.from_type(str, module=''),
-                TypeInfo.from_set({
-                    TypeInfo.from_type(int, module='')
-                })
-            }),
+                TypeInfo.from_type(int, module='')
+            })
+        })
+
+    assert t.fullname() == "types.UnionType"
+    assert t.args == (
+        TypeInfo.from_type(int, module=''),
+        TypeInfo.from_type(str, module=''),
+    )
+
+
+def test_from_set_with_never():
+    t = TypeInfo.from_set({
+            TypeInfo.from_type(Never),
+            TypeInfo.from_type(int, module=''),
             TypeInfo.from_type(str, module='')
         })
 
-    assert t.qualname() == "types.UnionType"
+    assert t.fullname() == "types.UnionType"
     assert t.args == (
         TypeInfo.from_type(int, module=''),
         TypeInfo.from_type(str, module=''),

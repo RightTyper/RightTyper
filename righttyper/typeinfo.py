@@ -47,7 +47,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     mergeable_types = set(
         t
         for t in typeinfoset
-        if t.type_obj is not None and hasattr(t.type_obj, "__mro__")
+        if type(t.type_obj) is type     # we need a type_obj with __mro__ for this
         if len(t.args) == 0                          # we don't compare arguments yet
         if not hasattr(t.type_obj, "__orig_class__") # we don't support generics yet
     )
@@ -111,7 +111,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     # Get the superclasses, if any, that have all the common attributes
     common_supertypes = defaultdict(list)
     for t in mergeable_types:
-        for base in insert_numerics(cast(TYPE_OBJ_TYPES, t.type_obj).__mro__):
+        for base in insert_numerics(cast(type, t.type_obj).__mro__):
             if common_attributes.issubset(set(dir(base))):
                 common_supertypes[base].append(t)
 

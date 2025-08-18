@@ -470,8 +470,8 @@ class Observations:
         class NeverSayNeverT(TypeInfo.Transformer):
             """Removes uses of typing.Never, replacing them with typing.Any"""
             def visit(vself, node: TypeInfo) -> TypeInfo:
-                if node.qualname() == "typing.Never":
-                    return TypeInfo("typing", "Any")
+                if node.type_obj is typing.Never:
+                    return TypeInfo.from_type(typing.Any)
 
                 return super().visit(node)
 

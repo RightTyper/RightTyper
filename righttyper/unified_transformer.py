@@ -134,7 +134,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                     yield from iter_types(arg)
 
         self.name2module: dict[str, str] = {
-            t.qualname(): t.module
+            t.fullname(): t.module
             for ann in type_annotations.values()
             for root in [arg[1] for arg in ann.args] + [ann.retval]
             for t in iter_types(root)

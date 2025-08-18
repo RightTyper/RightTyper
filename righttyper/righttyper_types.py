@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace, field
 from typing import NewType, TypeVar, Self, TypeAlias, List, Iterator, cast
+import typing
 import collections.abc as abc
 import types
 
@@ -28,10 +29,12 @@ class FuncAnnotation:
     args: list[tuple[ArgumentName, TypeInfo]]   # TODO: make me a map?
     retval: TypeInfo
 
+# The typing module does not define a type for such "typing special forms".
+SpecialForms: TypeAlias = typing.Any|typing.Never
 
 # Valid non-None TypeInfo.type_obj types: allows static casting
 # 'None' away in situations where mypy doesn't recognize it.
-TYPE_OBJ_TYPES: TypeAlias = type
+TYPE_OBJ_TYPES: TypeAlias = type|SpecialForms
 
 @dataclass(eq=True, frozen=True)
 class TypeInfo:
@@ -70,12 +73,12 @@ class TypeInfo:
                 return str(a)
             
             return (
-                f"{self.qualname()}[" +
+                f"{self.fullname()}[" +
                     ", ".join(arg2str(a) for a in self.args) +
                 "]"
             )
 
-        return self.qualname()
+        return self.fullname()
 
 
     @staticmethod
@@ -91,12 +94,12 @@ class TypeInfo:
 
     @staticmethod
     def from_type(t: TYPE_OBJ_TYPES, module: str|None = None, **kwargs) -> "TypeInfo":
-        if t == types.NoneType:
+        if t is types.NoneType:
             return NoneTypeInfo
 
         return TypeInfo(
-            name=t.__qualname__,
-            module=(t.__module__ if module is None else module),
+            name=getattr(t, "__qualname__"), # sidesteps mypy errors for special forms
+            module=(getattr(t, "__module__") if module is None else module),
             type_obj=t,
             **kwargs
         )
@@ -107,9 +110,6 @@ class TypeInfo:
         if not s:
             return NoneTypeInfo
 
-        if len(s) == 1:
-            return next(iter(s))
-
         def expand_unions(t: "TypeInfo") -> Iterator["TypeInfo"]:
             # don't merge unions designated as typevars, or the typevar gets lost.
             if t.type_obj is types.UnionType and not t.typevar_index:
@@ -119,7 +119,13 @@ class TypeInfo:
             else:
                 yield t
 
-        s = {ex for t in s for ex in expand_unions(t)}
+        s = {expanded for t in s for expanded in expand_unions(t)}
+
+        if len(s) == 1:
+            return next(iter(s))
+
+        # delete "Never", as it's unnecessary
+        s = {t for t in s if t.type_obj is not typing.Never}
 
         return TypeInfo(
             module='types',
@@ -144,7 +150,7 @@ class TypeInfo:
         )
 
 
-    def qualname(self) -> str:
+    def fullname(self) -> str:
         return self.module + '.' + self.name if self.module else self.name
 
 
