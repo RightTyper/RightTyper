@@ -12,6 +12,8 @@ import sys
 import platform
 import typeshed_client as ts
 import pickle
+import datetime
+import json
 
 
 import collections.abc as abc
@@ -241,11 +243,31 @@ class Observations:
             )
 
 
+    @staticmethod
+    def _get_arg_types(arg_info: inspect.ArgInfo) -> tuple[TypeInfo, ...]:
+        """Computes the types of the given arguments."""
+        return (
+            *(get_value_type(arg_info.locals[arg_name]) for arg_name in arg_info.args),
+            *(
+                (TypeInfo.from_set({
+                    get_value_type(val) for val in arg_info.locals[arg_info.varargs]
+                }),)
+                if arg_info.varargs else ()
+            ),
+            *(
+                (TypeInfo.from_set({
+                    get_value_type(val) for val in arg_info.locals[arg_info.keywords].values()
+                }),)
+                if arg_info.keywords else ()
+            )
+        )
+
+
     def record_start(
         self,
         code: CodeType,
         frame_id: FrameId,
-        arg_types: tuple[TypeInfo, ...],
+        arg_info: inspect.ArgInfo,
         self_type: TypeInfo|None,
         self_replacement: TypeInfo|None,
     ) -> None:
@@ -253,7 +275,8 @@ class Observations:
 
         # print(f"record_start {code.co_qualname} {arg_types}")
         self.pending_traces[(CodeId(id(code)), frame_id)] = PendingCallTrace(
-            arg_types,
+            arg_info=arg_info,
+            args=self._get_arg_types(arg_info),
             self_type=self_type,
             self_replacement=self_replacement,
             is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
@@ -294,6 +317,11 @@ class Observations:
             if code_id not in self.traces:
                 self.traces[code_id] = Counter()
             self.traces[code_id].update((tr.process(),))
+
+            # Resample arguments in case they change during execution (e.g., containers)
+            tr.args = self._get_arg_types(tr.arg_info)
+            self.traces[code_id].update((tr.process(),))
+
             del self.pending_traces[(code_id, frame_id)]
             return True
 
@@ -468,8 +496,8 @@ class Observations:
         class NeverSayNeverT(TypeInfo.Transformer):
             """Removes uses of typing.Never, replacing them with typing.Any"""
             def visit(vself, node: TypeInfo) -> TypeInfo:
-                if node.qualname() == "typing.Never":
-                    return TypeInfo("typing", "Any")
+                if node.type_obj is typing.Never:
+                    return TypeInfo.from_type(typing.Any)
 
                 return super().visit(node)
 
@@ -811,26 +839,10 @@ def process_function_call(
     self_type, self_replacement, overrides = get_self_type()
     obs.record_function(code, args, get_defaults, overrides)
 
-    arg_values = (
-        *(get_value_type(args.locals[arg_name]) for arg_name in args.args),
-        *(
-            (TypeInfo.from_set({
-                get_value_type(val) for val in args.locals[args.varargs]
-            }),)
-            if args.varargs else ()
-        ),
-        *(
-            (TypeInfo.from_set({
-                get_value_type(val) for val in args.locals[args.keywords].values()
-            }),)
-            if args.keywords else ()
-        )
-    )
-
     obs.record_start(
         code,
         FrameId(id(frame)),
-        arg_values,
+        args,
         self_type,
         self_replacement
     )
@@ -936,13 +948,55 @@ def output_signatures(
 
 
 def process_collected(collected: dict[str, Any]):
-    sig_changes = process_files(
+    sig_changes: list[SignatureChanges] = process_files(
         collected['files'],
         collected['type_annotations']
     )
 
-    with open(f"{TOOL_NAME}.out", "w+") as f:
-        output_signatures(sig_changes, f)
+    if options.json_output:
+        data: dict[str, Any] = {
+            'meta': {
+                'software': TOOL_NAME,
+                'version': importlib.metadata.version(TOOL_NAME),
+                'timestamp': datetime.datetime.now().isoformat(),
+            },
+            'files': dict()
+        }
+
+        file2module = {file: module for file, module in collected['files']}
+        file_func2sigs = {
+            (file, funcname): (old_sig, new_sig)
+            for file, changes in sig_changes
+            for funcname, old_sig, new_sig in changes
+        }
+
+        for funcid in sorted(collected['type_annotations']):
+            if funcid.file_name not in data['files']:
+                entry: dict[str, Any]
+                entry = data['files'][funcid.file_name] = {
+                    'module': file2module.get(funcid.file_name),
+                    'functions': dict()
+                }
+
+            if funcid.func_name in entry['functions']:
+                continue  # TODO handle multiple first_code_line
+
+            ann = collected['type_annotations'][funcid]
+            entry['functions'][funcid.func_name] = {
+                'args': {a[0]: str(a[1]) for a in ann.args},
+                'retval': str(ann.retval)
+            }
+
+            if changes := file_func2sigs.get((funcid.file_name, funcid.func_name)):
+                entry['functions'][funcid.func_name]['old_sig'] = changes[0]
+                entry['functions'][funcid.func_name]['new_sig'] = changes[1]
+
+        with open(f"{TOOL_NAME}.json", "w") as f:
+            json.dump(data, f)
+
+    else:
+        with open(f"{TOOL_NAME}.out", "w+") as f:
+            output_signatures(sig_changes, f)
 
 
 def process_file_wrapper(args) -> SignatureChanges:
@@ -1133,6 +1187,12 @@ def cli(verbose: bool):
     default=False,
 )
 @click.option(
+    "--json-output",
+    default=options.json_output,
+    is_flag=True,
+    help=f"Output inferences in JSON, instead of writing {TOOL_NAME}.out."
+)
+@click.option(
     "--target-overhead",
     type=float,
     default=options.target_overhead,
@@ -1206,6 +1266,7 @@ def run(
     ignore_annotations: bool,
     only_update_annotations: bool,
     generate_stubs: bool,
+    json_output: bool,
     infer_shapes: bool,
     root: str,
     target_overhead: float,
@@ -1267,6 +1328,7 @@ def run(
     options.overwrite = overwrite
     options.output_files = output_files
     options.generate_stubs = generate_stubs
+    options.json_output = json_output
     options.use_multiprocessing = use_multiprocessing
     options.sampling = sampling
     options.replace_dict = replace_dict

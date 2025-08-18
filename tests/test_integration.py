@@ -3448,9 +3448,7 @@ def test_empty_container(python_version):
         """)
 
 
-@pytest.mark.skip(reason="just documents an idea")
 def test_container_is_modified():
-    # TODO should we resample mutable containers upon return?
     t = textwrap.dedent("""\
         def f(x):
             x.append(1)
@@ -3679,6 +3677,8 @@ def test_typefinder_defined_in_main():
 
 def test_inconsistent_samples():
     Path("t.py").write_text(textwrap.dedent("""\
+        import inspect
+
         def f():
             def g(a, b):
                 return a+b
@@ -3692,10 +3692,12 @@ def test_inconsistent_samples():
         rt.obs.record_start(
             code=g.__code__,
             frame_id=rt.FrameId(0),
-            arg_types=(
-                rt.get_type_name(int), 
-                rt.get_type_name(int), 
-                rt.get_type_name(int),
+            arg_info=inspect.ArgInfo(
+                ['x', 'y', 'z'], None, None, {
+                    'x': 0,
+                    'y': 0,
+                    'z': 0
+                }
             ),
             self_type=None,
             self_replacement=None

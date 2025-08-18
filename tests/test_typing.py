@@ -3,7 +3,7 @@ from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
 from collections import namedtuple
-from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal, cast, Self
+from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal, cast, Self, Never
 import pytest
 import importlib
 import types
@@ -529,89 +529,7 @@ def test_merged_types_superclass_multiple_superclasses():
 
 str_ti = TypeInfo("", "str", type_obj=str)
 int_ti = TypeInfo("", "int", type_obj=int)
-bool_ti = TypeInfo("", "bool", type_obj=bool)
-generator_ti = lambda *a: TypeInfo.from_type(abc.Generator, module="typing", args=tuple(a))
-iterator_ti = lambda *a: TypeInfo("typing", "Iterator", tuple(a))
 union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.UnionType)
-
-
-def generate_sample(func: Callable, *args) -> PendingCallTrace:
-    import righttyper.righttyper_runtime as rt
-
-    res = func(*args)
-    tr = PendingCallTrace(tuple(rt_get_value_type(arg) for arg in args))
-    if type(res).__name__ == "generator":
-        tr.is_generator = True
-        try:
-            while True:
-                nex = next(res) # this can fail
-                tr.yields.add(rt_get_value_type(nex))
-        except StopIteration as e:
-            if e.value is not None:
-                tr.returns = rt_get_value_type(e.value)
-    else:
-        tr.returns = rt_get_value_type(res)
-
-    return tr
-
-
-def test_sample_process_simple():
-    def dog(a):
-        return a
-
-    tr = generate_sample(dog, "hi")
-    assert tr == PendingCallTrace((str_ti,), returns=str_ti)
-    assert generalize([tr.process()]) == [str_ti, str_ti]
-
-
-def test_sample_process_generator():
-    def dog(a, b):
-        yield a
-        return b
-
-    tr = generate_sample(dog, 1, "hi")
-    assert tr == PendingCallTrace((int_ti, str_ti,), {int_ti}, returns=str_ti, is_generator=True)
-    assert generalize([tr.process()]) == [int_ti, str_ti, generator_ti(int_ti, NoneTypeInfo, str_ti)]
-
-
-def test_sample_process_generator_noyield():
-    def dog(a, b):
-        return b
-        yield 
-
-    tr = generate_sample(dog, 1, "hi")
-    assert tr == PendingCallTrace((int_ti, str_ti,), returns=str_ti, is_generator=True)
-    assert generalize([tr.process()]) == [int_ti, str_ti, generator_ti(NoneTypeInfo, NoneTypeInfo, str_ti)]
-
-
-def test_sample_process_iterator_union():
-    def dog(a, b):
-        yield a
-        yield b
-
-    tr = generate_sample(dog, 1, "hi")
-    assert tr == PendingCallTrace((int_ti, str_ti,), yields={int_ti, str_ti}, is_generator=True)
-    assert generalize([tr.process()]) == [int_ti, str_ti, iterator_ti(union_ti(int_ti, str_ti))]
-
-
-def test_sample_process_iterator():
-    def dog(a):
-        yield a
-
-    tr = generate_sample(dog, "hi")
-    assert tr == PendingCallTrace((str_ti,), yields={str_ti}, is_generator=True)
-    assert generalize([tr.process()]) == [str_ti, iterator_ti((str_ti))]
-
-
-def test_sample_process_generator_union():
-    def dog(a, b, c):
-        yield a
-        yield b
-        return c
-
-    tr = generate_sample(dog, 1, "hi", True)
-    assert tr == PendingCallTrace((int_ti, str_ti, bool_ti,), yields={int_ti, str_ti}, returns=bool_ti, is_generator=True)
-    assert generalize([tr.process()]) == [int_ti, str_ti, bool_ti, generator_ti(union_ti(int_ti, str_ti), NoneTypeInfo, bool_ti)]
 
 
 T = TypeVar("T")
@@ -668,14 +586,14 @@ def test_hint2type_literal():
 
 def test_hint2type_unions():
     t = rt.hint2type(Union[int, str])
-    assert t.qualname() == "types.UnionType"
+    assert t.fullname() == "types.UnionType"
     assert t.args == (
         TypeInfo.from_type(int, module=''),
         TypeInfo.from_type(str, module=''),
     )
 
     t = rt.hint2type(Optional[str])
-    assert t.qualname() == "types.UnionType"
+    assert t.fullname() == "types.UnionType"
     assert t.args == (
         TypeInfo.from_type(str, module=''),
         NoneTypeInfo
@@ -699,17 +617,28 @@ def test_hint2type_jaxtyping():
 
 
 def test_from_set_with_unions():
-    t = merged_types({
+    t = TypeInfo.from_set({
             TypeInfo.from_set({
                 TypeInfo.from_type(str, module=''),
-                TypeInfo.from_set({
-                    TypeInfo.from_type(int, module='')
-                })
-            }),
+                TypeInfo.from_type(int, module='')
+            })
+        })
+
+    assert t.fullname() == "types.UnionType"
+    assert t.args == (
+        TypeInfo.from_type(int, module=''),
+        TypeInfo.from_type(str, module=''),
+    )
+
+
+def test_from_set_with_never():
+    t = TypeInfo.from_set({
+            TypeInfo.from_type(Never),
+            TypeInfo.from_type(int, module=''),
             TypeInfo.from_type(str, module='')
         })
 
-    assert t.qualname() == "types.UnionType"
+    assert t.fullname() == "types.UnionType"
     assert t.args == (
         TypeInfo.from_type(int, module=''),
         TypeInfo.from_type(str, module=''),

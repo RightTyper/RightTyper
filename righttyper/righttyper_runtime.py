@@ -589,7 +589,7 @@ def _handle_dict(value: Any, depth: int) -> TypeInfo:
         el = _random_item(value)
         args = (get_value_type(el, depth+1), get_value_type(value[el], depth+1))
     else:
-        args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+        args = (TypeInfo.from_type(typing.Never), TypeInfo.from_type(typing.Never))
 
     if t is MappingProxyType:
         return TypeInfo(name='MappingProxyType', module='types', type_obj=t, args=args)
@@ -603,7 +603,7 @@ def _handle_randomdict(value: Any, depth: int) -> TypeInfo:
             el = value.random_item()
             args = tuple(get_value_type(fld, depth+1) for fld in el)
         else:
-            args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+            args = (TypeInfo.from_type(typing.Never), TypeInfo.from_type(typing.Never))
     except Exception:
         pass
     return TypeInfo.from_type(dict, module='', args=args)
@@ -614,7 +614,7 @@ def _handle_list(value: Any, depth: int) -> TypeInfo:
         el = value[random.randint(0, len(value)-1)] # this is O(1), much faster than islice()
         args = (get_value_type(el, depth+1),)
     else:
-        args = (TypeInfo("typing", "Never"),)
+        args = (TypeInfo.from_type(typing.Never),)
     return TypeInfo.from_type(list, module='', args=args)
 
 
@@ -625,7 +625,7 @@ def _handle_set(value: Any, depth: int) -> TypeInfo:
         el = _random_item(value)
         args = (get_value_type(el, depth+1),)
     else:
-        args = (TypeInfo("typing", "Never"),)
+        args = (TypeInfo.from_type(typing.Never),)
     return TypeInfo.from_type(t, module='', args=args)
 
 
@@ -665,7 +665,7 @@ def _handle_tuple_iter(value: Any, depth: int) -> TypeInfo|None:
             el = t[random.randint(0, len(t)-1)] # this is O(1), much faster than islice()
             args = (get_value_type(el, depth+1),)
         else:
-            args = (TypeInfo("typing", "Never"),)
+            args = (TypeInfo.from_type(typing.Never),)
         return TypeInfo("typing", "Iterator", args=args)
     return None
 
@@ -705,7 +705,7 @@ def _handle_zip(value: Any, depth: int) -> TypeInfo|None:
         args = (
             # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
             TypeInfo.from_type(tuple, module="", args=tuple(
-                (src.args[0] if src.args else UnknownTypeInfo) if src.qualname() == "typing.Iterator"
+                (src.args[0] if src.args else UnknownTypeInfo) if src.fullname() == "typing.Iterator"
                 else TypeInfo.from_type(PostponedIteratorArg, args=(src,))
                 for src in zip_sources
             )),
@@ -721,7 +721,7 @@ def _handle_enumerate(value: Any, depth: int) -> TypeInfo|None:
         src = get_value_type(l, depth+1)
         args = (
             # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
-            ((src.args[0] if src.args else UnknownTypeInfo),) if src.qualname() == "typing.Iterator"
+            ((src.args[0] if src.args else UnknownTypeInfo),) if src.fullname() == "typing.Iterator"
             else (TypeInfo.from_type(PostponedIteratorArg, args=(src,)),)
         )
 
@@ -813,7 +813,7 @@ def get_value_type(
                 el = _random_item(value)
                 args = (get_value_type(el, depth+1),)
             else:
-                args = (TypeInfo("typing", "Never"),)
+                args = (TypeInfo.from_type(typing.Never),)
             return TypeInfo("typing", view.__qualname__, args=args)
         elif isinstance(value, abc.ItemsView):
             # no name in "builtins" or "types" modules, so use abc protocol
@@ -821,7 +821,7 @@ def get_value_type(
                 el = _random_item(value)
                 args = (get_value_type(el[0], depth+1), get_value_type(el[1], depth+1))
             else:
-                args = (TypeInfo("typing", "Never"), TypeInfo("typing", "Never"))
+                args = (TypeInfo.from_type(typing.Never), TypeInfo.from_type(typing.Never))
             return TypeInfo("typing", "ItemsView", args=args)
         elif t.__name__ == 'async_generator_wrapped_value':
             if (l := _first_referent(value)) is not None:
