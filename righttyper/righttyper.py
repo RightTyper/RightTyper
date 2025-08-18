@@ -944,7 +944,7 @@ def process_collected(collected: dict[str, Any]):
     )
 
     if options.json_output:
-        data = {
+        data: dict[str, Any] = {
             'meta': {
                 'software': TOOL_NAME,
                 'version': importlib.metadata.version(TOOL_NAME),
@@ -962,6 +962,7 @@ def process_collected(collected: dict[str, Any]):
 
         for funcid in sorted(collected['type_annotations']):
             if funcid.file_name not in data['files']:
+                entry: dict[str, Any]
                 entry = data['files'][funcid.file_name] = {
                     'module': file2module.get(funcid.file_name),
                     'functions': dict()
