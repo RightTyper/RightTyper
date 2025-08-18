@@ -243,11 +243,31 @@ class Observations:
             )
 
 
+    @staticmethod
+    def _get_arg_types(arg_info: inspect.ArgInfo) -> tuple[TypeInfo, ...]:
+        """Computes the types of the given arguments."""
+        return (
+            *(get_value_type(arg_info.locals[arg_name]) for arg_name in arg_info.args),
+            *(
+                (TypeInfo.from_set({
+                    get_value_type(val) for val in arg_info.locals[arg_info.varargs]
+                }),)
+                if arg_info.varargs else ()
+            ),
+            *(
+                (TypeInfo.from_set({
+                    get_value_type(val) for val in arg_info.locals[arg_info.keywords].values()
+                }),)
+                if arg_info.keywords else ()
+            )
+        )
+
+
     def record_start(
         self,
         code: CodeType,
         frame_id: FrameId,
-        arg_types: tuple[TypeInfo, ...],
+        arg_info: inspect.ArgInfo,
         self_type: TypeInfo|None,
         self_replacement: TypeInfo|None,
     ) -> None:
@@ -255,7 +275,8 @@ class Observations:
 
         # print(f"record_start {code.co_qualname} {arg_types}")
         self.pending_traces[(CodeId(id(code)), frame_id)] = PendingCallTrace(
-            arg_types,
+            arg_info=arg_info,
+            args=self._get_arg_types(arg_info),
             self_type=self_type,
             self_replacement=self_replacement,
             is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
@@ -296,6 +317,11 @@ class Observations:
             if code_id not in self.traces:
                 self.traces[code_id] = Counter()
             self.traces[code_id].update((tr.process(),))
+
+            # Resample arguments in case they change during execution (e.g., containers)
+            tr.args = self._get_arg_types(tr.arg_info)
+            self.traces[code_id].update((tr.process(),))
+
             del self.pending_traces[(code_id, frame_id)]
             return True
 
@@ -813,26 +839,10 @@ def process_function_call(
     self_type, self_replacement, overrides = get_self_type()
     obs.record_function(code, args, get_defaults, overrides)
 
-    arg_values = (
-        *(get_value_type(args.locals[arg_name]) for arg_name in args.args),
-        *(
-            (TypeInfo.from_set({
-                get_value_type(val) for val in args.locals[args.varargs]
-            }),)
-            if args.varargs else ()
-        ),
-        *(
-            (TypeInfo.from_set({
-                get_value_type(val) for val in args.locals[args.keywords].values()
-            }),)
-            if args.keywords else ()
-        )
-    )
-
     obs.record_start(
         code,
         FrameId(id(frame)),
-        arg_values,
+        args,
         self_type,
         self_replacement
     )

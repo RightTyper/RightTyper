@@ -5,6 +5,7 @@ from typing import NewType, TypeVar, Self, TypeAlias, List, Iterator, cast
 import typing
 import collections.abc as abc
 import types
+import inspect
 
 T = TypeVar("T")
 
@@ -200,6 +201,7 @@ CallTrace: TypeAlias = tuple[TypeInfo, ...]
 
 @dataclass
 class PendingCallTrace:
+    arg_info: inspect.ArgInfo
     args: tuple[TypeInfo, ...]
     yields: set[TypeInfo] = field(default_factory=set)
     sends: set[TypeInfo] = field(default_factory=set)
