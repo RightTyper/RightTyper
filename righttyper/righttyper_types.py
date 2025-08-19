@@ -18,7 +18,7 @@ CodeId = NewType("CodeId", int)     # obtained from id(code) where code is-a Cod
 FrameId = NewType("FrameId", int)   # similarly from id(frame)
 
 
-@dataclass(eq=True, frozen=True)
+@dataclass(eq=True, order=True, frozen=True)
 class FuncId:
     file_name: Filename
     first_code_line: int
