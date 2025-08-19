@@ -1266,7 +1266,7 @@ def cli(verbose: bool):
           " You can later process using RightTyper's \"process\" command."
 )
 @click.option(
-    "--no-exclude-types-from",
+    "--no-exclude-types",
     "exclude_types_from",
     flag_value=[],
     show_default=False,
@@ -1279,7 +1279,7 @@ def cli(verbose: bool):
     help="""Prefixes for module name prefixes whose types are omitted or replaced with "typing.Any"."""
 )
 @click.option(
-    "--no-resolve-mocks-from",
+    "--no-resolve-mocks",
     "resolve_mocks_from",
     flag_value=[],
     show_default=False,
