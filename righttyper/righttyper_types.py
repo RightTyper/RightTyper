@@ -169,8 +169,8 @@ class TypeInfo:
 
 
 NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
-UnknownTypeInfo = TypeInfo("typing", "Any")
-AnyTypeInfo = TypeInfo("typing", "Any")
+UnknownTypeInfo = TypeInfo.from_type(typing.Any)
+AnyTypeInfo = TypeInfo.from_type(typing.Any)
 
 
 @dataclass

@@ -1204,7 +1204,7 @@ def test_class_name_in_test(tmp_cwd):
         """
     ))
 
-    rt_run('-m', 'pytest', '-s', 'tests')
+    rt_run('--no-exclude-types-from', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
@@ -1226,11 +1226,42 @@ def test_class_name_in_test_subdir(tmp_cwd):
         """
     ))
 
-    rt_run('-m', 'pytest', '-s', 'tests')
+    rt_run('--no-exclude-types-from', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "sub" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
     assert "import test_foo" not in output
+
+
+def test_class_name_excluded(tmp_cwd):
+    # the class name is excluded because it comes from a test_ module.
+    (tmp_cwd / "code.py").write_text(textwrap.dedent("""\
+        def f(x):
+            pass
+
+        """
+    ))
+
+
+    (tmp_cwd / "tests").mkdir()
+    (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
+        from code import f
+
+        class C:
+            pass
+
+        def test_foo():
+            f(C())
+        """
+    ))
+
+    rt_run('-m', 'pytest', '-s', 'tests')
+    output = (tmp_cwd / "code.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(x: Any) -> None: ...
+    """)
 
 
 @pytest.mark.xfail(reason="Doesn't work yet")

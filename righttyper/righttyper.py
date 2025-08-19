@@ -497,12 +497,23 @@ class Observations:
             """Removes uses of typing.Never, replacing them with typing.Any"""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 if node.type_obj is typing.Never:
-                    return TypeInfo.from_type(typing.Any)
+                    return AnyTypeInfo
 
                 return super().visit(node)
 
         if not options.use_typing_never:
             self._transform_types(NeverSayNeverT())
+
+        class TestTypeRemovingT(TypeInfo.Transformer):
+            """Removes types whose module name starts with given prefixes."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if any(node.module.startswith(p) for p in options.exclude_types_from):
+                    return AnyTypeInfo
+
+                return super().visit(node)
+
+        if options.exclude_types_from:
+            self._transform_types(TestTypeRemovingT())
 
         class TypingUnionT(TypeInfo.Transformer):
             """Replaces types.UnionType with typing.Union and typing.Optional."""
@@ -1253,6 +1264,19 @@ def cli(verbose: bool):
     help=f"Rather than immediately process collect data, save it to {PKL_FILE_NAME}." +\
           " You can later process using RightTyper's \"process\" command."
 )
+@click.option(
+    "--no-exclude-types-from",
+    "exclude_types_from",
+    flag_value=[],  # set to empty tuple
+    show_default=False,
+    help="Clears the list of module name prefixes whose types are excluded.",
+)
+@click.option(
+    "--exclude-types-from",
+    multiple=True,
+    default=options.exclude_types_from,
+    help="""Prefixes for module names whose types are omitted or replaced with "typing.Any"."""
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
     script: str,
@@ -1278,7 +1302,8 @@ def run(
     python_version: tuple[int, ...],
     use_top_pct: int,
     only_collect: bool,
-    type_depth_limit: int|None
+    type_depth_limit: int|None,
+    exclude_types_from: list[str]
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
@@ -1339,6 +1364,7 @@ def run(
     options.inline_generics = python_version >= (3, 12)
     options.use_top_pct = use_top_pct
     options.type_depth_limit = type_depth_limit
+    options.exclude_types_from = exclude_types_from
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
