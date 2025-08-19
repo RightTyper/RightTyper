@@ -25,7 +25,8 @@ import typing
 from typing import (
     Any,
     TextIO,
-    Self
+    Self,
+    Sequence
 )
 
 import click
@@ -1267,7 +1268,7 @@ def cli(verbose: bool):
 @click.option(
     "--no-exclude-types-from",
     "exclude_types_from",
-    flag_value=[],  # set to empty tuple
+    flag_value=[],
     show_default=False,
     help="Clears the list of module name prefixes whose types are excluded.",
 )
@@ -1275,7 +1276,20 @@ def cli(verbose: bool):
     "--exclude-types-from",
     multiple=True,
     default=options.exclude_types_from,
-    help="""Prefixes for module names whose types are omitted or replaced with "typing.Any"."""
+    help="""Prefixes for module name prefixes whose types are omitted or replaced with "typing.Any"."""
+)
+@click.option(
+    "--no-resolve-mocks-from",
+    "resolve_mocks_from",
+    flag_value=[],
+    show_default=False,
+    help="Clears the list of module name prefixes whose types are subject to mock type resolution.",
+)
+@click.option(
+    "--resolve-mocks-from",
+    multiple=True,
+    default=options.resolve_mocks_from,
+    help="""Prefixes for module name prefixes whose types are subject to mock type resolution."""
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
@@ -1303,7 +1317,8 @@ def run(
     use_top_pct: int,
     only_collect: bool,
     type_depth_limit: int|None,
-    exclude_types_from: list[str]
+    exclude_types_from: Sequence[str],
+    resolve_mocks_from: Sequence[str]
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
@@ -1365,6 +1380,7 @@ def run(
     options.use_top_pct = use_top_pct
     options.type_depth_limit = type_depth_limit
     options.exclude_types_from = exclude_types_from
+    options.resolve_mocks_from = resolve_mocks_from
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
