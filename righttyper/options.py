@@ -27,7 +27,7 @@ class Options:
     inline_generics: bool = False
     only_update_annotations: bool = False
     use_top_pct: int = 80
-    exclude_types_from: Sequence[str] = ('pytest.', '_pytest.', 'py.test.', 'test_')
-    resolve_mocks_from: Sequence[str] = ('pytest.', '_pytest.', 'py.test.', 'test_')
+    exclude_types_from: Sequence[str] = ('pytest', '_pytest', 'py.test', 'test_')
+    resolve_mocks_from: Sequence[str] = ('test_',)
 
 options = Options()
