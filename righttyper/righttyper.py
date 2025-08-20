@@ -74,7 +74,6 @@ from righttyper.typeinfo import (
 from righttyper.righttyper_utils import (
     TOOL_ID,
     TOOL_NAME,
-    debug_print_set_level,
     skip_this_file,
     source_to_module_fqn,
     get_main_module_fqn,
@@ -1105,16 +1104,16 @@ def parse_none_or_ge_zero(value) -> int|None:
     }
 )
 @click.option(
-    "--verbose",
+    "--debug",
     is_flag=True,
-    help="Print diagnostic information.",
+    help="Include diagnostic information in log file.",
 )
 @click.version_option(
     version=importlib.metadata.version(TOOL_NAME),
     prog_name=TOOL_NAME,
 )
-def cli(verbose: bool):
-    debug_print_set_level(verbose)
+def cli(debug: bool):
+    logger.setLevel(logging.DEBUG)
 
 
 def list_and_clear_callback(ctx, param, values):

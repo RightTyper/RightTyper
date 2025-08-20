@@ -1236,7 +1236,7 @@ def test_class_name_in_test_subdir(tmp_cwd):
 def test_class_name_excluded(tmp_cwd):
     # The class name is excluded because it comes from a test_ module.
     # It shouldn't be mock resolved because it doesn't inherit from a non-test module
-    (tmp_cwd / "mycode.py").write_text(textwrap.dedent("""\
+    (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
         def f(x):
             pass
 
@@ -1245,7 +1245,7 @@ def test_class_name_excluded(tmp_cwd):
 
     (tmp_cwd / "tests").mkdir()
     (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
-        from code import f
+        from m import f
 
         class C:
             pass
@@ -1256,7 +1256,7 @@ def test_class_name_excluded(tmp_cwd):
     ))
 
     rt_run('-m', 'pytest', '-s', 'tests')
-    output = (tmp_cwd / "mycode.py").read_text()
+    output = (tmp_cwd / "m.py").read_text()
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent(f"""\
@@ -1265,7 +1265,7 @@ def test_class_name_excluded(tmp_cwd):
 
 
 def test_mock_class_inherited(tmp_cwd):
-    (tmp_cwd / "mycode.py").write_text(textwrap.dedent("""\
+    (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
         class C:
             pass
 
@@ -1278,21 +1278,21 @@ def test_mock_class_inherited(tmp_cwd):
 
     (tmp_cwd / "tests").mkdir()
     (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
-        import code
+        import m
 
-        class Mock(code.C):
+        class Mock(m.C):
             pass
 
         class Mock2(Mock):
             pass
 
         def test_foo():
-            code.f(Mock2())
+            m.f(Mock2())
         """
     ))
 
     rt_run('-m', 'pytest', '-s', 'tests')
-    output = (tmp_cwd / "mycode.py").read_text()
+    output = (tmp_cwd / "m.py").read_text()
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent(f"""\
@@ -1301,7 +1301,7 @@ def test_mock_class_inherited(tmp_cwd):
 
 
 def test_mock_with_class_spec(tmp_cwd):
-    (tmp_cwd / "mycode.py").write_text(textwrap.dedent("""\
+    (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
         class C:
             pass
 
@@ -1313,19 +1313,19 @@ def test_mock_with_class_spec(tmp_cwd):
 
     (tmp_cwd / "tests").mkdir()
     (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
-        import code
+        import m
         import unittest.mock as mock
 
         def test_foo():
-            code.f(mock.Mock(spec=code.C))
+            m.f(mock.Mock(spec=m.C))
 
         def test_bar():
-            code.g(mock.create_autospec(code.C))
+            m.g(mock.create_autospec(m.C))
         """
     ))
 
     rt_run('-m', 'pytest', '-s', 'tests')
-    output = (tmp_cwd / "mycode.py").read_text()
+    output = (tmp_cwd / "m.py").read_text()
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent(f"""\
@@ -1338,7 +1338,7 @@ def test_mock_with_class_spec(tmp_cwd):
 
 
 def test_mock_with_obj_spec(tmp_cwd):
-    (tmp_cwd / "mycode.py").write_text(textwrap.dedent("""\
+    (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
         class C:
             pass
 
@@ -1348,16 +1348,16 @@ def test_mock_with_obj_spec(tmp_cwd):
 
     (tmp_cwd / "tests").mkdir()
     (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
-        import code
+        import m
         import unittest.mock as mock
 
         def test_foo():
-            code.f(mock.Mock(spec=code.C()))
+            m.f(mock.Mock(spec=m.C()))
         """
     ))
 
     rt_run('-m', 'pytest', '-s', 'tests')
-    output = (tmp_cwd / "mycode.py").read_text()
+    output = (tmp_cwd / "m.py").read_text()
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent(f"""\

@@ -13,7 +13,6 @@ from righttyper.logger import logger
 TOOL_ID: int = 3
 TOOL_NAME: Final[str] = "righttyper"
 _SAMPLING_INTERVAL = 0.01
-_DEBUG_PRINT: bool = False
 
 
 def glob_translate_to_regex(r):
@@ -47,15 +46,6 @@ def update_sampling_interval(
     ## FIXME _SAMPLING_INTERVAL *= 1.5
 
 
-def debug_print(args: Any, *varargs: Any, **kwargs: Any) -> None:
-    if _DEBUG_PRINT:
-        print(__file__, args, *varargs, **kwargs)
-
-
-def debug_print_set_level(level: bool) -> None:
-    _DEBUG_PRINT = level
-
-
 def _get_righttyper_path() -> str:
     import importlib.util
     spec = importlib.util.find_spec(__package__)
@@ -85,7 +75,7 @@ def skip_this_file(
     include_all: bool,
     include_files_pattern: str,
 ) -> bool:
-    debug_print(
+    logger.debug(
         f"checking skip_this_file: {script_dir=}, {filename=}, {include_files_pattern=}"
     )
     if include_all:
