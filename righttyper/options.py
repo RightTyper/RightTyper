@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Sequence
 
 @dataclass
 class Options:
@@ -26,5 +27,7 @@ class Options:
     inline_generics: bool = False
     only_update_annotations: bool = False
     use_top_pct: int = 80
+    exclude_types: tuple[str, ...] = ('pytest.', '_pytest.', 'py.test.', 'test_')
+    resolve_mocks: tuple[str, ...] = ('test_', 'unittest.mock.')
 
 options = Options()

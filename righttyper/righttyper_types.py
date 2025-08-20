@@ -18,7 +18,7 @@ CodeId = NewType("CodeId", int)     # obtained from id(code) where code is-a Cod
 FrameId = NewType("FrameId", int)   # similarly from id(frame)
 
 
-@dataclass(eq=True, frozen=True)
+@dataclass(eq=True, order=True, frozen=True)
 class FuncId:
     file_name: Filename
     first_code_line: int
@@ -112,7 +112,7 @@ class TypeInfo:
             return NoneTypeInfo
 
         def expand_unions(t: "TypeInfo") -> Iterator["TypeInfo"]:
-            # don't merge unions designated as typevars, or the typevar gets lost.
+            # Don't merge unions designated as typevars, or the typevar gets lost.
             if t.type_obj is types.UnionType and not t.typevar_index:
                 for a in t.args:
                     if isinstance(a, TypeInfo):
@@ -125,7 +125,11 @@ class TypeInfo:
         if len(s) == 1:
             return next(iter(s))
 
-        # delete "Never", as it's unnecessary
+        # If "Any" is present, the union reduces to "Any"
+        if t := next((t for t in s if t.type_obj is typing.Any), None):
+            return t
+
+        # Delete "Never", as it's unnecessary
         s = {t for t in s if t.type_obj is not typing.Never}
 
         return TypeInfo(
@@ -169,8 +173,8 @@ class TypeInfo:
 
 
 NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
-UnknownTypeInfo = TypeInfo("typing", "Any")
-AnyTypeInfo = TypeInfo("typing", "Any")
+UnknownTypeInfo = TypeInfo.from_type(typing.Any)
+AnyTypeInfo = TypeInfo.from_type(typing.Any)
 
 
 @dataclass

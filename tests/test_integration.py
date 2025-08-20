@@ -1204,7 +1204,7 @@ def test_class_name_in_test(tmp_cwd):
         """
     ))
 
-    rt_run('-m', 'pytest', '-s', 'tests')
+    rt_run('--no-exclude-types', '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
@@ -1226,11 +1226,143 @@ def test_class_name_in_test_subdir(tmp_cwd):
         """
     ))
 
-    rt_run('-m', 'pytest', '-s', 'tests')
+    rt_run('--no-exclude-types', '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "sub" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
     assert "import test_foo" not in output
+
+
+def test_class_name_excluded(tmp_cwd):
+    # The class name is excluded because it comes from a test_ module.
+    # It shouldn't be mock resolved because it doesn't inherit from a non-test module
+    (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
+        def f(x):
+            pass
+
+        """
+    ))
+
+    (tmp_cwd / "tests").mkdir()
+    (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
+        from m import f
+
+        class C:
+            pass
+
+        def test_foo():
+            f(C())
+        """
+    ))
+
+    rt_run('-m', 'pytest', '-s', 'tests')
+    output = (tmp_cwd / "m.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(x) -> None: ...
+    """)
+
+
+def test_mock_class_inherited(tmp_cwd):
+    (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+
+        def f(x):
+            pass
+
+        """
+    ))
+
+
+    (tmp_cwd / "tests").mkdir()
+    (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
+        import m
+
+        class Mock(m.C):
+            pass
+
+        class Mock2(Mock):
+            pass
+
+        def test_foo():
+            m.f(Mock2())
+        """
+    ))
+
+    rt_run('-m', 'pytest', '-s', 'tests')
+    output = (tmp_cwd / "m.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(x: C) -> None: ...
+    """)
+
+
+def test_mock_with_class_spec(tmp_cwd):
+    (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+
+        def f(x): pass
+        def g(x): pass
+
+        """
+    ))
+
+    (tmp_cwd / "tests").mkdir()
+    (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
+        import m
+        import unittest.mock as mock
+
+        def test_foo():
+            m.f(mock.Mock(spec=m.C))
+
+        def test_bar():
+            m.g(mock.create_autospec(m.C))
+        """
+    ))
+
+    rt_run('-m', 'pytest', '-s', 'tests')
+    output = (tmp_cwd / "m.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(x: C) -> None: ...
+    """)
+
+    assert get_function(code, 'g') == textwrap.dedent(f"""\
+        def g(x: C) -> None: ...
+    """)
+
+
+def test_mock_with_obj_spec(tmp_cwd):
+    (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+
+        def f(x): pass
+        """
+    ))
+
+    (tmp_cwd / "tests").mkdir()
+    (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
+        import m
+        import unittest.mock as mock
+
+        def test_foo():
+            m.f(mock.Mock(spec=m.C()))
+        """
+    ))
+
+    rt_run('-m', 'pytest', '-s', 'tests')
+    output = (tmp_cwd / "m.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(x: C) -> None: ...
+    """)
 
 
 @pytest.mark.xfail(reason="Doesn't work yet")
@@ -2323,6 +2455,7 @@ def test_arg_parsing(tmp_cwd):
 
 
 def test_mocked_function():
+    # FIXME what does this test??
     Path("t.py").write_text(textwrap.dedent("""\
         from unittest.mock import create_autospec
 
@@ -3423,7 +3556,8 @@ def test_object_with_empty_dir():
 
 
 @pytest.mark.parametrize("python_version", ["3.10", "3.11"])
-def test_empty_container(python_version):
+@pytest.mark.parametrize("opt", ['--use-typing-never', '--no-use-typing-never'])
+def test_empty_container(python_version, opt):
     t = textwrap.dedent("""\
         def f(x):
             return len(x)
@@ -3434,11 +3568,11 @@ def test_empty_container(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', f'--python-version={python_version}', 't.py')
+    rt_run('--no-sampling', opt, f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    if python_version == "3.11":
+    if python_version == "3.11" and opt == '--use-typing-never':
         assert get_function(code, 'f') == textwrap.dedent("""\
             def f(x: dict[Never, Never]|list[Never]) -> int: ...
         """)
@@ -3446,6 +3580,26 @@ def test_empty_container(python_version):
         assert get_function(code, 'f') == textwrap.dedent("""\
             def f(x: dict[Any, Any]|list[Any]) -> int: ...
         """)
+
+
+def test_empty_and_nonempty_container():
+    t = textwrap.dedent("""\
+        def f(x):
+            return len(x)
+
+        f([])
+        f([1])
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--no-sampling', '--use-typing-never', f'--python-version=3.11', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: list[int]) -> int: ...
+    """)
 
 
 def test_container_is_modified():

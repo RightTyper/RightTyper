@@ -11,12 +11,10 @@ from righttyper.righttyper_types import (
     FunctionName,
 )
 from righttyper.righttyper_utils import (
-    debug_print,
     source_to_module_fqn
 )
 from righttyper.unified_transformer import UnifiedTransformer
-
-logger = logging.getLogger("righttyper")
+from righttyper.logger import logger
 
 SignatureChanges = tuple[Filename, list[tuple[FunctionName, str, str]]]
 
@@ -87,7 +85,7 @@ def process_file(
     only_update_annotations: bool = False,
     inline_generics: bool = False,
 ) -> SignatureChanges:
-    debug_print(f"process_file: {filename}")
+    logger.debug(f"process_file: {filename}")
     try:
         with open(filename, "r") as file:
             source = file.read()

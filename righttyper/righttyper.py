@@ -25,7 +25,8 @@ import typing
 from typing import (
     Any,
     TextIO,
-    Self
+    Self,
+    Sequence
 )
 
 import click
@@ -73,7 +74,6 @@ from righttyper.typeinfo import (
 from righttyper.righttyper_utils import (
     TOOL_ID,
     TOOL_NAME,
-    debug_print_set_level,
     skip_this_file,
     source_to_module_fqn,
     get_main_module_fqn,
@@ -85,8 +85,8 @@ from righttyper.righttyper_alarm import (
 )
 
 from righttyper.options import Options, options
+from righttyper.logger import logger
 
-logger = logging.getLogger("righttyper")
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
 PKL_FILE_VERSION = 2
 
@@ -497,12 +497,24 @@ class Observations:
             """Removes uses of typing.Never, replacing them with typing.Any"""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 if node.type_obj is typing.Never:
-                    return TypeInfo.from_type(typing.Any)
+                    return AnyTypeInfo
 
                 return super().visit(node)
 
         if not options.use_typing_never:
             self._transform_types(NeverSayNeverT())
+
+        class TestTypeRemovingT(TypeInfo.Transformer):
+            """Removes types whose module name starts with given prefixes."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                fullname = node.fullname()
+                if any(fullname.startswith(p) for p in options.exclude_types):
+                    return AnyTypeInfo
+
+                return super().visit(node)
+
+        if options.exclude_types:
+            self._transform_types(TestTypeRemovingT())
 
         class TypingUnionT(TypeInfo.Transformer):
             """Replaces types.UnionType with typing.Union and typing.Optional."""
@@ -992,7 +1004,7 @@ def process_collected(collected: dict[str, Any]):
                 entry['functions'][funcid.func_name]['new_sig'] = changes[1]
 
         with open(f"{TOOL_NAME}.json", "w") as f:
-            json.dump(data, f)
+            json.dump(data, f, indent=2)
 
     else:
         with open(f"{TOOL_NAME}.out", "w+") as f:
@@ -1060,15 +1072,6 @@ def process_files(
     return sig_changes
 
 
-FORMAT = "[%(filename)s:%(lineno)s] %(message)s"
-logging.basicConfig(
-    filename="righttyper.log",
-    level=logging.INFO,
-    format=FORMAT,
-)
-logger = logging.getLogger("righttyper")
-
-
 class CheckModule(click.ParamType):
     name = "module"
 
@@ -1101,16 +1104,16 @@ def parse_none_or_ge_zero(value) -> int|None:
     }
 )
 @click.option(
-    "--verbose",
+    "--debug",
     is_flag=True,
-    help="Print diagnostic information.",
+    help="Include diagnostic information in log file.",
 )
 @click.version_option(
     version=importlib.metadata.version(TOOL_NAME),
     prog_name=TOOL_NAME,
 )
-def cli(verbose: bool):
-    debug_print_set_level(verbose)
+def cli(debug: bool):
+    logger.setLevel(logging.DEBUG)
 
 
 @cli.command(
@@ -1137,11 +1140,13 @@ def cli(verbose: bool):
 @click.option(
     "--include-files",
     type=str,
+    metavar="PATTERN",
     help="Process only files matching the given pattern.",
 )
 @click.option(
     "--include-functions",
     multiple=True,
+    metavar="PATTERN",
     help="Only annotate functions matching the given pattern.",
 )
 @click.option(
@@ -1231,6 +1236,7 @@ def cli(verbose: bool):
     default="none",
     callback=lambda ctx, param, value: parse_none_or_ge_zero(value),
     show_default=True,
+    metavar="[INTEGER|none]",
     help="Maximum depth (types within types) for generic types; 'none' to disable.",
 )
 @click.option(
@@ -1244,7 +1250,8 @@ def cli(verbose: bool):
     "--use-top-pct",
     type=click.IntRange(1, 100),
     default=options.use_top_pct,
-    help="Only use the X% most common call traces.",
+    metavar="PCT",
+    help="Only use the PCT% most common call traces.",
 )
 @click.option(
     "--only-collect",
@@ -1252,6 +1259,35 @@ def cli(verbose: bool):
     is_flag=True,
     help=f"Rather than immediately process collect data, save it to {PKL_FILE_NAME}." +\
           " You can later process using RightTyper's \"process\" command."
+)
+@click.option(
+    "--exclude-types",
+    multiple=True,
+    default=options.exclude_types,
+    metavar="TYPE_NAME",
+    help="""Exclude or replace with "typing.Any" types whose full name starts with the given string. Can be passed multiple times."""
+)
+@click.option(
+    "--no-exclude-types",
+    is_flag=True,
+    help="Do not exclude types."
+)
+@click.option(
+    "--resolve-mocks",
+    multiple=True,
+    default=options.resolve_mocks,
+    metavar="TYPE_NAME",
+    help="Attempt to resolve mock types whose full name starts with the given string to non-test types. Can be passed multiple times."
+)
+@click.option(
+    "--no-resolve-mocks",
+    is_flag=True,
+    help="Do not attempt to resolve mock types."
+)
+@click.option(
+    "--use-typing-never/--no-use-typing-never",
+    default=True,
+    help="Whether to emit typing.Never.",
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
@@ -1278,7 +1314,12 @@ def run(
     python_version: tuple[int, ...],
     use_top_pct: int,
     only_collect: bool,
-    type_depth_limit: int|None
+    type_depth_limit: int|None,
+    exclude_types: tuple[str],
+    no_exclude_types: bool,
+    resolve_mocks: tuple[str],
+    no_resolve_mocks: bool,
+    use_typing_never: bool
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
@@ -1335,10 +1376,12 @@ def run(
     options.container_sample_limit = container_sample_limit
     options.use_typing_union = python_version < (3, 10)
     options.use_typing_self = python_version >= (3, 11)
-    options.use_typing_never = python_version >= (3, 11)
+    options.use_typing_never = python_version >= (3, 11) and use_typing_never
     options.inline_generics = python_version >= (3, 12)
     options.use_top_pct = use_top_pct
     options.type_depth_limit = type_depth_limit
+    options.exclude_types = () if no_exclude_types else exclude_types
+    options.resolve_mocks = () if no_resolve_mocks else resolve_mocks
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)

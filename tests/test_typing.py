@@ -34,7 +34,9 @@ class IterableClass(abc.Iterable):
 class MyGeneric[A, B](dict): pass
 
 
-def test_get_value_type():
+def test_get_value_type(monkeypatch):
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
+
     assert NoneTypeInfo is rt_get_value_type(None)
 
     assert "bool" == get_value_type(True)
@@ -224,7 +226,9 @@ def test_non_array_with_dtype():
 class NamedTupleClass:
     P = namedtuple('P', [])
 
-def test_get_value_type_namedtuple_nonlocal():
+def test_get_value_type_namedtuple_nonlocal(monkeypatch):
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
+
     # namedtuple's __qualname__ also doesn't contain the enclosing class name...
     assert f"{__name__}.NamedTupleClass.P" == get_value_type(NamedTupleClass.P())
 
@@ -234,7 +238,9 @@ class Decision(Enum):
     MAYBE = 1
     YES = 2
 
-def test_get_value_type_enum():
+def test_get_value_type_enum(monkeypatch):
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
+
     assert f"{__name__}.Decision" == get_value_type(Decision.MAYBE)
 
 
@@ -403,7 +409,9 @@ def test_merged_types_generics():
     ))
 
 
-def test_merged_types_superclass():
+def test_merged_types_superclass(monkeypatch):
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
+
     class A: pass
     class B(A): pass
     class C(B): pass
@@ -454,7 +462,9 @@ def name(t: type):
     return f"{t.__module__}.{t.__qualname__}"
 
 
-def test_merged_types_superclass_checks_attributes():
+def test_merged_types_superclass_checks_attributes(monkeypatch):
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
+
     class A: pass
     class B(A):
         def foo(self): pass
@@ -480,7 +490,9 @@ def test_merged_types_superclass_checks_attributes():
     ))
 
 
-def test_merged_types_superclass_dunder_matters():
+def test_merged_types_superclass_dunder_matters(monkeypatch):
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
+
     class A: pass
     class B(A):
         pass
@@ -505,7 +517,9 @@ def test_merged_types_superclass_bare_type():
     ))
 
 
-def test_merged_types_superclass_multiple_superclasses():
+def test_merged_types_superclass_multiple_superclasses(monkeypatch):
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
+
     class A: pass
     class B(A):
         def foo(self): pass
@@ -643,6 +657,17 @@ def test_from_set_with_never():
         TypeInfo.from_type(int, module=''),
         TypeInfo.from_type(str, module=''),
     )
+
+
+def test_from_set_with_any():
+    t = TypeInfo.from_set({
+            TypeInfo.from_type(Any),
+            TypeInfo.from_type(int, module=''),
+            TypeInfo.from_type(str, module='')
+        })
+
+    assert t.fullname() == "typing.Any"
+    assert t.args == ()
 
 
 def test_uniontype():

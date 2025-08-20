@@ -38,7 +38,7 @@ from righttyper.righttyper_types import (
 )
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 from righttyper.options import options
-
+from righttyper.logger import logger
 
 @cache
 def get_jaxtyping():
@@ -415,7 +415,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
 
     if depth > 255:
         # We have likely fallen into an infinite recursion; fail gracefully
-        print(f"Warning: RightTyper failed to compute the type of {obj}.")
+        logger.error(f"RightTyper failed to compute the type of {obj}.")
         return UnknownTypeInfo
 
     # Some builtin types are available from the "builtins" module,
@@ -445,7 +445,22 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
         return TypeInfo(obj.__module__, t_name, args=(get_type_name(obj.type, depth+1),))
 
     if (module_and_name := search_type(obj)):
-        return TypeInfo(*module_and_name, type_obj=obj)
+        module, name = module_and_name
+
+        # Check if this is a mock object.
+        fullname = module + "." + name
+        if any(fullname.startswith(p) for p in options.resolve_mocks):
+            logger.debug(f"Attempting to resolve mock {fullname}")
+            import unittest.mock as mock
+
+            # We conservatively only recognize classes that have a single base (besides any Mock ones).
+            # If the only base is 'object', we couldn't find a non-mock module base.
+            non_unittest_bases = [b for b in obj.__bases__ if b not in (mock.Mock, mock.MagicMock)]
+            if len(non_unittest_bases) == 1 and non_unittest_bases != [object,]:
+                if (ti := get_type_name(*non_unittest_bases, depth=depth+1)) is not UnknownTypeInfo:
+                    return ti
+
+        return TypeInfo(module, name, type_obj=obj)
 
     return UnknownTypeInfo
 
@@ -632,15 +647,18 @@ def _handle_set(value: Any, depth: int) -> TypeInfo:
 def _handle_int_iter(value: Any, depth: int) -> TypeInfo:
     return TypeInfo("typing", "Iterator", args=(TypeInfo.from_type(int, module=""),))
 
+
 def _handle_dict_keyiter(value: Any, depth: int) -> TypeInfo|None:
     if type(d := _first_referent(value)) is dict:
         return TypeInfo("typing", "Iterator", args=(get_value_type(d, depth+1).args[0],))
     return None
 
+
 def _handle_dict_valueiter(value: Any, depth: int) -> TypeInfo|None:
     if type(d := _first_referent(value)) is dict:
         return TypeInfo("typing", "Iterator", args=(get_value_type(d, depth+1).args[1],))
     return None
+
 
 def _handle_dict_itemiter(value: Any, depth: int) -> TypeInfo|None:
     if type(d := _first_referent(value)) is dict:
@@ -649,15 +667,18 @@ def _handle_dict_itemiter(value: Any, depth: int) -> TypeInfo|None:
                )
     return None
 
+
 def _handle_list_iter(value: Any, depth: int) -> TypeInfo|None:
     if type(l := _first_referent(value)) is list:
         return TypeInfo("typing", "Iterator", args=get_value_type(l, depth+1).args)
     return None
 
+
 def _handle_set_iter(value: Any, depth: int) -> TypeInfo|None:
     if type(s := _first_referent(value)) is set:
         return TypeInfo("typing", "Iterator", args=get_value_type(s, depth+1).args)
     return None
+
 
 def _handle_tuple_iter(value: Any, depth: int) -> TypeInfo|None:
     if type(t := _first_referent(value)) is tuple:
@@ -668,6 +689,7 @@ def _handle_tuple_iter(value: Any, depth: int) -> TypeInfo|None:
             args = (TypeInfo.from_type(typing.Never),)
         return TypeInfo("typing", "Iterator", args=args)
     return None
+
 
 def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
     if (
@@ -696,6 +718,7 @@ def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
         return TypeInfo("typing", "Iterator")
     return None
 
+
 def _handle_zip(value: Any, depth: int) -> TypeInfo|None:
     if (
         type(t := _first_referent(value)) is tuple
@@ -713,6 +736,7 @@ def _handle_zip(value: Any, depth: int) -> TypeInfo|None:
         return TypeInfo("typing", "Iterator", args=args)
     return None
 
+
 def _handle_enumerate(value: Any, depth: int) -> TypeInfo|None:
     if (
         (l := _first_referent(value)) is not None
@@ -727,6 +751,7 @@ def _handle_enumerate(value: Any, depth: int) -> TypeInfo|None:
 
         return TypeInfo.from_type(enumerate, module="", args=args)
     return None
+
 
 _type2handler: dict[type, Callable[[Any, int], TypeInfo|None]] = {
     NoneType: lambda value, depth: NoneTypeInfo,
@@ -768,24 +793,30 @@ def get_value_type(
     depth: int = 0
 ) -> TypeInfo:
     """
-    get_value_type takes a value (an instance) as input and returns a string representing its type.
+    get_value_type takes a value (an instance) as input and returns a TypeInfo representing its type.
 
     If the value is a collection, it randomly selects an element (or key-value pair) and determines their types.
     If the value is a tuple, it determines the types of all elements in the tuple.
-
-    For other types, it returns the name of the type.
     """
     if depth > 255:
         # We have likely fallen into an infinite recursion; fail gracefully
-        print(f"Warning: RightTyper failed to compute the type of {value}.")
+        logger.error(f"RightTyper failed to compute the type of {value}.")
         return UnknownTypeInfo
 
     t: type = type(value)
     args: tuple[TypeInfo|str|ellipsis, ...]
 
-    if (h := _type2handler.get(type(value))):
+    if (h := _type2handler.get(t)):
         if (ti := h(value, depth)) is not None:
             return ti
+
+    # Is this a spec-based mock?
+    if (
+        (mock_spec := inspect.getattr_static(value, "_spec_class", None))
+        and any((t.__module__ + "." + t.__qualname__).startswith(p) for p in options.resolve_mocks)
+    ):
+        logger.debug(f"Resolving spec-based mock {t.__module__}.{t.__qualname__}")
+        return get_type_name(mock_spec)
 
     # using getattr or hasattr here can lead to problems when __getattr__ is overridden
     if (orig := inspect.getattr_static(value, "__orig_class__", None)):

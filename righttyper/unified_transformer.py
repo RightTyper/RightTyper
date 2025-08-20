@@ -425,6 +425,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         """Processes a parameter, either returning an updated parameter or the original one."""
         if self.only_update_annotations and parameter.annotation is None:
             return parameter
+
         if (
             not (parameter.annotation is None or self.override_annotations)
             or (annotation := next(
@@ -439,11 +440,13 @@ class UnifiedTransformer(cst.CSTTransformer):
         if not self._is_valid(annotation):
             return parameter
 
-        annotation_expr = self._get_annotation_expr(annotation)
-
-        new_par = parameter.with_changes(
-            annotation=cst.Annotation(annotation=annotation_expr)
-        )
+        if annotation.fullname() == "typing.Any":
+            new_par = parameter.with_changes(annotation=None)
+        else:
+            annotation_expr = self._get_annotation_expr(annotation)
+            new_par = parameter.with_changes(
+                annotation=cst.Annotation(annotation=annotation_expr)
+            )
 
         # remove per-parameter type hint comment for non-last parameter
         if ((comment := _get_str_attr(new_par, "comma.whitespace_after.first_line.comment.value"))
@@ -577,11 +580,15 @@ class UnifiedTransformer(cst.CSTTransformer):
                 )
                 if should_update_ret:
                     if self._is_valid(ann.retval):
-                        annotation_expr = self._get_annotation_expr(ann.retval)
 
-                        updated_node = updated_node.with_changes(
-                            returns=cst.Annotation(annotation=annotation_expr),
-                        )
+                        if ann.retval.fullname() == "typing.Any":
+                            updated_node = updated_node.with_changes(returns=None)
+                        else:
+                            annotation_expr = self._get_annotation_expr(ann.retval)
+
+                            updated_node = updated_node.with_changes(
+                                returns=cst.Annotation(annotation=annotation_expr),
+                            )
 
                         # remove "(...) -> retval"-style type hint comment
                         if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
