@@ -35,7 +35,7 @@ class MyGeneric[A, B](dict): pass
 
 
 def test_get_value_type(monkeypatch):
-    monkeypatch.setattr(options.options, 'resolve_mocks_from', [])
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
 
     assert NoneTypeInfo is rt_get_value_type(None)
 
@@ -227,7 +227,7 @@ class NamedTupleClass:
     P = namedtuple('P', [])
 
 def test_get_value_type_namedtuple_nonlocal(monkeypatch):
-    monkeypatch.setattr(options.options, 'resolve_mocks_from', [])
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
 
     # namedtuple's __qualname__ also doesn't contain the enclosing class name...
     assert f"{__name__}.NamedTupleClass.P" == get_value_type(NamedTupleClass.P())
@@ -239,7 +239,7 @@ class Decision(Enum):
     YES = 2
 
 def test_get_value_type_enum(monkeypatch):
-    monkeypatch.setattr(options.options, 'resolve_mocks_from', [])
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
 
     assert f"{__name__}.Decision" == get_value_type(Decision.MAYBE)
 
@@ -410,7 +410,7 @@ def test_merged_types_generics():
 
 
 def test_merged_types_superclass(monkeypatch):
-    monkeypatch.setattr(options.options, 'resolve_mocks_from', [])
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
 
     class A: pass
     class B(A): pass
@@ -463,7 +463,7 @@ def name(t: type):
 
 
 def test_merged_types_superclass_checks_attributes(monkeypatch):
-    monkeypatch.setattr(options.options, 'resolve_mocks_from', [])
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
 
     class A: pass
     class B(A):
@@ -491,7 +491,7 @@ def test_merged_types_superclass_checks_attributes(monkeypatch):
 
 
 def test_merged_types_superclass_dunder_matters(monkeypatch):
-    monkeypatch.setattr(options.options, 'resolve_mocks_from', [])
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
 
     class A: pass
     class B(A):
@@ -518,7 +518,7 @@ def test_merged_types_superclass_bare_type():
 
 
 def test_merged_types_superclass_multiple_superclasses(monkeypatch):
-    monkeypatch.setattr(options.options, 'resolve_mocks_from', [])
+    monkeypatch.setattr(options.options, 'resolve_mocks', ())
 
     class A: pass
     class B(A):

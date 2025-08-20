@@ -106,9 +106,9 @@ Options:
   --all-files                     Process any files encountered, including
                                   libraries (except for those specified in
                                   --include-files)
-  --include-files TEXT            Process only files matching the given
+  --include-files PATTERN         Process only files matching the given
                                   pattern.
-  --include-functions TEXT        Only annotate functions matching the given
+  --include-functions PATTERN     Only annotate functions matching the given
                                   pattern.
   --infer-shapes                  Produce tensor shape annotations (compatible
                                   with jaxtyping).
@@ -143,18 +143,28 @@ Options:
   --container-sample-limit INTEGER
                                   Number of container elements to sample.
                                   [default: 1000]
-  --type-depth-limit TEXT         Maximum depth (types within types) for
+  --type-depth-limit [INTEGER|none]
+                                  Maximum depth (types within types) for
                                   generic types; 'none' to disable.  [default:
                                   none]
   --python-version [3.9|3.10|3.11|3.12|3.13]
                                   Python version for which to emit
                                   annotations.  [default: 3.12]
-  --use-top-pct INTEGER RANGE     Only use the X% most common call traces.
+  --use-top-pct PCT               Only use the PCT% most common call traces.
                                   [default: 80; 1<=x<=100]
   --only-collect                  Rather than immediately process collect
                                   data, save it to righttyper.rt. You can
                                   later process using RightTyper's "process"
                                   command.
+  --exclude-types TYPE_NAME       Exclude or replace with "typing.Any" types
+                                  whose full name starts with the given
+                                  string; pass "" to clear/disable.  [default:
+                                  pytest., _pytest., py.test., test_]
+  --resolve-mocks TYPE_NAME       Attempt to resolve mock types whose full
+                                  name starts with the given string to non-
+                                  test types; pass "" to clear/disable.
+                                  [default: test_, unittest.mock.]
   --help                          Show this message and exit.
+
 ```
 

@@ -86,8 +86,8 @@ from righttyper.righttyper_alarm import (
 )
 
 from righttyper.options import Options, options
+from righttyper.logger import logger
 
-logger = logging.getLogger("righttyper")
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
 PKL_FILE_VERSION = 2
 
@@ -508,12 +508,13 @@ class Observations:
         class TestTypeRemovingT(TypeInfo.Transformer):
             """Removes types whose module name starts with given prefixes."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
-                if any(node.module.startswith(p) for p in options.exclude_types_from):
+                fullname = node.fullname()
+                if any(fullname.startswith(p) for p in options.exclude_types):
                     return AnyTypeInfo
 
                 return super().visit(node)
 
-        if options.exclude_types_from:
+        if options.exclude_types:
             self._transform_types(TestTypeRemovingT())
 
         class TypingUnionT(TypeInfo.Transformer):
@@ -1004,7 +1005,7 @@ def process_collected(collected: dict[str, Any]):
                 entry['functions'][funcid.func_name]['new_sig'] = changes[1]
 
         with open(f"{TOOL_NAME}.json", "w") as f:
-            json.dump(data, f)
+            json.dump(data, f, indent=2)
 
     else:
         with open(f"{TOOL_NAME}.out", "w+") as f:
@@ -1072,15 +1073,6 @@ def process_files(
     return sig_changes
 
 
-FORMAT = "[%(filename)s:%(lineno)s] %(message)s"
-logging.basicConfig(
-    filename="righttyper.log",
-    level=logging.INFO,
-    format=FORMAT,
-)
-logger = logging.getLogger("righttyper")
-
-
 class CheckModule(click.ParamType):
     name = "module"
 
@@ -1125,6 +1117,16 @@ def cli(verbose: bool):
     debug_print_set_level(verbose)
 
 
+def list_and_clear_callback(ctx, param, values):
+    result = []
+    for v in values:
+        if v == "":
+            result = []   # clear everything so far
+        else:
+            result.append(v)
+    return tuple(result)
+
+
 @cli.command(
     context_settings={
         "allow_extra_args": True,
@@ -1149,11 +1151,13 @@ def cli(verbose: bool):
 @click.option(
     "--include-files",
     type=str,
+    metavar="PATTERN",
     help="Process only files matching the given pattern.",
 )
 @click.option(
     "--include-functions",
     multiple=True,
+    metavar="PATTERN",
     help="Only annotate functions matching the given pattern.",
 )
 @click.option(
@@ -1243,6 +1247,7 @@ def cli(verbose: bool):
     default="none",
     callback=lambda ctx, param, value: parse_none_or_ge_zero(value),
     show_default=True,
+    metavar="[INTEGER|none]",
     help="Maximum depth (types within types) for generic types; 'none' to disable.",
 )
 @click.option(
@@ -1256,7 +1261,8 @@ def cli(verbose: bool):
     "--use-top-pct",
     type=click.IntRange(1, 100),
     default=options.use_top_pct,
-    help="Only use the X% most common call traces.",
+    metavar="PCT",
+    help="Only use the PCT% most common call traces.",
 )
 @click.option(
     "--only-collect",
@@ -1266,30 +1272,20 @@ def cli(verbose: bool):
           " You can later process using RightTyper's \"process\" command."
 )
 @click.option(
-    "--no-exclude-types",
-    "exclude_types_from",
-    flag_value=[],
-    show_default=False,
-    help="Clears the list of module name prefixes whose types are excluded.",
-)
-@click.option(
-    "--exclude-types-from",
+    "--exclude-types",
     multiple=True,
-    default=options.exclude_types_from,
-    help="""Prefixes for module name prefixes whose types are omitted or replaced with "typing.Any"."""
+    default=options.exclude_types,
+    callback=list_and_clear_callback,
+    metavar="TYPE_NAME",
+    help="""Exclude or replace with "typing.Any" types whose full name starts with the given string; pass "" to clear/disable."""
 )
 @click.option(
-    "--no-resolve-mocks",
-    "resolve_mocks_from",
-    flag_value=[],
-    show_default=False,
-    help="Clears the list of module name prefixes whose types are subject to mock type resolution.",
-)
-@click.option(
-    "--resolve-mocks-from",
+    "--resolve-mocks",
     multiple=True,
-    default=options.resolve_mocks_from,
-    help="""Prefixes for module name prefixes whose types are subject to mock type resolution."""
+    default=options.resolve_mocks,
+    callback=list_and_clear_callback,
+    metavar="TYPE_NAME",
+    help="""Attempt to resolve mock types whose full name starts with the given string to non-test types; pass "" to clear/disable."""
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
@@ -1317,8 +1313,8 @@ def run(
     use_top_pct: int,
     only_collect: bool,
     type_depth_limit: int|None,
-    exclude_types_from: Sequence[str],
-    resolve_mocks_from: Sequence[str]
+    exclude_types: tuple[str],
+    resolve_mocks: tuple[str]
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
@@ -1379,8 +1375,8 @@ def run(
     options.inline_generics = python_version >= (3, 12)
     options.use_top_pct = use_top_pct
     options.type_depth_limit = type_depth_limit
-    options.exclude_types_from = exclude_types_from
-    options.resolve_mocks_from = resolve_mocks_from
+    options.exclude_types = exclude_types
+    options.resolve_mocks = resolve_mocks
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)

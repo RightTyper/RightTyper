@@ -7,13 +7,13 @@ from functools import cache
 from typing import Any, Final
 from pathlib import Path
 
+from righttyper.logger import logger
+
 
 TOOL_ID: int = 3
 TOOL_NAME: Final[str] = "righttyper"
 _SAMPLING_INTERVAL = 0.01
 _DEBUG_PRINT: bool = False
-
-logger = logging.getLogger("righttyper")
 
 
 def glob_translate_to_regex(r):

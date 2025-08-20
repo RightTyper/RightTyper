@@ -15,8 +15,7 @@ from righttyper.righttyper_utils import (
     source_to_module_fqn
 )
 from righttyper.unified_transformer import UnifiedTransformer
-
-logger = logging.getLogger("righttyper")
+from righttyper.logger import logger
 
 SignatureChanges = tuple[Filename, list[tuple[FunctionName, str, str]]]
 

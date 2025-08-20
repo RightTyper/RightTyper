@@ -38,7 +38,7 @@ from righttyper.righttyper_types import (
 )
 from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
 from righttyper.options import options
-
+from righttyper.logger import logger
 
 @cache
 def get_jaxtyping():
@@ -415,7 +415,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
 
     if depth > 255:
         # We have likely fallen into an infinite recursion; fail gracefully
-        print(f"Warning: RightTyper failed to compute the type of {obj}.")
+        logger.error(f"RightTyper failed to compute the type of {obj}.")
         return UnknownTypeInfo
 
     # Some builtin types are available from the "builtins" module,
@@ -448,7 +448,9 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
         module, name = module_and_name
 
         # Check if this is a mock object.
-        if any(module.startswith(p) for p in options.resolve_mocks_from):
+        fullname = module + "." + name
+        if any(fullname.startswith(p) for p in options.resolve_mocks):
+            logger.debug(f"Attempting to resolve mock {fullname}")
             import unittest.mock as mock
 
             # We conservatively only recognize classes that have a single base (besides any Mock ones).
@@ -798,21 +800,23 @@ def get_value_type(
     """
     if depth > 255:
         # We have likely fallen into an infinite recursion; fail gracefully
-        print(f"Warning: RightTyper failed to compute the type of {value}.")
+        logger.error(f"RightTyper failed to compute the type of {value}.")
         return UnknownTypeInfo
 
     t: type = type(value)
     args: tuple[TypeInfo|str|ellipsis, ...]
 
-    if (h := _type2handler.get(type(value))):
+    if (h := _type2handler.get(t)):
         if (ti := h(value, depth)) is not None:
             return ti
 
+    print(f"*** {t.__module__}.{t.__qualname__}")
     # Is this a spec-based mock?
     if (
         (mock_spec := inspect.getattr_static(value, "_spec_class", None))
-        and any(t.__module__.startswith(p) for p in options.resolve_mocks_from)
+        and any((t.__module__ + "." + t.__qualname__).startswith(p) for p in options.resolve_mocks)
     ):
+        logger.debug(f"Resolving spec-based mock {t.__module__}.{t.__qualname__}")
         return get_type_name(mock_spec)
 
     # using getattr or hasattr here can lead to problems when __getattr__ is overridden
