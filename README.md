@@ -158,13 +158,18 @@ Options:
                                   command.
   --exclude-types TYPE_NAME       Exclude or replace with "typing.Any" types
                                   whose full name starts with the given
-                                  string; pass "" to clear/disable.  [default:
-                                  pytest., _pytest., py.test., test_]
+                                  string. Can be passed multiple times.
+                                  [default: pytest., _pytest., py.test.,
+                                  test_]
+  --no-exclude-types              Do not exclude types.
   --resolve-mocks TYPE_NAME       Attempt to resolve mock types whose full
                                   name starts with the given string to non-
-                                  test types; pass "" to clear/disable.
+                                  test types. Can be passed multiple times.
                                   [default: test_, unittest.mock.]
+  --no-resolve-mocks              Do not attempt to resolve mock types.
+  --use-typing-never / --no-use-typing-never
+                                  Whether to emit typing.Never.  [default:
+                                  use-typing-never]
   --help                          Show this message and exit.
-
 ```
 

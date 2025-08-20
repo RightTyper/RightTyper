@@ -1116,16 +1116,6 @@ def cli(debug: bool):
     logger.setLevel(logging.DEBUG)
 
 
-def list_and_clear_callback(ctx, param, values):
-    result = []
-    for v in values:
-        if v == "":
-            result = []   # clear everything so far
-        else:
-            result.append(v)
-    return tuple(result)
-
-
 @cli.command(
     context_settings={
         "allow_extra_args": True,
@@ -1274,17 +1264,25 @@ def list_and_clear_callback(ctx, param, values):
     "--exclude-types",
     multiple=True,
     default=options.exclude_types,
-    callback=list_and_clear_callback,
     metavar="TYPE_NAME",
-    help="""Exclude or replace with "typing.Any" types whose full name starts with the given string; pass "" to clear/disable."""
+    help="""Exclude or replace with "typing.Any" types whose full name starts with the given string. Can be passed multiple times."""
+)
+@click.option(
+    "--no-exclude-types",
+    is_flag=True,
+    help="Do not exclude types."
 )
 @click.option(
     "--resolve-mocks",
     multiple=True,
     default=options.resolve_mocks,
-    callback=list_and_clear_callback,
     metavar="TYPE_NAME",
-    help="""Attempt to resolve mock types whose full name starts with the given string to non-test types; pass "" to clear/disable."""
+    help="Attempt to resolve mock types whose full name starts with the given string to non-test types. Can be passed multiple times."
+)
+@click.option(
+    "--no-resolve-mocks",
+    is_flag=True,
+    help="Do not attempt to resolve mock types."
 )
 @click.option(
     "--use-typing-never/--no-use-typing-never",
@@ -1318,7 +1316,9 @@ def run(
     only_collect: bool,
     type_depth_limit: int|None,
     exclude_types: tuple[str],
+    no_exclude_types: bool,
     resolve_mocks: tuple[str],
+    no_resolve_mocks: bool,
     use_typing_never: bool
 ) -> None:
     """Runs a given script or module, collecting type information."""
@@ -1380,8 +1380,8 @@ def run(
     options.inline_generics = python_version >= (3, 12)
     options.use_top_pct = use_top_pct
     options.type_depth_limit = type_depth_limit
-    options.exclude_types = exclude_types
-    options.resolve_mocks = resolve_mocks
+    options.exclude_types = () if no_exclude_types else exclude_types
+    options.resolve_mocks = () if no_resolve_mocks else resolve_mocks
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
