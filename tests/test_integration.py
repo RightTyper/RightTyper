@@ -1236,7 +1236,7 @@ def test_class_name_in_test_subdir(tmp_cwd):
 def test_class_name_excluded(tmp_cwd):
     # The class name is excluded because it comes from a test_ module.
     # It shouldn't be mock resolved because it doesn't inherit from a non-test module
-    (tmp_cwd / "code.py").write_text(textwrap.dedent("""\
+    (tmp_cwd / "mycode.py").write_text(textwrap.dedent("""\
         def f(x):
             pass
 
@@ -1256,7 +1256,7 @@ def test_class_name_excluded(tmp_cwd):
     ))
 
     rt_run('-m', 'pytest', '-s', 'tests')
-    output = (tmp_cwd / "code.py").read_text()
+    output = (tmp_cwd / "mycode.py").read_text()
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent(f"""\
@@ -1265,7 +1265,7 @@ def test_class_name_excluded(tmp_cwd):
 
 
 def test_mock_class_inherited(tmp_cwd):
-    (tmp_cwd / "code.py").write_text(textwrap.dedent("""\
+    (tmp_cwd / "mycode.py").write_text(textwrap.dedent("""\
         class C:
             pass
 
@@ -1292,7 +1292,7 @@ def test_mock_class_inherited(tmp_cwd):
     ))
 
     rt_run('-m', 'pytest', '-s', 'tests')
-    output = (tmp_cwd / "code.py").read_text()
+    output = (tmp_cwd / "mycode.py").read_text()
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent(f"""\
@@ -1301,7 +1301,7 @@ def test_mock_class_inherited(tmp_cwd):
 
 
 def test_mock_with_class_spec(tmp_cwd):
-    (tmp_cwd / "code.py").write_text(textwrap.dedent("""\
+    (tmp_cwd / "mycode.py").write_text(textwrap.dedent("""\
         class C:
             pass
 
@@ -1325,7 +1325,7 @@ def test_mock_with_class_spec(tmp_cwd):
     ))
 
     rt_run('-m', 'pytest', '-s', 'tests')
-    output = (tmp_cwd / "code.py").read_text()
+    output = (tmp_cwd / "mycode.py").read_text()
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent(f"""\
@@ -1338,7 +1338,7 @@ def test_mock_with_class_spec(tmp_cwd):
 
 
 def test_mock_with_obj_spec(tmp_cwd):
-    (tmp_cwd / "code.py").write_text(textwrap.dedent("""\
+    (tmp_cwd / "mycode.py").write_text(textwrap.dedent("""\
         class C:
             pass
 
@@ -1357,7 +1357,7 @@ def test_mock_with_obj_spec(tmp_cwd):
     ))
 
     rt_run('-m', 'pytest', '-s', 'tests')
-    output = (tmp_cwd / "code.py").read_text()
+    output = (tmp_cwd / "mycode.py").read_text()
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent(f"""\
