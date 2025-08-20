@@ -659,6 +659,17 @@ def test_from_set_with_never():
     )
 
 
+def test_from_set_with_any():
+    t = TypeInfo.from_set({
+            TypeInfo.from_type(Any),
+            TypeInfo.from_type(int, module=''),
+            TypeInfo.from_type(str, module='')
+        })
+
+    assert t.fullname() == "typing.Any"
+    assert t.args == ()
+
+
 def test_uniontype():
     assert "int|str" == str(union_ti(int_ti, str_ti))
     assert "types.UnionType" == str(union_ti())

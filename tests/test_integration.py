@@ -3582,6 +3582,26 @@ def test_empty_container(python_version, opt):
         """)
 
 
+def test_empty_and_nonempty_container():
+    t = textwrap.dedent("""\
+        def f(x):
+            return len(x)
+
+        f([])
+        f([1])
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--no-sampling', '--use-typing-never', f'--python-version=3.11', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: list[int]) -> int: ...
+    """)
+
+
 def test_container_is_modified():
     t = textwrap.dedent("""\
         def f(x):
