@@ -810,7 +810,6 @@ def get_value_type(
         if (ti := h(value, depth)) is not None:
             return ti
 
-    print(f"*** {t.__module__}.{t.__qualname__}")
     # Is this a spec-based mock?
     if (
         (mock_spec := inspect.getattr_static(value, "_spec_class", None))

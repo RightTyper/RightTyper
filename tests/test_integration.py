@@ -3556,7 +3556,8 @@ def test_object_with_empty_dir():
 
 
 @pytest.mark.parametrize("python_version", ["3.10", "3.11"])
-def test_empty_container(python_version):
+@pytest.mark.parametrize("opt", ['--use-typing-never', '--no-use-typing-never'])
+def test_empty_container(python_version, opt):
     t = textwrap.dedent("""\
         def f(x):
             return len(x)
@@ -3567,11 +3568,11 @@ def test_empty_container(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', f'--python-version={python_version}', 't.py')
+    rt_run('--no-sampling', opt, f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    if python_version == "3.11":
+    if python_version == "3.11" and opt == '--use-typing-never':
         assert get_function(code, 'f') == textwrap.dedent("""\
             def f(x: dict[Never, Never]|list[Never]) -> int: ...
         """)

@@ -1287,6 +1287,11 @@ def list_and_clear_callback(ctx, param, values):
     metavar="TYPE_NAME",
     help="""Attempt to resolve mock types whose full name starts with the given string to non-test types; pass "" to clear/disable."""
 )
+@click.option(
+    "--use-typing-never/--no-use-typing-never",
+    default=True,
+    help="Whether to emit typing.Never.",
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
     script: str,
@@ -1314,7 +1319,8 @@ def run(
     only_collect: bool,
     type_depth_limit: int|None,
     exclude_types: tuple[str],
-    resolve_mocks: tuple[str]
+    resolve_mocks: tuple[str],
+    use_typing_never: bool
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
@@ -1371,7 +1377,7 @@ def run(
     options.container_sample_limit = container_sample_limit
     options.use_typing_union = python_version < (3, 10)
     options.use_typing_self = python_version >= (3, 11)
-    options.use_typing_never = python_version >= (3, 11)
+    options.use_typing_never = python_version >= (3, 11) and use_typing_never
     options.inline_generics = python_version >= (3, 12)
     options.use_top_pct = use_top_pct
     options.type_depth_limit = type_depth_limit
