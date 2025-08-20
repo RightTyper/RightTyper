@@ -10,7 +10,8 @@ from righttyper.righttyper_types import (
     ArgumentName,
     TypeInfo,
     NoneTypeInfo,
-    FuncAnnotation
+    FuncAnnotation,
+    AnyTypeInfo
 )
 from righttyper.righttyper_runtime import get_type_name
 import typing
@@ -879,7 +880,7 @@ def test_existing_typing_imports():
                     [
                         (ArgumentName('x'), TypeInfo.from_type(ast.If))
                     ],
-                    TypeInfo(module='typing', name='Any')
+                    TypeInfo(module='typing', name='List')
                 ),
             },
             override_annotations=False,
@@ -890,7 +891,7 @@ def test_existing_typing_imports():
 
     code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: "ast.If") -> Any: ...
+        def foo(x: "ast.If") -> List: ...
     """)
 
     assert get_if_type_checking(code) == textwrap.dedent("""\
@@ -902,7 +903,7 @@ def test_existing_typing_imports():
 
     code_str = str(code.code)
     assert code_str.startswith(textwrap.dedent("""\
-        from typing import TYPE_CHECKING, Any
+        from typing import TYPE_CHECKING, List
         if TYPE_CHECKING:
             import m
     """))
@@ -930,7 +931,7 @@ def test_inserts_imports_after_docstring_and_space():
                     [
                         (ArgumentName('x'), TypeInfo.from_type(ast.If))
                     ],
-                    TypeInfo(module='typing', name='Any')
+                    TypeInfo(module='typing', name='List')
                 ),
             },
             override_annotations=False,
@@ -941,7 +942,7 @@ def test_inserts_imports_after_docstring_and_space():
 
     code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: ast.If) -> Any: ...
+        def foo(x: ast.If) -> List: ...
     """)
 
     print(code.code)
@@ -959,7 +960,7 @@ def test_inserts_imports_after_docstring_and_space():
 
 
         from __future__ import annotations
-        from typing import TYPE_CHECKING, Any
+        from typing import TYPE_CHECKING, List
         if TYPE_CHECKING:
             import ast
     """))
@@ -2088,4 +2089,33 @@ def test_overload_aliased():
                 return "hello"
             elif isinstance(bar, str):
                 return 2
+        """).strip()
+
+
+def test_dont_annotate_with_any():
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(bar: int) -> float:
+            ...
+    """))
+    foo = get_funcid('foo.py', code, 'foo')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: FuncAnnotation(
+                    [
+                        (ArgumentName("bar"), AnyTypeInfo),
+                    ],
+                    AnyTypeInfo,
+                ),},
+            override_annotations=True,
+            only_update_annotations=False,
+            inline_generics=False,
+            module_name='foo'
+        )
+
+    code = t.transform_code(code)
+    function = get_function(code, "foo")
+    assert function.strip() == textwrap.dedent("""
+        def foo(bar):
+            ...
         """).strip()

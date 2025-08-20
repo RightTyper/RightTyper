@@ -1260,7 +1260,7 @@ def test_class_name_excluded(tmp_cwd):
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent(f"""\
-        def f(x: Any) -> None: ...
+        def f(x) -> None: ...
     """)
 
 
