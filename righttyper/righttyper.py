@@ -331,11 +331,20 @@ class Observations:
     def _transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
 
-        for trace_counter in self.traces.values():
+        for code_id, trace_counter in self.traces.items():
             for trace, count in list(trace_counter.items()):
                 trace_prime = tuple(tr.visit(t) for t in trace)
                 # Use identity rather than ==, as only non-essential attributes may have changed
                 if any(old is not new for old, new in zip(trace, trace_prime)):
+                    if logger.level == logging.DEBUG:
+                        func_info = self.functions_visited.get(code_id, None)
+                        logger.debug(
+                            "Transformed " +
+                            (func_info.func_id.func_name if func_info else "?") +
+                            str(tuple(str(t) for t in trace)) +
+                            " -> " +
+                            str(tuple(str(t) for t in trace_prime))
+                        )
                     del trace_counter[trace]
                     trace_counter[trace_prime] = count
 
@@ -646,13 +655,7 @@ def enter_handler(code: CodeType, offset: int) -> Any:
     Process the function entry point, perform monitoring related operations,
     and manage the profiling of function execution.
     """
-    if should_skip_function(
-        code,
-        options.script_dir,
-        options.include_all,
-        options.include_files_pattern,
-        options.include_functions_pattern
-    ):
+    if should_skip_function(code):
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -674,13 +677,7 @@ def call_handler(
 ) -> Any:
     # If we are calling a function, activate its start, return, and yield handlers.
     if isinstance(callable, FunctionType) and isinstance(getattr(callable, "__code__", None), CodeType):
-        if not should_skip_function(
-            code,
-            options.script_dir,
-            options.include_all,
-            options.include_files_pattern,
-            options.include_functions_pattern,
-        ):
+        if not should_skip_function(code):
             sys.monitoring.set_local_events(
                 TOOL_ID,
                 callable.__code__,
@@ -706,13 +703,7 @@ def yield_handler(
     yield_value (Any): return value of the function.
     """
     # Check if the function name is in the excluded list
-    if should_skip_function(
-        code,
-        options.script_dir,
-        options.include_all,
-        options.include_files_pattern,
-        options.include_functions_pattern
-    ):
+    if should_skip_function(code):
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -742,13 +733,7 @@ def return_handler(
     return_value (Any): return value of the function.
     """
     # Check if the function name is in the excluded list
-    if should_skip_function(
-        code,
-        options.script_dir,
-        options.include_all,
-        options.include_files_pattern,
-        options.include_functions_pattern
-    ):
+    if should_skip_function(code):
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -1404,12 +1389,7 @@ def run(
         file_names = set(
             t.func_id.file_name
             for t in obs.functions_visited.values()
-            if not skip_this_file(
-                t.func_id.file_name,
-                options.script_dir,
-                options.include_all,
-                options.include_files_pattern
-            )
+            if not skip_this_file(t.func_id.file_name)
         )
 
         collected = {
