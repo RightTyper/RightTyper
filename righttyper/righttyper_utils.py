@@ -8,6 +8,7 @@ from typing import Any, Final
 from pathlib import Path
 
 from righttyper.logger import logger
+from righttyper.options import options
 
 
 TOOL_ID: int = 3
@@ -69,16 +70,9 @@ PYTHON_LIBS = _get_python_libs()
 
 
 @cache
-def skip_this_file(
-    filename: str,
-    script_dir: str,
-    include_all: bool,
-    include_files_pattern: str,
-) -> bool:
-    logger.debug(
-        f"checking skip_this_file: {script_dir=}, {filename=}, {include_files_pattern=}"
-    )
-    if include_all:
+def skip_this_file(filename: str) -> bool:
+    #logger.debug(f"checking skip_this_file {filename=}")
+    if options.include_all:
         should_skip = False
     else:
         should_skip = (
@@ -86,11 +80,11 @@ def skip_this_file(
             # FIXME how about packages installed with 'pip install -e' (editable)?
             or any(filename.startswith(p) for p in PYTHON_LIBS)
             or filename.startswith(RIGHTTYPER_PATH)
-            or script_dir not in os.path.abspath(filename)
+            or options.script_dir not in os.path.abspath(filename)
         )
-    if include_files_pattern:
+    if options.include_files_pattern:
         should_skip = should_skip or not re.search(
-            include_files_pattern, filename
+            options.include_files_pattern, filename
         )
     return should_skip
 

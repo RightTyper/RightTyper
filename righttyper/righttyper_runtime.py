@@ -149,22 +149,11 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
 
 
 @cache
-def should_skip_function(
-    code: CodeType,
-    script_dir: str,
-    include_all: bool,
-    include_files_pattern: str,
-    include_functions_pattern: tuple[str, ...]
-) -> bool:
-    skip_file = skip_this_file(
-        code.co_filename,
-        script_dir,
-        include_all,
-        include_files_pattern,
-    )
-    included_in_pattern = include_functions_pattern and \
+def should_skip_function(code: CodeType) -> bool:
+    skip_file = skip_this_file(code.co_filename)
+    included_in_pattern = options.include_functions_pattern and \
         all([not re.search(pattern, code.co_name) \
-             for pattern in include_functions_pattern])
+             for pattern in options.include_functions_pattern])
     if (
         skip_file
         or included_in_pattern
@@ -410,6 +399,7 @@ class _GetItemDummy:
 GETITEM_ITER: type = type(iter(_GetItemDummy()))
 
 
+@cache
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
 
@@ -450,7 +440,6 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
         # Check if this is a mock object.
         fullname = module + "." + name
         if any(fullname.startswith(p) for p in options.resolve_mocks):
-            logger.debug(f"Attempting to resolve mock {fullname}")
             import unittest.mock as mock
 
             # We conservatively only recognize classes that have a single base (besides any Mock ones).
@@ -458,6 +447,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
             non_unittest_bases = [b for b in obj.__bases__ if b not in (mock.Mock, mock.MagicMock)]
             if len(non_unittest_bases) == 1 and non_unittest_bases != [object,]:
                 if (ti := get_type_name(*non_unittest_bases, depth=depth+1)) is not UnknownTypeInfo:
+                    logger.debug(f"Resolved mock {fullname} -> {str(ti)}")
                     return ti
 
         return TypeInfo(module, name, type_obj=obj)
@@ -811,12 +801,12 @@ def get_value_type(
             return ti
 
     # Is this a spec-based mock?
-    if (
-        (mock_spec := inspect.getattr_static(value, "_spec_class", None))
-        and any((t.__module__ + "." + t.__qualname__).startswith(p) for p in options.resolve_mocks)
-    ):
-        logger.debug(f"Resolving spec-based mock {t.__module__}.{t.__qualname__}")
-        return get_type_name(mock_spec)
+    if mock_spec := inspect.getattr_static(value, "_spec_class", None):
+        fullname = t.__module__ + "." + t.__qualname__
+        if any(fullname.startswith(p) for p in options.resolve_mocks):
+            ti = get_type_name(mock_spec, depth+1)
+            logger.debug(f"Resolved spec mock {fullname} -> {str(ti)}")
+            return ti
 
     # using getattr or hasattr here can lead to problems when __getattr__ is overridden
     if (orig := inspect.getattr_static(value, "__orig_class__", None)):
