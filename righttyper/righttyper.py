@@ -14,6 +14,7 @@ import typeshed_client as ts
 import pickle
 import datetime
 import json
+import subprocess
 
 
 import collections.abc as abc
@@ -175,6 +176,44 @@ def get_typeshed_arg_types(
             return pos_args + kw_args
 
     return None
+
+
+@functools.cache
+def resolve_mock(ti: TypeInfo) -> TypeInfo|None:
+    import unittest.mock as mock
+
+    def needs_mock_resolution(t: TypeInfo) -> bool:
+        fullname = t.fullname()
+        return any(fullname.startswith(p) for p in options.resolve_mocks)
+
+    trace = [ti]
+    t = ti
+    while needs_mock_resolution(t):
+        if not t.type_obj:
+            return None
+
+        non_unittest_bases = [
+            b for b in t.type_obj.__bases__ if b not in (mock.Mock, mock.MagicMock)
+        ]
+
+        # To be conservative, we only recognize classes with a single base (besides any Mock).
+        # If the only base is 'object', we couldn't find a non-mock module base.
+        if len(non_unittest_bases) != 1 or (base := non_unittest_bases[0]) is object:
+            return None
+
+        t = get_type_name(base)
+        trace.append(t)
+        if len(trace) > 50:
+            return None # break loops
+
+    if t is ti:
+        # 'ti' didn't need resolution.  Indicate no need to replace the type.
+        return None
+
+    if logger.level == logging.DEBUG:
+        logger.debug(f"Resolved mock {' -> '.join([str(t) for t in trace])}")
+
+    return t
 
 
 @dataclass
@@ -339,7 +378,7 @@ class Observations:
                     if logger.level == logging.DEBUG:
                         func_info = self.functions_visited.get(code_id, None)
                         logger.debug(
-                            "Transformed " +
+                            type(tr).__name__ + " " +
                             (func_info.func_id.func_name if func_info else "?") +
                             str(tuple(str(t) for t in trace)) +
                             " -> " +
@@ -513,8 +552,21 @@ class Observations:
         if not options.use_typing_never:
             self._transform_types(NeverSayNeverT())
 
-        class TestTypeRemovingT(TypeInfo.Transformer):
-            """Removes types whose module name starts with given prefixes."""
+        class ResolveMocksT(TypeInfo.Transformer):
+            """Resolves apparent test mock types to non-test ones."""
+            # TODO make mock resolution context sensitive, leaving test-only
+            # objects unresolved within test code?
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                node = super().visit(node)
+                if (resolved := resolve_mock(node)):
+                    return resolved
+                return node
+
+        if options.resolve_mocks:
+            self._transform_types(ResolveMocksT())
+
+        class ExcludeTypesT(TypeInfo.Transformer):
+            """Removes types excluded through --exclude-types."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 fullname = node.fullname()
                 if any(fullname.startswith(p) for p in options.exclude_types):
@@ -523,7 +575,7 @@ class Observations:
                 return super().visit(node)
 
         if options.exclude_types:
-            self._transform_types(TestTypeRemovingT())
+            self._transform_types(ExcludeTypesT())
 
         class TypingUnionT(TypeInfo.Transformer):
             """Replaces types.UnionType with typing.Union and typing.Optional."""
@@ -1307,6 +1359,8 @@ def run(
     use_typing_never: bool
 ) -> None:
     """Runs a given script or module, collecting type information."""
+
+    logger.info(f"Starting: {subprocess.list2cmdline(sys.orig_argv)}")
 
     if module:
         args = [*((script,) if script else ()), *args]  # script, if any, is really the 1st module arg
