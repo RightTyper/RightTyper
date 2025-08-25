@@ -435,22 +435,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
         return TypeInfo(obj.__module__, t_name, args=(get_type_name(obj.type, depth+1),))
 
     if (module_and_name := search_type(obj)):
-        module, name = module_and_name
-
-        # Check if this is a mock object.
-        fullname = module + "." + name
-        if any(fullname.startswith(p) for p in options.resolve_mocks):
-            import unittest.mock as mock
-
-            # We conservatively only recognize classes that have a single base (besides any Mock ones).
-            # If the only base is 'object', we couldn't find a non-mock module base.
-            non_unittest_bases = [b for b in obj.__bases__ if b not in (mock.Mock, mock.MagicMock)]
-            if len(non_unittest_bases) == 1 and non_unittest_bases != [object,]:
-                if (ti := get_type_name(*non_unittest_bases, depth=depth+1)) is not UnknownTypeInfo:
-                    logger.debug(f"Resolved mock {fullname} -> {str(ti)}")
-                    return ti
-
-        return TypeInfo(module, name, type_obj=obj)
+        return TypeInfo(*module_and_name, type_obj=obj)
 
     return UnknownTypeInfo
 
