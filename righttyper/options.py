@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from typing import Sequence
+import functools
+import re
 
 @dataclass
 class Options:
@@ -27,7 +29,14 @@ class Options:
     inline_generics: bool = False
     only_update_annotations: bool = False
     use_top_pct: int = 80
-    exclude_types: tuple[str, ...] = ('pytest.', '_pytest.', 'py.test.', 'test_')
-    resolve_mocks: tuple[str, ...] = ('test_', 'unittest.mock.')
+    exclude_test_types: bool = True
+    resolve_mocks: bool = False
+    test_modules: tuple[str, ...] = ('pytest', '_pytest', 'py.test', 'unittest')
+
+
+    @functools.cached_property
+    def test_modules_re(self) -> re.Pattern:
+        """Returns a regular expression pattern to match test modules with."""
+        return re.compile('|'.join([f"({m}(?:\\.|$))" for m in self.test_modules]))
 
 options = Options()

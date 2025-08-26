@@ -1204,7 +1204,7 @@ def test_class_name_in_test(tmp_cwd):
         """
     ))
 
-    rt_run('--no-exclude-types', '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
+    rt_run('--no-exclude-test-types', '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
@@ -1226,7 +1226,7 @@ def test_class_name_in_test_subdir(tmp_cwd):
         """
     ))
 
-    rt_run('--no-exclude-types', '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
+    rt_run('--no-exclude-test-types', '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "sub" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
@@ -1291,7 +1291,7 @@ def test_mock_class_inherited(tmp_cwd):
         """
     ))
 
-    rt_run('-m', 'pytest', '-s', 'tests')
+    rt_run('--resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "m.py").read_text()
     code = cst.parse_module(output)
 
@@ -1324,7 +1324,7 @@ def test_mock_with_class_spec(tmp_cwd):
         """
     ))
 
-    rt_run('-m', 'pytest', '-s', 'tests')
+    rt_run('--resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "m.py").read_text()
     code = cst.parse_module(output)
 
@@ -1356,7 +1356,7 @@ def test_mock_with_obj_spec(tmp_cwd):
         """
     ))
 
-    rt_run('-m', 'pytest', '-s', 'tests')
+    rt_run('--resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "m.py").read_text()
     code = cst.parse_module(output)
 
