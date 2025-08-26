@@ -2115,7 +2115,7 @@ def test_dont_annotate_with_any():
 
     code = t.transform_code(code)
     function = get_function(code, "foo")
-    assert function.strip() == textwrap.dedent("""
+    assert function == textwrap.dedent("""\
         def foo(bar):
             ...
-        """).strip()
+        """)
