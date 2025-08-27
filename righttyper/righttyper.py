@@ -443,7 +443,7 @@ class Observations:
                             f"{[tuple(str(t) for t in s) for s in traces]}")
                 return None
 
-            return FuncAnnotation(
+            ann = FuncAnnotation(
                 args=[
                     (
                         arg.arg_name,
@@ -463,6 +463,21 @@ class Observations:
                 ],
                 retval=signature[-1]
             )
+
+            if logger.level == logging.DEBUG:
+                trace_counter = self.traces[code_id]
+                for trace, count in list(trace_counter.items()):
+                    logger.debug(
+                        "trace " + func_info.func_id.func_name +
+                        str(tuple(str(t) for t in trace)) +
+                        f" {count}x"
+                    )
+                logger.debug(
+                    "ann   " + func_info.func_id.func_name +
+                    str((*(str(arg[1]) for arg in ann.args), str(ann.retval)))
+                )
+
+            return ann
 
         class NonSelfCloningT(TypeInfo.Transformer):
             """Clones the given TypeInfo tree, clearing all 'is_self' flags,
@@ -1138,16 +1153,18 @@ def parse_none_or_ge_zero(value) -> int|None:
     }
 )
 @click.option(
+    # just for backwards compatibility
     "--debug",
     is_flag=True,
-    help="Include diagnostic information in log file.",
+    hidden=True,
 )
 @click.version_option(
     version=importlib.metadata.version(TOOL_NAME),
     prog_name=TOOL_NAME,
 )
 def cli(debug: bool):
-    logger.setLevel(logging.DEBUG)
+    if debug:
+        logger.setLevel(logging.DEBUG)
 
 
 @cli.command(
@@ -1318,6 +1335,11 @@ def cli(debug: bool):
     default=True,
     help="Whether to emit typing.Never.",
 )
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Include diagnostic information in log file.",
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
     script: str,
@@ -1347,11 +1369,14 @@ def run(
     resolve_mocks: bool,
     exclude_test_types: bool,
     test_modules: tuple[str, ...],
-    use_typing_never: bool
+    use_typing_never: bool,
+    debug: bool
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
     logger.info(f"Starting: {subprocess.list2cmdline(sys.orig_argv)}")
+    if debug:
+        logger.setLevel(logging.DEBUG)
 
     if module:
         args = [*((script,) if script else ()), *args]  # script, if any, is really the 1st module arg
