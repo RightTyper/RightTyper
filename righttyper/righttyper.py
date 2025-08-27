@@ -1162,9 +1162,9 @@ def validate_module(ctx, param, value):
     raise click.BadParameter("not a valid module.")
 
 
-def validate_module_multiple(ctx, param, value):
+def validate_module_names(ctx, param, value):
     for m in value:
-        if not importlib.util.find_spec(m):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*$', m):
             raise click.BadParameter(f""""{m}" is not a valid module.""")
 
     return value
@@ -1384,7 +1384,7 @@ def cli(debug: bool):
     "--test-modules",
     multiple=True,
     default=options.test_modules,
-    callback=validate_module_multiple,
+    callback=validate_module_names,
     metavar="MODULE",
     help="""Additional modules (besides those detected) whose types are subject to mock resolution or test type exclusion, if enabled. Matches submodules as well. Can be passed multiple times."""
 )
