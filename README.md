@@ -136,6 +136,9 @@ Options:
                                   use-multiprocessing]
   --sampling / --no-sampling      Whether to sample calls or to use every one.
                                   [default: sampling]
+  --no-sampling-for NAME_REGEX    Rather than sample, record every invocation
+                                  of any functions matching the given regular
+                                  expression.
   --replace-dict / --no-replace-dict
                                   Whether to replace 'dict' to enable
                                   efficient, statistically correct samples.
@@ -173,5 +176,6 @@ Options:
   --use-typing-never / --no-use-typing-never
                                   Whether to emit typing.Never.  [default:
                                   use-typing-never]
+  --debug                         Include diagnostic information in log file.
   --help                          Show this message and exit.
 ```

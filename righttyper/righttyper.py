@@ -15,6 +15,7 @@ import pickle
 import datetime
 import json
 import subprocess
+import re
 
 
 import collections.abc as abc
@@ -730,8 +731,16 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         process_function_call(code, frame)
         del frame
 
-    return sys.monitoring.DISABLE if options.sampling else None
+    if (
+        options.sampling
+        and not (
+            (no_sampling_for := options.no_sampling_for_re)
+            and no_sampling_for.search(code.co_qualname)
+        )
+    ):
+        return sys.monitoring.DISABLE
 
+    return None
 
 def call_handler(
     code: CodeType,
@@ -780,8 +789,17 @@ def yield_handler(
         del frame
 
     # Keep the event enabled until we receive it for a frame whose trace we're recording.
-    return sys.monitoring.DISABLE if (options.sampling and found) else None
+    if (
+        options.sampling
+        and found
+        and not (
+            (no_sampling_for := options.no_sampling_for_re)
+            and no_sampling_for.search(code.co_qualname)
+        )
+    ):
+        return sys.monitoring.DISABLE
 
+    return None
 
 def return_handler(
     code: CodeType,
@@ -810,7 +828,17 @@ def return_handler(
         del frame
 
     # Keep the event enabled until we receive it for a frame whose trace we're recording.
-    return sys.monitoring.DISABLE if (options.sampling and found) else None
+    if (
+        options.sampling
+        and found
+        and not (
+            (no_sampling_for := options.no_sampling_for_re)
+            and no_sampling_for.search(code.co_qualname)
+        )
+    ):
+        return sys.monitoring.DISABLE
+
+    return None
 
 
 def process_function_call(
@@ -1136,6 +1164,7 @@ class CheckModule(click.ParamType):
         )
         return ""
 
+
 def parse_none_or_ge_zero(value) -> int|None:
     if value.lower() == "none":
         return None
@@ -1146,6 +1175,16 @@ def parse_none_or_ge_zero(value) -> int|None:
         return ivalue
     except ValueError:
         raise click.BadParameter("must be an integer ≥ 0 or 'none'")
+
+
+def validate_regex(ctx, param, value: str|None) -> str|None:
+    try:
+        if value:
+            re.compile(value)
+        return value
+    except re.error as e:
+        raise click.BadParameter(str(e))
+
 
 @click.group(
     context_settings={
@@ -1263,7 +1302,14 @@ def cli(debug: bool):
     "--sampling/--no-sampling",
     default=options.sampling,
     help=f"Whether to sample calls or to use every one.",
-    show_default=True,
+)
+@click.option(
+    "--no-sampling-for",
+    metavar="NAME_REGEX",
+    callback=validate_regex,
+    default=options.no_sampling_for,
+    type=str,
+    help=f"Rather than sample, record every invocation of any functions matching the given regular expression.",
 )
 @click.option(
     "--signal-wakeup/--thread-wakeup",
@@ -1359,6 +1405,7 @@ def run(
     target_overhead: float,
     use_multiprocessing: bool,
     sampling: bool,
+    no_sampling_for: str,
     signal_wakeup: bool,
     replace_dict: bool,
     container_sample_limit: int,
@@ -1427,6 +1474,7 @@ def run(
     options.json_output = json_output
     options.use_multiprocessing = use_multiprocessing
     options.sampling = sampling
+    options.no_sampling_for = no_sampling_for
     options.replace_dict = replace_dict
     options.container_sample_limit = container_sample_limit
     options.use_typing_union = python_version < (3, 10)

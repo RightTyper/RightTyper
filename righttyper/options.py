@@ -20,6 +20,7 @@ class Options:
     json_output: bool = False
     use_multiprocessing: bool = True
     sampling: bool = True
+    no_sampling_for: str|None = None
     replace_dict: bool = False
     container_sample_limit: int = 1000
     type_depth_limit: int|None = None
@@ -38,5 +39,10 @@ class Options:
     def test_modules_re(self) -> re.Pattern:
         """Returns a regular expression pattern to match test modules with."""
         return re.compile('|'.join([f"({m}(?:\\.|$))" for m in self.test_modules]))
+
+    @functools.cached_property
+    def no_sampling_for_re(self) -> re.Pattern|None:
+        """Returns a regular expression pattern for no_sampling_for."""
+        return re.compile(self.no_sampling_for) if self.no_sampling_for else None
 
 options = Options()
