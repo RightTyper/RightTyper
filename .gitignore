@@ -4,3 +4,4 @@ righttyper.egg-info/
 .venv
 venv
 righttyper.log
+*.swp
