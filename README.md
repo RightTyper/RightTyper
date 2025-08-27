@@ -102,14 +102,16 @@ Usage: python -m righttyper run [OPTIONS] [SCRIPT] [ARGS]...
   Runs a given script or module, collecting type information.
 
 Options:
-  -m, --module MODULE             Run the given module instead of a script.
+  -m, --module TEXT               Run the given module instead of a script.
   --all-files                     Process any files encountered, including
                                   libraries (except for those specified in
                                   --include-files)
-  --include-files PATTERN         Process only files matching the given
-                                  pattern.
-  --include-functions PATTERN     Only annotate functions matching the given
-                                  pattern.
+  --include-files REGEX           Process only files matching the given
+                                  regular expression. Can be passed multiple
+                                  times.
+  --include-functions REGEX       Only annotate functions matching the given
+                                  regular expression. Can be passed multiple
+                                  times.
   --infer-shapes                  Produce tensor shape annotations (compatible
                                   with jaxtyping).
   --root DIRECTORY                Process only files under the given
@@ -136,6 +138,9 @@ Options:
                                   use-multiprocessing]
   --sampling / --no-sampling      Whether to sample calls or to use every one.
                                   [default: sampling]
+  --no-sampling-for REGEX         Rather than sample, record every invocation
+                                  of any functions matching the given regular
+                                  expression. Can be passed multiple times.
   --replace-dict / --no-replace-dict
                                   Whether to replace 'dict' to enable
                                   efficient, statistically correct samples.
@@ -171,7 +176,8 @@ Options:
                                   times.  [default: pytest, _pytest, py.test,
                                   unittest]
   --use-typing-never / --no-use-typing-never
-                                  Whether to emit typing.Never.  [default:
+                                  Whether to emit "typing.Never".  [default:
                                   use-typing-never]
+  --debug                         Include diagnostic information in log file.
   --help                          Show this message and exit.
 ```

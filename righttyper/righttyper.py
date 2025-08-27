@@ -15,6 +15,7 @@ import pickle
 import datetime
 import json
 import subprocess
+import re
 
 
 import collections.abc as abc
@@ -90,7 +91,7 @@ from righttyper.options import Options, options
 from righttyper.logger import logger
 
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
-PKL_FILE_VERSION = 3
+PKL_FILE_VERSION = 4
 
 
 def get_inline_arg_types(
@@ -730,8 +731,16 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         process_function_call(code, frame)
         del frame
 
-    return sys.monitoring.DISABLE if options.sampling else None
+    if (
+        options.sampling
+        and not (
+            (no_sampling_for := options.no_sampling_for_re)
+            and no_sampling_for.search(code.co_qualname)
+        )
+    ):
+        return sys.monitoring.DISABLE
 
+    return None
 
 def call_handler(
     code: CodeType,
@@ -780,8 +789,17 @@ def yield_handler(
         del frame
 
     # Keep the event enabled until we receive it for a frame whose trace we're recording.
-    return sys.monitoring.DISABLE if (options.sampling and found) else None
+    if (
+        options.sampling
+        and found
+        and not (
+            (no_sampling_for := options.no_sampling_for_re)
+            and no_sampling_for.search(code.co_qualname)
+        )
+    ):
+        return sys.monitoring.DISABLE
 
+    return None
 
 def return_handler(
     code: CodeType,
@@ -810,7 +828,17 @@ def return_handler(
         del frame
 
     # Keep the event enabled until we receive it for a frame whose trace we're recording.
-    return sys.monitoring.DISABLE if (options.sampling and found) else None
+    if (
+        options.sampling
+        and found
+        and not (
+            (no_sampling_for := options.no_sampling_for_re)
+            and no_sampling_for.search(code.co_qualname)
+        )
+    ):
+        return sys.monitoring.DISABLE
+
+    return None
 
 
 def process_function_call(
@@ -1087,8 +1115,15 @@ def process_files(
     )
 
     if options.use_multiprocessing:
-        with concurrent.futures.ProcessPoolExecutor() as executor:
-            results = executor.map(process_file_wrapper, args_gen)
+        def mp_map(fn, args_gen):
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                for fut in concurrent.futures.as_completed([
+                    executor.submit(process_file_wrapper, args)
+                    for args in args_gen
+                ]):
+                    yield fut.result()
+
+        results = mp_map(process_file_wrapper, args_gen)
     else:
         results = map(process_file_wrapper, args_gen)
 
@@ -1121,20 +1156,19 @@ def process_files(
     return sig_changes
 
 
-class CheckModule(click.ParamType):
-    name = "module"
+def validate_module(ctx, param, value):
+    if not value or importlib.util.find_spec(value):
+        return value
+    raise click.BadParameter("not a valid module.")
 
-    def convert(self, value: str, param: Any, ctx: Any) -> str:
-        # Check if it's a valid file path
-        if importlib.util.find_spec(value):
-            return value
 
-        self.fail(
-            f"{value} isn't a valid module",
-            param,
-            ctx,
-        )
-        return ""
+def validate_module_names(ctx, param, value):
+    for m in value:
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*$', m):
+            raise click.BadParameter(f""""{m}" is not a valid module.""")
+
+    return value
+
 
 def parse_none_or_ge_zero(value) -> int|None:
     if value.lower() == "none":
@@ -1146,6 +1180,17 @@ def parse_none_or_ge_zero(value) -> int|None:
         return ivalue
     except ValueError:
         raise click.BadParameter("must be an integer ≥ 0 or 'none'")
+
+
+def validate_regexes(ctx, param, value):
+    try:
+        if value:
+            for v in value:
+                re.compile(v)
+        return value
+    except re.error as e:
+        raise click.BadParameter(str(e))
+
 
 @click.group(
     context_settings={
@@ -1181,7 +1226,7 @@ def cli(debug: bool):
     "-m",
     "--module",
     help="Run the given module instead of a script.",
-    type=CheckModule(),
+    callback=validate_module
 )
 @click.option(
     "--all-files",
@@ -1190,15 +1235,19 @@ def cli(debug: bool):
 )
 @click.option(
     "--include-files",
+    metavar="REGEX",
     type=str,
-    metavar="PATTERN",
-    help="Process only files matching the given pattern.",
+    multiple=True,
+    callback=validate_regexes,
+    help="Process only files matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
     "--include-functions",
+    metavar="REGEX",
+    type=str,
     multiple=True,
-    metavar="PATTERN",
-    help="Only annotate functions matching the given pattern.",
+    callback=validate_regexes,
+    help="Only annotate functions matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
     "--infer-shapes",
@@ -1263,7 +1312,15 @@ def cli(debug: bool):
     "--sampling/--no-sampling",
     default=options.sampling,
     help=f"Whether to sample calls or to use every one.",
-    show_default=True,
+)
+@click.option(
+    "--no-sampling-for",
+    metavar="REGEX",
+    type=str,
+    multiple=True,
+    callback=validate_regexes,
+    default=options.no_sampling_for,
+    help=f"Rather than sample, record every invocation of any functions matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
     "--signal-wakeup/--thread-wakeup",
@@ -1327,13 +1384,14 @@ def cli(debug: bool):
     "--test-modules",
     multiple=True,
     default=options.test_modules,
+    callback=validate_module_names,
     metavar="MODULE",
     help="""Additional modules (besides those detected) whose types are subject to mock resolution or test type exclusion, if enabled. Matches submodules as well. Can be passed multiple times."""
 )
 @click.option(
     "--use-typing-never/--no-use-typing-never",
     default=True,
-    help="Whether to emit typing.Never.",
+    help="""Whether to emit "typing.Never".""",
 )
 @click.option(
     "--debug",
@@ -1359,6 +1417,7 @@ def run(
     target_overhead: float,
     use_multiprocessing: bool,
     sampling: bool,
+    no_sampling_for: str,
     signal_wakeup: bool,
     replace_dict: bool,
     container_sample_limit: int,
@@ -1414,9 +1473,9 @@ def run(
     else:
         options.script_dir = os.path.dirname(os.path.realpath(script))
 
-    options.include_files_pattern = include_files
+    options.include_files = include_files
     options.include_all = all_files
-    options.include_functions_pattern = include_functions
+    options.include_functions = include_functions
     options.target_overhead = target_overhead
     options.infer_shapes = infer_shapes
     options.ignore_annotations = ignore_annotations
@@ -1427,6 +1486,7 @@ def run(
     options.json_output = json_output
     options.use_multiprocessing = use_multiprocessing
     options.sampling = sampling
+    options.no_sampling_for = no_sampling_for
     options.replace_dict = replace_dict
     options.container_sample_limit = container_sample_limit
     options.use_typing_union = python_version < (3, 10)

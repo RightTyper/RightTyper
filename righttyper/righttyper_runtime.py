@@ -155,20 +155,26 @@ def is_test_module(m: str) -> bool:
     # avoiding its warning and the possible rewriting issues it warns about.
     from righttyper.pytest import pytest_modules
 
-    return m in pytest_modules or bool(options.test_modules_re.match(m))
+    return (
+        m in pytest_modules
+        or (
+            (opt_test_modules := options.test_modules_re)
+            and opt_test_modules.match(m)
+        )
+    )
 
 
 @cache
 def should_skip_function(code: CodeType) -> bool:
-    skip_file = skip_this_file(code.co_filename)
-    included_in_pattern = options.include_functions_pattern and \
-        all([not re.search(pattern, code.co_name) \
-             for pattern in options.include_functions_pattern])
     if (
-        skip_file
-        or included_in_pattern
+        skip_this_file(code.co_filename)
+        or (    # doesn't match any of the include patterns
+            (include_functions := options.include_functions_re)
+            and not include_functions.search(code.co_name)
+        )
     ):
         return True
+
     if not (code.co_flags & 0x2):
         import dis
 
