@@ -2,6 +2,7 @@ import inspect
 import random
 import re
 import sys
+import logging
 
 import collections
 import collections.abc as abc
@@ -146,6 +147,15 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
         type_obj=cast(type, abc.Callable),
         is_bound=isinstance(func, MethodType)
     )
+
+
+@cache
+def is_test_module(m: str) -> bool:
+    # Only load this module now: if pytest is used, let pytest load it first,
+    # avoiding its warning and the possible rewriting issues it warns about.
+    from righttyper.pytest import pytest_modules
+
+    return m in pytest_modules or bool(options.test_modules_re.match(m))
 
 
 @cache
@@ -368,7 +378,11 @@ def search_type(t: type) -> tuple[str, str] | None:
 
     # Look up type in map
     if (f := type_finder.find(t)):
-        return normalize_module_name(f[0]), f[1]
+        mod, name = normalize_module_name(f[0]), f[1]
+        if logger.level == logging.DEBUG:
+            if mod != t.__module__ or name != t.__qualname__:
+                logger.debug(f"Mapped {t.__module__}.{t.__qualname__} to {mod}.{name}")
+        return mod, name
 
     # Just trust local scope names... can we do better?
     if '<locals>' in t.__qualname__:
@@ -787,10 +801,9 @@ def get_value_type(
 
     # Is this a spec-based mock?
     if mock_spec := inspect.getattr_static(value, "_spec_class", None):
-        fullname = t.__module__ + "." + t.__qualname__
-        if any(fullname.startswith(p) for p in options.resolve_mocks):
+        if options.resolve_mocks and is_test_module(t.__module__):
             ti = get_type_name(mock_spec, depth+1)
-            logger.debug(f"Resolved spec mock {fullname} -> {str(ti)}")
+            logger.debug(f"Resolved spec mock {t.__module__}.{t.__qualname__} -> {str(ti)}")
             return ti
 
     # using getattr or hasattr here can lead to problems when __getattr__ is overridden

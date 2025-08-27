@@ -42,6 +42,7 @@ from righttyper.righttyper_runtime import (
     get_value_type,
     get_type_name,
     should_skip_function,
+    is_test_module,
     hint2type,
     PostponedIteratorArg,
 )
@@ -89,7 +90,7 @@ from righttyper.options import Options, options
 from righttyper.logger import logger
 
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
-PKL_FILE_VERSION = 2
+PKL_FILE_VERSION = 3
 
 
 def get_inline_arg_types(
@@ -180,15 +181,12 @@ def get_typeshed_arg_types(
 
 @functools.cache
 def resolve_mock(ti: TypeInfo) -> TypeInfo|None:
+    """Attempts to map a test type, such as a mock, to a production one."""
     import unittest.mock as mock
-
-    def needs_mock_resolution(t: TypeInfo) -> bool:
-        fullname = t.fullname()
-        return any(fullname.startswith(p) for p in options.resolve_mocks)
 
     trace = [ti]
     t = ti
-    while needs_mock_resolution(t):
+    while is_test_module(t.module):
         if not t.type_obj:
             return None
 
@@ -445,7 +443,7 @@ class Observations:
                             f"{[tuple(str(t) for t in s) for s in traces]}")
                 return None
 
-            return FuncAnnotation(
+            ann = FuncAnnotation(
                 args=[
                     (
                         arg.arg_name,
@@ -465,6 +463,21 @@ class Observations:
                 ],
                 retval=signature[-1]
             )
+
+            if logger.level == logging.DEBUG:
+                trace_counter = self.traces[code_id]
+                for trace, count in list(trace_counter.items()):
+                    logger.debug(
+                        "trace " + func_info.func_id.func_name +
+                        str(tuple(str(t) for t in trace)) +
+                        f" {count}x"
+                    )
+                logger.debug(
+                    "ann   " + func_info.func_id.func_name +
+                    str((*(str(arg[1]) for arg in ann.args), str(ann.retval)))
+                )
+
+            return ann
 
         class NonSelfCloningT(TypeInfo.Transformer):
             """Clones the given TypeInfo tree, clearing all 'is_self' flags,
@@ -565,17 +578,16 @@ class Observations:
         if options.resolve_mocks:
             self._transform_types(ResolveMocksT())
 
-        class ExcludeTypesT(TypeInfo.Transformer):
-            """Removes types excluded through --exclude-types."""
+        class ExcludeTestTypesT(TypeInfo.Transformer):
+            """Removes test types."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
-                fullname = node.fullname()
-                if any(fullname.startswith(p) for p in options.exclude_types):
+                if is_test_module(node.module):
                     return AnyTypeInfo
 
                 return super().visit(node)
 
-        if options.exclude_types:
-            self._transform_types(ExcludeTypesT())
+        if options.exclude_test_types:
+            self._transform_types(ExcludeTestTypesT())
 
         class TypingUnionT(TypeInfo.Transformer):
             """Replaces types.UnionType with typing.Union and typing.Optional."""
@@ -1141,16 +1153,18 @@ def parse_none_or_ge_zero(value) -> int|None:
     }
 )
 @click.option(
+    # just for backwards compatibility
     "--debug",
     is_flag=True,
-    help="Include diagnostic information in log file.",
+    hidden=True,
 )
 @click.version_option(
     version=importlib.metadata.version(TOOL_NAME),
     prog_name=TOOL_NAME,
 )
 def cli(debug: bool):
-    logger.setLevel(logging.DEBUG)
+    if debug:
+        logger.setLevel(logging.DEBUG)
 
 
 @cli.command(
@@ -1298,33 +1312,33 @@ def cli(debug: bool):
           " You can later process using RightTyper's \"process\" command."
 )
 @click.option(
-    "--exclude-types",
-    multiple=True,
-    default=options.exclude_types,
-    metavar="TYPE_NAME",
-    help="""Exclude or replace with "typing.Any" types whose full name starts with the given string. Can be passed multiple times."""
-)
-@click.option(
-    "--no-exclude-types",
+    "--resolve-mocks/--no-resolve-mocks",
     is_flag=True,
-    help="Do not exclude types."
-)
-@click.option(
-    "--resolve-mocks",
-    multiple=True,
     default=options.resolve_mocks,
-    metavar="TYPE_NAME",
-    help="Attempt to resolve mock types whose full name starts with the given string to non-test types. Can be passed multiple times."
+    help="Whether to attempt to resolve test types, such as mocks, to non-test types."
 )
 @click.option(
-    "--no-resolve-mocks",
+    "--exclude-test-types/--no-exclude-test-types",
     is_flag=True,
-    help="Do not attempt to resolve mock types."
+    default=options.exclude_test_types,
+    help="""Whether to exclude or replace with "typing.Any" types defined in test modules."""
+)
+@click.option(
+    "--test-modules",
+    multiple=True,
+    default=options.test_modules,
+    metavar="MODULE",
+    help="""Additional modules (besides those detected) whose types are subject to mock resolution or test type exclusion, if enabled. Matches submodules as well. Can be passed multiple times."""
 )
 @click.option(
     "--use-typing-never/--no-use-typing-never",
     default=True,
     help="Whether to emit typing.Never.",
+)
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Include diagnostic information in log file.",
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
@@ -1352,15 +1366,17 @@ def run(
     use_top_pct: int,
     only_collect: bool,
     type_depth_limit: int|None,
-    exclude_types: tuple[str],
-    no_exclude_types: bool,
-    resolve_mocks: tuple[str],
-    no_resolve_mocks: bool,
-    use_typing_never: bool
+    resolve_mocks: bool,
+    exclude_test_types: bool,
+    test_modules: tuple[str, ...],
+    use_typing_never: bool,
+    debug: bool
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
     logger.info(f"Starting: {subprocess.list2cmdline(sys.orig_argv)}")
+    if debug:
+        logger.setLevel(logging.DEBUG)
 
     if module:
         args = [*((script,) if script else ()), *args]  # script, if any, is really the 1st module arg
@@ -1419,11 +1435,16 @@ def run(
     options.inline_generics = python_version >= (3, 12)
     options.use_top_pct = use_top_pct
     options.type_depth_limit = type_depth_limit
-    options.exclude_types = () if no_exclude_types else exclude_types
-    options.resolve_mocks = () if no_resolve_mocks else resolve_mocks
+    options.resolve_mocks = resolve_mocks
+    options.exclude_test_types = exclude_test_types
+    options.test_modules = test_modules
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
+
+    pytest_plugins = os.environ.get("PYTEST_PLUGINS")
+    pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
+    os.environ["PYTEST_PLUGINS"] = pytest_plugins
 
     try:
         setup_tool_id()
@@ -1440,26 +1461,26 @@ def run(
         reset_monitoring()
         alarm.stop()
 
-        file_names = set(
-            t.func_id.file_name
-            for t in obs.functions_visited.values()
-            if not skip_this_file(t.func_id.file_name)
-        )
+    file_names = set(
+        t.func_id.file_name
+        for t in obs.functions_visited.values()
+        if not skip_this_file(t.func_id.file_name)
+    )
 
-        collected = {
-            'version': PKL_FILE_VERSION,
-            'files': [[f, obs.source_to_module_name.get(f)] for f in file_names],
-            'type_annotations': obs.collect_annotations(),
-            'options': options
-        }
+    collected = {
+        'version': PKL_FILE_VERSION,
+        'files': [[f, obs.source_to_module_name.get(f)] for f in file_names],
+        'type_annotations': obs.collect_annotations(),
+        'options': options
+    }
 
-        if only_collect:
-            with open(PKL_FILE_NAME, "wb") as f:
-                pickle.dump(collected, f)
+    if only_collect:
+        with open(PKL_FILE_NAME, "wb") as f:
+            pickle.dump(collected, f)
 
-            print(f"Collected types saved to {PKL_FILE_NAME}.")
-        else:
-            process_collected(collected)
+        print(f"Collected types saved to {PKL_FILE_NAME}.")
+    else:
+        process_collected(collected)
 
 
 @cli.command()

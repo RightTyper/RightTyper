@@ -96,7 +96,7 @@ For example, with `--type-depth-limit=1`, a type inferred as `list[tuple[tuple[i
 Below is the full list of options for the run command:
 
 ```
-$ python3.12 -m righttyper run --help
+$ python3 -m righttyper run --help
 Usage: python -m righttyper run [OPTIONS] [SCRIPT] [ARGS]...
 
   Runs a given script or module, collecting type information.
@@ -156,20 +156,22 @@ Options:
                                   data, save it to righttyper.rt. You can
                                   later process using RightTyper's "process"
                                   command.
-  --exclude-types TYPE_NAME       Exclude or replace with "typing.Any" types
-                                  whose full name starts with the given
-                                  string. Can be passed multiple times.
-                                  [default: pytest., _pytest., py.test.,
-                                  test_]
-  --no-exclude-types              Do not exclude types.
-  --resolve-mocks TYPE_NAME       Attempt to resolve mock types whose full
-                                  name starts with the given string to non-
-                                  test types. Can be passed multiple times.
-                                  [default: test_, unittest.mock.]
-  --no-resolve-mocks              Do not attempt to resolve mock types.
+  --resolve-mocks / --no-resolve-mocks
+                                  Whether to attempt to resolve test types,
+                                  such as mocks, to non-test types.  [default:
+                                  no-resolve-mocks]
+  --exclude-test-types / --no-exclude-test-types
+                                  Whether to exclude or replace with
+                                  "typing.Any" types defined in test modules.
+                                  [default: exclude-test-types]
+  --test-modules MODULE           Additional modules (besides those detected)
+                                  whose types are subject to mock resolution
+                                  or test type exclusion, if enabled. Matches
+                                  submodules as well. Can be passed multiple
+                                  times.  [default: pytest, _pytest, py.test,
+                                  unittest]
   --use-typing-never / --no-use-typing-never
                                   Whether to emit typing.Never.  [default:
                                   use-typing-never]
   --help                          Show this message and exit.
 ```
-
