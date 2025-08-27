@@ -1115,8 +1115,15 @@ def process_files(
     )
 
     if options.use_multiprocessing:
-        with concurrent.futures.ProcessPoolExecutor() as executor:
-            results = executor.map(process_file_wrapper, args_gen)
+        def mp_map(fn, args_gen):
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                for fut in concurrent.futures.as_completed([
+                    executor.submit(process_file_wrapper, args)
+                    for args in args_gen
+                ]):
+                    yield fut.result()
+
+        results = mp_map(process_file_wrapper, args_gen)
     else:
         results = map(process_file_wrapper, args_gen)
 
