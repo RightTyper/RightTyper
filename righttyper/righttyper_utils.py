@@ -82,10 +82,12 @@ def skip_this_file(filename: str) -> bool:
             or filename.startswith(RIGHTTYPER_PATH)
             or options.script_dir not in os.path.abspath(filename)
         )
-    if options.include_files_pattern:
-        should_skip = should_skip or not re.search(
-            options.include_files_pattern, filename
-        )
+
+    if not should_skip and (include_files := options.include_files_re):
+        should_skip = not include_files.search(filename)
+        if should_skip:
+            logger.debug(f"skipping {filename}")
+
     return should_skip
 
 

@@ -91,7 +91,7 @@ from righttyper.options import Options, options
 from righttyper.logger import logger
 
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
-PKL_FILE_VERSION = 3
+PKL_FILE_VERSION = 4
 
 
 def get_inline_arg_types(
@@ -1149,20 +1149,18 @@ def process_files(
     return sig_changes
 
 
-class CheckModule(click.ParamType):
-    name = "module"
+def validate_module(ctx, param, value):
+    if not value or importlib.util.find_spec(value):
+        return value
+    raise click.BadParameter("not a valid module.")
 
-    def convert(self, value: str, param: Any, ctx: Any) -> str:
-        # Check if it's a valid file path
-        if importlib.util.find_spec(value):
-            return value
 
-        self.fail(
-            f"{value} isn't a valid module",
-            param,
-            ctx,
-        )
-        return ""
+def validate_module_multiple(ctx, param, value):
+    for m in value:
+        if not importlib.util.find_spec(m):
+            raise click.BadParameter(f""""{m}" is not a valid module.""")
+
+    return value
 
 
 def parse_none_or_ge_zero(value) -> int|None:
@@ -1177,10 +1175,11 @@ def parse_none_or_ge_zero(value) -> int|None:
         raise click.BadParameter("must be an integer ≥ 0 or 'none'")
 
 
-def validate_regex(ctx, param, value: str|None) -> str|None:
+def validate_regexes(ctx, param, value):
     try:
         if value:
-            re.compile(value)
+            for v in value:
+                re.compile(v)
         return value
     except re.error as e:
         raise click.BadParameter(str(e))
@@ -1220,7 +1219,7 @@ def cli(debug: bool):
     "-m",
     "--module",
     help="Run the given module instead of a script.",
-    type=CheckModule(),
+    callback=validate_module
 )
 @click.option(
     "--all-files",
@@ -1229,15 +1228,19 @@ def cli(debug: bool):
 )
 @click.option(
     "--include-files",
+    metavar="REGEX",
     type=str,
-    metavar="PATTERN",
-    help="Process only files matching the given pattern.",
+    multiple=True,
+    callback=validate_regexes,
+    help="Process only files matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
     "--include-functions",
+    metavar="REGEX",
+    type=str,
     multiple=True,
-    metavar="PATTERN",
-    help="Only annotate functions matching the given pattern.",
+    callback=validate_regexes,
+    help="Only annotate functions matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
     "--infer-shapes",
@@ -1305,11 +1308,12 @@ def cli(debug: bool):
 )
 @click.option(
     "--no-sampling-for",
-    metavar="NAME_REGEX",
-    callback=validate_regex,
-    default=options.no_sampling_for,
+    metavar="REGEX",
     type=str,
-    help=f"Rather than sample, record every invocation of any functions matching the given regular expression.",
+    multiple=True,
+    callback=validate_regexes,
+    default=options.no_sampling_for,
+    help=f"Rather than sample, record every invocation of any functions matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
     "--signal-wakeup/--thread-wakeup",
@@ -1373,13 +1377,14 @@ def cli(debug: bool):
     "--test-modules",
     multiple=True,
     default=options.test_modules,
+    callback=validate_module_multiple,
     metavar="MODULE",
     help="""Additional modules (besides those detected) whose types are subject to mock resolution or test type exclusion, if enabled. Matches submodules as well. Can be passed multiple times."""
 )
 @click.option(
     "--use-typing-never/--no-use-typing-never",
     default=True,
-    help="Whether to emit typing.Never.",
+    help="""Whether to emit "typing.Never".""",
 )
 @click.option(
     "--debug",
@@ -1461,9 +1466,9 @@ def run(
     else:
         options.script_dir = os.path.dirname(os.path.realpath(script))
 
-    options.include_files_pattern = include_files
+    options.include_files = include_files
     options.include_all = all_files
-    options.include_functions_pattern = include_functions
+    options.include_functions = include_functions
     options.target_overhead = target_overhead
     options.infer_shapes = infer_shapes
     options.ignore_annotations = ignore_annotations

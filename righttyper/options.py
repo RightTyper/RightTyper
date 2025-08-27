@@ -3,14 +3,22 @@ from typing import Sequence
 import functools
 import re
 
+
+def _merge_regexes(patterns: tuple[str, ...]) -> re.Pattern|None:
+    """Merges multiple regular expressions, returning a compiled pattern or,
+       if the tuple is empty, returns None.
+    """
+    return re.compile('|'.join([f"{(p)}" for p in patterns])) if patterns else None
+
+
 @dataclass
 class Options:
     """Options for the run command."""
 
     script_dir: str = ""
-    include_files_pattern: str = ""
+    include_files: tuple[str, ...] = ()
     include_all: bool = False
-    include_functions_pattern: tuple[str, ...] = tuple()
+    include_functions: tuple[str, ...] = ()
     target_overhead: float = 5.0
     infer_shapes: bool = False
     ignore_annotations: bool = False
@@ -20,7 +28,7 @@ class Options:
     json_output: bool = False
     use_multiprocessing: bool = True
     sampling: bool = True
-    no_sampling_for: str|None = None
+    no_sampling_for: tuple[str, ...] = ()
     replace_dict: bool = False
     container_sample_limit: int = 1000
     type_depth_limit: int|None = None
@@ -36,13 +44,24 @@ class Options:
 
 
     @functools.cached_property
-    def test_modules_re(self) -> re.Pattern:
+    def include_files_re(self) -> re.Pattern|None:
+        """Returns a regular expression pattern for no_sampling_for."""
+        return _merge_regexes(self.include_files)
+
+    @functools.cached_property
+    def include_functions_re(self) -> re.Pattern|None:
+        """Returns a regular expression pattern for no_sampling_for."""
+        return _merge_regexes(self.include_functions)
+
+    @functools.cached_property
+    def test_modules_re(self) -> re.Pattern|None:
         """Returns a regular expression pattern to match test modules with."""
-        return re.compile('|'.join([f"({m}(?:\\.|$))" for m in self.test_modules]))
+        # Escape dots and enforce module path boundaries
+        return _merge_regexes([f"{m.replace('.', r'\.')}(?:\\.|$)" for m in self.test_modules])
 
     @functools.cached_property
     def no_sampling_for_re(self) -> re.Pattern|None:
         """Returns a regular expression pattern for no_sampling_for."""
-        return re.compile(self.no_sampling_for) if self.no_sampling_for else None
+        return _merge_regexes(self.no_sampling_for)
 
 options = Options()
