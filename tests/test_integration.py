@@ -539,7 +539,7 @@ def test_internal_numpy_type():
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run('--adjust-type-names', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3678,7 +3678,7 @@ def test_typefinder_name_from_all_preferred(all_type):
         """
     ))
 
-    rt_run('t.py')
+    rt_run('--adjust-type-names', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3717,7 +3717,7 @@ def test_typefinder_name_without_underscore_preferred():
         """
     ))
 
-    rt_run('t.py')
+    rt_run('--adjust-type-names', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3757,7 +3757,7 @@ def test_typefinder_mod_without_underscore_preferred():
         """
     ))
 
-    rt_run('t.py')
+    rt_run('--adjust-type-names', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
     print(output)
@@ -3793,7 +3793,7 @@ def test_typefinder_shorter_name_preferred():
         """
     ))
 
-    rt_run('t.py')
+    rt_run('--adjust-type-names', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3820,7 +3820,7 @@ def test_typefinder_defined_in_main():
         """
     ))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('--adjust-type-names', '--no-sampling', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 

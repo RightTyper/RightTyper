@@ -149,14 +149,17 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
     )
 
 
-@cache
-def is_test_module(m: str) -> bool:
+def detected_test_modules() -> set[str]:
     # Only load this module now: if pytest is used, let pytest load it first,
     # avoiding its warning and the possible rewriting issues it warns about.
     from righttyper.pytest import pytest_modules
+    return pytest_modules
 
+
+@cache
+def is_test_module(m: str) -> bool:
     return (
-        m in pytest_modules
+        m in detected_test_modules()
         or (
             (opt_test_modules := options.test_modules_re)
             and opt_test_modules.match(m)
@@ -166,13 +169,14 @@ def is_test_module(m: str) -> bool:
 
 @cache
 def should_skip_function(code: CodeType) -> bool:
+    if skip_this_file(code.co_filename):
+        return True
+
     if (
-        skip_this_file(code.co_filename)
-        or (    # doesn't match any of the include patterns
-            (include_functions := options.include_functions_re)
-            and not include_functions.search(code.co_name)
-        )
+        (include_functions := options.include_functions_re)
+        and not include_functions.search(code.co_name)
     ):
+        logger.debug(f"skipping function {code.co_name}")
         return True
 
     if not (code.co_flags & 0x2):
@@ -313,7 +317,8 @@ class TypeFinder:
             else None
         )
 
-        for name, obj in target.__dict__.items():
+        # TODO why can target.__dict__ change during iteration?
+        for name, obj in list(target.__dict__.items()):
             name_is_private = (
                 is_private
                 or (dunder_all is not None and name not in dunder_all)
@@ -373,6 +378,18 @@ class TypeFinder:
                     )
 
 
+def _is_defined_in(t: type, target: type|ModuleType, name_parts: list[str], name_index: int=0) -> bool:
+    """Checks whether a name, given split into name_parts, is defined in a class or module."""
+    if name_index<len(name_parts) and (obj := target.__dict__.get(name_parts[name_index])):
+        if obj is t:
+            return True
+
+        if type(obj) in (type, ModuleType):
+            return _is_defined_in(t, obj, name_parts, name_index+1)
+
+    return False
+
+
 type_finder = TypeFinder()
 
 
@@ -382,15 +399,30 @@ def search_type(t: type) -> tuple[str, str] | None:
        returning the module and qualified name under which it exists, if any.
     """
 
+    if not options.adjust_type_names:
+        # If we we can, (i.e., not '<locals>', not from '__main__',) check the type is there
+        # The problem with __main__ is that if runpy is done running the module/script,
+        # sys.modules['__main__'] points back to RightTyper's __main__.
+        if (
+            t.__module__ != '__main__'
+            and '<locals>' not in (name_parts := t.__qualname__.split('.'))
+            and (
+                not (m := sys.modules.get(t.__module__))
+                or not _is_defined_in(t, m, name_parts)
+            )
+        ):
+            return None
+        return normalize_module_name(t.__module__), t.__qualname__
+
     # Look up type in map
     if (f := type_finder.find(t)):
         mod, name = normalize_module_name(f[0]), f[1]
         if logger.level == logging.DEBUG:
             if mod != t.__module__ or name != t.__qualname__:
-                logger.debug(f"Mapped {t.__module__}.{t.__qualname__} to {mod}.{name}")
+                logger.debug(f"Adjusted {t.__module__}.{t.__qualname__} to {mod}.{name}")
         return mod, name
 
-    # Just trust local scope names... can we do better?
+    # Just trust local scope names... TODO can we do better?
     if '<locals>' in t.__qualname__:
         return normalize_module_name(t.__module__), t.__qualname__
 
