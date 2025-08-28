@@ -43,6 +43,7 @@ from righttyper.righttyper_runtime import (
     get_value_type,
     get_type_name,
     should_skip_function,
+    detected_test_modules,
     is_test_module,
     hint2type,
     PostponedIteratorArg,
@@ -1394,6 +1395,11 @@ def cli(debug: bool):
     help="""Whether to emit "typing.Never".""",
 )
 @click.option(
+    "--adjust-type-names/--no-adjust-type-names",
+    default=options.adjust_type_names,
+    help="Whether to look for a canonical name for types, rather than use the module and name where they are defined.",
+)
+@click.option(
     "--debug",
     is_flag=True,
     help="Include diagnostic information in log file.",
@@ -1429,6 +1435,7 @@ def run(
     exclude_test_types: bool,
     test_modules: tuple[str, ...],
     use_typing_never: bool,
+    adjust_type_names: bool,
     debug: bool
 ) -> None:
     """Runs a given script or module, collecting type information."""
@@ -1498,6 +1505,7 @@ def run(
     options.resolve_mocks = resolve_mocks
     options.exclude_test_types = exclude_test_types
     options.test_modules = test_modules
+    options.adjust_type_names = adjust_type_names
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
@@ -1526,6 +1534,10 @@ def run(
         for t in obs.functions_visited.values()
         if not skip_this_file(t.func_id.file_name)
     )
+
+    if logger.level == logging.DEBUG:
+        for m in detected_test_modules():
+            logger.debug(f"test module: {m}")
 
     collected = {
         'version': PKL_FILE_VERSION,

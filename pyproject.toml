@@ -65,6 +65,7 @@ classifiers = [
 [project.optional-dependencies]
 tests = [
     "pytest",
+    "pytest-antilru",
     "mypy",
     "numpy",
     "ml_dtypes",
