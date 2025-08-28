@@ -86,7 +86,7 @@ def skip_this_file(filename: str) -> bool:
     if not should_skip and (include_files := options.include_files_re):
         should_skip = not include_files.search(filename)
         if should_skip:
-            logger.debug(f"skipping {filename}")
+            logger.debug(f"skipping file {filename}")
 
     return should_skip
 

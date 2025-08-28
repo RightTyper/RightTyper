@@ -1546,6 +1546,9 @@ def run(
         'options': options
     }
 
+    logger.debug(f"observed {len(collected['files'])} file(s)")
+    logger.debug(f"generated {len(collected['type_annotations'])} annotation(s)")
+
     if only_collect:
         with open(PKL_FILE_NAME, "wb") as f:
             pickle.dump(collected, f)

@@ -169,13 +169,14 @@ def is_test_module(m: str) -> bool:
 
 @cache
 def should_skip_function(code: CodeType) -> bool:
+    if skip_this_file(code.co_filename):
+        return True
+
     if (
-        skip_this_file(code.co_filename)
-        or (    # doesn't match any of the include patterns
-            (include_functions := options.include_functions_re)
-            and not include_functions.search(code.co_name)
-        )
+        (include_functions := options.include_functions_re)
+        and not include_functions.search(code.co_name)
     ):
+        logger.debug(f"skipping function {code.co_name}")
         return True
 
     if not (code.co_flags & 0x2):
