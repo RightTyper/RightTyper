@@ -8,7 +8,7 @@ def _merge_regexes(patterns: tuple[str, ...]) -> re.Pattern|None:
     """Merges multiple regular expressions, returning a compiled pattern or,
        if the tuple is empty, returns None.
     """
-    return re.compile('|'.join([f"{(p)}" for p in patterns])) if patterns else None
+    return re.compile('|'.join([f"(?:{p})" for p in patterns])) if patterns else None
 
 
 @dataclass
