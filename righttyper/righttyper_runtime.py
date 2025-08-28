@@ -317,7 +317,8 @@ class TypeFinder:
             else None
         )
 
-        for name, obj in target.__dict__.items():
+        # TODO why can target.__dict__ change during iteration?
+        for name, obj in list(target.__dict__.items()):
             name_is_private = (
                 is_private
                 or (dunder_all is not None and name not in dunder_all)
