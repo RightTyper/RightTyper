@@ -178,6 +178,11 @@ Options:
   --use-typing-never / --no-use-typing-never
                                   Whether to emit "typing.Never".  [default:
                                   use-typing-never]
+  --adjust-type-names / --no-adjust-type-names
+                                  Whether to look for a canonical name for
+                                  types, rather than use the module and name
+                                  where they are defined.  [default: adjust-
+                                  type-names]
   --debug                         Include diagnostic information in log file.
   --help                          Show this message and exit.
 ```

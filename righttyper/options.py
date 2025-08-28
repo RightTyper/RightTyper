@@ -41,7 +41,7 @@ class Options:
     exclude_test_types: bool = True
     resolve_mocks: bool = False
     test_modules: tuple[str, ...] = ('pytest', '_pytest', 'py.test', 'unittest')
-    adjust_type_names: bool = False
+    adjust_type_names: bool = True
 
 
     @functools.cached_property
