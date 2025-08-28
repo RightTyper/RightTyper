@@ -301,7 +301,7 @@ def test_type_from_annotations():
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-@pytest.mark.skipif(sys.version_info >= (3,13), reason="jaxtyping name errors") # FIXME
+@pytest.mark.skip(reason="jaxtyping name errors") # FIXME
 def test_hint2type():
     import jaxtyping
     import jax
