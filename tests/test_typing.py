@@ -9,6 +9,7 @@ import importlib
 import types
 from righttyper.options import options
 from enum import Enum
+import sys
 
 rt_get_value_type = rt.get_value_type
 
@@ -300,6 +301,7 @@ def test_type_from_annotations():
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
+@pytest.mark.skipif(sys.version_info >= (3,13), reason="jaxtyping name errors") # FIXME
 def test_hint2type():
     import jaxtyping
     import jax
