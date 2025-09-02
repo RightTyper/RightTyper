@@ -1019,7 +1019,7 @@ def execute_script_or_module(
         if e.code not in (None, 0):
             raise
 
-    # FIXME: save main_globals somehow upon exception
+    # TODO: save main_globals somehow upon exception
 
 
 def output_signatures(
@@ -1525,51 +1525,51 @@ def run(
     pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
     os.environ["PYTEST_PLUGINS"] = pytest_plugins
 
-    main_globals: dict[str, Any]|None = None
+    setup_tool_id()
+    register_monitoring_callbacks(
+        enter_handler,
+        return_handler,
+        yield_handler,
+        call_handler,
+    )
+    sys.monitoring.restart_events()
+    alarm.start()
+
     try:
-        setup_tool_id()
-        register_monitoring_callbacks(
-            enter_handler,
-            return_handler,
-            yield_handler,
-            call_handler,
-        )
-        sys.monitoring.restart_events()
-        alarm.start()
         execute_script_or_module(script, is_module=bool(module), args=args)
     finally:
         reset_monitoring()
         alarm.stop()
 
-    file_names = set(
-        t.func_id.file_name
-        for t in obs.functions_visited.values()
-        if not skip_this_file(t.func_id.file_name)
-    )
+        file_names = set(
+            t.func_id.file_name
+            for t in obs.functions_visited.values()
+            if not skip_this_file(t.func_id.file_name)
+        )
 
-    type_annotations = obs.collect_annotations()
+        type_annotations = obs.collect_annotations()
 
-    if logger.level == logging.DEBUG:
-        for m in detected_test_modules():
-            logger.debug(f"test module: {m}")
+        if logger.level == logging.DEBUG:
+            for m in detected_test_modules():
+                logger.debug(f"test module: {m}")
 
-    collected = {
-        'version': PKL_FILE_VERSION,
-        'files': [[f, obs.source_to_module_name.get(f)] for f in file_names],
-        'type_annotations': type_annotations,
-        'options': options
-    }
+        collected = {
+            'version': PKL_FILE_VERSION,
+            'files': [[f, obs.source_to_module_name.get(f)] for f in file_names],
+            'type_annotations': type_annotations,
+            'options': options
+        }
 
-    logger.debug(f"observed {len(file_names)} file(s)")
-    logger.debug(f"generated {len(type_annotations)} annotation(s)")
+        logger.debug(f"observed {len(file_names)} file(s)")
+        logger.debug(f"generated {len(type_annotations)} annotation(s)")
 
-    if only_collect:
-        with open(PKL_FILE_NAME, "wb") as f:
-            pickle.dump(collected, f)
+        if only_collect:
+            with open(PKL_FILE_NAME, "wb") as f:
+                pickle.dump(collected, f)
 
-        print(f"Collected types saved to {PKL_FILE_NAME}.")
-    else:
-        process_collected(collected)
+            print(f"Collected types saved to {PKL_FILE_NAME}.")
+        else:
+            process_collected(collected)
 
 
 @cli.command()
