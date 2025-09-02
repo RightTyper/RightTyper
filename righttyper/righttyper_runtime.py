@@ -24,6 +24,7 @@ from types import (
 from typing import Any, cast, TypeAlias, get_type_hints, get_origin, get_args, Callable
 import typing
 from pathlib import Path
+from dataclasses import dataclass, field
 
 from righttyper.random_dict import RandomDict
 from righttyper.righttyper_types import (
@@ -162,7 +163,7 @@ def is_test_module(m: str) -> bool:
         m in detected_test_modules()
         or (
             (opt_test_modules := options.test_modules_re)
-            and opt_test_modules.match(m)
+            and bool(opt_test_modules.match(m))
         )
     )
 
@@ -234,150 +235,6 @@ def normalize_module_name(module_name: str) -> str:
     return module_name
 
 
-class TypeFinder:
-    """Maps type objects to the module and qualified name under which they are exported."""
-
-    def __init__(self):
-        self._sys_modules_len = 0
-        self._known_modules: set[str] = set()
-        self._map: dict[type, tuple[list[str], list[str]]] = dict()
-        self._private_map: dict[type, tuple[list[str], list[str]]] = dict()
-
-    @staticmethod
-    def _to_strings(r: tuple[list[str], list[str]]) -> tuple[str, str]:
-        return ".".join(r[0]), ".".join(r[1])
-
-
-    def find(self, t: type) -> tuple[str, str]|None:
-        """Given a type object, return its module and qualified name as strings."""
-
-        self._update_map()
-
-        if t.__module__ == '__main__' and t not in self._map and t not in self._private_map:
-            # TODO if running in __main__'s top-level code, the code may not yet have
-            # reached the location where the type is defined.  We could handle this much
-            # better by doing this mapping after execution and using __main__'s dictionary
-            # returned by runpy.
-            # TODO this is invoked after runpy is done running the module/script,
-            # sys.modules['__main__'] may point back to RightTyper's main...
-            # the same change above would resolve this as well.
-            self._add_types_from(sys.modules['__main__'], ['__main__'], [], is_private=False)
-
-        if (r := self._map.get(t)) or (r := self._private_map.get(t)):
-            return self._to_strings(r)
-
-        return None
-
-
-    def _update_map(self) -> None:
-        """Updates our internal map of types to modules and names."""
-        # We detect changes in sys.modules by changes in its size,
-        # assuming it monotonically increases in size.
-        # TODO change to doing this mapping after execution, when
-        # changes no longer affect us.
-        if len(sys.modules) != self._sys_modules_len:
-            sys_modules = list(sys.modules) # list() in case it changes while we're working
-            for m in sys_modules:
-                if (
-                    m == '__main__'
-                    or m in self._known_modules
-                ):
-                    continue
-
-                self._add_types_from(
-                    sys.modules[m],
-                    m.split('.'), [],
-                    is_private=(m.startswith("_") or "._" in m)
-                )
-                self._known_modules.add(m)
-
-            self._sys_modules_len = len(sys_modules)
-
-
-    def _add_types_from(
-        self,
-        target: type|ModuleType,
-        mod_parts: list[str],
-        name_parts: list[str],
-        *,
-        is_private: bool,
-        objs_in_path: set = set()
-    ) -> None:
-        """Recursively explores a module (or type), updating self._map.
-           'target': the object to explore
-           'mod_parts': the module name, split on '.'
-           'name_parts': the qualified name parts, split on '.'
-           'objs_in_path': set of objects being recursed on, for loop avoidance
-        """
-
-        dunder_all = (
-            set(da)
-            if isinstance(target, ModuleType)
-            and isinstance((da := target.__dict__.get('__all__')), (list, tuple))
-            else None
-        )
-
-        # TODO why can target.__dict__ change during iteration?
-        for name, obj in list(target.__dict__.items()):
-            name_is_private = (
-                is_private
-                or (dunder_all is not None and name not in dunder_all)
-                or name.startswith("_")
-            )
-
-            if (
-                isinstance(obj, (type, ModuleType))
-                # also include typing's special definitions; must be hashable to use as dict key
-                or (target is typing and isinstance(obj, abc.Hashable) and hasattr(obj, "__name__"))
-            ):
-                # Some module objects are really namespaces, like "sys.monitoring"; they
-                # don't show up in sys.modules. We want to process any such, but leave others
-                # to be processed on their own from sys.modules
-                if isinstance(obj, ModuleType) and obj.__name__ in sys.modules:
-                    continue
-
-                new_name_parts = name_parts + [name]
-
-                if not isinstance(obj, ModuleType):
-                    the_map = self._private_map if name_is_private else self._map
-                    if (prev := the_map.get(cast(type, obj))):
-                        prev_pkg = prev[0][0]
-                        this_pkg = mod_parts[0]
-                        prev_len = len(prev[0]) + len(prev[1])
-                        this_len = len(mod_parts) + len(new_name_parts)
-
-                    # When a module creates an alias for some other package's type,
-                    # it must first import that dependency; that causes the dependency
-                    # to show up first in sys.modules. Because of this, if a name already
-                    # exists for a type pointing to another package, we don't override it.
-                    # However, within a package, modules often load submodules before
-                    # creating aliases that give types their "official" names. Within the
-                    # same package, we pick the shortest, as shorter names are easier to
-                    # use, and thus more likely to be the intended name.
-                    # We assume that the package is given by the module name's first
-                    # dot-delimited part, which isn't always true (e.g., namespace packages).
-                    # TODO figure out package based on __file__ and/or __path__
-                    if (
-                        not prev
-                        or (
-                            prev_pkg == this_pkg and (
-                                prev_len > this_len
-                                or (prev_len == this_len and new_name_parts[-1] == obj.__name__)
-                            )
-                        )
-                    ):
-                        the_map[cast(type, obj)] = (mod_parts, new_name_parts)
-
-                if isinstance(obj, (type, ModuleType)) and obj not in objs_in_path:
-                    self._add_types_from(
-                        obj,
-                        mod_parts,
-                        new_name_parts,
-                        is_private=name_is_private,
-                        objs_in_path=objs_in_path | {obj}
-                    )
-
-
 def _is_defined_in(t: type, target: type|ModuleType, name_parts: list[str], name_index: int=0) -> bool:
     """Checks whether a name, given split into name_parts, is defined in a class or module."""
     if name_index<len(name_parts) and (obj := target.__dict__.get(name_parts[name_index])):
@@ -390,15 +247,11 @@ def _is_defined_in(t: type, target: type|ModuleType, name_parts: list[str], name
     return False
 
 
-type_finder = TypeFinder()
-
-
 @cache
 def search_type(t: type) -> tuple[str, str] | None:
     """Searches for a given type in its __module__ and any submodules,
        returning the module and qualified name under which it exists, if any.
     """
-
     if not options.adjust_type_names:
         # If we we can, (i.e., not '<locals>', not from '__main__',) check the type is there
         # The problem with __main__ is that if runpy is done running the module/script,
@@ -412,21 +265,9 @@ def search_type(t: type) -> tuple[str, str] | None:
             )
         ):
             return None
-        return normalize_module_name(t.__module__), t.__qualname__
 
-    # Look up type in map
-    if (f := type_finder.find(t)):
-        mod, name = normalize_module_name(f[0]), f[1]
-        if logger.level == logging.DEBUG:
-            if mod != t.__module__ or name != t.__qualname__:
-                logger.debug(f"Adjusted {t.__module__}.{t.__qualname__} to {mod}.{name}")
-        return mod, name
+    return normalize_module_name(t.__module__), t.__qualname__
 
-    # Just trust local scope names... TODO can we do better?
-    if '<locals>' in t.__qualname__:
-        return normalize_module_name(t.__module__), t.__qualname__
-
-    return None
 
 # CPython 3.12 returns specialized objects for each one of the following iterators,
 # but does not name their types publicly.  We here give them names to keep the
@@ -858,7 +699,7 @@ def get_value_type(
     elif isinstance(value, CoroutineType):
         return _type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
     elif isinstance(value, type) and value is not type:
-        return TypeInfo("", "type", args=(get_type_name(value, depth+1),), type_obj=t)
+        return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
     elif t.__module__ == "builtins":
         if in_builtins_import(t):
             return TypeInfo.from_type(t, module="") # these are "well known", so no module name needed

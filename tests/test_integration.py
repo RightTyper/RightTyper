@@ -3648,7 +3648,7 @@ def test_typing_union(python_version):
 
 
 @pytest.mark.parametrize('all_type', ['list', 'tuple'])
-def test_typefinder_name_from_all_preferred(all_type):
+def test_typemap_name_from_all_preferred(all_type):
     # C has 4 names:
     #   - m.foo.C, where it's defined
     #   - m.C, where it's imported into m
@@ -3687,7 +3687,7 @@ def test_typefinder_name_from_all_preferred(all_type):
     """)
 
 
-def test_typefinder_name_without_underscore_preferred():
+def test_typemap_name_without_underscore_preferred():
     # C has 5 names:
     #   - m.foo.C, where it's defined
     #   - m._C, where it's imported (and defined before m.C)
@@ -3726,7 +3726,7 @@ def test_typefinder_name_without_underscore_preferred():
     """)
 
 
-def test_typefinder_mod_without_underscore_preferred():
+def test_typemap_mod_without_underscore_preferred():
     # C has 5 names:
     #   - _foo.C, where it's defined
     #   - m._foo.C, where it's imported
@@ -3767,7 +3767,7 @@ def test_typefinder_mod_without_underscore_preferred():
     """)
 
 
-def test_typefinder_shorter_name_preferred():
+def test_typemap_shorter_name_preferred():
     # C has two names:
     #   - m.foo.C, where it's defined
     #   - m.C, where it's imported
@@ -3799,6 +3799,42 @@ def test_typefinder_shorter_name_preferred():
 
     assert get_function(code, 'f') == textwrap.dedent("""\
         def f(x: m.C) -> None: ...
+    """)
+
+
+def test_typemap_non_test_name_preferred():
+    # C has three names:
+    #   - mymodule._C, where it's defined
+    #   - test_one.C, where it's imported
+    #
+    # we want to see it pick mymodule.C
+    Path("mymodule").mkdir()
+    (Path("mymodule") / "__init__.py").write_text(textwrap.dedent("""\
+        def f(x):
+            pass
+        """
+    ))
+    (Path("mymodule") / "types.py").write_text(textwrap.dedent("""\
+        class _C:
+            pass
+        """
+    ))
+    Path("test").mkdir()
+    (Path("test") / "test_one.py").write_text(textwrap.dedent("""\
+        from mymodule.types import _C as C
+        import mymodule
+
+        def test_it():
+            mymodule.f(C())
+        """
+    ))
+
+    rt_run('--adjust-type-names', '-m', 'pytest')
+    output = (Path("mymodule") / "__init__.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: "mymodule.types._C") -> None: ...
     """)
 
 

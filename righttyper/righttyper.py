@@ -90,6 +90,7 @@ from righttyper.righttyper_alarm import (
 
 from righttyper.options import Options, options
 from righttyper.logger import logger
+from righttyper.typemap import AdjustTypeNamesT
 
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
 PKL_FILE_VERSION = 4
@@ -230,6 +231,9 @@ class Observations:
     # Mapping of sources to their module names
     # TODO handle cases where modules are loaded more than once, e.g. through pytest
     source_to_module_name: dict[str, str|None] = field(default_factory=dict)
+
+    # target __main__ module globals
+    main_globals: dict[str, Any]|None = None
 
 
     def record_module(
@@ -480,6 +484,9 @@ class Observations:
                 )
 
             return ann
+
+        if options.adjust_type_names:
+            self._transform_types(AdjustTypeNamesT(self.main_globals))
 
         class NonSelfCloningT(TypeInfo.Transformer):
             """Clones the given TypeInfo tree, clearing all 'is_self' flags,
@@ -993,18 +1000,20 @@ def execute_script_or_module(
     is_module: bool,
     args: list[str],
 ) -> None:
+    """Executes the script or module, returning the __main__ module's globals."""
+
     try:
         sys.argv = [script, *args]
         if is_module:
             with loader.ImportManager(replace_dict=options.replace_dict):
-                runpy.run_module(
+                obs.main_globals = runpy.run_module(
                     script,
                     run_name="__main__",
                     alter_sys=True,
                 )
         else:
             with loader.ImportManager(replace_dict=options.replace_dict):
-                runpy.run_path(script, run_name="__main__")
+                obs.main_globals = runpy.run_path(script, run_name="__main__")
 
     except SystemExit as e:
         if e.code not in (None, 0):
@@ -1514,6 +1523,7 @@ def run(
     pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
     os.environ["PYTEST_PLUGINS"] = pytest_plugins
 
+    main_globals: dict[str, Any]|None = None
     try:
         setup_tool_id()
         register_monitoring_callbacks(
