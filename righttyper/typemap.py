@@ -25,7 +25,7 @@ class TypeMap:
             return ".".join(self.module_parts), ".".join(self.name_parts)
 
 
-    def __init__(self, main_globals: dict[str, typing.Any]):
+    def __init__(self, main_globals: dict[str, typing.Any]|None):
         self._map: dict[type, tuple[str, str]] = self.build_map(main_globals)
 
 
@@ -34,8 +34,8 @@ class TypeMap:
         return self._map.get(t, None)
 
 
-    def build_map(self, main_globals: dict[str, typing.Any]) -> dict[type, tuple[str, str]]:
-        work_map: dict[str, list[TypeName]] = defaultdict(list)
+    def build_map(self, main_globals: dict[str, typing.Any]|None) -> dict[type, tuple[str, str]]:
+        work_map: dict[type, list[TypeMap.TypeName]] = defaultdict(list)
         known_modules: set[str] = set()
 
         for m in list(sys.modules): # list() in case it changes while we're working
@@ -66,7 +66,7 @@ class TypeMap:
         def get_name(t: type) -> str|None:
             return getattr(t, "__qualname__", getattr(t, "__name__"))
 
-        def typename_key(t: type, tn: self.TypeName) -> tuple[int, ...]:
+        def typename_key(t: type, tn: TypeMap.TypeName) -> tuple[int, ...]:
             module, name = tn.to_strings()
             # str() because __module__ might be a getset_attribute (hello, cython)
             t_package = str(t.__module__).split('.')[0]
@@ -107,8 +107,8 @@ class TypeMap:
 
     def _add_types_from(
         self,
-        work_map: dict[str, TypeName],
-        dunder_dict: dict[str, typing.Any],
+        work_map: dict[type, list[TypeName]],
+        dunder_dict: abc.Mapping[str, typing.Any],
         mod_parts: list[str],
         name_parts: list[str],
         *,
@@ -178,7 +178,7 @@ class TypeMap:
 
 class AdjustTypeNamesT(TypeInfo.Transformer):
     """Adjust types' module and name by looking their type_obj on TypeMap."""
-    def __init__(vself, main_globals: dict[str, typing.Any]):
+    def __init__(vself, main_globals: dict[str, typing.Any] | None):
         vself.type_map = TypeMap(main_globals)
 
     def visit(vself, node: TypeInfo) -> TypeInfo:

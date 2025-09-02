@@ -1421,7 +1421,7 @@ def run(
     module: str,
     args: list[str],
     all_files: bool,
-    include_files: str,
+    include_files: tuple[str, ...],
     include_functions: tuple[str, ...],
     overwrite: bool,
     output_files: bool,
@@ -1434,7 +1434,7 @@ def run(
     target_overhead: float,
     use_multiprocessing: bool,
     sampling: bool,
-    no_sampling_for: str,
+    no_sampling_for: tuple[str, ...],
     signal_wakeup: bool,
     replace_dict: bool,
     container_sample_limit: int,
@@ -1547,6 +1547,8 @@ def run(
         if not skip_this_file(t.func_id.file_name)
     )
 
+    type_annotations = obs.collect_annotations()
+
     if logger.level == logging.DEBUG:
         for m in detected_test_modules():
             logger.debug(f"test module: {m}")
@@ -1554,12 +1556,12 @@ def run(
     collected = {
         'version': PKL_FILE_VERSION,
         'files': [[f, obs.source_to_module_name.get(f)] for f in file_names],
-        'type_annotations': obs.collect_annotations(),
+        'type_annotations': type_annotations,
         'options': options
     }
 
-    logger.debug(f"observed {len(collected['files'])} file(s)")
-    logger.debug(f"generated {len(collected['type_annotations'])} annotation(s)")
+    logger.debug(f"observed {len(file_names)} file(s)")
+    logger.debug(f"generated {len(type_annotations)} annotation(s)")
 
     if only_collect:
         with open(PKL_FILE_NAME, "wb") as f:

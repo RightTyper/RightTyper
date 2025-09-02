@@ -4,7 +4,7 @@ import functools
 import re
 
 
-def _merge_regexes(patterns: tuple[str, ...]) -> re.Pattern|None:
+def _merge_regexes(patterns: Sequence[str]) -> re.Pattern|None:
     """Merges multiple regular expressions, returning a compiled pattern or,
        if the tuple is empty, returns None.
     """

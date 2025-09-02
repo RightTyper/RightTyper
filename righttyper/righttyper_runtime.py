@@ -159,11 +159,11 @@ def detected_test_modules() -> set[str]:
 
 @cache
 def is_test_module(m: str) -> bool:
-    return (
+    return bool(
         m in detected_test_modules()
         or (
             (opt_test_modules := options.test_modules_re)
-            and bool(opt_test_modules.match(m))
+            and opt_test_modules.match(m)
         )
     )
 
@@ -292,7 +292,6 @@ class _GetItemDummy:
 GETITEM_ITER: type = type(iter(_GetItemDummy()))
 
 
-@cache
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
 
