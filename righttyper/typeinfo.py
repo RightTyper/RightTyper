@@ -57,6 +57,20 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
 
     other_types = typeinfoset - mergeable_types
 
+    base_containers = set(              # container types without arguments
+        t
+        for t in mergeable_types
+        if issubclass(t.type_obj, abc.Container)
+    )
+
+    if base_containers:
+        # argument-less containers subsume those with arguments: delete them
+        other_types = set(
+            t
+            for t in other_types
+            if not any(bc.type_obj is t.type_obj for bc in base_containers)
+        )
+
     # TODO do we want to merge by protocol?  search for protocols in collections.abc types?
 
     def insert_numerics(mro: tuple[type, ...]) -> tuple[type, ...]:
@@ -135,9 +149,6 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
         if any(t in mergeable_types for t in types):
             mergeable_types -= set(types)
             replacements.add(get_type_name(st))
-
-    if not replacements:
-        return typeinfoset
 
     return mergeable_types | replacements | other_types
 
