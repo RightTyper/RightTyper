@@ -67,6 +67,7 @@ class TypeMap:
             return getattr(t, "__qualname__", getattr(t, "__name__"))
 
         def typename_key(t: type, tn: TypeMap.TypeName) -> tuple[int, ...]:
+            """Generates a key for sorting / picking among the names found for a type."""
             module, name = tn.to_strings()
             # str() because __module__ might be a getset_attribute (hello, cython)
             t_package = str(t.__module__).split('.')[0]
@@ -86,22 +87,15 @@ class TypeMap:
         search_map: dict[type, tuple[str, str]] = dict()
 
         for t in work_map:
-            typename_list = sorted(work_map[t], key=lambda tn: typename_key(t, tn))
-            mod_and_name = typename_list[0].to_strings()
+            mod_and_name = min(work_map[t], key=lambda tn: typename_key(t, tn)).to_strings()
             if mod_and_name[0] == 'builtins':
                 mod_and_name = ('', mod_and_name[1])
-
             search_map[t] = mod_and_name
 
             if logger.level == logging.DEBUG:
-                for tn in typename_list:
+                for tn in sorted(work_map[t], key=lambda tn: typename_key(t, tn)):
                     logger.debug(f"TypeMap {t.__module__}.{get_name(t)} {'.'.join(tn.to_strings())}")
 
-            if False:
-                for tn in typename_list:
-                    #if typename_list[0].to_strings() != (t.__module__, get_name(t)):
-                    print(f"TypeMap {t.__module__}.{get_name(t)} " +
-                              f"{'.'.join(tn.to_strings())} {typename_key(t, tn)}")
         return search_map
 
 
