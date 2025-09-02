@@ -52,7 +52,7 @@ def runmypy(tmp_cwd, request):
 
 
 def rt_run(*args, capture: bool = False):
-    run_args = [sys.executable, '-m', 'righttyper', 'run', '--output-files', '--overwrite', *args]
+    run_args = [sys.executable, '-m', 'righttyper', 'run', *args]
 
     if capture:
         p = subprocess.run(run_args, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -2415,7 +2415,6 @@ def test_nonzero_SystemExit(as_module):
     """))
 
     p = subprocess.run([sys.executable, '-m', 'righttyper', 'run',
-                        '--output-files', '--overwrite',
                         *(('-m', 't') if as_module else ('t.py',))],
                         check=False)
     assert p.returncode != 0

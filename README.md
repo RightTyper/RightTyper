@@ -118,12 +118,15 @@ Options:
                                   directory.  If omitted, the script's
                                   directory (or, for -m, the current
                                   directory) is used.
-  --overwrite / --no-overwrite    Overwrite files with type information.
-                                  [default: no-overwrite]
+  --overwrite / --no-overwrite    Overwrite ".py" files with type information.
+                                  If disabled, ".py.typed" files are written
+                                  instead. The original files are saved as
+                                  ".bak".  [default: overwrite]
   --output-files / --no-output-files
                                   Output annotated files (possibly
-                                  overwriting, if specified).  [default: no-
-                                  output-files]
+                                  overwriting, if specified).  If disabled,
+                                  the annotations are only written to
+                                  righttyper.out.  [default: output-files]
   --ignore-annotations            Ignore existing annotations and overwrite
                                   with type information.
   --only-update-annotations       Overwrite existing annotations but never add

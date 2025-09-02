@@ -1275,15 +1275,13 @@ def cli(debug: bool):
 )
 @click.option(
     "--overwrite/--no-overwrite",
-    help="Overwrite files with type information.",
-    default=False,
-    show_default=True,
+    help="""Overwrite ".py" files with type information. If disabled, ".py.typed" files are written instead. The original files are saved as ".bak".""",
+    default=options.overwrite,
 )
 @click.option(
     "--output-files/--no-output-files",
-    help="Output annotated files (possibly overwriting, if specified).",
-    default=False,
-    show_default=True,
+    help=f"Output annotated files (possibly overwriting, if specified).  If disabled, the annotations are only written to {TOOL_NAME}.out.",
+    default=options.output_files,
 )
 @click.option(
     "--ignore-annotations",
