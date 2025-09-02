@@ -415,8 +415,20 @@ def test_merged_types():
 
 def test_merged_types_generics():
     assert "list[bool]|list[int]" == str(merged_types({
-            TypeInfo("", "list", args=(TypeInfo("", "int"),)),
-            TypeInfo("", "list", args=(TypeInfo("", "bool"),))
+            TypeInfo("", "list", type_obj=list, args=(TypeInfo("", "int"),)),
+            TypeInfo("", "list", type_obj=list, args=(TypeInfo("", "bool"),))
+        }
+    ))
+
+    assert "builtins.list" == str(merged_types({
+            TypeInfo.from_type(list, args=(TypeInfo("", "int"),)),
+            TypeInfo.from_type(list),
+        }
+    ))
+
+    assert "builtins.tuple" == str(merged_types({
+            TypeInfo.from_type(tuple, args=(TypeInfo("", "int"), ...)),
+            TypeInfo.from_type(tuple),
         }
     ))
 

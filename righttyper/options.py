@@ -22,8 +22,8 @@ class Options:
     target_overhead: float = 5.0
     infer_shapes: bool = False
     ignore_annotations: bool = False
-    overwrite: bool = False
-    output_files: bool = False
+    overwrite: bool = True
+    output_files: bool = True
     generate_stubs: bool = False
     json_output: bool = False
     use_multiprocessing: bool = True

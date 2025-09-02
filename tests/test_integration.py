@@ -52,7 +52,7 @@ def runmypy(tmp_cwd, request):
 
 
 def rt_run(*args, capture: bool = False):
-    run_args = [sys.executable, '-m', 'righttyper', 'run', '--output-files', '--overwrite', *args]
+    run_args = [sys.executable, '-m', 'righttyper', 'run', *args]
 
     if capture:
         p = subprocess.run(run_args, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -2407,6 +2407,10 @@ def test_rich_is_messed_up():
 @pytest.mark.parametrize('as_module', [False, True])
 def test_nonzero_SystemExit(as_module):
     Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x):
+            return x
+
+        foo(10)
         raise SystemExit("something")
     """))
 
@@ -2415,6 +2419,11 @@ def test_nonzero_SystemExit(as_module):
                         check=False)
     assert p.returncode != 0
 
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent(f"""\
+        def foo(x: int) -> int: ...
+    """)
 
 @pytest.mark.parametrize('as_module', [False, True])
 def test_zero_SystemExit(as_module):
@@ -2427,7 +2436,12 @@ def test_zero_SystemExit(as_module):
     """))
 
     rt_run(*(('-m', 't') if as_module else ('t.py',)))
-    assert "def foo(x: int) -> int:" in Path("t.py").read_text()
+
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent(f"""\
+        def foo(x: int) -> int: ...
+    """)
 
 
 def test_arg_parsing(tmp_cwd):

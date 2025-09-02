@@ -66,7 +66,8 @@ class TypeMap:
         def get_name(t: type) -> str|None:
             return getattr(t, "__qualname__", getattr(t, "__name__"))
 
-        def typename_key(t: type, tn: TypeMap.TypeName) -> tuple[int, ...]:
+        def typename_key(t: type, tn: TypeMap.TypeName) -> tuple[int|bool, ...]:
+            """Generates a key for sorting / picking among the names found for a type."""
             module, name = tn.to_strings()
             # str() because __module__ might be a getset_attribute (hello, cython)
             t_package = str(t.__module__).split('.')[0]
@@ -80,28 +81,21 @@ class TypeMap:
                 # prefer shorter to longer (in components)
                 len(tn.module_parts)+len(tn.name_parts),
                 # prefer where's defined
-                name != get_name(t),
+                module != t.__module__ or name != get_name(t),
             )
 
         search_map: dict[type, tuple[str, str]] = dict()
 
         for t in work_map:
-            typename_list = sorted(work_map[t], key=lambda tn: typename_key(t, tn))
-            mod_and_name = typename_list[0].to_strings()
+            mod_and_name = min(work_map[t], key=lambda tn: typename_key(t, tn)).to_strings()
             if mod_and_name[0] == 'builtins':
                 mod_and_name = ('', mod_and_name[1])
-
             search_map[t] = mod_and_name
 
             if logger.level == logging.DEBUG:
-                for tn in typename_list:
+                for tn in sorted(work_map[t], key=lambda tn: typename_key(t, tn)):
                     logger.debug(f"TypeMap {t.__module__}.{get_name(t)} {'.'.join(tn.to_strings())}")
 
-            if False:
-                for tn in typename_list:
-                    #if typename_list[0].to_strings() != (t.__module__, get_name(t)):
-                    print(f"TypeMap {t.__module__}.{get_name(t)} " +
-                              f"{'.'.join(tn.to_strings())} {typename_key(t, tn)}")
         return search_map
 
 
@@ -140,13 +134,16 @@ class TypeMap:
             )
 
             if (
-                isinstance(obj, (type, types.ModuleType))
-                # also include typing's special definitions; must be hashable to use as dict key
-                or (
-                    dunder_dict is typing.__dict__
-                    and isinstance(obj, abc.Hashable)
-                    and hasattr(obj, "__name__")
+                (
+                    isinstance(obj, (type, types.ModuleType))
+                    # also include typing's special definitions; must be hashable to use as dict key
+                    or (
+                        dunder_dict is typing.__dict__
+                        and isinstance(obj, abc.Hashable)
+                        and hasattr(obj, "__name__")
+                    )
                 )
+                and hasattr(obj, "__module__")
             ):
                 # Some module objects are really namespaces, like "sys.monitoring"; they
                 # don't show up in sys.modules. We want to process any such, but leave others
