@@ -3,6 +3,7 @@ from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
 from collections import namedtuple
+import typing
 from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal, cast, Self, Never
 import pytest
 import importlib
@@ -10,6 +11,7 @@ import types
 from righttyper.options import options
 from enum import Enum
 import sys
+from righttyper.typemap import AdjustTypeNamesT
 
 rt_get_value_type = rt.get_value_type
 
@@ -19,6 +21,15 @@ assert importlib.util.find_spec('pytest_antilru') is not None, "pytest-antilru m
 
 def get_value_type(v, **kwargs) -> str:
     return str(rt_get_value_type(v, **kwargs))
+
+
+def get_type_name(t) -> TypeInfo:
+    transformer = AdjustTypeNamesT(sys.modules['__main__'].__dict__)
+    ti = rt.get_type_name(cast(type, t))
+    if options.adjust_type_names:
+        return transformer.visit(ti)
+    return ti
+ 
 
 def type_from_annotations(*args, **kwargs) -> str:
     return str(rt.type_from_annotations(*args, **kwargs))
@@ -32,9 +43,7 @@ class IterableClass(abc.Iterable):
 class MyGeneric[A, B](dict): pass
 
 
-def test_get_value_type(monkeypatch):
-    monkeypatch.setattr(options, 'resolve_mocks', False)
-
+def test_get_value_type():
     assert NoneTypeInfo is rt_get_value_type(None)
 
     assert "bool" == get_value_type(True)
@@ -167,7 +176,7 @@ def test_value_type_iterator(init, name, nextv):
     ["iter(enumerate(('a', 'b')))", "enumerate"],
 ])
 def test_type_name_iterator(init, name):
-    assert name == str(rt.get_type_name(type(eval(init))))
+    assert name == str(get_type_name(type(eval(init))))
 
 
 @pytest.mark.parametrize("adjust_type_names", [False, True])
@@ -175,7 +184,7 @@ def test_dynamic_type(monkeypatch, adjust_type_names):
     monkeypatch.setattr(options, 'adjust_type_names', adjust_type_names)
 
     t = type('myType', (object,), dict())
-    assert rt.get_type_name(t) is UnknownTypeInfo
+    assert get_type_name(t) is UnknownTypeInfo
 
 
 @pytest.mark.parametrize("adjust_type_names", [False, True])
@@ -185,16 +194,10 @@ def test_local_type_module_invalid(monkeypatch, adjust_type_names):
     class Invalid: pass
     Invalid.__module__ = 'does_not_exist'
 
-    assert rt.get_type_name(Invalid).module == "does_not_exist"
+    assert get_type_name(Invalid).module == "does_not_exist"
 
 
 def test_items_from_typing():
-    import typing
-
-    def get_type_name(obj):
-        # mypy ignore non-'type' asks for typing.*
-        return rt.get_type_name(cast(type, obj))
-
     assert TypeInfo("typing", "Any") == get_type_name(Any)
     assert TypeInfo("typing", "Self") == get_type_name(Self)
     assert TypeInfo("typing", "List") == get_type_name(List)
@@ -236,15 +239,14 @@ class NamedTupleClass:
     P = namedtuple('P', [])
 
 @pytest.mark.parametrize("adjust_type_names", [False, True])
-def test_get_value_type_namedtuple_nonlocal(monkeypatch, adjust_type_names):
-    monkeypatch.setattr(options, 'resolve_mocks', False)
+def test_get_type_name_namedtuple_nonlocal(monkeypatch, adjust_type_names):
     monkeypatch.setattr(options, 'adjust_type_names', adjust_type_names)
 
     if adjust_type_names:
         # namedtuple's __qualname__ also doesn't contain the enclosing class name...
-        assert f"{__name__}.NamedTupleClass.P" == get_value_type(NamedTupleClass.P())
+        assert f"{__name__}.NamedTupleClass.P" == get_type_name(NamedTupleClass.P).fullname()
     else:
-        assert UnknownTypeInfo is rt.get_value_type(NamedTupleClass.P())
+        assert UnknownTypeInfo is get_type_name(NamedTupleClass.P)
 
 
 class Decision(Enum):
@@ -252,9 +254,7 @@ class Decision(Enum):
     MAYBE = 1
     YES = 2
 
-def test_get_value_type_enum(monkeypatch):
-    monkeypatch.setattr(options, 'resolve_mocks', False)
-
+def test_get_value_type_enum():
     assert f"{__name__}.Decision" == get_value_type(Decision.MAYBE)
 
 
@@ -301,7 +301,6 @@ def test_type_from_annotations():
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
                      importlib.util.find_spec('numpy') is None),
                     reason='missing modules')
-@pytest.mark.skip(reason="jaxtyping name errors") # FIXME
 def test_hint2type():
     import jaxtyping
     import jax
@@ -422,9 +421,7 @@ def test_merged_types_generics():
     ))
 
 
-def test_merged_types_superclass(monkeypatch):
-    monkeypatch.setattr(options, 'resolve_mocks', False)
-
+def test_merged_types_superclass():
     class A: pass
     class B(A): pass
     class C(B): pass
@@ -451,7 +448,7 @@ def test_merged_types_superclass(monkeypatch):
     assert f"int|{name(A)}" == str(merged_types({
             TypeInfo.from_type(A),
             TypeInfo.from_type(D),
-            rt.get_type_name(int),
+            get_type_name(int),
         }
     ))
 
@@ -475,9 +472,7 @@ def name(t: type):
     return f"{t.__module__}.{t.__qualname__}"
 
 
-def test_merged_types_superclass_checks_attributes(monkeypatch):
-    monkeypatch.setattr(options, 'resolve_mocks', False)
-
+def test_merged_types_superclass_checks_attributes():
     class A: pass
     class B(A):
         def foo(self): pass
@@ -503,9 +498,7 @@ def test_merged_types_superclass_checks_attributes(monkeypatch):
     ))
 
 
-def test_merged_types_superclass_dunder_matters(monkeypatch):
-    monkeypatch.setattr(options, 'resolve_mocks', False)
-
+def test_merged_types_superclass_dunder_matters():
     class A: pass
     class B(A):
         pass
@@ -524,15 +517,13 @@ def test_merged_types_superclass_dunder_matters(monkeypatch):
 def test_merged_types_superclass_bare_type():
     # invoking type.mro() raises an exception
     assert "int|type" == str(merged_types({
-            rt.get_type_name(int),
-            rt.get_type_name(type)
+            get_type_name(int),
+            get_type_name(type)
         }
     ))
 
 
-def test_merged_types_superclass_multiple_superclasses(monkeypatch):
-    monkeypatch.setattr(options, 'resolve_mocks', False)
-
+def test_merged_types_superclass_multiple_superclasses():
     class A: pass
     class B(A):
         def foo(self): pass
