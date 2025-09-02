@@ -67,8 +67,6 @@ class TypeMap:
             return getattr(t, "__qualname__", getattr(t, "__name__"))
 
         def typename_key(t: type, tn: TypeMap.TypeName) -> tuple[int|bool, ...]:
-                # prefer where's defined
-                module != t.__module__ or name != get_name(t),
             """Generates a key for sorting / picking among the names found for a type."""
             module, name = tn.to_strings()
             # str() because __module__ might be a getset_attribute (hello, cython)
