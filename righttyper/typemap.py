@@ -68,7 +68,8 @@ class TypeMap:
 
         def typename_key(t: type, tn: self.TypeName) -> tuple[int, ...]:
             module, name = tn.to_strings()
-            t_package = t.__module__.split('.')[0]
+            # str() because __module__ might be a getset_attribute (hello, cython)
+            t_package = str(t.__module__).split('.')[0]
             return (
                 # prefer non-test to test
                 is_test_module(module),
