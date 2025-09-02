@@ -66,7 +66,9 @@ class TypeMap:
         def get_name(t: type) -> str|None:
             return getattr(t, "__qualname__", getattr(t, "__name__"))
 
-        def typename_key(t: type, tn: TypeMap.TypeName) -> tuple[int, ...]:
+        def typename_key(t: type, tn: TypeMap.TypeName) -> tuple[int|bool, ...]:
+                # prefer where's defined
+                module != t.__module__ or name != get_name(t),
             """Generates a key for sorting / picking among the names found for a type."""
             module, name = tn.to_strings()
             # str() because __module__ might be a getset_attribute (hello, cython)
@@ -81,7 +83,7 @@ class TypeMap:
                 # prefer shorter to longer (in components)
                 len(tn.module_parts)+len(tn.name_parts),
                 # prefer where's defined
-                name != get_name(t),
+                module != t.__module__ or name != get_name(t),
             )
 
         search_map: dict[type, tuple[str, str]] = dict()
@@ -134,13 +136,16 @@ class TypeMap:
             )
 
             if (
-                isinstance(obj, (type, types.ModuleType))
-                # also include typing's special definitions; must be hashable to use as dict key
-                or (
-                    dunder_dict is typing.__dict__
-                    and isinstance(obj, abc.Hashable)
-                    and hasattr(obj, "__name__")
+                (
+                    isinstance(obj, (type, types.ModuleType))
+                    # also include typing's special definitions; must be hashable to use as dict key
+                    or (
+                        dunder_dict is typing.__dict__
+                        and isinstance(obj, abc.Hashable)
+                        and hasattr(obj, "__name__")
+                    )
                 )
+                and hasattr(obj, "__module__")
             ):
                 # Some module objects are really namespaces, like "sys.monitoring"; they
                 # don't show up in sys.modules. We want to process any such, but leave others
