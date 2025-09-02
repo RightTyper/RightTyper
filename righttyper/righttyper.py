@@ -1019,6 +1019,8 @@ def execute_script_or_module(
         if e.code not in (None, 0):
             raise
 
+    # FIXME: save main_globals somehow upon exception
+
 
 def output_signatures(
     sig_changes: list[SignatureChanges],
