@@ -225,12 +225,17 @@ class UnifiedTransformer(cst.CSTTransformer):
                 yield t
 
 
-    def _process_generics(self, ann: FuncAnnotation) -> tuple[FuncAnnotation, dict[int, TypeInfo]]:
+    def _process_generics(
+        self,
+        ann: FuncAnnotation,
+        used_inline_names: set[str]
+    ) -> tuple[FuncAnnotation, dict[int, TypeInfo]]:
         """Transforms an annotation, defining type variables and using them."""
+        used_inline_names = set(used_inline_names)
 
         class RenameGenericsTransformer(TypeInfo.Transformer):
-            def __init__(self):
-                self.generics = {}
+            def __init__(vself):
+                vself.generics = {}
             
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 if not node.typevar_index:
@@ -238,7 +243,10 @@ class UnifiedTransformer(cst.CSTTransformer):
 
                 if node.typevar_index not in vself.generics:
                     if self.inline_generics:
-                        name = f"T{node.typevar_index}"
+                        i = 0
+                        while (name := f"T{node.typevar_index + i}") in used_inline_names:
+                            i += 1
+                        used_inline_names.add(name)
                     else:
                         while (name := f"rt_T{self.module_generic_index}") in self.used_names[-1]:
                             self.module_generic_index += 1
@@ -372,6 +380,26 @@ class UnifiedTransformer(cst.CSTTransformer):
                         )
 
         return False
+
+    def visit_Assign(self, node: cst.Assign) -> bool:
+        for t in node.targets:
+            if isinstance(t.target, cst.Name):
+                self.known_names.add(".".join(self.name_stack + [t.target.value]))
+            elif isinstance(t.target, cst.Tuple):
+                for el in t.target.elements:
+                    if isinstance(el.value, cst.Name):
+                        self.known_names.add(".".join(self.name_stack + [el.value.value]))
+        return True
+
+    def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
+        if isinstance(node.target, cst.Name):
+            self.known_names.add(".".join(self.name_stack + [node.target.value]))
+        return True
+
+    def visit_NamedExpr(self, node: cst.NamedExpr) -> bool:
+        if isinstance(node.target, cst.Name):
+            self.known_names.add(".".join(self.name_stack + [node.target.value]))
+        return True
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
         name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
@@ -511,60 +539,73 @@ class UnifiedTransformer(cst.CSTTransformer):
             overloads = self.overload_stack[-1]
             self.overload_stack[-1] = []
 
-            # Do existing annotations overlap with typevar args/return ?
-            typevar_overlap = not self.override_annotations and (
-                    (updated_node.returns is not None and ann.retval.is_typevar()) or
-                    any (
-                        par.annotation is not None and
-                        par.name.value in argmap and
-                        argmap[par.name.value].is_typevar()
-                        for par in typing.cast(typing.Iterator[cst.Param], cstm.findall(updated_node.params, cstm.Param()))
-                    )
-            )
+            retained_name_annotations = {   # if a typevar is retained, it'll be in this set
+                name.value
+                for par in typing.cast(typing.Iterator[cst.Param],
+                                       cstm.findall(updated_node.params,
+                                                    cstm.Param(annotation=cstm.Annotation())))
+                for name in typing.cast(typing.Iterator[cst.Name],
+                                        cstm.findall(par.annotation, cstm.Name()))
+                if not self.override_annotations or par.name.value not in argmap
+            }
+
+            if updated_node.returns is not None and (not self.override_annotations or ann.retval is None):
+                retained_name_annotations |= {
+                    name.value
+                    for name in typing.cast(typing.Iterator[cst.Annotation],
+                                            cstm.findall(updated_node.returns, cstm.Name()))
+                }
 
             del argmap
 
             # We don't yet support updating overloads; if they are present and not being removed, leave the function alone.
             if overloads == [] or self.override_annotations:
-                # We don't yet support merging type parameters
-                if not typevar_overlap and updated_node.type_parameters is None:
-                    ann, generics = self._process_generics(ann)
+                ann, generics = self._process_generics(ann, retained_name_annotations)
 
-                    if self.inline_generics:
-                        # add type parameters
-                        type_params = []
-                        for generic in generics.values():
-                            assert all(isinstance(arg, TypeInfo) for arg in generic.args)
-                            type_params.append(cst.TypeParam(param=cst.TypeVar(
-                                name=cst.Name(value=str(generic)),
-                                bound=cst.Tuple(elements=[
-                                    cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
-                                    for arg in generic.args
-                                ])
-                            )))
+                if self.inline_generics:
+                    type_params = [
+                        tpar
+                        for tpar in typing.cast(typing.Iterator[cst.TypeParam],
+                                                cstm.findall(updated_node,
+                                                             cstm.TypeParam(param=cstm.TypeVar())))
+                        if tpar.param.name.value in retained_name_annotations
+                    ]
 
-                        if type_params:
-                            updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
-                                params=type_params
-                            ))
+                    # add type parameters
+                    for generic in generics.values():
+                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                        type_params.append(cst.TypeParam(param=cst.TypeVar(
+                            name=cst.Name(value=str(generic)),
+                            bound=cst.Tuple(elements=[
+                                cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
+                                for arg in generic.args
+                            ])
+                        )))
 
+                    if type_params:
+                        updated_node = updated_node.with_changes(type_parameters=cst.TypeParameters(
+                            params=type_params
+                        ))
                     else:
-                        # define typevars
-                        for generic in generics.values():
-                            assert generic.typevar_name is not None
-                            assert all(isinstance(arg, TypeInfo) for arg in generic.args)
-                            pre_function.append(cst.SimpleStatementLine(body=[
-                                cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
-                                           value=cst.Call(func=cst.Name("TypeVar"), args=[
-                                               cst.Arg(value=cst.SimpleString(_quote(str(generic)))),
-                                               *(cst.Arg(value=self._get_annotation_expr(
-                                                   typing.cast(TypeInfo, arg)))
-                                                 for arg in generic.args
-                                                )
-                                           ])
-                                )
-                            ]))
-                            self.unknown_types.add("TypeVar")
+                        updated_node = updated_node.with_changes(type_parameters=None)
+
+                else:
+                    # define typevars
+                    for generic in generics.values():
+                        assert generic.typevar_name is not None
+                        assert all(isinstance(arg, TypeInfo) for arg in generic.args)
+                        pre_function.append(cst.SimpleStatementLine(body=[
+                            cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
+                                       value=cst.Call(func=cst.Name("TypeVar"), args=[
+                                           cst.Arg(value=cst.SimpleString(_quote(str(generic)))),
+                                           *(cst.Arg(value=self._get_annotation_expr(
+                                               typing.cast(TypeInfo, arg)))
+                                             for arg in generic.args
+                                            )
+                                       ])
+                            )
+                        ]))
+                        self.unknown_types.add("TypeVar")
 
                 # Now update the parameters
                 class ParamChanger(cst.CSTTransformer):

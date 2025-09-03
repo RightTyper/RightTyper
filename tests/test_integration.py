@@ -1300,6 +1300,53 @@ def test_mock_class_inherited(tmp_cwd):
     """)
 
 
+@pytest.mark.parametrize("adjust_names", [False, True])
+def test_mock_resolution_maps_names(tmp_cwd, adjust_names):
+    (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
+        class _C:  # private
+            pass
+
+        D = _C
+
+        def f(x):
+            pass
+
+        """
+    ))
+
+
+    (tmp_cwd / "tests").mkdir()
+    (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
+        import m
+
+        class Mock(m.D):
+            pass
+
+        class Mock2(Mock):
+            pass
+
+        def test_foo():
+            m.f(Mock2())
+        """
+    ))
+
+    rt_run('--resolve-mocks',
+           *(('--adjust-type-names',) if adjust_names else ('--no-adjust-type-names',)),
+           '-m', 'pytest', '-s', 'tests')
+    output = (tmp_cwd / "m.py").read_text()
+    print(output)
+    code = cst.parse_module(output)
+
+    if adjust_names:
+        assert get_function(code, 'f') == textwrap.dedent(f"""\
+            def f(x: D) -> None: ...
+        """)
+    else:
+        assert get_function(code, 'f') == textwrap.dedent(f"""\
+            def f(x: _C) -> None: ...
+        """)
+
+
 def test_mock_with_class_spec(tmp_cwd):
     (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
         class C:
