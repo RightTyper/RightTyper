@@ -2197,3 +2197,142 @@ def test_dont_annotate_with_any():
         def foo(bar):
             ...
         """)
+
+
+def test_local_aliases_known():
+    code = cst.parse_module(textwrap.dedent("""\
+        class _C:
+            pass
+
+        D = _C
+
+        def f(x):
+            ...
+    """))
+    f = get_funcid('foo.py', code, 'f')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: FuncAnnotation(
+                    [
+                        (ArgumentName("x"), TypeInfo("foo", "D")),
+                    ],
+                    TypeInfo("foo", "D"),
+                ),},
+            override_annotations=True,
+            only_update_annotations=False,
+            inline_generics=False,
+            module_name='foo'
+        )
+
+    code = t.transform_code(code)
+    function = get_function(code, "f")
+    assert function == textwrap.dedent("""\
+        def f(x: D) -> D:
+            ...
+        """)
+
+
+def test_local_aliases_known_multiple():
+    code = cst.parse_module(textwrap.dedent("""\
+        class _C:
+            pass
+
+        E, D = None, _C
+
+        def f(x):
+            ...
+    """))
+    f = get_funcid('foo.py', code, 'f')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: FuncAnnotation(
+                    [
+                        (ArgumentName("x"), TypeInfo("foo", "D")),
+                    ],
+                    TypeInfo("foo", "D"),
+                ),},
+            override_annotations=True,
+            only_update_annotations=False,
+            inline_generics=False,
+            module_name='foo'
+        )
+
+    code = t.transform_code(code)
+    function = get_function(code, "f")
+    assert function == textwrap.dedent("""\
+        def f(x: D) -> D:
+            ...
+        """)
+
+
+def test_local_aliases_known_annotated():
+    code = cst.parse_module(textwrap.dedent("""\
+        from typing import TypeAlias
+
+        class _C:
+            pass
+
+        D: TypeAlias = _C
+
+        def f(x):
+            ...
+    """))
+    f = get_funcid('foo.py', code, 'f')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: FuncAnnotation(
+                    [
+                        (ArgumentName("x"), TypeInfo("foo", "D")),
+                    ],
+                    TypeInfo("foo", "D"),
+                ),},
+            override_annotations=True,
+            only_update_annotations=False,
+            inline_generics=False,
+            module_name='foo'
+        )
+
+    code = t.transform_code(code)
+    function = get_function(code, "f")
+    assert function == textwrap.dedent("""\
+        def f(x: D) -> D:
+            ...
+        """)
+
+
+def test_local_aliases_known_namedexpr():
+    code = cst.parse_module(textwrap.dedent("""\
+        class _C:
+            pass
+
+        if (D := _C):
+            pass
+
+        def f(x):
+            ...
+    """))
+    f = get_funcid('foo.py', code, 'f')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: FuncAnnotation(
+                    [
+                        (ArgumentName("x"), TypeInfo("foo", "D")),
+                    ],
+                    TypeInfo("foo", "D"),
+                ),},
+            override_annotations=True,
+            only_update_annotations=False,
+            inline_generics=False,
+            module_name='foo'
+        )
+
+    code = t.transform_code(code)
+    function = get_function(code, "f")
+    assert function == textwrap.dedent("""\
+        def f(x: D) -> D:
+            ...
+        """)

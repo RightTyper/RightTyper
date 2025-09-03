@@ -381,6 +381,26 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         return False
 
+    def visit_Assign(self, node: cst.Assign) -> bool:
+        for t in node.targets:
+            if isinstance(t.target, cst.Name):
+                self.known_names.add(".".join(self.name_stack + [t.target.value]))
+            elif isinstance(t.target, cst.Tuple):
+                for el in t.target.elements:
+                    if isinstance(el.value, cst.Name):
+                        self.known_names.add(".".join(self.name_stack + [el.value.value]))
+        return True
+
+    def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
+        if isinstance(node.target, cst.Name):
+            self.known_names.add(".".join(self.name_stack + [node.target.value]))
+        return True
+
+    def visit_NamedExpr(self, node: cst.NamedExpr) -> bool:
+        if isinstance(node.target, cst.Name):
+            self.known_names.add(".".join(self.name_stack + [node.target.value]))
+        return True
+
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
         name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.append(node.name.value)
