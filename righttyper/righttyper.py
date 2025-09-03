@@ -182,8 +182,7 @@ def get_typeshed_arg_types(
     return None
 
 
-@functools.cache
-def resolve_mock(ti: TypeInfo) -> TypeInfo|None:
+def resolve_mock(ti: TypeInfo, adjuster: AdjustTypeNamesT|None) -> TypeInfo|None:
     """Attempts to map a test type, such as a mock, to a production one."""
     import unittest.mock as mock
 
@@ -203,6 +202,8 @@ def resolve_mock(ti: TypeInfo) -> TypeInfo|None:
             return None
 
         t = get_type_name(base)
+        if adjuster:
+            t = adjuster.visit(t)
         trace.append(t)
         if len(trace) > 50:
             return None # break loops
@@ -485,8 +486,10 @@ class Observations:
 
             return ann
 
+        type_name_adjuster = None
         if options.adjust_type_names:
-            self._transform_types(AdjustTypeNamesT(self.main_globals))
+            type_name_adjuster = AdjustTypeNamesT(self.main_globals)
+            self._transform_types(type_name_adjuster)
 
         class NonSelfCloningT(TypeInfo.Transformer):
             """Clones the given TypeInfo tree, clearing all 'is_self' flags,
@@ -580,7 +583,7 @@ class Observations:
             # objects unresolved within test code?
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
-                if (resolved := resolve_mock(node)):
+                if (resolved := resolve_mock(node, type_name_adjuster)):
                     return resolved
                 return node
 
@@ -1275,7 +1278,7 @@ def cli(debug: bool):
 )
 @click.option(
     "--overwrite/--no-overwrite",
-    help="""Overwrite ".py" files with type information. If disabled, ".py.typed" files are written instead. The original files are saved as ".bak".""",
+    help="""Overwrite ".py" files with type information. If disabled, ".py.typed" files are written instead. The original files are saved as ".py.bak".""",
     default=options.overwrite,
 )
 @click.option(
