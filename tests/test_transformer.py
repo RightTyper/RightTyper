@@ -1746,7 +1746,7 @@ def test_generics_arg_already_annotated(override):
         """)
     else:
         assert get_function(code, 'add') == textwrap.dedent("""\
-            def add(a: int|str, b: int|str) -> int|str:
+            def add[T1: (int, str)](a: T1, b: int|str) -> T1:
                 return a + b
         """)
 
@@ -1786,14 +1786,15 @@ def test_generics_ret_already_annotated(override):
         """)
     else:
         assert get_function(code, 'add') == textwrap.dedent("""\
-            def add(a: int|str, b: int|str) -> int|str:
+            def add[T1: (int, str)](a: T1, b: T1) -> int|str:
                 return a + b
         """)
 
 
-def test_generics_already_annotated_no_overlap():
+@pytest.mark.parametrize('override', [False, True])
+def test_generics_existing_generics(override):
     code = cst.parse_module(textwrap.dedent("""\
-        def add(a, b: bool):
+        def add[X: (int, bool), Y: (str,), Z: (int,)](a, b: Y) -> Z:
             return a + b
     """))
 
@@ -1809,6 +1810,43 @@ def test_generics_already_annotated_no_overlap():
                     T1
                 ),
             },
+            override_annotations=override,
+            only_update_annotations=False,
+            module_name = 'foo',
+            inline_generics=True
+        )
+
+    code = t.transform_code(code)
+
+    if override:
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add[Y: (str,), T1: (int, str)](a: T1, b: Y) -> T1:
+                return a + b
+        """)
+    else:
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add[Y: (str,), Z: (int,), T1: (int, str)](a: T1, b: Y) -> Z:
+                return a + b
+        """)
+
+
+def test_generics_existing_unused_generics():
+    code = cst.parse_module(textwrap.dedent("""\
+        def add[X: (int, bool)](a, b):
+            return a + b
+    """))
+
+    f = get_funcid('foo.py', code, 'add')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: FuncAnnotation(
+                    [
+                        (ArgumentName("a"), TypeInfo("", "int")),
+                    ],
+                    NoneTypeInfo
+                ),
+            },
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1818,15 +1856,15 @@ def test_generics_already_annotated_no_overlap():
     code = t.transform_code(code)
 
     assert get_function(code, 'add') == textwrap.dedent("""\
-        def add[T1: (int, str)](a: T1, b: bool) -> T1:
+        def add(a: int, b) -> None:
             return a + b
     """)
 
 
-def test_generics_existing_generics():
-    # we don't (yet) attempt to merge inline generics
+@pytest.mark.parametrize('override', [False, True])
+def test_generics_existing_generics_nested(override):
     code = cst.parse_module(textwrap.dedent("""\
-        def add[X: (int, bool)](a, b: X):
+        def add[X: (int, bool), Y: (str,), Z: (int,)](a, b: tuple[Y]) -> list[Z]:
             return a + b
     """))
 
@@ -1842,6 +1880,46 @@ def test_generics_existing_generics():
                     T1
                 ),
             },
+            override_annotations=override,
+            only_update_annotations=False,
+            module_name = 'foo',
+            inline_generics=True
+        )
+
+    code = t.transform_code(code)
+
+    if override:
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add[Y: (str,), T1: (int, str)](a: T1, b: tuple[Y]) -> T1:
+                return a + b
+        """)
+    else:
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add[Y: (str,), Z: (int,), T1: (int, str)](a: T1, b: tuple[Y]) -> list[Z]:
+                return a + b
+        """)
+
+
+def test_generics_existing_generics_overlaps_name():
+    # we don't (yet) attempt to merge inline generics
+    code = cst.parse_module(textwrap.dedent("""\
+        def add[T1: (bool,)](a, b: T1):
+            return a + b
+    """))
+
+    T1 = make_typevar([str, int], 1)
+    T2 = make_typevar([str, bool], 2)
+    f = get_funcid('foo.py', code, 'add')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: FuncAnnotation(
+                    [
+                        (ArgumentName("a"), T1),
+                    ],
+                    T2
+                ),
+            },
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1851,7 +1929,7 @@ def test_generics_existing_generics():
     code = t.transform_code(code)
 
     assert get_function(code, 'add') == textwrap.dedent("""\
-        def add[X: (int, bool)](a: int|str, b: X) -> int|str:
+        def add[T1: (bool,), T2: (int, str), T3: (bool, str)](a: T2, b: T1) -> T3:
             return a + b
     """)
 
