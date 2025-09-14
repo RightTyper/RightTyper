@@ -12,15 +12,17 @@ _EVENTS = frozenset(
         sys.monitoring.events.PY_RETURN,
         sys.monitoring.events.PY_YIELD,
 #        sys.monitoring.events.CALL,
+        sys.monitoring.events.PY_UNWIND,
     }
 )
 
 
 def register_monitoring_callbacks(
-    enter_function: Callable[[CodeType, int], Any],
-    exit_function: Callable[[CodeType, int, Any], object],
-    yield_function: Callable[[CodeType, int, Any], object],
+    enter_handler: Callable[[CodeType, int], Any],
+    exit_handler: Callable[[CodeType, int, Any], object],
+    yield_handler: Callable[[CodeType, int, Any], object],
     call_handler: Callable[[CodeType, int, object, object], Any],
+    unwind_handler: Callable[[CodeType, int, BaseException], Any],
 ) -> None:
     """Set up tracking for all enters, exits, yields, and calls."""
     event_set = 0
@@ -30,10 +32,11 @@ def register_monitoring_callbacks(
     sys.monitoring.set_events(TOOL_ID, event_set)
 
     fns: dict[Any, Callable[..., Any]] = {
-        sys.monitoring.events.PY_START: enter_function,
-        sys.monitoring.events.PY_RETURN: exit_function,
-        sys.monitoring.events.PY_YIELD: yield_function,
+        sys.monitoring.events.PY_START: enter_handler,
+        sys.monitoring.events.PY_RETURN: exit_handler,
+        sys.monitoring.events.PY_YIELD: yield_handler,
         sys.monitoring.events.CALL: call_handler,
+        sys.monitoring.events.PY_UNWIND: unwind_handler,
     }
 
     for event in _EVENTS:

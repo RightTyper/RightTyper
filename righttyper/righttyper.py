@@ -350,23 +350,50 @@ class Observations:
         return False
 
 
+    def _record_return_type(self, tr: PendingCallTrace, code_id: CodeId, frame_id: FrameId, ret_type: Any) -> None:
+        """Records a pending call trace's return type, finishing the trace."""
+        assert tr is not None
+
+        tr.returns = ret_type
+        if code_id not in self.traces:
+            self.traces[code_id] = Counter()
+        self.traces[code_id].update((tr.process(),))
+
+        # Resample arguments in case they change during execution (e.g., containers)
+        tr.args = self._get_arg_types(tr.arg_info)
+        self.traces[code_id].update((tr.process(),))
+
+        del self.pending_traces[(code_id, frame_id)]
+        return True
+
+        return False
+
+
     def record_return(self, code: CodeType, frame_id: FrameId, return_value: Any) -> bool:
         """Records a return."""
-
         # print(f"record_return {code.co_qualname}")
 
         code_id = CodeId(id(code))
         if (tr := self.pending_traces.get((code_id, frame_id))):
-            tr.returns = get_value_type(return_value)
-            if code_id not in self.traces:
-                self.traces[code_id] = Counter()
-            self.traces[code_id].update((tr.process(),))
+            self._record_return_type(tr, code_id, frame_id, get_value_type(return_value))
+            return True
 
-            # Resample arguments in case they change during execution (e.g., containers)
-            tr.args = self._get_arg_types(tr.arg_info)
-            self.traces[code_id].update((tr.process(),))
+        return False
 
-            del self.pending_traces[(code_id, frame_id)]
+
+    def record_no_return(self, code: CodeType, frame_id: FrameId) -> bool:
+        """Records the lack of a return (e.g., because an exception was raised)."""
+        # print(f"record_no_return {code.co_qualname}")
+
+        code_id = CodeId(id(code))
+        if (tr := self.pending_traces.get((code_id, frame_id))):
+            self._record_return_type(
+                tr,
+                code_id,
+                frame_id,
+                # Generators in 3.12 may cause a GeneratorExit
+                NoneTypeInfo if tr.is_generator else TypeInfo.from_type(typing.NoReturn)
+            )
             return True
 
         return False
@@ -574,8 +601,19 @@ class Observations:
 
                 return super().visit(node)
 
+        class NoReturnIsNowNeverT(TypeInfo.Transformer):
+            """Converts typing.NoReturn to typing.Never,
+               which is the more modern way to type a 'no return'"""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.type_obj is typing.NoReturn:
+                    return TypeInfo.from_type(typing.Never) 
+
+                return super().visit(node)
+
         if not options.use_typing_never:
             self._transform_types(NeverSayNeverT())
+        else:
+            self._transform_types(NoReturnIsNowNeverT())
 
         class ResolveMocksT(TypeInfo.Transformer):
             """Resolves apparent test mock types to non-test ones."""
@@ -773,6 +811,22 @@ def call_handler(
     return sys.monitoring.DISABLE
 
 
+def _should_disable(found: bool) -> bool:
+    """Decides whether to disable an event."""
+
+    # 'found' indicates whether we had a pending trace for the call:
+    # we keep the event enabled until we receive it for a frame whose
+    # trace we're recording.
+    return bool(
+        options.sampling
+        and found
+        and not (
+            (no_sampling_for := options.no_sampling_for_re)
+            and no_sampling_for.search(code.co_qualname)
+        )
+    )
+
+
 def yield_handler(
     code: CodeType,
     instruction_offset: int,
@@ -799,18 +853,11 @@ def yield_handler(
         found = obs.record_yield(code, FrameId(id(frame)), yield_value)
         del frame
 
-    # Keep the event enabled until we receive it for a frame whose trace we're recording.
-    if (
-        options.sampling
-        and found
-        and not (
-            (no_sampling_for := options.no_sampling_for_re)
-            and no_sampling_for.search(code.co_qualname)
-        )
-    ):
+    if _should_disable(found):
         return sys.monitoring.DISABLE
 
     return None
+
 
 def return_handler(
     code: CodeType,
@@ -838,18 +885,30 @@ def return_handler(
         found = obs.record_return(code, FrameId(id(frame)), return_value)
         del frame
 
-    # Keep the event enabled until we receive it for a frame whose trace we're recording.
-    if (
-        options.sampling
-        and found
-        and not (
-            (no_sampling_for := options.no_sampling_for_re)
-            and no_sampling_for.search(code.co_qualname)
-        )
-    ):
+    if _should_disable(found):
         return sys.monitoring.DISABLE
 
     return None
+
+
+def unwind_handler(
+    code: CodeType,
+    instruction_offset: int,
+    exception: BaseException,
+) -> Any:
+
+    if should_skip_function(code):
+        return None # PY_UNWIND can't be disabled
+
+    frame = inspect.currentframe()
+    while frame and frame.f_code is not code:
+        frame = frame.f_back
+
+    if frame:
+        obs.record_no_return(code, FrameId(id(frame)))
+        del frame
+
+    return None # PY_UNWIND can't be disabled
 
 
 def process_function_call(
@@ -1532,6 +1591,7 @@ def run(
         return_handler,
         yield_handler,
         call_handler,
+        unwind_handler,
     )
     sys.monitoring.restart_events()
     alarm.start()
