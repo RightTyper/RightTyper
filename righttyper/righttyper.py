@@ -811,22 +811,6 @@ def call_handler(
     return sys.monitoring.DISABLE
 
 
-def _should_disable(found: bool) -> bool:
-    """Decides whether to disable an event."""
-
-    # 'found' indicates whether we had a pending trace for the call:
-    # we keep the event enabled until we receive it for a frame whose
-    # trace we're recording.
-    return bool(
-        options.sampling
-        and found
-        and not (
-            (no_sampling_for := options.no_sampling_for_re)
-            and no_sampling_for.search(code.co_qualname)
-        )
-    )
-
-
 def yield_handler(
     code: CodeType,
     instruction_offset: int,
@@ -853,7 +837,17 @@ def yield_handler(
         found = obs.record_yield(code, FrameId(id(frame)), yield_value)
         del frame
 
-    if _should_disable(found):
+    if (
+        # 'found' indicates whether we had a pending trace for the call:
+        # we keep the event enabled until we receive it for a frame whose
+        # trace we're recording.
+        found
+        and options.sampling
+        and not (
+            (no_sampling_for := options.no_sampling_for_re)
+            and no_sampling_for.search(code.co_qualname)
+        )
+    ):
         return sys.monitoring.DISABLE
 
     return None
@@ -885,7 +879,17 @@ def return_handler(
         found = obs.record_return(code, FrameId(id(frame)), return_value)
         del frame
 
-    if _should_disable(found):
+    if (
+        # 'found' indicates whether we had a pending trace for the call:
+        # we keep the event enabled until we receive it for a frame whose
+        # trace we're recording.
+        found
+        and options.sampling
+        and not (
+            (no_sampling_for := options.no_sampling_for_re)
+            and no_sampling_for.search(code.co_qualname)
+        )
+    ):
         return sys.monitoring.DISABLE
 
     return None
