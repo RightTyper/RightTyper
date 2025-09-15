@@ -4,15 +4,13 @@ import os
 import sys
 
 from functools import cache
-from typing import Any, Final
+from typing import Any
 from pathlib import Path
 
 from righttyper.logger import logger
 from righttyper.options import options
 
 
-TOOL_ID: int = 3
-TOOL_NAME: Final[str] = "righttyper"
 _SAMPLING_INTERVAL = 0.01
 
 

@@ -49,9 +49,10 @@ from righttyper.righttyper_runtime import (
     PostponedIteratorArg,
 )
 from righttyper.righttyper_tool import (
+    TOOL_ID,
+    TOOL_NAME,
     register_monitoring_callbacks,
-    reset_monitoring,
-    setup_tool_id,
+    reset_monitoring
 )
 from righttyper.righttyper_types import (
     ArgInfo,
@@ -76,8 +77,6 @@ from righttyper.typeinfo import (
     generalize,
 )
 from righttyper.righttyper_utils import (
-    TOOL_ID,
-    TOOL_NAME,
     skip_this_file,
     source_to_module_fqn,
     get_main_module_fqn,
@@ -364,9 +363,6 @@ class Observations:
         self.traces[code_id].update((tr.process(),))
 
         del self.pending_traces[(code_id, frame_id)]
-        return True
-
-        return False
 
 
     def record_return(self, code: CodeType, frame_id: FrameId, return_value: Any) -> bool:
@@ -1589,7 +1585,6 @@ def run(
     pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
     os.environ["PYTEST_PLUGINS"] = pytest_plugins
 
-    setup_tool_id()
     register_monitoring_callbacks(
         enter_handler,
         return_handler,
