@@ -544,6 +544,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 for par in typing.cast(typing.Iterator[cst.Param],
                                        cstm.findall(updated_node.params,
                                                     cstm.Param(annotation=cstm.Annotation())))
+                if par.annotation is not None
                 for name in typing.cast(typing.Iterator[cst.Name],
                                         cstm.findall(par.annotation, cstm.Name()))
                 if not self.override_annotations or par.name.value not in argmap
@@ -552,7 +553,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             if updated_node.returns is not None and (not self.override_annotations or ann.retval is None):
                 retained_name_annotations |= {
                     name.value
-                    for name in typing.cast(typing.Iterator[cst.Annotation],
+                    for name in typing.cast(typing.Iterator[cst.Name],
                                             cstm.findall(updated_node.returns, cstm.Name()))
                 }
 
