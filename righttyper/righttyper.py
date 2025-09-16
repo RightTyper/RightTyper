@@ -759,7 +759,7 @@ def wrap_send(obj: Any) -> Any:
     return obj
 
 
-def enter_handler(code: CodeType, offset: int) -> Any:
+def start_handler(code: CodeType, offset: int) -> Any:
     """
     Process the function entry point, perform monitoring related operations,
     and manage the profiling of function execution.
@@ -1008,7 +1008,7 @@ def process_function_call(
 
 
 instrumentation_functions_code = {
-    enter_handler.__code__,
+    start_handler.__code__,
     call_handler.__code__,
     return_handler.__code__,
     yield_handler.__code__,
@@ -1593,7 +1593,7 @@ def run(
     os.environ["PYTEST_PLUGINS"] = pytest_plugins
 
     register_monitoring_callbacks(
-        enter_handler,
+        start_handler,
         return_handler,
         yield_handler,
         call_handler,
