@@ -349,11 +349,19 @@ class Observations:
         return False
 
 
-    def _record_return_type(self, tr: PendingCallTrace, code_id: CodeId, frame_id: FrameId, ret_type: Any) -> None:
+    def _record_return_type(self, tr: PendingCallTrace, code_id: CodeId, ret_type: Any) -> None:
         """Records a pending call trace's return type, finishing the trace."""
         assert tr is not None
 
-        tr.returns = ret_type
+        tr.returns = (
+            ret_type if ret_type is not None
+            else (
+                # Generators may still be running, or exit with a GeneratorExit exception; we still
+                # want them marked as returning None, so they can be simplified to Iterator
+                NoneTypeInfo if tr.is_generator else TypeInfo.from_type(typing.NoReturn)
+            )
+        )
+
         if code_id not in self.traces:
             self.traces[code_id] = Counter()
         self.traces[code_id].update((tr.process(),))
@@ -362,8 +370,6 @@ class Observations:
         tr.args = self._get_arg_types(tr.arg_info)
         self.traces[code_id].update((tr.process(),))
 
-        del self.pending_traces[(code_id, frame_id)]
-
 
     def record_return(self, code: CodeType, frame_id: FrameId, return_value: Any) -> bool:
         """Records a return."""
@@ -371,7 +377,8 @@ class Observations:
 
         code_id = CodeId(id(code))
         if (tr := self.pending_traces.get((code_id, frame_id))):
-            self._record_return_type(tr, code_id, frame_id, get_value_type(return_value))
+            self._record_return_type(tr, code_id, get_value_type(return_value))
+            del self.pending_traces[(code_id, frame_id)]
             return True
 
         return False
@@ -383,13 +390,8 @@ class Observations:
 
         code_id = CodeId(id(code))
         if (tr := self.pending_traces.get((code_id, frame_id))):
-            self._record_return_type(
-                tr,
-                code_id,
-                frame_id,
-                # Generators in 3.12 may cause a GeneratorExit
-                NoneTypeInfo if tr.is_generator else TypeInfo.from_type(typing.NoReturn)
-            )
+            self._record_return_type(tr, code_id, None)
+            del self.pending_traces[(code_id, frame_id)]
             return True
 
         return False
@@ -419,13 +421,10 @@ class Observations:
     def collect_annotations(self: Self) -> dict[FuncId, FuncAnnotation]:
         """Collects function type annotations from the observed types."""
 
-        # Finish traces for any generators that are still unfinished
-        # TODO are there other cases we should handle?
+        # Finish traces for any generators that may be still running
         for (code_id, _), tr in self.pending_traces.items():
-            if tr.yields:
-                if code_id not in self.traces:
-                    self.traces[code_id] = Counter()
-                self.traces[code_id].update((tr.process(),))
+            if tr.is_generator:
+                self._record_return_type(tr, code_id, None)
 
 
         def most_common_traces(code_id: CodeId) -> list[CallTrace]:
