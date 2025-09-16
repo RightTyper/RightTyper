@@ -786,6 +786,7 @@ def enter_handler(code: CodeType, offset: int) -> Any:
 
     return None
 
+
 def call_handler(
     code: CodeType,
     instruction_offset: int,
@@ -1315,6 +1316,11 @@ def cli(debug: bool):
     help="Process only files matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
+    "--exclude-test-files/--no-exclude-test-files",
+    default=options.exclude_test_files,
+    help="Automatically exclude test modules from typing.",
+)
+@click.option(
     "--include-functions",
     metavar="REGEX",
     type=str,
@@ -1481,6 +1487,7 @@ def run(
     args: list[str],
     all_files: bool,
     include_files: tuple[str, ...],
+    exclude_test_files: bool,
     include_functions: tuple[str, ...],
     overwrite: bool,
     output_files: bool,
@@ -1552,6 +1559,7 @@ def run(
 
     options.include_files = include_files
     options.include_all = all_files
+    options.exclude_test_files = exclude_test_files
     options.include_functions = include_functions
     options.target_overhead = target_overhead
     options.infer_shapes = infer_shapes

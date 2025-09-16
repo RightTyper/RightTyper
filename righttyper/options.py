@@ -18,6 +18,7 @@ class Options:
     script_dir: str = ""
     include_files: tuple[str, ...] = ()
     include_all: bool = False
+    exclude_test_files: bool = True
     include_functions: tuple[str, ...] = ()
     target_overhead: float = 5.0
     infer_shapes: bool = False

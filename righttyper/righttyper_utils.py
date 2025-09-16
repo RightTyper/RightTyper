@@ -69,12 +69,15 @@ PYTHON_LIBS = _get_python_libs()
 
 @cache
 def skip_this_file(filename: str) -> bool:
+    import righttyper.pytest as rtp
+
     #logger.debug(f"checking skip_this_file {filename=}")
     if options.include_all:
         should_skip = False
     else:
         should_skip = (
             filename.startswith("<")
+            or (options.exclude_test_files and filename in rtp.pytest_files)
             # FIXME how about packages installed with 'pip install -e' (editable)?
             or any(filename.startswith(p) for p in PYTHON_LIBS)
             or filename.startswith(RIGHTTYPER_PATH)

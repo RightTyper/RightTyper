@@ -1205,7 +1205,8 @@ def test_class_name_in_test(tmp_cwd):
         """
     ))
 
-    rt_run('--no-exclude-test-types', '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
+    rt_run('--no-exclude-test-files', '--no-exclude-test-types',
+           '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
@@ -1227,7 +1228,8 @@ def test_class_name_in_test_subdir(tmp_cwd):
         """
     ))
 
-    rt_run('--no-exclude-test-types', '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
+    rt_run('--no-exclude-test-files', '--no-exclude-test-types',
+           '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "sub" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
@@ -3497,7 +3499,7 @@ def test_instrument_pytest():
 
     Path("t.py").write_text(t)
 
-    rt_run('-m' 'pytest', 't.py')
+    rt_run('--no-exclude-test-files', '-m' 'pytest', 't.py')
     output = Path("t.py").read_text()
     assert "def f() -> Generator[int, int, None]" in output
 
