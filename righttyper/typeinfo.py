@@ -60,7 +60,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     base_containers = set(              # container types without arguments
         t
         for t in mergeable_types
-        if issubclass(t.type_obj, abc.Container)
+        if issubclass(cast(type, t.type_obj), abc.Container)
     )
 
     if base_containers:
