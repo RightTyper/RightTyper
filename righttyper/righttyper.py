@@ -16,6 +16,7 @@ import datetime
 import json
 import subprocess
 import re
+import time
 
 
 import collections.abc as abc
@@ -90,6 +91,7 @@ from righttyper.righttyper_alarm import (
 from righttyper.options import Options, options
 from righttyper.logger import logger
 from righttyper.typemap import AdjustTypeNamesT
+from righttyper.atomic import AtomicCounter
 
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
 PKL_FILE_VERSION = 4
@@ -725,7 +727,22 @@ class Observations:
 
 obs = Observations()
 
+instrumentation_counter = AtomicCounter()
 
+
+def is_instrumentation(f):
+    """Decorator that marks a function as being instrumentation."""
+    def wrapper(*args, **kwargs):
+        try:
+            instrumentation_counter.inc()
+            return f(*args, **kwargs)
+        finally:
+            instrumentation_counter.dec()
+
+    return wrapper
+
+
+@is_instrumentation
 def send_handler(code: CodeType, frame_id: FrameId, arg0: Any) -> None:
     obs.record_send(
         code,
@@ -759,6 +776,7 @@ def wrap_send(obj: Any) -> Any:
     return obj
 
 
+@is_instrumentation
 def start_handler(code: CodeType, offset: int) -> Any:
     """
     Process the function entry point, perform monitoring related operations,
@@ -787,6 +805,7 @@ def start_handler(code: CodeType, offset: int) -> Any:
     return None
 
 
+@is_instrumentation
 def call_handler(
     code: CodeType,
     instruction_offset: int,
@@ -807,6 +826,7 @@ def call_handler(
     return sys.monitoring.DISABLE
 
 
+@is_instrumentation
 def yield_handler(
     code: CodeType,
     instruction_offset: int,
@@ -849,6 +869,7 @@ def yield_handler(
     return None
 
 
+@is_instrumentation
 def return_handler(
     code: CodeType,
     instruction_offset: int,
@@ -891,6 +912,7 @@ def return_handler(
     return None
 
 
+@is_instrumentation
 def unwind_handler(
     code: CodeType,
     instruction_offset: int,
@@ -1007,54 +1029,33 @@ def process_function_call(
     )
 
 
-instrumentation_functions_code = {
-    start_handler.__code__,
-    call_handler.__code__,
-    return_handler.__code__,
-    yield_handler.__code__,
-    send_handler.__code__
-}
-
-def in_instrumentation_code() -> bool:
-    for frame in sys._current_frames().values():
-        # We stop walking the stack after a given number of frames to
-        # limit overhead. The instrumentation code should be fairly
-        # shallow, so this heuristic should have no impact on accuracy
-        # while improving performance.
-        f: FrameType|None = frame
-        countdown = 10
-        while f and countdown > 0:
-            # using torch dynamo, f_code can apparently be a dict...
-            if isinstance(f.f_code, CodeType) and f.f_code in instrumentation_functions_code:
-                return True # In instrumentation code
-            f = f.f_back
-            countdown -= 1
-    return False
-
-
-instrumentation_overhead = 0.0
-sample_count_instrumentation = 0.0
-sample_count_total = 0.0
+sample_count_instrumentation = 0
+sample_count_total = 0
+instrumentation_overhead = []
+instrumentation_restarted = []
 
 def restart_sampling() -> None:
     """
     Measures the instrumentation overhead, restarting event delivery
     if it lies below the target overhead.
     """
-    # Walk the stack to see if righttyper instrumentation is running (and thus instrumentation).
-    # We use this information to estimate instrumentation overhead, and put off restarting
-    # instrumentation until overhead drops below the target threshold.
     global sample_count_instrumentation, sample_count_total
-    global instrumentation_overhead
-    sample_count_total += 1.0
-    if in_instrumentation_code():
-        sample_count_instrumentation += 1.0
-    instrumentation_overhead = (
-        sample_count_instrumentation / sample_count_total
-    )
-    if instrumentation_overhead <= options.target_overhead / 100.0:
-        # Instrumentation overhead is low enough: restart instrumentation.
-        sys.monitoring.restart_events()
+    sample_count_total += 1
+    if instrumentation_counter.count() > 0:
+        sample_count_instrumentation += 1
+
+    overhead = float(sample_count_instrumentation) / sample_count_total
+    if (sample_count_total % 50) == 0:
+        if (restart := (overhead <= options.target_overhead / 100.0)):
+            # Instrumentation overhead is low enough: restart instrumentation.
+            sys.monitoring.restart_events()
+
+        if options.save_profiling is not None:
+            instrumentation_overhead.append(overhead)
+            instrumentation_restarted.append(restart)
+
+        # TODO how to best measure overhead -- overall, over the interval, with decay...?
+        #sample_count_instrumentation = sample_count_total = 0
 
 
 def execute_script_or_module(
@@ -1446,6 +1447,13 @@ def cli(debug: bool):
           " You can later process using RightTyper's \"process\" command."
 )
 @click.option(
+    "--save-profiling",
+    type=str,
+    metavar="NAME",
+    hidden=True,
+    help=f"""Save record of self-profiling results in "{TOOL_NAME}-profile.json", under the given name."""
+)
+@click.option(
     "--resolve-mocks/--no-resolve-mocks",
     is_flag=True,
     default=options.resolve_mocks,
@@ -1507,6 +1515,7 @@ def run(
     python_version: tuple[int, ...],
     use_top_pct: int,
     only_collect: bool,
+    save_profiling: str,
     type_depth_limit: int|None,
     resolve_mocks: bool,
     exclude_test_types: bool,
@@ -1516,6 +1525,8 @@ def run(
     debug: bool
 ) -> None:
     """Runs a given script or module, collecting type information."""
+
+    start_time = time.perf_counter()
 
     logger.info(f"Starting: {subprocess.list2cmdline(sys.orig_argv)}")
     if debug:
@@ -1584,6 +1595,7 @@ def run(
     options.exclude_test_types = exclude_test_types
     options.test_modules = test_modules
     options.adjust_type_names = adjust_type_names
+    options.save_profiling = save_profiling
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(restart_sampling, 0.01)
@@ -1637,6 +1649,32 @@ def run(
             print(f"Collected types saved to {PKL_FILE_NAME}.")
         else:
             process_collected(collected)
+
+        end_time = time.perf_counter()
+        logger.info(f"Finished in {end_time-start_time:.0f}s")
+
+        if save_profiling:
+            try:
+                with open(f"{TOOL_NAME}-profile.json", "r") as f:
+                    data = json.load(f)
+            except FileNotFoundError:
+                data = []
+
+            data.append({
+                    'name': save_profiling,
+                    'command': subprocess.list2cmdline(sys.orig_argv),
+                    'start_time': start_time,
+                    'end_time': end_time,
+                    'elapsed': end_time - start_time,
+                    'overhead': instrumentation_overhead,
+                    'restarted': instrumentation_restarted,
+                    'sample_count_instrumentation': sample_count_instrumentation,
+                    'sample_count_total': sample_count_total,
+                }
+            )
+
+            with open(f"{TOOL_NAME}-profile.json", "w") as f:
+                json.dump(data, f, indent=2)
 
 
 @cli.command()
