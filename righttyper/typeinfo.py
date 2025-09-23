@@ -43,33 +43,50 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     """Simplifies the set by replacing types with supertypes that contains
        all common attributes.
     """
-    # Types we know how to merge
-    mergeable_types = set(
+    # Types we support simplifying
+    simplifiable_types = set(
         t
         for t in typeinfoset
-        if type(t.type_obj) is type     # we need a type_obj with __mro__ for this
         if len(t.args) == 0                          # we don't compare arguments yet
         if not hasattr(t.type_obj, "__orig_class__") # we don't support generics yet
     )
 
-    if not mergeable_types:
+    if not simplifiable_types:
         return typeinfoset
 
-    other_types = typeinfoset - mergeable_types
+    other_types = typeinfoset - simplifiable_types 
 
-    base_containers = set(              # container types without arguments
+    # generics whose incomplete (argumentless) forms default to Any arguments
+    incomplete_types = set(
         t
-        for t in mergeable_types
-        if issubclass(cast(type, t.type_obj), abc.Container)
+        for t in simplifiable_types
+        if (
+            # TODO many more could be added here -- maybe every ABC?
+            t.type_obj in (abc.Callable, abc.Iterator, abc.AsyncIterator, abc.Iterable,
+                           abc.Generator, abc.AsyncGenerator, abc.Coroutine)
+            or (type(t.type_obj) is type and issubclass(cast(type, t.type_obj), abc.Container))
+        )
     )
 
-    if base_containers:
-        # argument-less containers subsume those with arguments: delete them
+    if incomplete_types:
+        # the incomplete form subsume those with arguments: delete them
         other_types = set(
             t
             for t in other_types
-            if not any(bc.type_obj is t.type_obj for bc in base_containers)
+            if not any(bc.type_obj is t.type_obj for bc in incomplete_types)
         )
+
+    # Types we support merging
+    mergeable_types = set(
+        t
+        for t in simplifiable_types
+        if type(t.type_obj) is type     # we need a type_obj with __mro__ for merging
+    )
+
+    other_types |= (simplifiable_types - mergeable_types)
+
+    if not mergeable_types:
+        return other_types
 
     # TODO do we want to merge by protocol?  search for protocols in collections.abc types?
 

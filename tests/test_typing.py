@@ -432,6 +432,19 @@ def test_merged_types_generics():
         }
     ))
 
+    assert "builtins.tuple" == str(merged_types({
+            TypeInfo.from_type(tuple, args=(TypeInfo("", "int"), ...)),
+            TypeInfo.from_type(tuple),
+        }
+    ))
+
+    assert "collections.abc.Callable" == str(merged_types({
+            rt.hint2type(abc.Callable[[], None]),
+            rt.hint2type(abc.Callable[[int], None]),
+            rt.hint2type(abc.Callable),
+        }
+    ))
+
 
 def test_merged_types_superclass():
     class A: pass
