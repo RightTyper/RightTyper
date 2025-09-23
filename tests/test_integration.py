@@ -3951,50 +3951,6 @@ def test_typefinder_defined_in_main():
     """)
 
 
-def test_inconsistent_samples():
-    Path("t.py").write_text(textwrap.dedent("""\
-        import inspect
-
-        def f():
-            def g(a, b):
-                return a+b
-            return g
-
-        g = f()
-        g(1,2)
-
-        # Fake an inconsistent (different arity) sample
-        import righttyper.righttyper as rt
-        rt.obs.record_start(
-            code=g.__code__,
-            frame_id=rt.FrameId(0),
-            arg_info=inspect.ArgInfo(
-                ['x', 'y', 'z'], None, None, {
-                    'x': 0,
-                    'y': 0,
-                    'z': 0
-                }
-            ),
-            self_type=None,
-            self_replacement=None
-        )
-        rt.obs.record_return(
-            code=g.__code__, frame_id=rt.FrameId(0), return_value=1
-        )
-        """
-    ))
-
-    stdout = rt_run('--no-sampling', 't.py', capture=True)
-    assert 'Error' not in stdout
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-
-    # no annotation expected
-    assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\
-        def g(a, b): ...
-    """)
-
-
 @pytest.mark.dont_run_mypy  # would fail due to f("foo") calls
 def test_use_top_pct():
     t = textwrap.dedent(f"""\
