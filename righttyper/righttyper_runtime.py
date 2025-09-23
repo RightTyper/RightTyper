@@ -648,7 +648,7 @@ def get_value_type(
 
     # using getattr or hasattr here can lead to problems when __getattr__ is overridden
     if (orig := inspect.getattr_static(value, "__orig_class__", None)):
-        assert type(orig) is GenericAlias
+        assert type(orig) in (GenericAlias, type(typing.Generic[T])), f"{orig=} {type(orig)=}"
         return hint2type(orig)
 
     if isinstance(value, (FunctionType, MethodType)):
