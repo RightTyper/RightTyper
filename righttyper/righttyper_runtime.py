@@ -38,7 +38,7 @@ from righttyper.righttyper_types import (
     AnyTypeInfo,
     UnknownTypeInfo
 )
-from righttyper.righttyper_utils import skip_this_file, get_main_module_fqn
+from righttyper.righttyper_utils import is_test_module, get_main_module_fqn
 from righttyper.options import options
 from righttyper.logger import logger
 
@@ -148,44 +148,6 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
         type_obj=cast(type, abc.Callable),
         is_bound=isinstance(func, MethodType)
     )
-
-
-def detected_test_modules() -> set[str]:
-    # Only load this module now: if pytest is used, let pytest load it first,
-    # avoiding its warning and the possible rewriting issues it warns about.
-    from righttyper.pytest import pytest_modules
-    return pytest_modules
-
-
-@cache
-def is_test_module(m: str) -> bool:
-    return bool(
-        m in detected_test_modules()
-        or (
-            (opt_test_modules := options.test_modules_re)
-            and opt_test_modules.match(m)
-        )
-    )
-
-
-@cache
-def should_skip_function(code: CodeType) -> bool:
-    if skip_this_file(code.co_filename):
-        return True
-
-    if (
-        (include_functions := options.include_functions_re)
-        and not include_functions.search(code.co_name)
-    ):
-        logger.debug(f"skipping function {code.co_name}")
-        return True
-
-    if not (code.co_flags & 0x2):
-        import dis
-
-        assert dis.COMPILER_FLAG_NAMES[0x2] == "NEWLOCALS"
-        return True
-    return False
 
 
 def find_caller_frame() -> FrameType|None:

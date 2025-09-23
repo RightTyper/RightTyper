@@ -45,9 +45,6 @@ from righttyper.righttyper_runtime import (
     unwrap,
     get_value_type,
     get_type_name,
-    should_skip_function,
-    detected_test_modules,
-    is_test_module,
     hint2type,
     PostponedIteratorArg,
 )
@@ -81,6 +78,9 @@ from righttyper.typeinfo import (
 )
 from righttyper.righttyper_utils import (
     skip_this_file,
+    should_skip_function,
+    detected_test_modules,
+    is_test_module,
     source_to_module_fqn,
     get_main_module_fqn,
 )
@@ -1609,7 +1609,7 @@ def run(
         type_annotations = obs.collect_annotations()
 
         if logger.level == logging.DEBUG:
-            for m in detected_test_modules():
+            for m in detected_test_modules:
                 logger.debug(f"test module: {m}")
 
         collected = {
