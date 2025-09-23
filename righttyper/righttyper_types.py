@@ -230,21 +230,22 @@ class PendingCallTrace:
             
         type_data = (*self.args, retval)
 
-        if self.self_type:
+        if self.self_type and self.self_replacement:
+            self_type = cast(TypeInfo, self.self_type)
+            self_replacement = cast(TypeInfo, self.self_replacement)
+
             class SelfTransformer(TypeInfo.Transformer):
                 """Replaces 'self' types with the type of the class that defines them,
                    also setting is_self for possible later replacement with typing.Self."""
 
                 def visit(vself, node: TypeInfo) -> TypeInfo:
-#                    if self.self_type: print(f"checking {str(node)} against {str(self.self_type)}")
+#                    if self_type: print(f"checking {str(node)} against {str(self_type)}")
                     if (
-                        self.self_type
-                        and self.self_replacement
-                        and hasattr(node.type_obj, "__mro__")
-                        and self.self_type.type_obj in cast(type, node.type_obj).__mro__
+                        hasattr(node.type_obj, "__mro__")
+                        and self_type.type_obj in cast(type, node.type_obj).__mro__
                     ):
-#                        print(f"replacing {str(node)} with {str(self.self_replacement)}")
-                        node = self.self_replacement.replace(is_self=True)
+#                        print(f"replacing {str(node)} with {str(self_replacement)}")
+                        node = self_replacement.replace(is_self=True)
 
                     return super().visit(node)
 
