@@ -1003,18 +1003,27 @@ def get_defaults(code, frame) -> dict[str, TypeInfo]:
 
 sample_count_instrumentation = 0
 sample_count_total = 0
+overhead: float|None = None
 samples_instrumentation = []
 samples_total = []
 instrumentation_overhead = []
 instrumentation_restarted = []
 disabled_code: set[CodeId] = set()
 
+def exp_smooth(value: float, previous: float|None) -> float:
+    """Exponentially smooths a value."""
+    if previous is None: return value
+
+    alpha = 0.4
+    return alpha * value + (1-alpha) * previous
+
+
 def self_profile() -> None:
     """
     Measures the instrumentation overhead, restarting event delivery
     if it lies below the target overhead.
     """
-    global sample_count_instrumentation, sample_count_total
+    global sample_count_instrumentation, sample_count_total, overhead
     sample_count_total += 1
     if instrumentation_counter.count() > 0:
         sample_count_instrumentation += 1
@@ -1022,7 +1031,9 @@ def self_profile() -> None:
     # Only calculate overhead every so often, so as to allow the currently
     # enabled events to be triggered.  Doing it every time makes it jumpy
     if (sample_count_total % 50) == 0:
-        overhead = float(sample_count_instrumentation) / sample_count_total
+        interval = float(sample_count_instrumentation) / sample_count_total
+        overhead = exp_smooth(interval, overhead)
+
         if (restart := (overhead <= options.target_overhead / 100.0)):
             # Instrumentation overhead is low enough: restart instrumentation.
             disabled_code.clear()
@@ -1034,8 +1045,7 @@ def self_profile() -> None:
             instrumentation_overhead.append(overhead)
             instrumentation_restarted.append(restart)
 
-        # TODO how to best measure overhead -- overall, over the interval, with decay...?
-        #sample_count_instrumentation = sample_count_total = 0
+        sample_count_instrumentation = sample_count_total = 0
 
 
 def execute_script_or_module(
