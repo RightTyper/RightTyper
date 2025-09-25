@@ -1403,9 +1403,11 @@ def cli(debug: bool):
 )
 @click.option(
     "--container-sample-limit",
-    type=int,
-    default=options.container_sample_limit,
-    help="Number of container elements to sample.",
+    default="none",
+    callback=lambda ctx, param, value: parse_none_or_ge_zero(value),
+    show_default=True,
+    metavar="[INTEGER|none]",
+    help="Number of container elements to sample; 'none' to disable.",
 )
 @click.option(
     "--type-depth-limit",

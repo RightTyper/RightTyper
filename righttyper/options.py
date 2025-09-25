@@ -31,7 +31,7 @@ class Options:
     sampling: bool = True
     no_sampling_for: tuple[str, ...] = ()
     replace_dict: bool = False
-    container_sample_limit: int = 1000
+    container_sample_limit: int|None = None
     type_depth_limit: int|None = None
     use_typing_union: bool = False
     use_typing_self: bool = False

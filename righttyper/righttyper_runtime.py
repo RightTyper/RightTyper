@@ -407,7 +407,10 @@ def _random_item[T](container: abc.Collection[T]) -> T:
     """Randomly samples from a container."""
     # Unbounded, islice's running time seems to be O(N); we arbitrarily bound to 1,000 items
     # to keep the overhead low (similar to list's O(1), in fact)
-    n = random.randint(0, min(options.container_sample_limit, len(container)-1))
+    limit = len(container)-1
+    if options.container_sample_limit is not None:
+        limit = min(limit, options.container_sample_limit)
+    n = random.randint(0, limit)
     return next(itertools.islice(container, n, None))
 
 
