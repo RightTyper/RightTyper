@@ -67,6 +67,27 @@ def platform_link_args():
     return []
 
 
+def bdist_wheel_options():
+    options = {}
+
+    # Build universal wheels on MacOS.
+    if (
+        sys.platform == 'darwin'
+        and sum(arg == '-arch' for arg in platform_compile_args()) > 1
+    ):
+        # On MacOS >= 11, all builds are compatible for a major MacOS version, so Python "floors"
+        # all minor versions to 0, leading to tags like like "macosx_11_0_universal2". If you use
+        # the actual (non-0) minor name in the build platform, pip doesn't install it.
+        import platform
+        v = platform.mac_ver()[0]
+        major = int(v.split('.')[0])
+        if major >= 11:
+            v = f"{major}.0"
+        options['plat_name'] = f"macosx-{v}-universal2"
+
+    return options
+
+
 setuptools.setup(
     packages=['righttyper'],
     version=get_version(),
@@ -82,5 +103,6 @@ setuptools.setup(
             extra_link_args=platform_link_args(),
             py_limited_api=False # doesn't work with pybind11
         )
-    ]
+    ],
+    options={'bdist_wheel': bdist_wheel_options()}
 )
