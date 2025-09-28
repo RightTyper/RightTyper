@@ -1,5 +1,5 @@
-righttyper/traverse.abi3.so
-righttyper.egg-info/
+*.so
+*.egg-info
 */__pycache__/
 .venv
 venv

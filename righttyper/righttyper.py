@@ -7,7 +7,6 @@ import functools
 import logging
 import os
 import runpy
-import signal
 import sys
 import platform
 import typeshed_client as ts
@@ -85,15 +84,12 @@ from righttyper.righttyper_utils import (
     get_main_module_fqn,
 )
 import righttyper.loader as loader
-from righttyper.righttyper_alarm import (
-    SignalAlarm,
-    ThreadAlarm,
-)
 
 from righttyper.options import Options, options
 from righttyper.logger import logger
 from righttyper.typemap import AdjustTypeNamesT
 from righttyper.atomic import AtomicCounter
+import righttyper.self_profiling as self_profiling
 
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
 PKL_FILE_VERSION = 4
@@ -745,10 +741,10 @@ def is_instrumentation(f):
     """Decorator that marks a function as being instrumentation."""
     def wrapper(*args, **kwargs):
         try:
-            instrumentation_counter.inc()
+            self_profiling.enter_instrumentation()
             return f(*args, **kwargs)
         finally:
-            instrumentation_counter.dec()
+            self_profiling.exit_instrumentation()
 
     return wrapper
 
@@ -1001,51 +997,7 @@ def get_defaults(code, frame) -> dict[str, TypeInfo]:
     return {}
 
 
-sample_count_instrumentation = 0
-sample_count_total = 0
-overhead: float|None = None
-samples_instrumentation = []
-samples_total = []
-instrumentation_overhead = []
-instrumentation_restarted = []
 disabled_code: set[CodeId] = set()
-
-def exp_smooth(value: float, previous: float|None) -> float:
-    """Exponentially smooths a value."""
-    if previous is None: return value
-
-    alpha = 0.4
-    return alpha * value + (1-alpha) * previous
-
-
-def self_profile() -> None:
-    """
-    Measures the instrumentation overhead, restarting event delivery
-    if it lies below the target overhead.
-    """
-    global sample_count_instrumentation, sample_count_total, overhead
-    sample_count_total += 1
-    if instrumentation_counter.count() > 0:
-        sample_count_instrumentation += 1
-
-    # Only calculate overhead every so often, so as to allow the currently
-    # enabled events to be triggered.  Doing it every time makes it jumpy
-    if (sample_count_total % 50) == 0:
-        interval = float(sample_count_instrumentation) / sample_count_total
-        overhead = exp_smooth(interval, overhead)
-
-        if (restart := (overhead <= options.target_overhead / 100.0)):
-            # Instrumentation overhead is low enough: restart instrumentation.
-            disabled_code.clear()
-            sys.monitoring.restart_events()
-
-        if options.save_profiling is not None:
-            samples_instrumentation.append(sample_count_instrumentation)
-            samples_total.append(sample_count_total)
-            instrumentation_overhead.append(overhead)
-            instrumentation_restarted.append(restart)
-
-        sample_count_instrumentation = sample_count_total = 0
 
 
 def execute_script_or_module(
@@ -1391,12 +1343,6 @@ def cli(debug: bool):
     help=f"Rather than sample, record every invocation of any functions matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
-    "--signal-wakeup/--thread-wakeup",
-    default=not platform.system() == "Windows",
-    hidden=True,
-    help="Whether to use signal-based wakeups or thread-based wakeups."
-)
-@click.option(
     "--replace-dict/--no-replace-dict",
     is_flag=True,
     help="Whether to replace 'dict' to enable efficient, statistically correct samples."
@@ -1501,7 +1447,6 @@ def run(
     use_multiprocessing: bool,
     sampling: bool,
     no_sampling_for: tuple[str, ...],
-    signal_wakeup: bool,
     replace_dict: bool,
     container_sample_limit: int,
     python_version: tuple[int, ...],
@@ -1589,9 +1534,6 @@ def run(
     options.adjust_type_names = adjust_type_names
     options.save_profiling = save_profiling
 
-    alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
-    alarm = alarm_cls(self_profile, 0.01)
-
     pytest_plugins = os.environ.get("PYTEST_PLUGINS")
     pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
     os.environ["PYTEST_PLUGINS"] = pytest_plugins
@@ -1603,14 +1545,16 @@ def run(
         call_handler,
         unwind_handler,
     )
+
     sys.monitoring.restart_events()
-    alarm.start()
+    self_profiling.configure(options, disabled_code, sys.monitoring.restart_events)
+    self_profiling.start()
 
     try:
         execute_script_or_module(script, is_module=bool(module), args=args)
     finally:
         reset_monitoring()
-        alarm.stop()
+        self_profiling.stop()
 
         file_names = set(
             t.func_id.file_name
@@ -1658,10 +1602,7 @@ def run(
                     'start_time': start_time,
                     'end_time': end_time,
                     'elapsed': end_time - start_time,
-                    'overhead': instrumentation_overhead,
-                    'restarted': instrumentation_restarted,
-                    'samples_instrumentation': samples_instrumentation,
-                    'samples_total': samples_total,
+                    **self_profiling.get_history()
                 }
             )
 
