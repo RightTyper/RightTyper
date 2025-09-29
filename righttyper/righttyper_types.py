@@ -239,12 +239,10 @@ class PendingCallTrace:
                    also setting is_self for possible later replacement with typing.Self."""
 
                 def visit(vself, node: TypeInfo) -> TypeInfo:
-#                    if self_type: print(f"checking {str(node)} against {str(self_type)}")
                     if (
                         hasattr(node.type_obj, "__mro__")
                         and self_type.type_obj in cast(type, node.type_obj).__mro__
                     ):
-#                        print(f"replacing {str(node)} with {str(self_replacement)}")
                         node = self_replacement.replace(is_self=True)
 
                     return super().visit(node)

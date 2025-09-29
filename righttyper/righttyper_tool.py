@@ -8,13 +8,15 @@ import functools
 TOOL_NAME: Final[str] = "righttyper"
 
 def _setup_tool_id(tool_id: int) -> int:
-    while True:
+    while 0 <= tool_id <= 5:    # only 0..5 supported by sys.monitoring
         try:
             sys.monitoring.use_tool_id(tool_id, TOOL_NAME)
             return tool_id
 
         except Exception:
             tool_id += 1
+
+    raise RuntimeError("Unable to obtain a sys.monitoring tool id")
 
 TOOL_ID: int = _setup_tool_id(3)
 

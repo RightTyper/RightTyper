@@ -13,7 +13,7 @@ def _merge_regexes(patterns: Sequence[str]) -> re.Pattern|None:
 
 @dataclass
 class Options:
-    """Options for the run command."""
+    """Options for the run command; see the click options in righttyper.py"""
 
     script_dir: str = ""
     include_files: tuple[str, ...] = ()

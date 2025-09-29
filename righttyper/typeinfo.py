@@ -69,7 +69,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     )
 
     if incomplete_types:
-        # the incomplete form subsume those with arguments: delete them
+        # the incomplete form subsumes those with arguments: delete them
         other_types = set(
             t
             for t in other_types

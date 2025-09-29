@@ -152,8 +152,9 @@ Options:
                                   efficient, statistically correct samples.
                                   [default: no-replace-dict]
   --container-sample-limit [INTEGER|none]
-                                  Number of container elements to sample;
-                                  'none' to disable.  [default: none]
+                                  Maximum number of container elements
+                                  considered when sampling; 'none' means
+                                  unlimited.  [default: 1000]
   --type-depth-limit [INTEGER|none]
                                   Maximum depth (types within types) for
                                   generic types; 'none' to disable.  [default:

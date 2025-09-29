@@ -1403,11 +1403,11 @@ def cli(debug: bool):
 )
 @click.option(
     "--container-sample-limit",
-    default="none",
+    default="1000",
     callback=lambda ctx, param, value: parse_none_or_ge_zero(value),
     show_default=True,
     metavar="[INTEGER|none]",
-    help="Number of container elements to sample; 'none' to disable.",
+    help="Maximum number of container elements considered when sampling; 'none' means unlimited.",
 )
 @click.option(
     "--type-depth-limit",
