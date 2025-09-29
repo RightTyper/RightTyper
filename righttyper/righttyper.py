@@ -54,8 +54,6 @@ PKL_FILE_VERSION = 6
 
 
 rec = ObservationsRecorder()
-instrumentation_counter = AtomicCounter()
-
 
 def is_instrumentation(f):
     """Decorator that marks a function as being instrumentation."""
