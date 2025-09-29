@@ -16,6 +16,8 @@ import datetime
 import json
 import subprocess
 import re
+import time
+import builtins
 
 
 import collections.abc as abc
@@ -28,7 +30,8 @@ from typing import (
     Any,
     TextIO,
     Self,
-    Sequence
+    Sequence,
+    overload
 )
 
 import click
@@ -42,16 +45,14 @@ from righttyper.righttyper_runtime import (
     unwrap,
     get_value_type,
     get_type_name,
-    should_skip_function,
-    detected_test_modules,
-    is_test_module,
     hint2type,
     PostponedIteratorArg,
 )
 from righttyper.righttyper_tool import (
+    TOOL_ID,
+    TOOL_NAME,
     register_monitoring_callbacks,
-    reset_monitoring,
-    setup_tool_id,
+    reset_monitoring
 )
 from righttyper.righttyper_types import (
     ArgInfo,
@@ -76,9 +77,10 @@ from righttyper.typeinfo import (
     generalize,
 )
 from righttyper.righttyper_utils import (
-    TOOL_ID,
-    TOOL_NAME,
     skip_this_file,
+    should_skip_function,
+    detected_test_modules,
+    is_test_module,
     source_to_module_fqn,
     get_main_module_fqn,
 )
@@ -91,9 +93,21 @@ from righttyper.righttyper_alarm import (
 from righttyper.options import Options, options
 from righttyper.logger import logger
 from righttyper.typemap import AdjustTypeNamesT
+from righttyper.atomic import AtomicCounter
 
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
 PKL_FILE_VERSION = 4
+
+
+# Overloads so we don't have to always write CodeId(id(code)), etc.
+@overload
+def id(obj: CodeType) -> CodeId: ...
+@overload
+def id(obj: FrameType) -> FrameId: ...
+@overload
+def id(obj: object) -> int: ...
+def id(obj):
+    return builtins.id(obj)
 
 
 def get_inline_arg_types(
@@ -224,7 +238,7 @@ class Observations:
     functions_visited: dict[CodeId, FuncInfo] = field(default_factory=dict)
 
     # Started, but not (yet) completed traces
-    pending_traces: dict[tuple[CodeId, FrameId], PendingCallTrace] = field(default_factory=dict)
+    pending_traces: dict[CodeId, dict[FrameId, PendingCallTrace]] = field(default_factory=lambda: defaultdict(dict))
 
     # Completed traces
     traces: dict[CodeId, Counter[CallTrace]] = field(default_factory=dict)
@@ -255,13 +269,13 @@ class Observations:
     def record_function(
         self,
         code: CodeType,
+        frame: FrameType,
         args: inspect.ArgInfo,
-        get_defaults: abc.Callable[[], dict[str, TypeInfo]],
         overrides: FunctionType|FunctionDescriptor|None
     ) -> None:
         """Records that a function was visited, along with some details about it."""
 
-        code_id = CodeId(id(code))
+        code_id = id(code)
         if code_id not in self.functions_visited:
             arg_names = (
                 *(a for a in args.args),
@@ -269,7 +283,7 @@ class Observations:
                 *((args.keywords,) if args.keywords else ())
             )
 
-            defaults = get_defaults()
+            defaults = get_defaults(code, frame)
 
             self.functions_visited[code_id] = FuncInfo(
                 FuncId(
@@ -310,64 +324,87 @@ class Observations:
     def record_start(
         self,
         code: CodeType,
-        frame_id: FrameId,
-        arg_info: inspect.ArgInfo,
-        self_type: TypeInfo|None,
-        self_replacement: TypeInfo|None,
+        frame: FrameType,
+        arg_info: inspect.ArgInfo
     ) -> None:
         """Records a function start."""
 
         # print(f"record_start {code.co_qualname} {arg_types}")
-        self.pending_traces[(CodeId(id(code)), frame_id)] = PendingCallTrace(
+        self_type, self_replacement, overrides = get_self_type(code, arg_info)
+        obs.record_function(code, frame, arg_info, overrides)
+        obs.record_module(code, frame)
+
+        self.pending_traces[id(code)][id(frame)] = PendingCallTrace(
             arg_info=arg_info,
             args=self._get_arg_types(arg_info),
-            self_type=self_type,
-            self_replacement=self_replacement,
             is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
             is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
+            self_type=self_type, self_replacement=self_replacement
         )
 
 
-    def record_yield(self, code: CodeType, frame_id: FrameId, yield_value: Any) -> bool:
+    def record_yield(self, code: CodeType, frame_id: FrameId, yield_value: Any) -> None:
         """Records a yield."""
 
         # print(f"record_yield {code.co_qualname}")
-        if (tr := self.pending_traces.get((CodeId(id(code)), frame_id))):
+        if (per_frame := self.pending_traces.get(id(code))) and (tr := per_frame.get(frame_id)):
             tr.yields.add(get_value_type(yield_value))
-            return True
-
-        return False
 
 
-    def record_send(self, code: CodeType, frame_id: FrameId, send_value: Any) -> bool:
+    def record_send(self, code: CodeType, frame_id: FrameId, send_value: Any) -> None:
         """Records a send."""
 
         # print(f"record_send {code.co_qualname}")
-        if (tr := self.pending_traces.get((CodeId(id(code)), frame_id))):
+        if (per_frame := self.pending_traces.get(id(code))) and (tr := per_frame.get(frame_id)):
             tr.sends.add(get_value_type(send_value))
-            return True
+
+
+    def _record_return_type(self, tr: PendingCallTrace, code_id: CodeId, ret_type: Any) -> None:
+        """Records a pending call trace's return type, finishing the trace."""
+        assert tr is not None
+
+        tr.returns = (
+            ret_type if ret_type is not None
+            else (
+                # Generators may still be running, or exit with a GeneratorExit exception; we still
+                # want them marked as returning None, so they can be simplified to Iterator
+                NoneTypeInfo if tr.is_generator else TypeInfo.from_type(typing.NoReturn)
+            )
+        )
+
+        if code_id not in self.traces:
+            self.traces[code_id] = Counter()
+        self.traces[code_id].update((tr.process(),))
+
+        # Resample arguments in case they change during execution (e.g., containers)
+        tr.args = self._get_arg_types(tr.arg_info)
+        self.traces[code_id].update((tr.process(),))
+
+
+    def record_return(self, code: CodeType, frame: FrameType, return_value: Any) -> bool:
+        """Records a return."""
+
+        # print(f"record_return {code.co_qualname}")
+        code_id = id(code)
+        frame_id = id(frame)
+        if (per_frame := self.pending_traces.get(code_id)) and (tr := per_frame.get(frame_id)):
+            self._record_return_type(tr, code_id, get_value_type(return_value))
+            del per_frame[frame_id]
+            return True # found it
 
         return False
 
 
-    def record_return(self, code: CodeType, frame_id: FrameId, return_value: Any) -> bool:
-        """Records a return."""
+    def record_no_return(self, code: CodeType, frame: FrameType) -> bool:
+        """Records the lack of a return (e.g., because an exception was raised)."""
 
-        # print(f"record_return {code.co_qualname}")
-
-        code_id = CodeId(id(code))
-        if (tr := self.pending_traces.get((code_id, frame_id))):
-            tr.returns = get_value_type(return_value)
-            if code_id not in self.traces:
-                self.traces[code_id] = Counter()
-            self.traces[code_id].update((tr.process(),))
-
-            # Resample arguments in case they change during execution (e.g., containers)
-            tr.args = self._get_arg_types(tr.arg_info)
-            self.traces[code_id].update((tr.process(),))
-
-            del self.pending_traces[(code_id, frame_id)]
-            return True
+        # print(f"record_no_return {code.co_qualname}")
+        code_id = id(code)
+        frame_id = id(frame)
+        if (per_frame := self.pending_traces.get(code_id)) and (tr := per_frame.get(frame_id)):
+            self._record_return_type(tr, code_id, None)
+            del per_frame[frame_id]
+            return True # found it
 
         return False
 
@@ -396,13 +433,11 @@ class Observations:
     def collect_annotations(self: Self) -> dict[FuncId, FuncAnnotation]:
         """Collects function type annotations from the observed types."""
 
-        # Finish traces for any generators that are still unfinished
-        # TODO are there other cases we should handle?
-        for (code_id, _), tr in self.pending_traces.items():
-            if tr.yields:
-                if code_id not in self.traces:
-                    self.traces[code_id] = Counter()
-                self.traces[code_id].update((tr.process(),))
+        # Finish traces for any generators that may be still running
+        for code_id, per_frame in self.pending_traces.items():
+            for tr in per_frame.values():
+                if tr.is_generator:
+                    self._record_return_type(tr, code_id, None)
 
 
         def most_common_traces(code_id: CodeId) -> list[CallTrace]:
@@ -437,7 +472,7 @@ class Observations:
                         or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
                     )
                 ):
-                    parent_code_id = CodeId(id(parents_func.__code__)) if hasattr(parents_func, "__code__") else None
+                    parent_code_id = id(parents_func.__code__) if hasattr(parents_func, "__code__") else None
                     if (
                         parent_code_id
                         and parent_code_id in self.traces
@@ -574,8 +609,19 @@ class Observations:
 
                 return super().visit(node)
 
+        class NoReturnIsNowNeverT(TypeInfo.Transformer):
+            """Converts typing.NoReturn to typing.Never,
+               which is the more modern way to type a 'no return'"""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                if node.type_obj is typing.NoReturn:
+                    return TypeInfo.from_type(typing.Never) 
+
+                return super().visit(node)
+
         if not options.use_typing_never:
             self._transform_types(NeverSayNeverT())
+        else:
+            self._transform_types(NoReturnIsNowNeverT())
 
         class ResolveMocksT(TypeInfo.Transformer):
             """Resolves apparent test mock types to non-test ones."""
@@ -692,7 +738,22 @@ class Observations:
 
 obs = Observations()
 
+instrumentation_counter = AtomicCounter()
 
+
+def is_instrumentation(f):
+    """Decorator that marks a function as being instrumentation."""
+    def wrapper(*args, **kwargs):
+        try:
+            instrumentation_counter.inc()
+            return f(*args, **kwargs)
+        finally:
+            instrumentation_counter.dec()
+
+    return wrapper
+
+
+@is_instrumentation
 def send_handler(code: CodeType, frame_id: FrameId, arg0: Any) -> None:
     obs.record_send(
         code,
@@ -726,12 +787,13 @@ def wrap_send(obj: Any) -> Any:
     return obj
 
 
-def enter_handler(code: CodeType, offset: int) -> Any:
+@is_instrumentation
+def start_handler(code: CodeType, offset: int) -> Any:
     """
     Process the function entry point, perform monitoring related operations,
     and manage the profiling of function execution.
     """
-    if should_skip_function(code):
+    if should_skip_function(code) or id(code) in disabled_code:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -739,20 +801,13 @@ def enter_handler(code: CodeType, offset: int) -> Any:
         frame = frame.f_back
 
     if frame:
-        process_function_call(code, frame)
+        obs.record_start(code, frame, inspect.getargvalues(frame))
         del frame
-
-    if (
-        options.sampling
-        and not (
-            (no_sampling_for := options.no_sampling_for_re)
-            and no_sampling_for.search(code.co_qualname)
-        )
-    ):
-        return sys.monitoring.DISABLE
 
     return None
 
+
+@is_instrumentation
 def call_handler(
     code: CodeType,
     instruction_offset: int,
@@ -773,6 +828,7 @@ def call_handler(
     return sys.monitoring.DISABLE
 
 
+@is_instrumentation
 def yield_handler(
     code: CodeType,
     instruction_offset: int,
@@ -786,32 +842,21 @@ def yield_handler(
     instruction_offset (int): position of the current instruction.
     yield_value (Any): return value of the function.
     """
-    # Check if the function name is in the excluded list
-    if should_skip_function(code):
+    if should_skip_function(code) or id(code) in disabled_code:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
     while frame and frame.f_code is not code:
         frame = frame.f_back
 
-    found = False
     if frame:
-        found = obs.record_yield(code, FrameId(id(frame)), yield_value)
+        obs.record_yield(code, id(frame), yield_value)
         del frame
-
-    # Keep the event enabled until we receive it for a frame whose trace we're recording.
-    if (
-        options.sampling
-        and found
-        and not (
-            (no_sampling_for := options.no_sampling_for_re)
-            and no_sampling_for.search(code.co_qualname)
-        )
-    ):
-        return sys.monitoring.DISABLE
 
     return None
 
+
+@is_instrumentation
 def return_handler(
     code: CodeType,
     instruction_offset: int,
@@ -825,177 +870,182 @@ def return_handler(
     instruction_offset (int): position of the current instruction.
     return_value (Any): return value of the function.
     """
-    # Check if the function name is in the excluded list
-    if should_skip_function(code):
+    if should_skip_function(code) or id(code) in disabled_code:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
     while frame and frame.f_code is not code:
         frame = frame.f_back
 
-    found = False
-    if frame:
-        found = obs.record_return(code, FrameId(id(frame)), return_value)
-        del frame
+    found = frame and obs.record_return(code, frame, return_value)
+    del frame
 
-    # Keep the event enabled until we receive it for a frame whose trace we're recording.
     if (
-        options.sampling
-        and found
+        found
+        and options.sampling
         and not (
             (no_sampling_for := options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
         )
     ):
+        disabled_code.add(id(code))
+        obs.pending_traces[id(code)].clear()
         return sys.monitoring.DISABLE
 
     return None
 
 
-def process_function_call(
+@is_instrumentation
+def unwind_handler(
     code: CodeType,
-    frame: FrameType,
-) -> None:
+    instruction_offset: int,
+    exception: BaseException,
+) -> Any:
 
-    obs.record_module(code, frame)
+    if should_skip_function(code):
+        return None # PY_UNWIND can't be disabled
 
-    def get_defaults() -> dict[str, TypeInfo]:
-        if (function := find_function(frame, code)):
-            return {
-                param_name: get_value_type(param.default)
-                for param_name, param in inspect.signature(function).parameters.items()
-                if param.default != inspect._empty
-            }
+    frame = inspect.currentframe()
+    while frame and frame.f_code is not code:
+        frame = frame.f_back
 
-        return {}
+    found = frame and obs.record_no_return(code, frame)
+    del frame
 
-    args = inspect.getargvalues(frame)
+    if (
+        found
+        and options.sampling
+        and not (
+            (no_sampling_for := options.no_sampling_for_re)
+            and no_sampling_for.search(code.co_qualname)
+        )
+    ):
+        disabled_code.add(id(code))
+        obs.pending_traces[id(code)].clear()
 
-    def get_self_type() -> tuple[TypeInfo|None, TypeInfo|None, FunctionType|FunctionDescriptor|None]:
-        if args.args:
-            first_arg = args.locals[args.args[0]]
+    return None # PY_UNWIND can't be disabled
 
-            name = code.co_name
-            if (
-                name.startswith("__")
-                and not name.endswith("__")
-                and len(parts := code.co_qualname.split(".")) > 1
-            ):
-                # parts[-2] may be "<locals>"... that's ok, as we then have
-                # a local function and there is no 'Self' to find.
-                name = f"_{parts[-2]}{name}"    # private attribute/method
 
-            # if type(first_arg) is type, we may have a @classmethod
-            first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
+def get_self_type(code, args) -> tuple[TypeInfo|None, TypeInfo|None, FunctionType|FunctionDescriptor|None]:
+    if args.args:
+        first_arg = args.locals[args.args[0]]
 
-            # @property?
-            is_property = isinstance(getattr(type(first_arg), name, None), property)
+        name = code.co_name
+        if (
+            name.startswith("__")
+            and not name.endswith("__")
+            and len(parts := code.co_qualname.split(".")) > 1
+        ):
+            # parts[-2] may be "<locals>"... that's ok, as we then have
+            # a local function and there is no 'Self' to find.
+            name = f"_{parts[-2]}{name}"    # private attribute/method
 
-            # find class that defines that name, in case it's inherited
-            defining_class, next_index = next(
-                (
-                    (ancestor, i+1)
-                    for i, ancestor in enumerate(first_arg_class.__mro__)
-                    if (
-                        (is_property and name in ancestor.__dict__)
-                        or (
-                            (f := unwrap(ancestor.__dict__.get(name, None)))
-                            and getattr(f, "__code__", None) is code
-                        )
+        # if type(first_arg) is type, we may have a @classmethod
+        first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
+
+        # @property?
+        is_property = isinstance(getattr(type(first_arg), name, None), property)
+
+        # find class that defines that name, in case it's inherited
+        defining_class, next_index = next(
+            (
+                (ancestor, i+1)
+                for i, ancestor in enumerate(first_arg_class.__mro__)
+                if (
+                    (is_property and name in ancestor.__dict__)
+                    or (
+                        (f := unwrap(ancestor.__dict__.get(name, None)))
+                        and getattr(f, "__code__", None) is code
                     )
+                )
+            ),
+            (None, None)
+        )
+
+        if not defining_class:
+            return None, None, None
+
+        # The first argument is 'Self' and the type of 'Self', in the context of
+        # its definition, is "defining_class"; now let's see if this method
+        # overrides another
+        overrides = None
+        if not (
+            is_property
+            or name in ('__init__', '__new__')  # irrelevant for Liskov
+        ):
+            overrides = next(
+                (
+                    # wrapper_descriptor and possibly other native objects may lack __module__
+                    f if hasattr(f, "__module__")
+                    else FunctionDescriptor(ancestor.__module__, f.__qualname__)
+                    for ancestor in first_arg_class.__mro__[next_index:]
+                    if (f := unwrap(ancestor.__dict__.get(name, None)))
+                    if getattr(f, "__code__", None) is not code
                 ),
-                (None, None)
+                None
             )
 
-            if not defining_class:
-                return None, None, None
+        return get_type_name(first_arg_class), get_type_name(defining_class), overrides
 
-            # The first argument is 'Self' and the type of 'Self', in the context of
-            # its definition, is "defining_class"; now let's see if this method
-            # overrides another
-            overrides = None
-            if not (
-                is_property
-                or name in ('__init__', '__new__')  # irrelevant for Liskov
-            ):
-                overrides = next(
-                    (
-                        # wrapper_descriptor and possibly other native objects may lack __module__
-                        f if hasattr(f, "__module__")
-                        else FunctionDescriptor(ancestor.__module__, f.__qualname__)
-                        for ancestor in first_arg_class.__mro__[next_index:]
-                        if (f := unwrap(ancestor.__dict__.get(name, None)))
-                        if getattr(f, "__code__", None) is not code
-                    ),
-                    None
-                )
-
-            return get_type_name(first_arg_class), get_type_name(defining_class), overrides
-
-        return None, None, None
-
-    # TODO self_type, like overrides, could just be saved in record_function,
-    # and computed only when first recording a function.
-    self_type, self_replacement, overrides = get_self_type()
-    obs.record_function(code, args, get_defaults, overrides)
-
-    obs.record_start(
-        code,
-        FrameId(id(frame)),
-        args,
-        self_type,
-        self_replacement
-    )
+    return None, None, None
 
 
-instrumentation_functions_code = {
-    enter_handler.__code__,
-    call_handler.__code__,
-    return_handler.__code__,
-    yield_handler.__code__,
-    send_handler.__code__
-}
+def get_defaults(code, frame) -> dict[str, TypeInfo]:
+    if (function := find_function(frame, code)):
+        return {
+            param_name: get_value_type(param.default)
+            for param_name, param in inspect.signature(function).parameters.items()
+            if param.default != inspect._empty
+        }
 
-def in_instrumentation_code() -> bool:
-    for frame in sys._current_frames().values():
-        # We stop walking the stack after a given number of frames to
-        # limit overhead. The instrumentation code should be fairly
-        # shallow, so this heuristic should have no impact on accuracy
-        # while improving performance.
-        f: FrameType|None = frame
-        countdown = 10
-        while f and countdown > 0:
-            # using torch dynamo, f_code can apparently be a dict...
-            if isinstance(f.f_code, CodeType) and f.f_code in instrumentation_functions_code:
-                return True # In instrumentation code
-            f = f.f_back
-            countdown -= 1
-    return False
+    return {}
 
 
-instrumentation_overhead = 0.0
-sample_count_instrumentation = 0.0
-sample_count_total = 0.0
+sample_count_instrumentation = 0
+sample_count_total = 0
+overhead: float|None = None
+samples_instrumentation = []
+samples_total = []
+instrumentation_overhead = []
+instrumentation_restarted = []
+disabled_code: set[CodeId] = set()
 
-def restart_sampling() -> None:
+def exp_smooth(value: float, previous: float|None) -> float:
+    """Exponentially smooths a value."""
+    if previous is None: return value
+
+    alpha = 0.4
+    return alpha * value + (1-alpha) * previous
+
+
+def self_profile() -> None:
     """
     Measures the instrumentation overhead, restarting event delivery
     if it lies below the target overhead.
     """
-    # Walk the stack to see if righttyper instrumentation is running (and thus instrumentation).
-    # We use this information to estimate instrumentation overhead, and put off restarting
-    # instrumentation until overhead drops below the target threshold.
-    global sample_count_instrumentation, sample_count_total
-    global instrumentation_overhead
-    sample_count_total += 1.0
-    if in_instrumentation_code():
-        sample_count_instrumentation += 1.0
-    instrumentation_overhead = (
-        sample_count_instrumentation / sample_count_total
-    )
-    if instrumentation_overhead <= options.target_overhead / 100.0:
-        # Instrumentation overhead is low enough: restart instrumentation.
-        sys.monitoring.restart_events()
+    global sample_count_instrumentation, sample_count_total, overhead
+    sample_count_total += 1
+    if instrumentation_counter.count() > 0:
+        sample_count_instrumentation += 1
+
+    # Only calculate overhead every so often, so as to allow the currently
+    # enabled events to be triggered.  Doing it every time makes it jumpy
+    if (sample_count_total % 50) == 0:
+        interval = float(sample_count_instrumentation) / sample_count_total
+        overhead = exp_smooth(interval, overhead)
+
+        if (restart := (overhead <= options.target_overhead / 100.0)):
+            # Instrumentation overhead is low enough: restart instrumentation.
+            disabled_code.clear()
+            sys.monitoring.restart_events()
+
+        if options.save_profiling is not None:
+            samples_instrumentation.append(sample_count_instrumentation)
+            samples_total.append(sample_count_total)
+            instrumentation_overhead.append(overhead)
+            instrumentation_restarted.append(restart)
+
+        sample_count_instrumentation = sample_count_total = 0
 
 
 def execute_script_or_module(
@@ -1257,6 +1307,11 @@ def cli(debug: bool):
     help="Process only files matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
+    "--exclude-test-files/--no-exclude-test-files",
+    default=options.exclude_test_files,
+    help="Automatically exclude test modules from typing.",
+)
+@click.option(
     "--include-functions",
     metavar="REGEX",
     type=str,
@@ -1348,9 +1403,11 @@ def cli(debug: bool):
 )
 @click.option(
     "--container-sample-limit",
-    type=int,
-    default=options.container_sample_limit,
-    help="Number of container elements to sample.",
+    default="1000",
+    callback=lambda ctx, param, value: parse_none_or_ge_zero(value),
+    show_default=True,
+    metavar="[INTEGER|none]",
+    help="Maximum number of container elements considered when sampling; 'none' means unlimited.",
 )
 @click.option(
     "--type-depth-limit",
@@ -1380,6 +1437,13 @@ def cli(debug: bool):
     is_flag=True,
     help=f"Rather than immediately process collect data, save it to {PKL_FILE_NAME}." +\
           " You can later process using RightTyper's \"process\" command."
+)
+@click.option(
+    "--save-profiling",
+    type=str,
+    metavar="NAME",
+    hidden=True,
+    help=f"""Save record of self-profiling results in "{TOOL_NAME}-profiling.json", under the given name."""
 )
 @click.option(
     "--resolve-mocks/--no-resolve-mocks",
@@ -1423,6 +1487,7 @@ def run(
     args: list[str],
     all_files: bool,
     include_files: tuple[str, ...],
+    exclude_test_files: bool,
     include_functions: tuple[str, ...],
     overwrite: bool,
     output_files: bool,
@@ -1442,6 +1507,7 @@ def run(
     python_version: tuple[int, ...],
     use_top_pct: int,
     only_collect: bool,
+    save_profiling: str,
     type_depth_limit: int|None,
     resolve_mocks: bool,
     exclude_test_types: bool,
@@ -1451,6 +1517,8 @@ def run(
     debug: bool
 ) -> None:
     """Runs a given script or module, collecting type information."""
+
+    start_time = time.perf_counter()
 
     logger.info(f"Starting: {subprocess.list2cmdline(sys.orig_argv)}")
     if debug:
@@ -1494,6 +1562,7 @@ def run(
 
     options.include_files = include_files
     options.include_all = all_files
+    options.exclude_test_files = exclude_test_files
     options.include_functions = include_functions
     options.target_overhead = target_overhead
     options.infer_shapes = infer_shapes
@@ -1518,20 +1587,21 @@ def run(
     options.exclude_test_types = exclude_test_types
     options.test_modules = test_modules
     options.adjust_type_names = adjust_type_names
+    options.save_profiling = save_profiling
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
-    alarm = alarm_cls(restart_sampling, 0.01)
+    alarm = alarm_cls(self_profile, 0.01)
 
     pytest_plugins = os.environ.get("PYTEST_PLUGINS")
     pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
     os.environ["PYTEST_PLUGINS"] = pytest_plugins
 
-    setup_tool_id()
     register_monitoring_callbacks(
-        enter_handler,
+        start_handler,
         return_handler,
         yield_handler,
         call_handler,
+        unwind_handler,
     )
     sys.monitoring.restart_events()
     alarm.start()
@@ -1551,7 +1621,7 @@ def run(
         type_annotations = obs.collect_annotations()
 
         if logger.level == logging.DEBUG:
-            for m in detected_test_modules():
+            for m in detected_test_modules:
                 logger.debug(f"test module: {m}")
 
         collected = {
@@ -1565,12 +1635,38 @@ def run(
         logger.debug(f"generated {len(type_annotations)} annotation(s)")
 
         if only_collect:
-            with open(PKL_FILE_NAME, "wb") as f:
-                pickle.dump(collected, f)
+            with open(PKL_FILE_NAME, "wb") as pklf:
+                pickle.dump(collected, pklf)
 
             print(f"Collected types saved to {PKL_FILE_NAME}.")
         else:
             process_collected(collected)
+
+        end_time = time.perf_counter()
+        logger.info(f"Finished in {end_time-start_time:.0f}s")
+
+        if save_profiling:
+            try:
+                with open(f"{TOOL_NAME}-profiling.json", "r") as f:
+                    data = json.load(f)
+            except FileNotFoundError:
+                data = []
+
+            data.append({
+                    'name': save_profiling,
+                    'command': subprocess.list2cmdline(sys.orig_argv),
+                    'start_time': start_time,
+                    'end_time': end_time,
+                    'elapsed': end_time - start_time,
+                    'overhead': instrumentation_overhead,
+                    'restarted': instrumentation_restarted,
+                    'samples_instrumentation': samples_instrumentation,
+                    'samples_total': samples_total,
+                }
+            )
+
+            with open(f"{TOOL_NAME}-profiling.json", "w") as f:
+                json.dump(data, f, indent=2)
 
 
 @cli.command()

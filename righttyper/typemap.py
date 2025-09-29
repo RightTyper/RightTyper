@@ -7,9 +7,8 @@ import sys
 import logging
 from pathlib import Path
 from righttyper.righttyper_types import TypeInfo, UnknownTypeInfo
-from righttyper.righttyper_runtime import is_test_module
 from righttyper.logger import logger
-from righttyper.righttyper_utils import source_to_module_fqn
+from righttyper.righttyper_utils import source_to_module_fqn, is_test_module
 
 
 class TypeMap:

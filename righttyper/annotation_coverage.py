@@ -5,7 +5,7 @@ import warnings
 
 import click
 
-from righttyper.righttyper_utils import TOOL_NAME
+from righttyper.righttyper_tool import TOOL_NAME
 
 # Suppress SyntaxWarning during AST parsing
 warnings.filterwarnings("ignore", category=SyntaxWarning)

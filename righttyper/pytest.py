@@ -1,10 +1,16 @@
 import pytest
-
-pytest_modules: set[str] = set()
+from righttyper.righttyper_utils import set_test_files_and_modules
 
 def pytest_collection_modifyitems(session, config, items):
     """Collects the names of pytest test modules."""
 
+    files: set[str] = set()
+    modules: set[str] = set()
+
     for item in items:
         if (mod := getattr(item, "module", None)):
-            pytest_modules.add(mod.__name__)
+            modules.add(mod.__name__)
+        if (path := getattr(item, "fspath", None)):
+            files.add(path)
+
+    set_test_files_and_modules(files, modules)

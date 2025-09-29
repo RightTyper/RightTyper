@@ -1,10 +1,24 @@
 import signal
 import sys
-from types import CodeType, FrameType
-from typing import Any
+from types import CodeType
+from typing import Any, Final
 from collections.abc import Callable
+import functools
 
-from righttyper.righttyper_utils import TOOL_ID, TOOL_NAME
+TOOL_NAME: Final[str] = "righttyper"
+
+def _setup_tool_id(tool_id: int) -> int:
+    while 0 <= tool_id <= 5:    # only 0..5 supported by sys.monitoring
+        try:
+            sys.monitoring.use_tool_id(tool_id, TOOL_NAME)
+            return tool_id
+
+        except Exception:
+            tool_id += 1
+
+    raise RuntimeError("Unable to obtain a sys.monitoring tool id")
+
+TOOL_ID: int = _setup_tool_id(3)
 
 _EVENTS = frozenset(
     {
@@ -12,28 +26,26 @@ _EVENTS = frozenset(
         sys.monitoring.events.PY_RETURN,
         sys.monitoring.events.PY_YIELD,
 #        sys.monitoring.events.CALL,
+        sys.monitoring.events.PY_UNWIND,
     }
 )
 
+EVENT_BITSET = functools.reduce(int.__or__, _EVENTS, 0)
 
 def register_monitoring_callbacks(
-    enter_function: Callable[[CodeType, int], Any],
-    exit_function: Callable[[CodeType, int, Any], object],
-    yield_function: Callable[[CodeType, int, Any], object],
+    start_handler: Callable[[CodeType, int], Any],
+    return_handler: Callable[[CodeType, int, Any], object],
+    yield_handler: Callable[[CodeType, int, Any], object],
     call_handler: Callable[[CodeType, int, object, object], Any],
+    unwind_handler: Callable[[CodeType, int, BaseException], Any],
 ) -> None:
     """Set up tracking for all enters, exits, yields, and calls."""
-    event_set = 0
-    for event in _EVENTS:
-        event_set |= event
-
-    sys.monitoring.set_events(TOOL_ID, event_set)
-
     fns: dict[Any, Callable[..., Any]] = {
-        sys.monitoring.events.PY_START: enter_function,
-        sys.monitoring.events.PY_RETURN: exit_function,
-        sys.monitoring.events.PY_YIELD: yield_function,
+        sys.monitoring.events.PY_START: start_handler,
+        sys.monitoring.events.PY_RETURN: return_handler,
+        sys.monitoring.events.PY_YIELD: yield_handler,
         sys.monitoring.events.CALL: call_handler,
+        sys.monitoring.events.PY_UNWIND: unwind_handler,
     }
 
     for event in _EVENTS:
@@ -43,6 +55,7 @@ def register_monitoring_callbacks(
             fns[event],
         )
 
+    sys.monitoring.set_events(TOOL_ID, EVENT_BITSET)
 
 def reset_monitoring() -> None:
     """Clear all monitoring of events."""
@@ -53,13 +66,3 @@ def reset_monitoring() -> None:
         sys.monitoring.set_events(TOOL_ID, sys.monitoring.events.NO_EVENTS)
     except ValueError:
         pass
-
-
-def setup_tool_id() -> None:
-    global TOOL_ID
-    while True:
-        try:
-            sys.monitoring.use_tool_id(TOOL_ID, TOOL_NAME)
-            break
-        except Exception:
-            TOOL_ID += 1

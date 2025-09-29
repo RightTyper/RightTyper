@@ -109,6 +109,9 @@ Options:
   --include-files REGEX           Process only files matching the given
                                   regular expression. Can be passed multiple
                                   times.
+  --exclude-test-files / --no-exclude-test-files
+                                  Automatically exclude test modules from
+                                  typing.  [default: exclude-test-files]
   --include-functions REGEX       Only annotate functions matching the given
                                   regular expression. Can be passed multiple
                                   times.
@@ -121,7 +124,7 @@ Options:
   --overwrite / --no-overwrite    Overwrite ".py" files with type information.
                                   If disabled, ".py.typed" files are written
                                   instead. The original files are saved as
-                                  ".bak".  [default: overwrite]
+                                  ".py.bak".  [default: overwrite]
   --output-files / --no-output-files
                                   Output annotated files (possibly
                                   overwriting, if specified).  If disabled,
@@ -148,9 +151,10 @@ Options:
                                   Whether to replace 'dict' to enable
                                   efficient, statistically correct samples.
                                   [default: no-replace-dict]
-  --container-sample-limit INTEGER
-                                  Number of container elements to sample.
-                                  [default: 1000]
+  --container-sample-limit [INTEGER|none]
+                                  Maximum number of container elements
+                                  considered when sampling; 'none' means
+                                  unlimited.  [default: 1000]
   --type-depth-limit [INTEGER|none]
                                   Maximum depth (types within types) for
                                   generic types; 'none' to disable.  [default:

@@ -4,15 +4,14 @@ import os
 import sys
 
 from functools import cache
-from typing import Any, Final
+from typing import Any
 from pathlib import Path
+from types import CodeType
 
 from righttyper.logger import logger
 from righttyper.options import options
 
 
-TOOL_ID: int = 3
-TOOL_NAME: Final[str] = "righttyper"
 _SAMPLING_INTERVAL = 0.01
 
 
@@ -68,6 +67,49 @@ def _get_python_libs() -> tuple[str, ...]:
 
 PYTHON_LIBS = _get_python_libs()
 
+detected_test_files: set[str] = set()
+detected_test_modules: set[str] = set()
+
+def set_test_files_and_modules(files: set[str], modules: set[str]) -> None:
+    detected_test_files.update(files)
+    detected_test_modules.update(modules)
+
+    # Clear caches, as these functions' results may now change
+    is_test_module.cache_clear()
+    skip_this_file.cache_clear()
+    should_skip_function.cache_clear()
+
+
+@cache
+def is_test_module(m: str) -> bool:
+    return bool(
+        m in detected_test_modules
+        or (
+            (opt_test_modules := options.test_modules_re)
+            and opt_test_modules.match(m)
+        )
+    )
+
+
+@cache
+def should_skip_function(code: CodeType) -> bool:
+    if skip_this_file(code.co_filename):
+        return True
+
+    if (
+        (include_functions := options.include_functions_re)
+        and not include_functions.search(code.co_name)
+    ):
+        logger.debug(f"skipping function {code.co_name}")
+        return True
+
+    if not (code.co_flags & 0x2):
+        import dis
+
+        assert dis.COMPILER_FLAG_NAMES[0x2] == "NEWLOCALS"
+        return True
+    return False
+
 
 @cache
 def skip_this_file(filename: str) -> bool:
@@ -77,6 +119,7 @@ def skip_this_file(filename: str) -> bool:
     else:
         should_skip = (
             filename.startswith("<")
+            or (options.exclude_test_files and filename in detected_test_files)
             # FIXME how about packages installed with 'pip install -e' (editable)?
             or any(filename.startswith(p) for p in PYTHON_LIBS)
             or filename.startswith(RIGHTTYPER_PATH)

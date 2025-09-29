@@ -29,7 +29,8 @@ ignore_missing_imports = true
 
 [build-system]
 requires = [
-    "setuptools>=61.0",
+    "setuptools>=77.0.3",
+    "packaging>=24.2", # for PEP 639
     "tomli; python_version < '3.11'" # tomllib alternative
 ]
 build-backend = "setuptools.build_meta"
@@ -42,6 +43,7 @@ version = "0.1.0"
 [project]
 name = "righttyper"
 dynamic = ["version", "readme"]
+license = "Apache-2.0"
 authors = [
   { name="Emery Berger", email="emerydb@amazon.com" },
   { name="Juan Altmayer Pizzorno", email="jpizzorno@umass.edu" },
@@ -58,7 +60,6 @@ description = "A fast runtime type hint assistant for Python code."
 requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 

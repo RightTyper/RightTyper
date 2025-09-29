@@ -1,4 +1,4 @@
-from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, PendingCallTrace, UnknownTypeInfo
+from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, PendingCallTrace, UnknownTypeInfo, T
 from righttyper.typeinfo import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
@@ -41,6 +41,9 @@ class IterableClass(abc.Iterable):
 
 
 class MyGeneric[A, B](dict): pass
+
+
+class MyOldGeneric(typing.Generic[T]): pass
 
 
 def test_get_value_type():
@@ -126,9 +129,8 @@ def test_get_value_type():
     assert "typing.AsyncGenerator" == get_value_type(async_range(10))
     assert "typing.AsyncGenerator" == get_value_type(aiter(async_range(10)))
 
-    assert f"{__name__}.MyGeneric[int, str]" == \
-            get_value_type(MyGeneric[int, str]())
-
+    assert f"{__name__}.MyGeneric[int, str]" == get_value_type(MyGeneric[int, str]())
+    assert f"{__name__}.MyOldGeneric[int]" == get_value_type(MyOldGeneric[int]())
 
 @pytest.mark.parametrize("init, name, nextv", [
     ["iter(b'0')", "typing.Iterator[int]", b'0'[0]],
@@ -432,6 +434,19 @@ def test_merged_types_generics():
         }
     ))
 
+    assert "builtins.tuple" == str(merged_types({
+            TypeInfo.from_type(tuple, args=(TypeInfo("", "int"), ...)),
+            TypeInfo.from_type(tuple),
+        }
+    ))
+
+    assert "collections.abc.Callable" == str(merged_types({
+            rt.hint2type(abc.Callable[[], None]),
+            rt.hint2type(abc.Callable[[int], None]),
+            rt.hint2type(abc.Callable),
+        }
+    ))
+
 
 def test_merged_types_superclass():
     class A: pass
@@ -562,14 +577,15 @@ int_ti = TypeInfo("", "int", type_obj=int)
 union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.UnionType)
 
 
-T = TypeVar("T")
-
 def test_hint2type_typevar():
     t = rt.hint2type(T)
-    assert t == TypeInfo(module=__name__, name='T')
+    assert t == TypeInfo(module=T.__module__, name=T.__name__)
 
     t = rt.hint2type(List[T])   # type: ignore[valid-type]
-    assert t == TypeInfo.from_type(list, module='', args=(TypeInfo(module=__name__, name='T'),))
+    assert t == TypeInfo.from_type(list, module='', args=(
+            TypeInfo(module=T.__module__, name=T.__name__),
+        )
+    )
 
 
 def test_hint2type_none():

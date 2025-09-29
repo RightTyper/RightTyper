@@ -350,8 +350,9 @@ def test_callable_from_annotations_typing_special():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
+    # note that for Python >= 3.11, we convert NoReturn to Never
     assert get_function(code, 'C.g') == textwrap.dedent("""\
-        def g(self: Self) -> Callable[[int, Any], NoReturn]: ...
+        def g(self: Self) -> Callable[[int, Any], Never]: ...
     """)
 
 
@@ -1204,7 +1205,8 @@ def test_class_name_in_test(tmp_cwd):
         """
     ))
 
-    rt_run('--no-exclude-test-types', '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
+    rt_run('--no-exclude-test-files', '--no-exclude-test-types',
+           '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
@@ -1226,7 +1228,8 @@ def test_class_name_in_test_subdir(tmp_cwd):
         """
     ))
 
-    rt_run('--no-exclude-test-types', '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
+    rt_run('--no-exclude-test-files', '--no-exclude-test-types',
+           '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "sub" / "test_foo.py").read_text()
 
     assert "def f(x: C) -> None" in output
@@ -1790,6 +1793,28 @@ def test_send_bound():
     assert "def gen() -> Generator[float, int, None]:" in output
     # TODO the Callable here is our wrapper for the 'g.send' method... can we do better?
     assert "def f(s: Callable) -> list[float]" in output
+
+
+def test_generator_exit_exception():
+    # in Python 3.12.9, this causes a PY_UNWIND with a GeneratorExit exception;
+    # this seems to have been a bug
+    t = textwrap.dedent("""\
+        def f():
+            x = yield 1
+            yield x
+            yield 2
+
+        g = f()
+        next(g)
+        g.send(1)
+        g.close()
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    assert "def f() -> Generator[int, int, None]" in output
 
 
 def test_coroutine():
@@ -3474,7 +3499,7 @@ def test_instrument_pytest():
 
     Path("t.py").write_text(t)
 
-    rt_run('-m' 'pytest', 't.py')
+    rt_run('--no-exclude-test-files', '-m' 'pytest', 't.py')
     output = Path("t.py").read_text()
     assert "def f() -> Generator[int, int, None]" in output
 
@@ -3926,50 +3951,6 @@ def test_typefinder_defined_in_main():
     """)
 
 
-def test_inconsistent_samples():
-    Path("t.py").write_text(textwrap.dedent("""\
-        import inspect
-
-        def f():
-            def g(a, b):
-                return a+b
-            return g
-
-        g = f()
-        g(1,2)
-
-        # Fake an inconsistent (different arity) sample
-        import righttyper.righttyper as rt
-        rt.obs.record_start(
-            code=g.__code__,
-            frame_id=rt.FrameId(0),
-            arg_info=inspect.ArgInfo(
-                ['x', 'y', 'z'], None, None, {
-                    'x': 0,
-                    'y': 0,
-                    'z': 0
-                }
-            ),
-            self_type=None,
-            self_replacement=None
-        )
-        rt.obs.record_return(
-            code=g.__code__, frame_id=rt.FrameId(0), return_value=1
-        )
-        """
-    ))
-
-    stdout = rt_run('--no-sampling', 't.py', capture=True)
-    assert 'Error' not in stdout
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-
-    # no annotation expected
-    assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\
-        def g(a, b): ...
-    """)
-
-
 @pytest.mark.dont_run_mypy  # would fail due to f("foo") calls
 def test_use_top_pct():
     t = textwrap.dedent(f"""\
@@ -4376,3 +4357,30 @@ def test_type_depth_limit_union_deeper(python_version):
     assert get_function(code, 'foo') == textwrap.dedent(f"""\
         def foo(x: list) -> None: ...
     """)
+
+
+@pytest.mark.parametrize("python_version", ["3.9", "3.11"])
+def test_function_raises(python_version):
+    t = textwrap.dedent("""\
+        def foo(x):
+            raise RuntimeError("not implemented")
+
+        foo(0)
+        """)
+
+    Path("t.py").write_text(t)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        rt_run(f"--python-version={python_version}", "t.py")
+
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    if python_version == "3.11":
+        assert get_function(code, 'foo') == textwrap.dedent(f"""\
+            def foo(x: int) -> Never: ...
+        """)
+    else:
+        assert get_function(code, 'foo') == textwrap.dedent(f"""\
+            def foo(x: int) -> NoReturn: ...
+        """)

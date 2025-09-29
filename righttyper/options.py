@@ -13,11 +13,12 @@ def _merge_regexes(patterns: Sequence[str]) -> re.Pattern|None:
 
 @dataclass
 class Options:
-    """Options for the run command."""
+    """Options for the run command; see the click options in righttyper.py"""
 
     script_dir: str = ""
     include_files: tuple[str, ...] = ()
     include_all: bool = False
+    exclude_test_files: bool = True
     include_functions: tuple[str, ...] = ()
     target_overhead: float = 5.0
     infer_shapes: bool = False
@@ -30,7 +31,7 @@ class Options:
     sampling: bool = True
     no_sampling_for: tuple[str, ...] = ()
     replace_dict: bool = False
-    container_sample_limit: int = 1000
+    container_sample_limit: int|None = None
     type_depth_limit: int|None = None
     use_typing_union: bool = False
     use_typing_self: bool = False
@@ -42,6 +43,7 @@ class Options:
     resolve_mocks: bool = False
     test_modules: tuple[str, ...] = ('pytest', '_pytest', 'py.test', 'unittest')
     adjust_type_names: bool = True
+    save_profiling: str|None = None
 
 
     @functools.cached_property
