@@ -88,7 +88,6 @@ import righttyper.loader as loader
 from righttyper.options import Options, options
 from righttyper.logger import logger
 from righttyper.typemap import AdjustTypeNamesT
-from righttyper.atomic import AtomicCounter
 import righttyper.self_profiling as self_profiling
 
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
@@ -733,8 +732,6 @@ class Observations:
 
 
 obs = Observations()
-
-instrumentation_counter = AtomicCounter()
 
 
 def is_instrumentation(f):
