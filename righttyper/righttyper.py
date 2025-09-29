@@ -786,7 +786,11 @@ def start_handler(code: CodeType, offset: int) -> Any:
     Process the function entry point, perform monitoring related operations,
     and manage the profiling of function execution.
     """
-    if should_skip_function(code) or id(code) in disabled_code:
+    if id(code) in disabled_code:
+        return sys.monitoring.DISABLE
+
+    if should_skip_function(code):
+        disabled_code.add(id(code))
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -835,7 +839,7 @@ def yield_handler(
     instruction_offset (int): position of the current instruction.
     yield_value (Any): return value of the function.
     """
-    if should_skip_function(code) or id(code) in disabled_code:
+    if id(code) in disabled_code:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -863,7 +867,7 @@ def return_handler(
     instruction_offset (int): position of the current instruction.
     return_value (Any): return value of the function.
     """
-    if should_skip_function(code) or id(code) in disabled_code:
+    if id(code) in disabled_code:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -895,7 +899,7 @@ def unwind_handler(
     exception: BaseException,
 ) -> Any:
 
-    if should_skip_function(code):
+    if id(code) in disabled_code:
         return None # PY_UNWIND can't be disabled
 
     frame = inspect.currentframe()
