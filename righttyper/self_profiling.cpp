@@ -35,6 +35,7 @@ struct State {
     // External dependencies provided by user code
     py::object _disabled_code;    // set; we call .clear()
     py::object _restart_callable; // callable to (re)start events
+    py::object _unwind_handler;
 
     // Cached settings (read once from 'options' in configure)
     double _target_overhead_threshold = 0.05; // proportion, e.g., 0.025 for 2.5%
@@ -47,7 +48,7 @@ struct State {
 
 
     // Configures self-profiling
-    void configure(py::object options, py::set disabled_code, py::function restart_callable) {
+    void configure(const py::object& options, const py::set& disabled_code, const py::function& restart_callable) {
         if (options.is_none())
             throw std::runtime_error("configure: 'options' must not be None.");
 
@@ -178,11 +179,26 @@ struct State {
         }
     }
 
+    void set_unwind_handler(const py::function& unwind_handler) {
+        _unwind_handler = unwind_handler;
+    }
+
+    void unwind_handler(const py::object& code, int offset, const py::object& exception) {
+        // Since PY_UNWIND can't be disabled, we do some filtering for relevant events here.
+        if (_configured and !_unwind_handler.is_none()) {
+            py::set disabled = py::reinterpret_borrow<py::set>(_disabled_code);
+            uintptr_t id = reinterpret_cast<uintptr_t>(code.ptr());
+            if (!disabled.contains(id))
+                _unwind_handler(code, offset, exception);
+        }
+    }
+
 
     // Called from Python to clean up
     void cleanup() {
         _disabled_code = py::none();
         _restart_callable = py::none();
+        _unwind_handler = py::none();
         stop_timer(); // must be last: releases the GIL
     }
 
@@ -224,6 +240,14 @@ PYBIND11_MODULE(self_profiling, m) {
     );
 
     m.def("get_history", []() { return G.get_history(); }, "Returns self-profiling history.");
+
+    m.def("set_unwind_handler", [](py::function handler) { G.set_unwind_handler(handler); });
+    m.def("unwind_handler",
+          [](py::object code, int offset, py::object exception) -> py::object {
+              G.unwind_handler(code, offset, exception);
+              return py::none();
+          }
+    );
 
     // If we don't clean up our references to Python objects while Python is still alive,
     // we may get a SIGSEGV in ~State() as it tries to reclaim memory.
