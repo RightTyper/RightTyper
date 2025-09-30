@@ -197,9 +197,9 @@ def unwind_handler(
     instruction_offset: int,
     exception: BaseException,
 ) -> Any:
-
-    if code in disabled_code:
-        return None # PY_UNWIND can't be disabled
+    # Unnecessary because self_profiling.unwind_handler already does it
+    # if code in disabled_code:
+    #    return None # PY_UNWIND can't be disabled
 
     frame = inspect.currentframe()
     while frame and frame.f_code is not code:
@@ -826,15 +826,19 @@ def run(
     pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
     os.environ["PYTEST_PLUGINS"] = pytest_plugins
 
+    self_profiling.configure(options, disabled_code, sys.monitoring.restart_events)
+
+    # the unwind handler can't be disabled, so we do some pre-filtering in native code
+    self_profiling.set_unwind_handler(unwind_handler)
+
     register_monitoring_callbacks(
         start_handler,
         return_handler,
         yield_handler,
-        unwind_handler,
+        self_profiling.unwind_handler,
     )
 
     sys.monitoring.restart_events()
-    self_profiling.configure(options, disabled_code, sys.monitoring.restart_events)
     self_profiling.start()
 
     try:
