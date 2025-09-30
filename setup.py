@@ -52,13 +52,17 @@ def platform_compile_args():
     if flags := os.environ.get("CXXFLAGS", "").split():
         return flags
 
-    if sys.platform == 'darwin':
-        # default to a multi-arch build
-        return ['-arch', 'x86_64', '-arch', 'arm64', '-arch', 'arm64e']
     if sys.platform == 'win32':
         # avoids creating Visual Studio dependencies
         return ['/MT']
-    return []
+
+    args = ['-g', '-O3']
+
+    if sys.platform == 'darwin':
+        # default to a multi-arch build
+        args += ['-arch', 'x86_64', '-arch', 'arm64', '-arch', 'arm64e']
+
+    return args
 
 
 def platform_link_args():
@@ -99,7 +103,7 @@ setuptools.setup(
             sources=["righttyper/self_profiling.cpp"],
             include_dirs=[pybind11.get_include()],
             language="c++",
-            extra_compile_args=cxx_version("c++17") + ["-g", "-O3"] + platform_compile_args(),
+            extra_compile_args=cxx_version("c++17") + platform_compile_args(),
             extra_link_args=platform_link_args(),
             py_limited_api=False # doesn't work with pybind11
         )
