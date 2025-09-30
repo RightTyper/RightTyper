@@ -185,7 +185,7 @@ struct State {
 
     void unwind_handler(const py::object& code, int offset, const py::object& exception) {
         // Since PY_UNWIND can't be disabled, we do some filtering for relevant events here.
-        if (_configured and !_unwind_handler.is_none()) {
+        if (_configured && !_unwind_handler.is_none()) {
             py::set disabled = py::reinterpret_borrow<py::set>(_disabled_code);
             uintptr_t id = reinterpret_cast<uintptr_t>(code.ptr());
             if (!disabled.contains(id))
