@@ -1616,27 +1616,28 @@ def run(
         reset_monitoring()
         alarm.stop()
 
-        file_names = set(
-            t.func_id.file_name
-            for t in obs.functions_visited.values()
-            if not skip_this_file(t.func_id.file_name)
-        )
+#        assert obs.source_to_module_name.keys() == set(
+#            t.func_id.file_name
+#            for t in obs.functions_visited.values()
+#            if not skip_this_file(t.func_id.file_name)
+#        )
 
+        files = list(obs.source_to_module_name.items())
         type_annotations = obs.collect_annotations()
 
         if logger.level == logging.DEBUG:
             for m in detected_test_modules:
                 logger.debug(f"test module: {m}")
 
+        logger.debug(f"observed {len(files)} file(s)")
+        logger.debug(f"generated {len(type_annotations)} annotation(s)")
+
         collected = {
             'version': PKL_FILE_VERSION,
-            'files': [[f, obs.source_to_module_name.get(f)] for f in file_names],
+            'files': files,
             'type_annotations': type_annotations,
             'options': options
         }
-
-        logger.debug(f"observed {len(file_names)} file(s)")
-        logger.debug(f"generated {len(type_annotations)} annotation(s)")
 
         if only_collect:
             with open(PKL_FILE_NAME, "wb") as pklf:
