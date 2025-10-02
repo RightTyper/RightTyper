@@ -80,6 +80,7 @@ from righttyper.righttyper_utils import (
     skip_this_file,
     should_skip_function,
     detected_test_modules,
+    detected_test_files,
     is_test_module,
     source_to_module_fqn,
     get_main_module_fqn,
@@ -1616,11 +1617,18 @@ def run(
         reset_monitoring()
         alarm.stop()
 
-#        assert obs.source_to_module_name.keys() == set(
-#            t.func_id.file_name
-#            for t in obs.functions_visited.values()
-#            if not skip_this_file(t.func_id.file_name)
-#        )
+        if exclude_test_files:
+            # should_skip_function doesn't know to skip test files until they are detected,
+            # so we can't help but get events for test modules while they are being loaded.
+            for f in obs.source_to_module_name.keys() & detected_test_files:
+                del obs.source_to_module_name[f]
+
+        if logger.level == logging.DEBUG:
+            assert (keys := obs.source_to_module_name.keys()) == (oldset := set(
+                t.func_id.file_name
+                for t in obs.functions_visited.values()
+                if not skip_this_file(t.func_id.file_name)
+            )), f"{keys-oldset=}  {oldset-keys=}"
 
         files = list(obs.source_to_module_name.items())
         type_annotations = obs.collect_annotations()
