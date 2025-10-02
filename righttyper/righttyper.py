@@ -813,27 +813,6 @@ def start_handler(code: CodeType, offset: int) -> Any:
 
 
 @is_instrumentation
-def call_handler(
-    code: CodeType,
-    instruction_offset: int,
-    callable: object,
-    arg0: object,
-) -> Any:
-    # If we are calling a function, activate its start, return, and yield handlers.
-    if isinstance(callable, FunctionType) and isinstance(getattr(callable, "__code__", None), CodeType):
-        if not should_skip_function(code):
-            sys.monitoring.set_local_events(
-                TOOL_ID,
-                callable.__code__,
-                sys.monitoring.events.PY_START
-                | sys.monitoring.events.PY_RETURN
-                | sys.monitoring.events.PY_YIELD
-            )
-
-    return sys.monitoring.DISABLE
-
-
-@is_instrumentation
 def yield_handler(
     code: CodeType,
     instruction_offset: int,
@@ -1605,7 +1584,6 @@ def run(
         start_handler,
         return_handler,
         yield_handler,
-        call_handler,
         unwind_handler,
     )
     sys.monitoring.restart_events()
