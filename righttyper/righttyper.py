@@ -1130,8 +1130,10 @@ def process_collected(collected: dict[str, Any]):
                     return str(TypeInfo.from_type(dict, module='', args=(TypeInfo.from_type(str, module=''), t)))
                 return str(t)
 
+            func_name = funcid.func_name.replace(".<locals>.", ".")
+
             ann = collected['type_annotations'][funcid]
-            entry['functions'][funcid.func_name] = {
+            entry['functions'][func_name] = {
                 'args': {
                     a[0]: argtype(a[1], is_varargs=(a[0] == ann.varargs),
                                   is_kwargs=(a[0] == ann.kwargs))
@@ -1141,8 +1143,8 @@ def process_collected(collected: dict[str, Any]):
             }
 
             if changes := file_func2sigs.get((funcid.file_name, funcid.func_name)):
-                entry['functions'][funcid.func_name]['old_sig'] = changes[0]
-                entry['functions'][funcid.func_name]['new_sig'] = changes[1]
+                entry['functions'][func_name]['old_sig'] = changes[0]
+                entry['functions'][func_name]['new_sig'] = changes[1]
 
         with open(f"{TOOL_NAME}.json", "w") as f:
             json.dump(data, f, indent=2)

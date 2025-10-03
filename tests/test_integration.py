@@ -632,6 +632,29 @@ def test_inner_function():
     assert "def g(y: int) -> int" in output
 
 
+def test_inner_function_json():
+    t = textwrap.dedent("""\
+        def f(x):
+            def g(y):
+                return y+1
+
+            return g(x)
+
+        f(1)
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--json-output', 't.py')
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    print(data)
+
+    foo = data['files'][str(Path('t.py').resolve())]['functions']['f.g']
+    assert "int" == foo['args']['y']
+
+
 def test_method():
     t = textwrap.dedent("""\
         class C:
@@ -2278,7 +2301,7 @@ def test_varargs_json():
         """
     ))
 
-    rt_run('--no-use-multiprocessing', '--json-output', 't.py')
+    rt_run('--json-output', 't.py')
     with Path("righttyper.json").open("r") as f:
         data = json.load(f)
 
