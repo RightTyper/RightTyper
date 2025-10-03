@@ -6,6 +6,7 @@ import pytest
 import importlib.util
 import re
 import libcst as cst
+import json
 
 from test_transformer import (get_function as t_get_function,
                               get_function_all as t_get_function_all)
@@ -2268,6 +2269,25 @@ def test_varargs_empty():
     assert 'def foo(x: bool, *args: None) -> None:' in output
 
 
+def test_varargs_json():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, *rest):
+            pass
+
+        foo(True, 10, 's', 0.5)
+        """
+    ))
+
+    rt_run('--no-use-multiprocessing', '--json-output', 't.py')
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    print(data)
+
+    foo = data['files'][str(Path('t.py').resolve())]['functions']['foo']
+    assert "tuple[float|int|str, ...]" == foo['args']['rest']
+
+
 def test_kwargs():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, **kwargs):
@@ -2294,6 +2314,25 @@ def test_kwargs_empty():
     rt_run('t.py')
     output = Path("t.py").read_text()
     assert 'def foo(x: bool, **kwargs: None) -> None:' in output
+
+
+def test_kwargs_json():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, **kwargs):
+            pass
+
+        foo(True, a=10, b='s', c=0.5)
+        """
+    ))
+
+    rt_run('--json-output', 't.py')
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    print(data)
+
+    foo = data['files'][str(Path('t.py').resolve())]['functions']['foo']
+    assert "dict[str, float|int|str]" == foo['args']['kwargs']
 
 
 def test_none_arg():

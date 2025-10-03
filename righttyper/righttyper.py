@@ -504,7 +504,9 @@ class Observations:
                     )
                     for i, arg in enumerate(func_info.args)
                 ],
-                retval=signature[-1]
+                retval=signature[-1],
+                varargs=func_info.varargs,
+                kwargs=func_info.kwargs
             )
 
             if logger.level == logging.DEBUG:
@@ -730,7 +732,9 @@ class Observations:
         return {
             self.functions_visited[code_id].func_id: FuncAnnotation(
                 args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
-                retval=finalize(annotation.retval)
+                retval=finalize(annotation.retval),
+                varargs=annotation.varargs,
+                kwargs=annotation.kwargs
             )
             for code_id in self.traces
             if (annotation := mk_annotation(code_id)) is not None
@@ -1119,9 +1123,20 @@ def process_collected(collected: dict[str, Any]):
             if funcid.func_name in entry['functions']:
                 continue  # TODO handle multiple first_code_line
 
+            def argtype(t: TypeInfo, *, is_varargs, is_kwargs) -> str:
+                if is_varargs:
+                    return str(TypeInfo.from_type(tuple, module='', args=(t, ...)))
+                if is_kwargs:
+                    return str(TypeInfo.from_type(dict, module='', args=(TypeInfo.from_type(str, module=''), t)))
+                return str(t)
+
             ann = collected['type_annotations'][funcid]
             entry['functions'][funcid.func_name] = {
-                'args': {a[0]: str(a[1]) for a in ann.args},
+                'args': {
+                    a[0]: argtype(a[1], is_varargs=(a[0] == ann.varargs),
+                                  is_kwargs=(a[0] == ann.kwargs))
+                    for a in ann.args
+                },
                 'retval': str(ann.retval)
             }
 

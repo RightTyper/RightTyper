@@ -29,6 +29,8 @@ class FuncId:
 class FuncAnnotation:
     args: list[tuple[ArgumentName, TypeInfo]]   # TODO: make me a map?
     retval: TypeInfo
+    varargs: str|None
+    kwargs: str|None
 
 # The typing module does not define a type for such "typing special forms".
 SpecialForms: TypeAlias = typing.Any|typing.Never
