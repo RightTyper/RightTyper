@@ -131,8 +131,10 @@ class TypeInfo:
         if t := next((t for t in s if t.type_obj is typing.Any), None):
             return t
 
-        # Delete "Never", as it's unnecessary
-        s = {t for t in s if t.type_obj is not typing.Never}
+        # Any others subsume "Never" and "NoReturn", so delete them
+        not_never = {t for t in s if t.type_obj not in (typing.Never, typing.NoReturn)}
+        if not_never:
+            s = not_never
 
         return TypeInfo(
             module='types',

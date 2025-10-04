@@ -241,24 +241,30 @@ def test_getitem_iterator_from_annotation():
     """)
 
 
-def test_custom_iterator():
+@pytest.mark.parametrize("python_version", ["3.10", "3.12"])
+def test_custom_iterator(python_version):
     t = textwrap.dedent(f"""\
         class X:
+            def __init__(self):
+                self._left = 2
+
             def __iter__(self):
                 return self
 
             def __next__(self):
+                if not self._left: raise StopIteration
+                self._left -= 1
                 return 42
 
         def f(it):
-            next(it)
+            [x for x in it]
 
         f(iter(X()))
         """)
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run(f'--python-version={python_version}', '--no-sampling', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -266,13 +272,23 @@ def test_custom_iterator():
         def f(it: X) -> None: ...
     """)
 
-    assert get_function(code, 'X.__iter__') == textwrap.dedent("""\
-        def __iter__(self: Self) -> Self: ...
-    """)
+    if python_version == "3.10":
+        assert get_function(code, 'X.__iter__') == textwrap.dedent("""\
+            def __iter__(self: "X") -> "X": ...
+        """)
+    else:
+        assert get_function(code, 'X.__iter__') == textwrap.dedent("""\
+            def __iter__(self: Self) -> Self: ...
+        """)
 
-    assert get_function(code, 'X.__next__') == textwrap.dedent("""\
-        def __next__(self: Self) -> int: ...
-    """)
+    if python_version == "3.10":
+        assert get_function(code, 'X.__next__') == textwrap.dedent("""\
+            def __next__(self: "X") -> int: ...
+        """)
+    else:
+        assert get_function(code, 'X.__next__') == textwrap.dedent("""\
+            def __next__(self: Self) -> int: ...
+        """)
 
 
 def test_builtins():
