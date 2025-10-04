@@ -174,13 +174,15 @@ def test_transform_function():
                     [
                         (ArgumentName('x'), TypeInfo.from_type(int, module=''))
                     ],
-                    TypeInfo.from_type(float, module='')
+                    TypeInfo.from_type(float, module=''),
+                    varargs=None, kwargs=None
                 ),
                 baz: FuncAnnotation(
                     [
                         (ArgumentName('z'), TypeInfo.from_type(int, module=''))
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 )
             },
             override_annotations=False,
@@ -248,19 +250,22 @@ def test_transform_method():
                     [
                         (ArgumentName('x'), TypeInfo.from_type(int, module=''))
                     ],
-                    TypeInfo.from_type(float, module='')
+                    TypeInfo.from_type(float, module=''),
+                    varargs=None, kwargs=None
                 ),
                 bar: FuncAnnotation(
                     [
                         (ArgumentName('x'), TypeInfo.from_type(int, module=''))
                     ],
-                    TypeInfo.from_type(float, module='')
+                    TypeInfo.from_type(float, module=''),
+                    varargs=None, kwargs=None
                 ),
                 baz: FuncAnnotation(
                     [
                         (ArgumentName('z'), TypeInfo.from_type(int, module=''))
                     ],
-                    TypeInfo.from_type(float, module='')
+                    TypeInfo.from_type(float, module=''),
+                    varargs=None, kwargs=None
                 )
             },
             override_annotations=False,
@@ -327,13 +332,15 @@ def test_transform_local_function():
                         (ArgumentName('x'), TypeInfo.from_type(int, module='')),
                         (ArgumentName('y'), TypeInfo.from_type(float, module=''))
                     ],
-                    TypeInfo.from_type(float, module='')
+                    TypeInfo.from_type(float, module=''),
+                    varargs=None, kwargs=None
                 ),
                 bar: FuncAnnotation(
                     [
                         (ArgumentName('z'), TypeInfo.from_type(int, module=''))
                     ],
-                    TypeInfo.from_type(float, module='')
+                    TypeInfo.from_type(float, module=''),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -372,14 +379,16 @@ def test_override_annotations():
                     [
                         (ArgumentName('x'), TypeInfo.from_type(float, module=''))
                     ],
-                    TypeInfo.from_type(float, module='')
+                    TypeInfo.from_type(float, module=''),
+                    varargs=None, kwargs=None
                 ),
                 bar: FuncAnnotation(
                     [
                         (ArgumentName('self'), TypeInfo(module='typing', name='Self')),
                         (ArgumentName('x'), TypeInfo.from_type(int, module=''))
                     ],
-                    TypeInfo.from_type(float, module='')
+                    TypeInfo.from_type(float, module=''),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=True,
@@ -416,7 +425,8 @@ def test_transform_adds_typing_import_for_typing_names():
                             )
                         ))
                     ],
-                    TypeInfo.from_type(list, module='', args=(TypeInfo(module='typing', name='Never'),))
+                    TypeInfo.from_type(list, module='', args=(TypeInfo(module='typing', name='Never'),)),
+                    varargs=None, kwargs=None
                 )
             },
             override_annotations=False,
@@ -454,7 +464,8 @@ def test_transform_unknown_type_as_string():
                             NoneTypeInfo
                         }))
                     ],
-                    TypeInfo(module='x', name='z.FloatingPointNumber')
+                    TypeInfo(module='x', name='z.FloatingPointNumber'),
+                    varargs=None, kwargs=None
                 )
             },
             override_annotations=False,
@@ -496,7 +507,8 @@ def test_transform_unknown_type_with_import_annotations():
                             NoneTypeInfo
                         }))
                     ],
-                    TypeInfo(module='x', name='z.FloatingPointNumber')
+                    TypeInfo(module='x', name='z.FloatingPointNumber'),
+                    varargs=None, kwargs=None
                 )
             },
             override_annotations=False,
@@ -539,7 +551,8 @@ def test_transform_deletes_type_hint_comments_in_header():
                         (ArgumentName('x'), TypeInfo.from_type(int, module='')),
                         (ArgumentName('y'), TypeInfo.from_type(int, module=''))
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 )
             },
             override_annotations=False,
@@ -587,7 +600,8 @@ def test_transform_deletes_type_hint_comments_in_parameters():
                         (ArgumentName('x'), TypeInfo.from_type(int, module='')),
                         (ArgumentName('y'), TypeInfo.from_type(int, module=''))
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 )
             },
             override_annotations=False,
@@ -639,7 +653,8 @@ def test_transform_deletes_type_hint_comments_for_retval():
                 foo: FuncAnnotation(
                     [
                     ],
-                    TypeInfo.from_type(float, module='')
+                    TypeInfo.from_type(float, module=''),
+                    varargs=None, kwargs=None
                 )
             },
             override_annotations=False,
@@ -695,20 +710,23 @@ def test_transform_locally_defined_types():
                         (ArgumentName('x'), TypeInfo.from_type(int, module='')),
                         (ArgumentName('y'), TypeInfo.from_type(int, module=''))
                     ],
-                    TypeInfo(module='foo', name='F')
+                    TypeInfo(module='foo', name='F'),
+                    varargs=None, kwargs=None
                 ),
                 f_foo: FuncAnnotation(
                     [
                         (ArgumentName('v'), TypeInfo.from_type(float, module='')),
                     ],
-                    TypeInfo(module='foo', name='F')
+                    TypeInfo(module='foo', name='F'),
+                    varargs=None, kwargs=None
                 ),
                 bar: FuncAnnotation(
                     [
                         (ArgumentName('x'), TypeInfo.from_type(int, module='')),
                         (ArgumentName('y'), TypeInfo.from_type(int, module=''))
                     ],
-                    TypeInfo(module='foo', name='F')
+                    TypeInfo(module='foo', name='F'),
+                    varargs=None, kwargs=None
                 )
             },
             override_annotations=False,
@@ -759,7 +777,8 @@ def test_uses_imported_aliases():
                         (ArgumentName('y'), TypeInfo(module='y', name='T')),
                         (ArgumentName('z'), TypeInfo(module='a.b', name='c.T'))
                     ],
-                    TypeInfo(module='r', name='t.T')
+                    TypeInfo(module='r', name='t.T'),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -802,7 +821,8 @@ def test_uses_imported_domains():
                         (ArgumentName('x'), TypeInfo(module='x.y', name='z')),
                         (ArgumentName('y'), TypeInfo(module='a', name='T'))
                     ],
-                    TypeInfo(module='r', name='t.T')
+                    TypeInfo(module='r', name='t.T'),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -838,7 +858,8 @@ def test_imports_subdomain_if_needed():
                     [
                         (ArgumentName('x'), TypeInfo(module='x.y', name='z'))
                     ],
-                    TypeInfo(module='a', name='b')
+                    TypeInfo(module='a', name='b'),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -880,7 +901,8 @@ def test_existing_typing_imports():
                     [
                         (ArgumentName('x'), TypeInfo.from_type(ast.If))
                     ],
-                    TypeInfo(module='typing', name='List')
+                    TypeInfo(module='typing', name='List'),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -931,7 +953,8 @@ def test_inserts_imports_after_docstring_and_space():
                     [
                         (ArgumentName('x'), TypeInfo.from_type(ast.If))
                     ],
-                    TypeInfo(module='typing', name='List')
+                    TypeInfo(module='typing', name='List'),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -985,7 +1008,8 @@ def test_relative_import():
                         (ArgumentName('y'), TypeInfo(module='pkg.a.c', name='T')),
                         (ArgumentName('z'), TypeInfo(module='pkg.a.c', name='X')),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1030,26 +1054,30 @@ def test_uses_local_imports():
                     [
                         (ArgumentName('x'), TypeInfo(module='m.n', name='T')),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
                 Cfoo: FuncAnnotation(
                     [
                         (ArgumentName('x'), TypeInfo(module='n', name='o.T')),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
                 Dfoo: FuncAnnotation(
                     [
                         (ArgumentName('x'), TypeInfo(module='n', name='o.T')),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
                 f : FuncAnnotation(
                     [
                         (ArgumentName('a'), TypeInfo(module='m.n', name='T')),
                         (ArgumentName('b'), TypeInfo(module='n', name='o.T')),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1102,13 +1130,15 @@ def test_nonglobal_imported_modules_are_ignored():
                         (ArgumentName('x'), TypeInfo(module='a', name='T')),
                         (ArgumentName('y'), TypeInfo(module='a.b', name='T'))
                     ],
-                    TypeInfo(module='a.c', name='T')
+                    TypeInfo(module='a.c', name='T'),
+                    varargs=None, kwargs=None
                 ),
                 bar: FuncAnnotation(
                     [
                         (ArgumentName('x'), TypeInfo(module='m', name='T')),
                     ],
-                    TypeInfo(module='m', name='T')
+                    TypeInfo(module='m', name='T'),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1160,13 +1190,15 @@ def test_nonglobal_assignments_are_ignored():
                     [
                         (ArgumentName('x'), TypeInfo(module='a', name='T')),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
                 bar: FuncAnnotation(
                     [
                         (ArgumentName('x'), TypeInfo(module='m', name='T')),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1209,7 +1241,8 @@ def test_if_type_checking_insertion():
                     [
                         (ArgumentName('x'), TypeInfo(module='c', name='T'))
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1244,7 +1277,8 @@ def test_import_conflicts_with_import():
                         (ArgumentName('x'), TypeInfo(module='a', name='T')),
                         (ArgumentName('y'), TypeInfo(module='c.d', name='e.T')),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1293,7 +1327,8 @@ def test_import_conflicts_with_definitions():
                         (ArgumentName('x'), TypeInfo(module='a', name='T')),
                         (ArgumentName('y'), TypeInfo(module='c.d', name='e.T')),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1343,7 +1378,8 @@ def test_import_conflicts_with_assignments():
                         (ArgumentName('x'), TypeInfo(module='a', name='T')),
                         (ArgumentName('y'), TypeInfo(module='c.d', name='e.T')),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1391,7 +1427,8 @@ def test_import_conflicts_with_with():
                     [
                         (ArgumentName('x'), TypeInfo(module='a', name='T')),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1437,7 +1474,8 @@ def test_builtin_name_conflicts():
                 f: FuncAnnotation(
                     [
                     ],
-                    TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int, module=''), TypeInfo.from_type(float, module='')))
+                    TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int, module=''), TypeInfo.from_type(float, module=''))),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1478,7 +1516,8 @@ def test_class_names_dont_affect_body_of_methods():
                 g: FuncAnnotation(
                     [
                     ],
-                    TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int, module=''),))
+                    TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int, module=''),)),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1531,10 +1570,10 @@ def test_inner_function():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {
-                g: FuncAnnotation([], tuple_int_float),
-                h: FuncAnnotation([], tuple_int_float),
-                i: FuncAnnotation([], tuple_int_float),
-                j: FuncAnnotation([], tuple_int_float)
+                g: FuncAnnotation([], tuple_int_float, varargs=None, kwargs=None),
+                h: FuncAnnotation([], tuple_int_float, varargs=None, kwargs=None),
+                i: FuncAnnotation([], tuple_int_float, varargs=None, kwargs=None),
+                j: FuncAnnotation([], tuple_int_float, varargs=None, kwargs=None)
             },
             override_annotations=False,
             only_update_annotations=False,
@@ -1588,7 +1627,8 @@ def test_builtin_name_conflicts_even_module_name():
                     TypeInfo.from_type(tuple, args=(
                         TypeInfo.from_type(int, module=''),
                         TypeInfo.from_type(float, module='')
-                    ))
+                    )),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1694,7 +1734,8 @@ def test_generics_inline_simple():
                         (ArgumentName("a"), T1),
                         (ArgumentName("b"), T1)
                     ],
-                    T1
+                    T1,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1728,7 +1769,8 @@ def test_generics_arg_already_annotated(override):
                         (ArgumentName("a"), T1),
                         (ArgumentName("b"), T1)
                     ],
-                    T1
+                    T1,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=override,
@@ -1768,7 +1810,8 @@ def test_generics_ret_already_annotated(override):
                         (ArgumentName("a"), T1),
                         (ArgumentName("b"), T1)
                     ],
-                    T1
+                    T1,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=override,
@@ -1807,7 +1850,8 @@ def test_generics_existing_generics(override):
                     [
                         (ArgumentName("a"), T1),
                     ],
-                    T1
+                    T1,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=override,
@@ -1844,7 +1888,8 @@ def test_generics_existing_unused_generics():
                     [
                         (ArgumentName("a"), TypeInfo("", "int")),
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1877,7 +1922,8 @@ def test_generics_existing_generics_nested(override):
                     [
                         (ArgumentName("a"), T1),
                     ],
-                    T1
+                    T1,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=override,
@@ -1917,7 +1963,8 @@ def test_generics_existing_generics_overlaps_name():
                     [
                         (ArgumentName("a"), T1),
                     ],
-                    T2
+                    T2,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1953,7 +2000,8 @@ def test_generics_inline_multiple():
                         (ArgumentName("c"), T2),
                         (ArgumentName("d"), T2)
                     ],
-                    NoneTypeInfo
+                    NoneTypeInfo,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -1987,6 +2035,7 @@ def test_generics_inline_nested():
                         (ArgumentName("b"), TypeInfo("", "list", (T1,))),
                     ],
                     TypeInfo("", "list", (T1,)),
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -2020,6 +2069,7 @@ def test_generics_defined_simple():
                         (ArgumentName("b"), T1),
                     ],
                     T1,
+                    varargs=None, kwargs=None
                 ),
             },
             override_annotations=False,
@@ -2065,6 +2115,7 @@ def test_overload_preserve():
                         (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
                     ],
                     TypeInfo.from_type(int, module=""),
+                    varargs=None, kwargs=None
                 ),},
             override_annotations=False,
             only_update_annotations=False,
@@ -2105,6 +2156,7 @@ def test_overload_remove():
                         (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
                     ],
                     TypeInfo.from_type(int, module=""),
+                    varargs=None, kwargs=None
                 ),},
             override_annotations=True,
             only_update_annotations=False,
@@ -2151,6 +2203,7 @@ def test_overload_aliased():
                         (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
                     ],
                     TypeInfo.from_type(int, module=""),
+                    varargs=None, kwargs=None
                 ),},
             override_annotations=True,
             only_update_annotations=False,
@@ -2184,6 +2237,7 @@ def test_dont_annotate_with_any():
                         (ArgumentName("bar"), AnyTypeInfo),
                     ],
                     AnyTypeInfo,
+                    varargs=None, kwargs=None
                 ),},
             override_annotations=True,
             only_update_annotations=False,
@@ -2218,6 +2272,7 @@ def test_local_aliases_known():
                         (ArgumentName("x"), TypeInfo("foo", "D")),
                     ],
                     TypeInfo("foo", "D"),
+                    varargs=None, kwargs=None
                 ),},
             override_annotations=True,
             only_update_annotations=False,
@@ -2252,6 +2307,7 @@ def test_local_aliases_known_multiple():
                         (ArgumentName("x"), TypeInfo("foo", "D")),
                     ],
                     TypeInfo("foo", "D"),
+                    varargs=None, kwargs=None
                 ),},
             override_annotations=True,
             only_update_annotations=False,
@@ -2288,6 +2344,7 @@ def test_local_aliases_known_annotated():
                         (ArgumentName("x"), TypeInfo("foo", "D")),
                     ],
                     TypeInfo("foo", "D"),
+                    varargs=None, kwargs=None
                 ),},
             override_annotations=True,
             only_update_annotations=False,
@@ -2323,6 +2380,7 @@ def test_local_aliases_known_namedexpr():
                         (ArgumentName("x"), TypeInfo("foo", "D")),
                     ],
                     TypeInfo("foo", "D"),
+                    varargs=None, kwargs=None
                 ),},
             override_annotations=True,
             only_update_annotations=False,
