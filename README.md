@@ -7,7 +7,7 @@
 ![tests](https://github.com/righttyper/righttyper/workflows/tests/badge.svg)
 
 RightTyper is a Python tool that generates types for your function arguments and return values.
-RightTyper lets your code run at nearly full speed (around 30% overhead) and little memory overhead.
+RightTyper lets your code run at nearly full speed (below 25% overhead) and little memory overhead.
 As a result, you won't experience slowdowns in your code or large memory consumption while using it,
 allowing you to integrate it with your standard tests and development process.
 By virtue of its design, and in a significant departure from previous approaches, RightTyper only captures the most commonly used types,
@@ -30,8 +30,8 @@ For details about how RightTyper works, please see the following paper: **[Right
 
 ## Performance Comparison
 The graph below presents the overhead of using RightTyper versus two previous tools, PyAnnotate and MonkeyType, across a range of benchmarks.
-On average, RightTyper imposes only 30% overhead compared to running plain Python.
-On running the tests of a popular package (black), RightTyper imposes only 20% overhead, while MonkeyType slows down execution by over 6x.
+On average, RightTyper imposes less than 25% overhead compared to running plain Python.
+On running the popular "black", RightTyper imposes only 30% overhead, while MonkeyType slows down execution by 35x.
 In extreme cases, MonkeyType runs over 270x slower than RightTyper.
 
 ![Overhead](docs/benchmark_comparison_execution_times.png)
