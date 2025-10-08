@@ -6,6 +6,7 @@ import pytest
 import importlib.util
 import re
 import libcst as cst
+import json
 
 from test_transformer import (get_function as t_get_function,
                               get_function_all as t_get_function_all)
@@ -240,24 +241,30 @@ def test_getitem_iterator_from_annotation():
     """)
 
 
-def test_custom_iterator():
+@pytest.mark.parametrize("python_version", ["3.10", "3.12"])
+def test_custom_iterator(python_version):
     t = textwrap.dedent(f"""\
         class X:
+            def __init__(self):
+                self._left = 2
+
             def __iter__(self):
                 return self
 
             def __next__(self):
+                if not self._left: raise StopIteration
+                self._left -= 1
                 return 42
 
         def f(it):
-            next(it)
+            [x for x in it]
 
         f(iter(X()))
         """)
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run(f'--python-version={python_version}', '--no-sampling', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -265,13 +272,23 @@ def test_custom_iterator():
         def f(it: X) -> None: ...
     """)
 
-    assert get_function(code, 'X.__iter__') == textwrap.dedent("""\
-        def __iter__(self: Self) -> Self: ...
-    """)
+    if python_version == "3.10":
+        assert get_function(code, 'X.__iter__') == textwrap.dedent("""\
+            def __iter__(self: "X") -> "X": ...
+        """)
+    else:
+        assert get_function(code, 'X.__iter__') == textwrap.dedent("""\
+            def __iter__(self: Self) -> Self: ...
+        """)
 
-    assert get_function(code, 'X.__next__') == textwrap.dedent("""\
-        def __next__(self: Self) -> int: ...
-    """)
+    if python_version == "3.10":
+        assert get_function(code, 'X.__next__') == textwrap.dedent("""\
+            def __next__(self: "X") -> int: ...
+        """)
+    else:
+        assert get_function(code, 'X.__next__') == textwrap.dedent("""\
+            def __next__(self: Self) -> int: ...
+        """)
 
 
 def test_builtins():
@@ -629,6 +646,29 @@ def test_inner_function():
     output = Path("t.py").read_text()
 
     assert "def g(y: int) -> int" in output
+
+
+def test_inner_function_json():
+    t = textwrap.dedent("""\
+        def f(x):
+            def g(y):
+                return y+1
+
+            return g(x)
+
+        f(1)
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--json-output', 't.py')
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    print(data)
+
+    foo = data['files'][str(Path('t.py').resolve())]['functions']['f.g']
+    assert "int" == foo['args']['y']
 
 
 def test_method():
@@ -2268,6 +2308,25 @@ def test_varargs_empty():
     assert 'def foo(x: bool, *args: None) -> None:' in output
 
 
+def test_varargs_json():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, *rest):
+            pass
+
+        foo(True, 10, 's', 0.5)
+        """
+    ))
+
+    rt_run('--json-output', 't.py')
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    print(data)
+
+    foo = data['files'][str(Path('t.py').resolve())]['functions']['foo']
+    assert "tuple[float|int|str, ...]" == foo['args']['rest']
+
+
 def test_kwargs():
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x, **kwargs):
@@ -2294,6 +2353,25 @@ def test_kwargs_empty():
     rt_run('t.py')
     output = Path("t.py").read_text()
     assert 'def foo(x: bool, **kwargs: None) -> None:' in output
+
+
+def test_kwargs_json():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, **kwargs):
+            pass
+
+        foo(True, a=10, b='s', c=0.5)
+        """
+    ))
+
+    rt_run('--json-output', 't.py')
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    print(data)
+
+    foo = data['files'][str(Path('t.py').resolve())]['functions']['foo']
+    assert "dict[str, float|int|str]" == foo['args']['kwargs']
 
 
 def test_none_arg():

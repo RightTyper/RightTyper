@@ -80,6 +80,7 @@ from righttyper.righttyper_utils import (
     skip_this_file,
     should_skip_function,
     detected_test_modules,
+    detected_test_files,
     is_test_module,
     source_to_module_fqn,
     get_main_module_fqn,
@@ -503,7 +504,9 @@ class Observations:
                     )
                     for i, arg in enumerate(func_info.args)
                 ],
-                retval=signature[-1]
+                retval=signature[-1],
+                varargs=func_info.varargs,
+                kwargs=func_info.kwargs
             )
 
             if logger.level == logging.DEBUG:
@@ -729,7 +732,9 @@ class Observations:
         return {
             self.functions_visited[code_id].func_id: FuncAnnotation(
                 args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
-                retval=finalize(annotation.retval)
+                retval=finalize(annotation.retval),
+                varargs=annotation.varargs,
+                kwargs=annotation.kwargs
             )
             for code_id in self.traces
             if (annotation := mk_annotation(code_id)) is not None
@@ -793,7 +798,11 @@ def start_handler(code: CodeType, offset: int) -> Any:
     Process the function entry point, perform monitoring related operations,
     and manage the profiling of function execution.
     """
-    if should_skip_function(code) or id(code) in disabled_code:
+    if id(code) in disabled_code:
+        return sys.monitoring.DISABLE
+
+    if should_skip_function(code):
+        disabled_code.add(id(code))
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -805,27 +814,6 @@ def start_handler(code: CodeType, offset: int) -> Any:
         del frame
 
     return None
-
-
-@is_instrumentation
-def call_handler(
-    code: CodeType,
-    instruction_offset: int,
-    callable: object,
-    arg0: object,
-) -> Any:
-    # If we are calling a function, activate its start, return, and yield handlers.
-    if isinstance(callable, FunctionType) and isinstance(getattr(callable, "__code__", None), CodeType):
-        if not should_skip_function(code):
-            sys.monitoring.set_local_events(
-                TOOL_ID,
-                callable.__code__,
-                sys.monitoring.events.PY_START
-                | sys.monitoring.events.PY_RETURN
-                | sys.monitoring.events.PY_YIELD
-            )
-
-    return sys.monitoring.DISABLE
 
 
 @is_instrumentation
@@ -842,7 +830,7 @@ def yield_handler(
     instruction_offset (int): position of the current instruction.
     yield_value (Any): return value of the function.
     """
-    if should_skip_function(code) or id(code) in disabled_code:
+    if id(code) in disabled_code:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -870,7 +858,7 @@ def return_handler(
     instruction_offset (int): position of the current instruction.
     return_value (Any): return value of the function.
     """
-    if should_skip_function(code) or id(code) in disabled_code:
+    if id(code) in disabled_code:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -902,7 +890,7 @@ def unwind_handler(
     exception: BaseException,
 ) -> Any:
 
-    if should_skip_function(code):
+    if id(code) in disabled_code:
         return None # PY_UNWIND can't be disabled
 
     frame = inspect.currentframe()
@@ -1135,15 +1123,28 @@ def process_collected(collected: dict[str, Any]):
             if funcid.func_name in entry['functions']:
                 continue  # TODO handle multiple first_code_line
 
+            def argtype(t: TypeInfo, *, is_varargs, is_kwargs) -> str:
+                if is_varargs:
+                    return str(TypeInfo.from_type(tuple, module='', args=(t, ...)))
+                if is_kwargs:
+                    return str(TypeInfo.from_type(dict, module='', args=(TypeInfo.from_type(str, module=''), t)))
+                return str(t)
+
+            func_name = funcid.func_name.replace(".<locals>.", ".")
+
             ann = collected['type_annotations'][funcid]
-            entry['functions'][funcid.func_name] = {
-                'args': {a[0]: str(a[1]) for a in ann.args},
+            entry['functions'][func_name] = {
+                'args': {
+                    a[0]: argtype(a[1], is_varargs=(a[0] == ann.varargs),
+                                  is_kwargs=(a[0] == ann.kwargs))
+                    for a in ann.args
+                },
                 'retval': str(ann.retval)
             }
 
             if changes := file_func2sigs.get((funcid.file_name, funcid.func_name)):
-                entry['functions'][funcid.func_name]['old_sig'] = changes[0]
-                entry['functions'][funcid.func_name]['new_sig'] = changes[1]
+                entry['functions'][func_name]['old_sig'] = changes[0]
+                entry['functions'][func_name]['new_sig'] = changes[1]
 
         with open(f"{TOOL_NAME}.json", "w") as f:
             json.dump(data, f, indent=2)
@@ -1600,7 +1601,6 @@ def run(
         start_handler,
         return_handler,
         yield_handler,
-        call_handler,
         unwind_handler,
     )
     sys.monitoring.restart_events()
@@ -1612,27 +1612,35 @@ def run(
         reset_monitoring()
         alarm.stop()
 
-        file_names = set(
-            t.func_id.file_name
-            for t in obs.functions_visited.values()
-            if not skip_this_file(t.func_id.file_name)
-        )
+        if exclude_test_files:
+            # should_skip_function doesn't know to skip test files until they are detected,
+            # so we can't help but get events for test modules while they are being loaded.
+            for f in obs.source_to_module_name.keys() & detected_test_files:
+                del obs.source_to_module_name[f]
 
+        if logger.level == logging.DEBUG:
+            assert (keys := obs.source_to_module_name.keys()) == (oldset := set(
+                t.func_id.file_name
+                for t in obs.functions_visited.values()
+                if not skip_this_file(t.func_id.file_name)
+            )), f"{keys-oldset=}  {oldset-keys=}"
+
+        files = list(obs.source_to_module_name.items())
         type_annotations = obs.collect_annotations()
 
         if logger.level == logging.DEBUG:
             for m in detected_test_modules:
                 logger.debug(f"test module: {m}")
 
+        logger.debug(f"observed {len(files)} file(s)")
+        logger.debug(f"generated {len(type_annotations)} annotation(s)")
+
         collected = {
             'version': PKL_FILE_VERSION,
-            'files': [[f, obs.source_to_module_name.get(f)] for f in file_names],
+            'files': files,
             'type_annotations': type_annotations,
             'options': options
         }
-
-        logger.debug(f"observed {len(file_names)} file(s)")
-        logger.debug(f"generated {len(type_annotations)} annotation(s)")
 
         if only_collect:
             with open(PKL_FILE_NAME, "wb") as pklf:

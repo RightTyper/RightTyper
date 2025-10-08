@@ -259,7 +259,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         tr = RenameGenericsTransformer()
         updated_ann = FuncAnnotation(
             [(name, tr.visit(ti)) for name, ti in ann.args],
-            tr.visit(ann.retval)
+            tr.visit(ann.retval),
+            varargs=ann.varargs, kwargs=ann.kwargs
         )
         
         return (updated_ann, tr.generics)
