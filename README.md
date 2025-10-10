@@ -190,6 +190,10 @@ Options:
                                   types, rather than use the module and name
                                   where they are defined.  [default: adjust-
                                   type-names]
+  --simplify-type-sets / --no-simplify-type-sets
+                                  Whether to attempt to simplify type sets,
+                                  such as int|bool|float -> float.  [default:
+                                  simplify-type-sets]
   --debug                         Include diagnostic information in log file.
   --help                          Show this message and exit.
 ```

@@ -5,6 +5,7 @@ from types import EllipsisType
 from righttyper.righttyper_types import TypeInfo, TYPE_OBJ_TYPES, NoneTypeInfo, CallTrace
 from righttyper.righttyper_utils import get_main_module_fqn
 from righttyper.righttyper_runtime import get_type_name
+from righttyper.options import options
 
 
 # TODO integrate these into TypeInfo?
@@ -27,7 +28,7 @@ class SimplifyGeneratorsTransformer(TypeInfo.Transformer):
 def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     """Attempts to merge types in a set before forming their union."""
 
-    if len(typeinfoset) > 1:
+    if len(typeinfoset) > 1 and options.simplify_type_sets:
         typeinfoset = simplify(typeinfoset)
 
     tr = SimplifyGeneratorsTransformer()
