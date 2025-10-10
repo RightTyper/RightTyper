@@ -2,6 +2,7 @@ from righttyper.righttyper_types import TypeInfo
 import righttyper.typeinfo
 from typing import Any
 import pytest
+from righttyper.options import options
 
 
 def ti(name: str, **kwargs) -> TypeInfo:
@@ -24,6 +25,15 @@ def generalize(samples):
         return [str(Renamer().visit(r)) for r in result]
 
     return result
+
+
+def test_no_simplify_types(monkeypatch):
+    monkeypatch.setattr(options, 'simplify_type_sets', False)
+
+    # in Python, issubclass(bool, int)
+    both = {TypeInfo.from_type(int), TypeInfo.from_type(bool)}
+    assert righttyper.typeinfo.merged_types(both) == TypeInfo.from_set(both)
+    assert len(TypeInfo.from_set(both).args) == 2
 
 
 def test_generalize_empty():
