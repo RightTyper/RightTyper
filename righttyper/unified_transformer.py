@@ -260,7 +260,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         updated_ann = FuncAnnotation(
             [(name, tr.visit(ti)) for name, ti in ann.args],
             tr.visit(ann.retval),
-            varargs=ann.varargs, kwargs=ann.kwargs
+            varargs=ann.varargs, kwargs=ann.kwargs,
+            variables=[(name, tr.visit(ti)) for name, ti in ann.variables],
         )
         
         return (updated_ann, tr.generics)

@@ -103,7 +103,7 @@ def should_skip_function(code: CodeType) -> bool:
         logger.debug(f"skipping function {code.co_name}")
         return True
 
-    if not (code.co_flags & 0x2):
+    if not (code.co_flags & 0x2) and code.co_name != '<module>':
         import dis
 
         assert dis.COMPILER_FLAG_NAMES[0x2] == "NEWLOCALS"

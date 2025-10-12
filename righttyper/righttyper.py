@@ -70,7 +70,8 @@ from righttyper.righttyper_types import (
     AnyTypeInfo,
     CallTrace,
     PendingCallTrace,
-    UnknownTypeInfo
+    UnknownTypeInfo,
+    ModuleVars
 )
 from righttyper.typeinfo import (
     merged_types,
@@ -241,6 +242,12 @@ class Observations:
     # Started, but not (yet) completed traces
     pending_traces: dict[CodeId, dict[FrameId, PendingCallTrace]] = field(default_factory=lambda: defaultdict(dict))
 
+    # Variables
+    # TODO ideally the variables should be included in the trace, so that they can be filtered
+    # and also included in any type patterns.
+    variables: dict[CodeId, dict[str, set[TypeInfo]]] = field(
+                                                    default_factory=lambda: defaultdict(lambda: defaultdict(set)))
+
     # Completed traces
     traces: dict[CodeId, Counter[CallTrace]] = field(default_factory=dict)
 
@@ -331,17 +338,29 @@ class Observations:
         """Records a function start."""
 
         # print(f"record_start {code.co_qualname} {arg_types}")
-        self_type, self_replacement, overrides = get_self_type(code, arg_info)
-        obs.record_function(code, frame, arg_info, overrides)
-        obs.record_module(code, frame)
 
-        self.pending_traces[id(code)][id(frame)] = PendingCallTrace(
-            arg_info=arg_info,
-            args=self._get_arg_types(arg_info),
-            is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
-            is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
-            self_type=self_type, self_replacement=self_replacement
-        )
+        self.record_module(code, frame)
+
+        if code.co_name == '<module>':
+            self.functions_visited[id(code)] = FuncInfo(
+                FuncId(
+                    Filename(code.co_filename),
+                    code.co_firstlineno,
+                    FunctionName(code.co_qualname),
+                ),
+                args=(), varargs=None, kwargs=None, overrides=None
+            )
+        else:
+            self_type, self_replacement, overrides = get_self_type(code, arg_info)
+            self.record_function(code, frame, arg_info, overrides)
+
+            self.pending_traces[id(code)][id(frame)] = PendingCallTrace(
+                arg_info=arg_info,
+                args=self._get_arg_types(arg_info),
+                is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
+                is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
+                self_type=self_type, self_replacement=self_replacement
+            )
 
 
     def record_yield(self, code: CodeType, frame_id: FrameId, yield_value: Any) -> None:
@@ -358,6 +377,19 @@ class Observations:
         # print(f"record_send {code.co_qualname}")
         if (per_frame := self.pending_traces.get(id(code))) and (tr := per_frame.get(frame_id)):
             tr.sends.add(get_value_type(send_value))
+
+
+    def _record_variables(self, code: CodeType, frame: FrameType) -> None:
+        arg_names = (
+            {a.arg_name for a in f.args}
+            if (f := self.functions_visited.get(id(code)))
+            else set()
+        )
+
+        code_vars = self.variables[id(code)]
+        for var, value in frame.f_locals.items():
+            if var not in arg_names:
+                code_vars[var].add(get_value_type(value))
 
 
     def _record_return_type(self, tr: PendingCallTrace, code_id: CodeId, ret_type: Any) -> None:
@@ -390,8 +422,11 @@ class Observations:
         frame_id = id(frame)
         if (per_frame := self.pending_traces.get(code_id)) and (tr := per_frame.get(frame_id)):
             self._record_return_type(tr, code_id, get_value_type(return_value))
+            self._record_variables(code, frame)
             del per_frame[frame_id]
             return True # found it
+        elif code.co_name == '<module>':
+            self._record_variables(code, frame)
 
         return False
 
@@ -404,8 +439,11 @@ class Observations:
         frame_id = id(frame)
         if (per_frame := self.pending_traces.get(code_id)) and (tr := per_frame.get(frame_id)):
             self._record_return_type(tr, code_id, None)
+            self._record_variables(code, frame)
             del per_frame[frame_id]
             return True # found it
+        elif code.co_name == '<module>':
+            self._record_variables(code, frame)
 
         return False
 
@@ -430,8 +468,11 @@ class Observations:
                     del trace_counter[trace]
                     trace_counter[trace_prime] = count
 
+        for code_id, var_dict in self.variables.items():
+            for var_name, var_types in list(var_dict.items()):
+                var_dict[var_name] = set(tr.visit(t) for t in var_types)
 
-    def collect_annotations(self: Self) -> dict[FuncId, FuncAnnotation]:
+    def collect_annotations(self: Self) -> tuple[dict[FuncId, FuncAnnotation], dict[FuncId, ModuleVars]]:
         """Collects function type annotations from the observed types."""
 
         # Finish traces for any generators that may be still running
@@ -506,7 +547,11 @@ class Observations:
                 ],
                 retval=signature[-1],
                 varargs=func_info.varargs,
-                kwargs=func_info.kwargs
+                kwargs=func_info.kwargs,
+                variables=[
+                    (var_name, merged_types(var_types))
+                    for var_name, var_types in self.variables[code_id].items()
+                ]
             )
 
             if logger.level == logging.DEBUG:
@@ -521,6 +566,10 @@ class Observations:
                     "ann   " + func_info.func_id.func_name +
                     str((*(str(arg[1]) for arg in ann.args), str(ann.retval)))
                 )
+                for var, var_type in list(self.variables[code_id].items()):
+                    logger.debug(
+                        "var {func_info.func_id.func_name} {var_type}"
+                    )
 
             return ann
 
@@ -729,16 +778,29 @@ class Observations:
                 t = f.visit(t)
             return t
 
-        return {
+        non_func_codeids = self.variables.keys() - self.traces.keys()
+
+        annotations = {
             self.functions_visited[code_id].func_id: FuncAnnotation(
                 args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
                 retval=finalize(annotation.retval),
                 varargs=annotation.varargs,
-                kwargs=annotation.kwargs
+                kwargs=annotation.kwargs,
+                variables=[(var[0], finalize(var[1])) for var in annotation.variables]
             )
             for code_id in self.traces
             if (annotation := mk_annotation(code_id)) is not None
         }
+
+        module_vars = {
+            self.functions_visited[code_id].func_id: ModuleVars([
+                (var_name, finalize(merged_types(var_types)))
+                for var_name, var_types in self.variables[code_id].items()
+            ])
+            for code_id in non_func_codeids
+        }
+
+        return annotations, module_vars
 
 
 obs = Observations()
@@ -1147,12 +1209,19 @@ def process_collected(collected: dict[str, Any]):
                     a[0]: argtype(*a)
                     for a in ann.args
                 },
-                'retval': str(ann.retval)
+                'retval': str(ann.retval),
+                'vars': { v[0]: str(v[1]) for v in ann.variables }
             }
 
             if changes := file_func2sigs.get((funcid.file_name, funcid.func_name)):
                 func_entry['old_sig'] = changes[0]
                 func_entry['new_sig'] = changes[1]
+
+
+        for funcid, mv in collected.get('module_vars', dict()).items():
+            data['files'][funcid.file_name]['vars'] = {
+                k: str(v) for k, v in mv.variables
+            }
 
         with open(f"{TOOL_NAME}.json", "w") as f:
             json.dump(data, f, indent=2)
@@ -1641,7 +1710,7 @@ def run(
             )), f"{keys-oldset=}  {oldset-keys=}"
 
         files = list(obs.source_to_module_name.items())
-        type_annotations = obs.collect_annotations()
+        type_annotations, module_vars = obs.collect_annotations()
 
         if logger.level == logging.DEBUG:
             for m in detected_test_modules:
@@ -1654,6 +1723,7 @@ def run(
             'version': PKL_FILE_VERSION,
             'files': files,
             'type_annotations': type_annotations,
+            'module_vars': module_vars,
             'options': options
         }
 

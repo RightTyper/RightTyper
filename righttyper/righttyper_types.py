@@ -31,6 +31,13 @@ class FuncAnnotation:
     retval: TypeInfo
     varargs: str|None
     kwargs: str|None
+    variables: list[tuple[ArgumentName], TypeInfo]
+
+
+@dataclass(eq=True, frozen=True)
+class ModuleVars:
+    variables: list[tuple[ArgumentName], TypeInfo]
+
 
 # The typing module does not define a type for such "typing special forms".
 SpecialForms: TypeAlias = typing.Any|typing.Never
