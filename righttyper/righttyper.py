@@ -468,7 +468,8 @@ class Observations:
                     del trace_counter[trace]
                     trace_counter[trace_prime] = count
 
-        for code_id, var_dict in self.variables.items():
+        # TODO how can self.variables change size during iteration?
+        for code_id, var_dict in list(self.variables.items()):
             for var_name, var_types in list(var_dict.items()):
                 var_dict[var_name] = set(tr.visit(t) for t in var_types)
 
