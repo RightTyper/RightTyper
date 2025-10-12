@@ -1181,10 +1181,13 @@ def process_collected(collected: dict[str, Any]):
                     'module': file2module.get(funcid.file_name),
                     'functions': {}
                 }
-                for funcid in sorted(collected['type_annotations'])
+                for funcid in sorted(
+                    collected.get('type_annotations', {}) | collected.get('module_vars', {})
+                )
             }
         }
 
+        # fill in functions
         for funcid, ann in collected['type_annotations'].items():
             if funcid.func_name.endswith(">"):  # <genexpr> and such
                 continue
@@ -1217,7 +1220,7 @@ def process_collected(collected: dict[str, Any]):
                 func_entry['old_sig'] = changes[0]
                 func_entry['new_sig'] = changes[1]
 
-
+        # fill in module vars
         for funcid, mv in collected.get('module_vars', dict()).items():
             data['files'][funcid.file_name]['vars'] = {
                 k: str(v) for k, v in mv.variables
