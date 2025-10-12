@@ -729,9 +729,9 @@ class UnifiedTransformer(cst.CSTTransformer):
                         )
                     )
                 ):
-                    break
+                    return i
 
-            return i
+            return 0
 
         if_type_checking_position = stmt_index(new_body, cstm.If(
                 test=cstm.Name('TYPE_CHECKING'),

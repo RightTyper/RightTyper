@@ -533,6 +533,27 @@ def test_transform_unknown_type_with_import_annotations():
     assert code_str.startswith("from __future__ import annotations")
 
 
+def test_transform_empty_body_but_from_future():
+    code = cst.parse_module(textwrap.dedent("""\
+        from __future__ import annotations
+    """))
+
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {},
+            override_annotations=False,
+            only_update_annotations=False,
+            module_name = 'foo',
+            inline_generics=False
+        )
+
+    code = t.transform_code(code)
+
+    assert str(code.code) == textwrap.dedent("""\
+        from __future__ import annotations
+    """)
+
+
 def test_transform_deletes_type_hint_comments_in_header():
     code = cst.parse_module(textwrap.dedent("""\
         def foo(x, y): # type: (int, int) -> Any
