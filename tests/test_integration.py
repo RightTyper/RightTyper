@@ -4513,3 +4513,66 @@ def test_run_exits_with_exception(tmp_cwd):
     assert get_function(code, 'f') == textwrap.dedent(f"""\
         def f(x: \"t.C\") -> Never: ...
     """)
+
+
+def test_json_variables():
+    t = textwrap.dedent("""\
+        def foo(x):
+            y = x/.1
+            return y
+
+        z = foo(10)
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--json-output', 't.py')
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    t_data = data['files'].get(str(Path('t.py').resolve()), {})
+    assert 'float' == t_data.get('vars', {}).get('z', None)
+
+    functions = t_data.get('functions', {})
+    assert 'foo' in functions
+
+    assert 'y' in functions['foo'].get('vars', {})
+    assert 'float' == functions['foo']['vars'].get('y', None)
+
+
+@pytest.mark.xfail(reason="Doesn't work yet")
+def test_json_variables_object():
+    t = textwrap.dedent("""\
+        class C:
+            foo = "bar"
+
+            def __init__(self, x):
+                self.x = x
+
+        c = C(10)
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--json-output', 't.py')
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    # global variable
+    t_data = data['files'].get(str(Path('t.py').resolve()), {})
+    assert 'c' in t_data.get('vars', {})
+    assert 't.C' == t_data['vars'].get('c', None)
+
+    assert 'C' in t_data.get('vars', {})
+    assert 'type[t.C]' == t_data['vars'].get('C', None)
+
+    # class variable
+    assert 'C.foo' in t_data.get('vars', {})
+    assert 'str' == t_data.get('vars', {}).get('C.foo', None)
+
+    functions = t_data.get('functions', {})
+    assert 'C.__init__' in functions
+
+    # function (method) variable
+    assert 'self.x' in functions['C.__init__'].get('vars', {})
+    assert 'int' == functions['C.__init__']['vars'].get('self.x', None)
