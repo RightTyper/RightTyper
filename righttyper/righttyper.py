@@ -1056,11 +1056,16 @@ def execute_script_or_module(
             with loader.ImportManager(replace_dict=options.replace_dict):
                 obs.main_globals = runpy.run_path(script, run_name="__main__")
 
-    except SystemExit as e:
-        if e.code not in (None, 0):
-            raise
+    except Exception as e:
+        tb = e.__traceback__
+        while tb is not None:
+            if tb.tb_frame.f_globals.get("__name__", None) == "__main__":
+                obs.main_globals = dict(tb.tb_frame.f_globals)
+                break
+            tb = tb.tb_next
 
-    # TODO: save main_globals somehow upon exception
+        if not isinstance(e, SystemExit) or e.code not in (None, 0):
+            raise
 
 
 def output_signatures(

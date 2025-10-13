@@ -4462,3 +4462,37 @@ def test_function_raises(python_version):
         assert get_function(code, 'foo') == textwrap.dedent(f"""\
             def foo(x: int) -> NoReturn: ...
         """)
+
+
+def test_run_exits_with_exception(tmp_cwd):
+    """runpy normally returns the globals, and RightTyper relies on that to find out
+       about any types defined in it. But when the module or script unwinds with an
+       exception, we need to go find those globals."""
+
+    # Raise exception from another module so that the globals we look for aren't
+    # trivially the last or first in the stack, etc.
+    Path("m.py").write_text(textwrap.dedent("""\
+        def f(x):
+            raise RuntimeError("something")
+        """
+    ))
+
+    Path("t.py").write_text(textwrap.dedent("""\
+        import m
+
+        class C:
+            pass
+
+        m.f(C())
+        """
+    ))
+
+    with pytest.raises(subprocess.CalledProcessError):
+        rt_run('t.py')
+
+    output = (tmp_cwd / "m.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(x: \"t.C\") -> Never: ...
+    """)
