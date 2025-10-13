@@ -671,6 +671,23 @@ def test_inner_function_json():
     assert "int" == foo['args']['y']
 
 
+def test_json_genexpr():
+    t = textwrap.dedent("""\
+        x, y = (i for i in range(2))
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--json-output', 't.py')
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    print(data)
+
+    functions = data['files'].get(str(Path('t.py').resolve()), {}).get('functions', {})
+    assert "<genexpr>" not in functions
+
+
 def test_method():
     t = textwrap.dedent("""\
         class C:
