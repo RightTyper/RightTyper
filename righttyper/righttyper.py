@@ -57,6 +57,7 @@ from righttyper.righttyper_tool import (
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
+    VariableName,
     CodeId,
     Filename,
     FuncId,
@@ -245,7 +246,7 @@ class Observations:
     # Variables
     # TODO ideally the variables should be included in the trace, so that they can be filtered
     # and also included in any type patterns.
-    variables: dict[CodeId, dict[str, set[TypeInfo]]] = field(
+    variables: dict[CodeId, dict[VariableName, set[TypeInfo]]] = field(
                                                     default_factory=lambda: defaultdict(lambda: defaultdict(set)))
 
     # Completed traces
@@ -389,7 +390,7 @@ class Observations:
         code_vars = self.variables[id(code)]
         for var, value in frame.f_locals.items():
             if var not in arg_names:
-                code_vars[var].add(get_value_type(value))
+                code_vars[VariableName(var)].add(get_value_type(value))
 
 
     def _record_return_type(self, tr: PendingCallTrace, code_id: CodeId, ret_type: Any) -> None:

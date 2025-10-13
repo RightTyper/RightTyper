@@ -10,6 +10,7 @@ import inspect
 T = TypeVar("T")
 
 ArgumentName = NewType("ArgumentName", str)
+VariableName = NewType("VariableName", str)
 
 Filename = NewType("Filename", str)
 FunctionName = NewType("FunctionName", str)
@@ -31,12 +32,12 @@ class FuncAnnotation:
     retval: TypeInfo
     varargs: str|None
     kwargs: str|None
-    variables: list[tuple[ArgumentName], TypeInfo]
+    variables: list[tuple[VariableName, TypeInfo]]
 
 
 @dataclass(eq=True, frozen=True)
 class ModuleVars:
-    variables: list[tuple[ArgumentName], TypeInfo]
+    variables: list[tuple[VariableName, TypeInfo]]
 
 
 # The typing module does not define a type for such "typing special forms".
