@@ -347,7 +347,7 @@ class Observations:
                 FuncId(
                     Filename(code.co_filename),
                     code.co_firstlineno,
-                    FunctionName(code.co_qualname),
+                    FunctionName('<module>'),
                 ),
                 args=(), varargs=None, kwargs=None, overrides=None
             )
@@ -426,7 +426,7 @@ class Observations:
             self._record_variables(code, frame)
             del per_frame[frame_id]
             return True # found it
-        elif code.co_name == '<module>':
+        elif code_id in self.functions_visited:
             self._record_variables(code, frame)
 
         return False
@@ -443,7 +443,7 @@ class Observations:
             self._record_variables(code, frame)
             del per_frame[frame_id]
             return True # found it
-        elif code.co_name == '<module>':
+        elif code_id in self.functions_visited:
             self._record_variables(code, frame)
 
         return False
