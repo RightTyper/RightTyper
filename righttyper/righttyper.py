@@ -1056,11 +1056,16 @@ def execute_script_or_module(
             with loader.ImportManager(replace_dict=options.replace_dict):
                 obs.main_globals = runpy.run_path(script, run_name="__main__")
 
-    except SystemExit as e:
-        if e.code not in (None, 0):
-            raise
+    except Exception as e:
+        tb = e.__traceback__
+        while tb is not None:
+            if tb.tb_frame.f_globals.get("__name__", None) == "__main__":
+                obs.main_globals = dict(tb.tb_frame.f_globals)
+                break
+            tb = tb.tb_next
 
-    # TODO: save main_globals somehow upon exception
+        if not isinstance(e, SystemExit) or e.code not in (None, 0):
+            raise
 
 
 def output_signatures(
@@ -1096,15 +1101,6 @@ def process_collected(collected: dict[str, Any]):
     )
 
     if options.json_output:
-        data: dict[str, Any] = {
-            'meta': {
-                'software': TOOL_NAME,
-                'version': importlib.metadata.version(TOOL_NAME),
-                'timestamp': datetime.datetime.now().isoformat(),
-            },
-            'files': dict()
-        }
-
         file2module = {file: module for file, module in collected['files']}
         file_func2sigs = {
             (file, funcname): (old_sig, new_sig)
@@ -1112,39 +1108,51 @@ def process_collected(collected: dict[str, Any]):
             for funcname, old_sig, new_sig in changes
         }
 
-        for funcid in sorted(collected['type_annotations']):
-            if funcid.file_name not in data['files']:
-                entry: dict[str, Any]
-                entry = data['files'][funcid.file_name] = {
+        data: dict[str, Any] = {
+            'meta': {
+                'software': TOOL_NAME,
+                'version': importlib.metadata.version(TOOL_NAME),
+                'timestamp': datetime.datetime.now().isoformat(),
+            },
+            'files': {
+                funcid.file_name: {
                     'module': file2module.get(funcid.file_name),
-                    'functions': dict()
+                    'functions': {}
                 }
+                for funcid in sorted(collected['type_annotations'])
+            }
+        }
 
-            if funcid.func_name in entry['functions']:
-                continue  # TODO handle multiple first_code_line
+        for funcid, ann in collected['type_annotations'].items():
+            if funcid.func_name.endswith(">"):  # <genexpr> and such
+                continue
 
-            def argtype(t: TypeInfo, *, is_varargs, is_kwargs) -> str:
-                if is_varargs:
+            func_json_name = funcid.func_name.replace(".<locals>.", ".")
+            file_functions: dict[str, Any] = data['files'][funcid.file_name]['functions']
+            if func_json_name in file_functions:
+                continue  # TODO handle functions with the same name
+
+            # varargs/kwargs arguments are implicitly tuples and dicts in annotations,
+            # but lacking the context given by their names prefixed by * or **, in JSON
+            # we want to be explicit about those types.
+            def argtype(name: str, t: TypeInfo) -> str:
+                if name == ann.varargs:
                     return str(TypeInfo.from_type(tuple, module='', args=(t, ...)))
-                if is_kwargs:
+                if name == ann.kwargs:
                     return str(TypeInfo.from_type(dict, module='', args=(TypeInfo.from_type(str, module=''), t)))
                 return str(t)
 
-            func_name = funcid.func_name.replace(".<locals>.", ".")
-
-            ann = collected['type_annotations'][funcid]
-            entry['functions'][func_name] = {
+            func_entry = file_functions[func_json_name] = {
                 'args': {
-                    a[0]: argtype(a[1], is_varargs=(a[0] == ann.varargs),
-                                  is_kwargs=(a[0] == ann.kwargs))
+                    a[0]: argtype(*a)
                     for a in ann.args
                 },
                 'retval': str(ann.retval)
             }
 
             if changes := file_func2sigs.get((funcid.file_name, funcid.func_name)):
-                entry['functions'][func_name]['old_sig'] = changes[0]
-                entry['functions'][func_name]['new_sig'] = changes[1]
+                func_entry['old_sig'] = changes[0]
+                func_entry['new_sig'] = changes[1]
 
         with open(f"{TOOL_NAME}.json", "w") as f:
             json.dump(data, f, indent=2)
