@@ -4540,11 +4540,13 @@ def test_json_variables():
     assert 'float' == functions['foo']['vars'].get('y', None)
 
 
-@pytest.mark.xfail(reason="Doesn't work yet")
 def test_json_variables_object():
     t = textwrap.dedent("""\
         class C:
             foo = "bar"
+
+            class D:
+                pass
 
             def __init__(self, x):
                 self.x = x
@@ -4555,6 +4557,7 @@ def test_json_variables_object():
     Path("t.py").write_text(t)
 
     rt_run('--json-output', 't.py')
+    print(Path("righttyper.json").read_text())
     with Path("righttyper.json").open("r") as f:
         data = json.load(f)
 
@@ -4566,9 +4569,12 @@ def test_json_variables_object():
     assert 'C' in t_data.get('vars', {})
     assert 'type[t.C]' == t_data['vars'].get('C', None)
 
-    # class variable
+    # class variables
     assert 'C.foo' in t_data.get('vars', {})
     assert 'str' == t_data.get('vars', {}).get('C.foo', None)
+
+    assert 'C.D' in t_data.get('vars', {})
+    assert 'type[t.C.D]' == t_data.get('vars', {}).get('C.D', None)
 
     functions = t_data.get('functions', {})
     assert 'C.__init__' in functions
@@ -4576,3 +4582,33 @@ def test_json_variables_object():
     # function (method) variable
     assert 'self.x' in functions['C.__init__'].get('vars', {})
     assert 'int' == functions['C.__init__']['vars'].get('self.x', None)
+
+
+@pytest.mark.xfail(reason="Doesn't work yet")
+def test_json_variables_nested():
+    t = textwrap.dedent("""\
+        def f():
+            class C:
+                foo = "bar"
+
+                def __init__(self, x):
+                    self.x = x
+
+            c = C(10)
+
+        f()
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--json-output', 't.py')
+    print(Path("righttyper.json").read_text())
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    # global variable
+    t_data = data['files'].get(str(Path('t.py').resolve()), {})
+    f_data = t_data['functions']['f']
+
+    assert 't.C' == t_data['vars'].get('c')
+    assert 'str' == t_data['vars'].get('C.foo')

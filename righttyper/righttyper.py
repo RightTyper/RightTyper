@@ -97,6 +97,21 @@ from righttyper.options import Options, options
 from righttyper.logger import logger
 from righttyper.typemap import AdjustTypeNamesT
 from righttyper.atomic import AtomicCounter
+from righttyper.variables import code2variables
+
+
+def find_co_newlocals():
+    # CO_NEWLOCALS, when set within a CodeType's co_flags, indicates that
+    # a new "locals" dictionary is created; it roughly indicates a function
+    # call, as the new dictionary is created for the new scope.
+    import dis
+    return next(
+        flag
+        for flag, name in dis.COMPILER_FLAG_NAMES.items()
+        if name == "NEWLOCALS"
+    )
+CO_NEWLOCALS = find_co_newlocals()
+
 
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
 PKL_FILE_VERSION = 4
@@ -342,12 +357,13 @@ class Observations:
 
         self.record_module(code, frame)
 
-        if code.co_name == '<module>':
+        if not (code.co_flags & CO_NEWLOCALS):
             self.functions_visited[id(code)] = FuncInfo(
                 FuncId(
                     Filename(code.co_filename),
                     code.co_firstlineno,
-                    FunctionName('<module>'),
+                    # FIXME this doesn't work for classes nested within functions, etc.
+                    FunctionName("" if code.co_name.startswith("<") else f"{code.co_qualname}."),
                 ),
                 args=(), varargs=None, kwargs=None, overrides=None
             )
@@ -381,16 +397,24 @@ class Observations:
 
 
     def _record_variables(self, code: CodeType, frame: FrameType) -> None:
-        arg_names = (
-            {a.arg_name for a in f.args}
-            if (f := self.functions_visited.get(id(code)))
-            else set()
-        )
+        if not (dot_names := code2variables.get(code)):
+            return
+
+        NO_OBJECT = object()    # to differentiate from None; TODO move elsewhere
+
+        def follow_attr_path(attr_path: list[str], obj: object) -> object | None:
+            for p in attr_path:
+                if (obj := getattr(obj, p, NO_OBJECT)) is NO_OBJECT:
+                    break
+            return obj
 
         code_vars = self.variables[id(code)]
-        for var, value in frame.f_locals.items():
-            if var not in arg_names:
-                code_vars[VariableName(var)].add(get_value_type(value))
+        for dn in dot_names:
+            (var, *attr_path) = dn.split('.')
+            value = follow_attr_path(attr_path, frame.f_locals.get(var, NO_OBJECT))
+            if value is NO_OBJECT:
+                continue
+            code_vars[VariableName(dn)].add(get_value_type(value))
 
 
     def _record_return_type(self, tr: PendingCallTrace, code_id: CodeId, ret_type: Any) -> None:
@@ -1181,7 +1205,8 @@ def process_collected(collected: dict[str, Any]):
             'files': {
                 funcid.file_name: {
                     'module': file2module.get(funcid.file_name),
-                    'functions': {}
+                    'functions': {},
+                    'vars': {}
                 }
                 for funcid in sorted(
                     collected.get('type_annotations', {}) | collected.get('module_vars', {})
@@ -1224,8 +1249,8 @@ def process_collected(collected: dict[str, Any]):
 
         # fill in module vars
         for funcid, mv in collected.get('module_vars', dict()).items():
-            data['files'][funcid.file_name]['vars'] = {
-                k: str(v) for k, v in mv.variables
+            data['files'][funcid.file_name]['vars'] |= {
+                (funcid.func_name + k): str(v) for k, v in mv.variables
             }
 
         with open(f"{TOOL_NAME}.json", "w") as f:
@@ -1745,8 +1770,8 @@ def run(
 
         if save_profiling:
             try:
-                with open(f"{TOOL_NAME}-profiling.json", "r") as f:
-                    data = json.load(f)
+                with open(f"{TOOL_NAME}-profiling.json", "r") as pf:
+                    data = json.load(pf)
             except FileNotFoundError:
                 data = []
 
@@ -1763,8 +1788,8 @@ def run(
                 }
             )
 
-            with open(f"{TOOL_NAME}-profiling.json", "w") as f:
-                json.dump(data, f, indent=2)
+            with open(f"{TOOL_NAME}-profiling.json", "w") as pf:
+                json.dump(data, pf, indent=2)
 
 
 @cli.command()

@@ -11,6 +11,8 @@ import types
 import typing
 
 from righttyper.ast_instrument import instrument
+from righttyper.variables import code2variables, map_variables
+
 
 class RightTyperLoader(ExecutionLoader):
     def __init__(self, fullname: str, path: Path, orig_loader: Loader|None=None, *, replace_dict: bool):
@@ -40,7 +42,9 @@ class RightTyperLoader(ExecutionLoader):
     def get_code(self, fullname: str) -> types.CodeType:
         tree = ast.parse(self.get_source(fullname))
         tree = instrument(tree, replace_dict=self.replace_dict)
-        return compile(tree, str(self.path), "exec")
+        code = compile(tree, str(self.path), "exec")
+        code2variables.update(map_variables(tree, code))
+        return code
 
     def create_module(self, spec):
         if self.orig_loader:
