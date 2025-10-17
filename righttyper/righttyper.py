@@ -117,6 +117,10 @@ PKL_FILE_NAME = f"{TOOL_NAME}.rt"
 PKL_FILE_VERSION = 4
 
 
+# Singleton used to differentiate from None
+NO_OBJECT = object()
+
+
 # Overloads so we don't have to always write CodeId(id(code)), etc.
 @overload
 def id(obj: CodeType) -> CodeId: ...
@@ -362,8 +366,7 @@ class Observations:
                 FuncId(
                     Filename(code.co_filename),
                     code.co_firstlineno,
-                    # FIXME this doesn't work for classes nested within functions, etc.
-                    FunctionName("" if code.co_name.startswith("<") else f"{code.co_qualname}."),
+                    FunctionName(code.co_qualname),
                 ),
                 args=(), varargs=None, kwargs=None, overrides=None
             )
@@ -397,10 +400,8 @@ class Observations:
 
 
     def _record_variables(self, code: CodeType, frame: FrameType) -> None:
-        if not (dot_names := code2variables.get(code)):
+        if not (codevars := code2variables.get(code)):
             return
-
-        NO_OBJECT = object()    # to differentiate from None; TODO move elsewhere
 
         def follow_attr_path(attr_path: list[str], obj: object) -> object | None:
             for p in attr_path:
@@ -408,13 +409,13 @@ class Observations:
                     break
             return obj
 
-        code_vars = self.variables[id(code)]
-        for dn in dot_names:
-            (var, *attr_path) = dn.split('.')
+        scope_vars = self.variables[id(codevars.scope)]
+        for dst, src in codevars.variables.items():
+            (var, *attr_path) = src.split('.')
             value = follow_attr_path(attr_path, frame.f_locals.get(var, NO_OBJECT))
             if value is NO_OBJECT:
                 continue
-            code_vars[VariableName(dn)].add(get_value_type(value))
+            scope_vars[VariableName(dst)].add(get_value_type(value))
 
 
     def _record_return_type(self, tr: PendingCallTrace, code_id: CodeId, ret_type: Any) -> None:
@@ -1206,7 +1207,6 @@ def process_collected(collected: dict[str, Any]):
                 funcid.file_name: {
                     'module': file2module.get(funcid.file_name),
                     'functions': {},
-                    'vars': {}
                 }
                 for funcid in sorted(
                     collected.get('type_annotations', {}) | collected.get('module_vars', {})
@@ -1236,11 +1236,14 @@ def process_collected(collected: dict[str, Any]):
 
             func_entry = file_functions[func_json_name] = {
                 'args': {
-                    a[0]: argtype(*a)
+                    a[0]: argtype(*a).replace(".<locals>.", ".")
                     for a in ann.args
                 },
-                'retval': str(ann.retval),
-                'vars': { v[0]: str(v[1]) for v in ann.variables }
+                'retval': str(ann.retval).replace(".<locals>.", "."),
+                'vars': {
+                    v[0]: str(v[1]).replace(".<locals>.", ".")
+                    for v in ann.variables
+                }
             }
 
             if changes := file_func2sigs.get((funcid.file_name, funcid.func_name)):
@@ -1249,8 +1252,9 @@ def process_collected(collected: dict[str, Any]):
 
         # fill in module vars
         for funcid, mv in collected.get('module_vars', dict()).items():
-            data['files'][funcid.file_name]['vars'] |= {
-                (funcid.func_name + k): str(v) for k, v in mv.variables
+            data['files'][funcid.file_name]['vars'] = {
+                k: str(v).replace(".<locals>.", ".")
+                for k, v in mv.variables
             }
 
         with open(f"{TOOL_NAME}.json", "w") as f:

@@ -5,17 +5,17 @@ import ast
 import types
 
 
-def map_variables(source: str) -> dict[types.CodeType, set[str]]:
+def map_variables(source: str) -> dict[types.CodeType, variables.CodeVars]:
     tree = ast.parse(source)
     code = compile(tree, "<string>", "exec", optimize=0)
     return variables.map_variables(tree, code)
 
 
-def get(mapping: dict[types.CodeType, set[str]], name: str):
+def get(mapping: dict[types.CodeType, variables.CodeVars], name: str):
     """Returns a code->variables mapping by code name only."""
-    for co, names in mapping.items():
-        if co.co_name == name:
-            return names
+    for co, codevars in mapping.items():
+        if co.co_qualname == name:
+            return set(codevars.variables.keys())
     return set()
 
 
@@ -134,13 +134,33 @@ def test_class_and_method_bodies():
             y = 0
             def __init__(self):
                 self.z = 3
+
             class D:
-                pass
+                z = "foo"
         """)
     m = map_variables(src)
-    assert get(m, "C") == {"y", "D"}
-    assert get(m, "__init__") == {"self.z"}
     assert get(m, "<module>") == {"C"}
+    assert get(m, "C") == {"C.y", "C.D"}
+    assert get(m, "C.D") == {"C.D.z"}
+    assert get(m, "C.__init__") == {"self.z"}
+
+
+def test_class_and_method_bodies_nested():
+    src = textwrap.dedent("""
+        def f():
+            class C:
+                y = 0
+                def __init__(self):
+                    self.z = 3
+
+                class D:
+                    z = "foo"
+        """)
+    m = map_variables(src)
+    assert get(m, "<module>") == set()
+    assert get(m, "f.<locals>.C") == {"C.y", "C.D"}
+    assert get(m, "f.<locals>.C.D") == {"C.D.z"}
+    assert get(m, "f.<locals>.C.__init__") == {"self.z"}
 
 
 def test_lambdas_and_comprehensions_have_their_own_code_objects():

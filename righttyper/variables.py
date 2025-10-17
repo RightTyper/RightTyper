@@ -5,8 +5,14 @@ from collections import defaultdict
 import collections.abc as abc
 
 
+@dataclass(eq=True, frozen=True)
+class CodeVars:
+    scope: types.CodeType | None    # code object in whose scope we're storing variables
+    variables: dict[str, str]       # maps name in scope to name in f_locals
+
+
 """Maps code objects to the variables assigned/bound within each object."""
-code2variables: dict[types.CodeType, set[str]] = dict()
+code2variables: dict[types.CodeType, CodeVars] = dict()
 
 
 def _extract_name(node: ast.AST) -> str:
@@ -58,12 +64,6 @@ def _from_pattern(p: ast.pattern) -> abc.Iterator[str]:
         yield from _from_pattern(p.patterns[0])
 
 
-@dataclass(eq=True, order=True, frozen=True)
-class ScopeKey:
-    name: str
-    lineno: int
-
-
 class VariableFinder(ast.NodeVisitor):
     """
     Walks the AST, collecting all variable names (dot-separated where applicable) that are
@@ -71,35 +71,47 @@ class VariableFinder(ast.NodeVisitor):
     Imports, comprehensions, generator expressions are ignored.
     """
     def __init__(self) -> None:
-        self._scope_stack: list[ScopeKey] = []
-        self.scope_vars: dict[ScopeKey, set[str]] = defaultdict(set)
+        self._qualname_stack: list[str] = []
+        self._code_stack: list[str] = ['<module>']
+        self._scope_stack: list[list[str]] = [[]]
+        self.code_vars: dict[str, tuple[str, dict[str, str]]] = dict()
 
     def _record_name(self, name: str) -> None:
-        self.scope_vars[self._scope_stack[-1]].add(name)
+        scope = self._scope_stack[-1]
+        codevars = self.code_vars.setdefault(self._code_stack[-1],
+            # -1 to omit "<locals>"
+            ('.'.join(scope[:-1]) if scope else '<module>', {})
+        )
+        dst_name = '.'.join(self._qualname_stack[len(scope):] + [name])
+        codevars[1][dst_name] = name
 
     def _record_target(self, t: ast.AST) -> None:
         self._record_name(_extract_name(t))
 
+    def _qualname(self) -> str:
+        return '.'.join(self._qualname_stack)
 
-    def _handle_scope(self, node: ast.FunctionDef|ast.AsyncFunctionDef|ast.ClassDef) -> None:
-        self._scope_stack.append(ScopeKey(node.name, node.lineno))
+    def visit_FunctionDef(self, node: ast.FunctionDef|ast.AsyncFunctionDef) -> None:
+        self._qualname_stack.append(node.name)
+        self._code_stack.append(self._qualname())
+        self._qualname_stack.append('<locals>')
+        self._scope_stack.append([*self._qualname_stack])
         self.generic_visit(node)
+        self._qualname_stack.pop();
+        self._code_stack.pop()
         self._scope_stack.pop()
-
-    def visit_Module(self, node: ast.Module) -> None:
-        self._scope_stack.append(ScopeKey("<module>", 1))
-        self.generic_visit(node)
-        self._scope_stack.pop()
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._handle_scope(node)
+        self._qualname_stack.pop()
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._handle_scope(node)
+        self.visit_FunctionDef(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self._record_name(node.name)
-        self._handle_scope(node)
+        self._qualname_stack.append(node.name)
+        self._code_stack.append(self._qualname())
+        self.generic_visit(node)
+        self._code_stack.pop()
+        self._qualname_stack.pop();
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         # any NamedExpr within stay within the lambda's scope
@@ -187,8 +199,13 @@ def map_variables(tree: ast.Module, module_code: types.CodeType) -> dict[types.C
     f = VariableFinder()
     f.visit(tree)
 
-    return {
-        co: scope_vars
+    qualname2code = {
+        co.co_qualname: co
         for co in _walk_code_objects(module_code)
-        if (scope_vars := f.scope_vars.get(ScopeKey(co.co_name, co.co_firstlineno)))
+    }
+
+    return {
+        co: CodeVars(qualname2code.get(code_vars[0]), code_vars[1])
+        for co in qualname2code.values()
+        if (code_vars := f.code_vars.get(co.co_qualname))
     }

@@ -4527,6 +4527,7 @@ def test_json_variables():
     Path("t.py").write_text(t)
 
     rt_run('--json-output', 't.py')
+    print(Path("righttyper.json").read_text())
     with Path("righttyper.json").open("r") as f:
         data = json.load(f)
 
@@ -4584,7 +4585,6 @@ def test_json_variables_object():
     assert 'int' == functions['C.__init__']['vars'].get('self.x', None)
 
 
-@pytest.mark.xfail(reason="Doesn't work yet")
 def test_json_variables_nested():
     t = textwrap.dedent("""\
         def f():
@@ -4593,6 +4593,9 @@ def test_json_variables_nested():
 
                 def __init__(self, x):
                     self.x = x
+
+                class D:
+                    bar = -1
 
             c = C(10)
 
@@ -4610,5 +4613,8 @@ def test_json_variables_nested():
     t_data = data['files'].get(str(Path('t.py').resolve()), {})
     f_data = t_data['functions']['f']
 
-    assert 't.C' == t_data['vars'].get('c')
-    assert 'str' == t_data['vars'].get('C.foo')
+    assert 't.f.C' == f_data['vars'].get('c')
+    assert 'type[t.f.C]' == f_data['vars'].get('C')
+    assert 'str' == f_data['vars'].get('C.foo')
+    assert 'type[t.f.C.D]' == f_data['vars'].get('C.D')
+    assert 'int' == f_data['vars'].get('C.D.bar')
