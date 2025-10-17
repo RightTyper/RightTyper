@@ -12,6 +12,7 @@ import typing
 
 from righttyper.ast_instrument import instrument
 from righttyper.variables import code2variables, map_variables
+from righttyper.righttyper_utils import skip_this_file
 
 
 class RightTyperLoader(ExecutionLoader):
@@ -64,14 +65,6 @@ class RightTyperMetaPathFinder(MetaPathFinder):
         self.replace_dict = replace_dict
 
 
-    @functools.cache
-    def _in_python_libs(self: typing.Self, filename: Path) -> bool:
-        if any(filename.is_relative_to(p) for p in self._pylib_paths):
-            return True
-
-        return False
-
-
     def find_spec(
         self: typing.Self,
         fullname: str,
@@ -95,7 +88,7 @@ class RightTyperMetaPathFinder(MetaPathFinder):
                 not isinstance(spec.loader, machinery.ExtensionFileLoader) and
                 (filename := Path(spec.origin)).exists() and
                 filename.suffix == '.py' and
-                not self._in_python_libs(filename)
+                not skip_this_file(spec.origin)
             ):
                 # For those that look like we can load, insert our loader
                 spec.loader = RightTyperLoader(fullname, filename, spec.loader, replace_dict=self.replace_dict)
