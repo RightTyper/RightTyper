@@ -7,8 +7,8 @@ import collections.abc as abc
 
 @dataclass(eq=True, frozen=True)
 class CodeVars:
-    scope: types.CodeType | None    # code object in whose scope we're storing variables
-    variables: dict[str, str]       # maps name in scope to name in f_locals
+    scope: types.CodeType       # code object in whose scope we're storing variables
+    variables: dict[str, str]   # maps name in scope to name in f_locals
 
 
 """Maps code objects to the variables assigned/bound within each object."""
@@ -192,7 +192,7 @@ def _walk_code_objects(co: types.CodeType) -> abc.Iterator[types.CodeType]:
             yield from _walk_code_objects(c)
 
 
-def map_variables(tree: ast.Module, module_code: types.CodeType) -> dict[types.CodeType, set[str]]:
+def map_variables(tree: ast.Module, module_code: types.CodeType) -> dict[types.CodeType, CodeVars]:
     """Creates a map of code objects to the variables assigned to in that code,
        to facilitate variable sampling."""
 
@@ -205,7 +205,8 @@ def map_variables(tree: ast.Module, module_code: types.CodeType) -> dict[types.C
     }
 
     return {
-        co: CodeVars(qualname2code.get(code_vars[0]), code_vars[1])
+        co: CodeVars(scope, code_vars[1])
         for co in qualname2code.values()
         if (code_vars := f.code_vars.get(co.co_qualname))
+        if (scope := qualname2code.get(code_vars[0]))
     }
