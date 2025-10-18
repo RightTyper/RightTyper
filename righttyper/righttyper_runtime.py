@@ -144,7 +144,7 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
 
     return TypeInfo("typing", "Callable",
         args=args,
-        code_id=CodeId(id(func.__code__)),
+        code=func.__code__,
         type_obj=cast(type, abc.Callable),
         is_bound=isinstance(func, MethodType)
     )
@@ -396,11 +396,11 @@ def _type_for_generator(
         try:
             hints = get_type_hints(f)
             if 'return' in hints:
-                return hint2type(hints['return']).replace(code_id=CodeId(id(code)))
+                return hint2type(hints['return']).replace(code=code)
         except:
             pass
 
-    return TypeInfo.from_type(type_obj, module="typing", code_id=CodeId(id(code)))
+    return TypeInfo.from_type(type_obj, module="typing", code=code)
 
 
 def _random_item[T](container: abc.Collection[T]) -> T:

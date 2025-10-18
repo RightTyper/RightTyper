@@ -54,8 +54,8 @@ class TypeInfo:
     args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()    # arguments within []
 
     # These fields are included for convenience, but don't affect what type is meant
-    code_id: CodeId = field(default=CodeId(0), compare=False)   # if a callable, generator or coroutine, the CodeId
-    is_bound: bool = field(default=False, compare=False)        # if a callable, whether bound
+    code: types.CodeType | None = field(default=None, compare=False)  # if a callable, generator or coroutine, the CodeType
+    is_bound: bool = field(default=False, compare=False)    # if a callable, whether bound
     type_obj: TYPE_OBJ_TYPES|None = field(default=None, compare=False)
     typevar_index: int = field(default=0, compare=False)
     typevar_name: str|None = field(default=None, compare=False) # TODO delete me?

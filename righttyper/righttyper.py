@@ -24,7 +24,7 @@ import collections.abc as abc
 from collections import defaultdict, Counter
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType, AsyncGeneratorType, UnionType
+from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType, AsyncGeneratorType, CoroutineType, UnionType
 import typing
 from typing import (
     Any,
@@ -257,19 +257,19 @@ def resolve_mock(ti: TypeInfo, adjuster: AdjustTypeNamesT|None) -> TypeInfo|None
 @dataclass
 class Observations:
     # Visited functions' and information about them
-    functions_visited: dict[CodeId, FuncInfo] = field(default_factory=dict)
+    functions_visited: dict[CodeType, FuncInfo] = field(default_factory=dict)
 
     # Started, but not (yet) completed traces
-    pending_traces: dict[CodeId, dict[FrameId, PendingCallTrace]] = field(default_factory=lambda: defaultdict(dict))
+    pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = field(default_factory=lambda: defaultdict(dict))
 
     # Variables
     # TODO ideally the variables should be included in the trace, so that they can be filtered
     # and also included in any type patterns.
-    variables: dict[CodeId, dict[VariableName, set[TypeInfo]]] = field(
+    variables: dict[CodeType, dict[VariableName, set[TypeInfo]]] = field(
                                                     default_factory=lambda: defaultdict(lambda: defaultdict(set)))
 
     # Completed traces
-    traces: dict[CodeId, Counter[CallTrace]] = field(default_factory=dict)
+    traces: dict[CodeType, Counter[CallTrace]] = field(default_factory=dict)
 
     # Mapping of sources to their module names
     # TODO handle cases where modules are loaded more than once, e.g. through pytest
@@ -303,8 +303,7 @@ class Observations:
     ) -> None:
         """Records that a function was visited, along with some details about it."""
 
-        code_id = id(code)
-        if code_id not in self.functions_visited:
+        if code not in self.functions_visited:
             arg_names = (
                 *(a for a in args.args),
                 *((args.varargs,) if args.varargs else ()),
@@ -313,7 +312,7 @@ class Observations:
 
             defaults = get_defaults(code, frame)
 
-            self.functions_visited[code_id] = FuncInfo(
+            self.functions_visited[code] = FuncInfo(
                 FuncId(
                     Filename(code.co_filename),
                     code.co_firstlineno,
@@ -362,7 +361,7 @@ class Observations:
         self.record_module(code, frame)
 
         if not (code.co_flags & CO_NEWLOCALS):
-            self.functions_visited[id(code)] = FuncInfo(
+            self.functions_visited[code] = FuncInfo(
                 FuncId(
                     Filename(code.co_filename),
                     code.co_firstlineno,
@@ -374,7 +373,7 @@ class Observations:
             self_type, self_replacement, overrides = get_self_type(code, arg_info)
             self.record_function(code, frame, arg_info, overrides)
 
-            self.pending_traces[id(code)][id(frame)] = PendingCallTrace(
+            self.pending_traces[code][id(frame)] = PendingCallTrace(
                 arg_info=arg_info,
                 args=self._get_arg_types(arg_info),
                 is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
@@ -387,7 +386,7 @@ class Observations:
         """Records a yield."""
 
         # print(f"record_yield {code.co_qualname}")
-        if (per_frame := self.pending_traces.get(id(code))) and (tr := per_frame.get(frame_id)):
+        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
             tr.yields.add(get_value_type(yield_value))
 
 
@@ -395,7 +394,7 @@ class Observations:
         """Records a send."""
 
         # print(f"record_send {code.co_qualname}")
-        if (per_frame := self.pending_traces.get(id(code))) and (tr := per_frame.get(frame_id)):
+        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
             tr.sends.add(get_value_type(send_value))
 
 
@@ -409,7 +408,7 @@ class Observations:
                     break
             return obj
 
-        scope_vars = self.variables[id(codevars.scope)]
+        scope_vars = self.variables[codevars.scope]
         for dst, src in codevars.variables.items():
             (var, *attr_path) = src.split('.')
             value = follow_attr_path(attr_path, frame.f_locals.get(var, NO_OBJECT))
@@ -418,7 +417,7 @@ class Observations:
             scope_vars[VariableName(dst)].add(get_value_type(value))
 
 
-    def _record_return_type(self, tr: PendingCallTrace, code_id: CodeId, ret_type: Any) -> None:
+    def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:
         """Records a pending call trace's return type, finishing the trace."""
         assert tr is not None
 
@@ -431,27 +430,26 @@ class Observations:
             )
         )
 
-        if code_id not in self.traces:
-            self.traces[code_id] = Counter()
-        self.traces[code_id].update((tr.process(),))
+        if code not in self.traces:
+            self.traces[code] = Counter()
+        self.traces[code].update((tr.process(),))
 
         # Resample arguments in case they change during execution (e.g., containers)
         tr.args = self._get_arg_types(tr.arg_info)
-        self.traces[code_id].update((tr.process(),))
+        self.traces[code].update((tr.process(),))
 
 
     def record_return(self, code: CodeType, frame: FrameType, return_value: Any) -> bool:
         """Records a return."""
 
         # print(f"record_return {code.co_qualname}")
-        code_id = id(code)
         frame_id = id(frame)
-        if (per_frame := self.pending_traces.get(code_id)) and (tr := per_frame.get(frame_id)):
-            self._record_return_type(tr, code_id, get_value_type(return_value))
+        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
+            self._record_return_type(tr, code, get_value_type(return_value))
             self._record_variables(code, frame)
             del per_frame[frame_id]
             return True # found it
-        elif code_id in self.functions_visited:
+        elif code in self.functions_visited:
             self._record_variables(code, frame)
 
         return False
@@ -461,14 +459,13 @@ class Observations:
         """Records the lack of a return (e.g., because an exception was raised)."""
 
         # print(f"record_no_return {code.co_qualname}")
-        code_id = id(code)
         frame_id = id(frame)
-        if (per_frame := self.pending_traces.get(code_id)) and (tr := per_frame.get(frame_id)):
-            self._record_return_type(tr, code_id, None)
+        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
+            self._record_return_type(tr, code, None)
             self._record_variables(code, frame)
             del per_frame[frame_id]
             return True # found it
-        elif code_id in self.functions_visited:
+        elif code in self.functions_visited:
             self._record_variables(code, frame)
 
         return False
@@ -477,13 +474,13 @@ class Observations:
     def _transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
 
-        for code_id, trace_counter in self.traces.items():
+        for code, trace_counter in self.traces.items():
             for trace, count in list(trace_counter.items()):
                 trace_prime = tuple(tr.visit(t) for t in trace)
                 # Use identity rather than ==, as only non-essential attributes may have changed
                 if any(old is not new for old, new in zip(trace, trace_prime)):
                     if logger.level == logging.DEBUG:
-                        func_info = self.functions_visited.get(code_id, None)
+                        func_info = self.functions_visited.get(code, None)
                         logger.debug(
                             type(tr).__name__ + " " +
                             (func_info.func_id.func_name if func_info else "?") +
@@ -495,29 +492,47 @@ class Observations:
                     trace_counter[trace_prime] = count
 
         # TODO how can self.variables change size during iteration?
-        for code_id, var_dict in list(self.variables.items()):
+        for code, var_dict in list(self.variables.items()):
             for var_name, var_types in list(var_dict.items()):
                 var_dict[var_name] = set(tr.visit(t) for t in var_types)
+
+
+    def try_close_generators(self: Self) -> None:
+        """Attempts to close any generators that may still be running."""
+        pending_generators = set()
+        for code, per_frame in self.pending_traces.items():
+            if any(tr.is_generator for tr in per_frame.values()):
+                pending_generators.add(code)
+
+        for code in pending_generators:
+            import gc
+            for obj in gc.get_referrers(code):
+                if isinstance(obj, (GeneratorType, AsyncGeneratorType, CoroutineType)):
+                    try:
+                        obj.close()
+                    except:
+                        pass
+
 
     def collect_annotations(self: Self) -> tuple[dict[FuncId, FuncAnnotation], dict[FuncId, ModuleVars]]:
         """Collects function type annotations from the observed types."""
 
         # Finish traces for any generators that may be still running
-        for code_id, per_frame in self.pending_traces.items():
+        for code, per_frame in self.pending_traces.items():
             for tr in per_frame.values():
                 if tr.is_generator:
-                    self._record_return_type(tr, code_id, None)
+                    self._record_return_type(tr, code, None)
 
 
-        def most_common_traces(code_id: CodeId) -> list[CallTrace]:
+        def most_common_traces(code: CodeType) -> list[CallTrace]:
             """Returns the top X% most common call traces, turning type checking into anomaly detection."""
-            counter = self.traces[code_id]
+            counter = self.traces[code]
 
             threshold = sum(counter.values()) * options.use_top_pct / 100
             cumulative = 0
 
             traces = list()
-            for trace, count in self.traces[code_id].most_common():
+            for trace, count in self.traces[code].most_common():
                 if cumulative >= threshold:
                     break
                 cumulative += count
@@ -526,9 +541,9 @@ class Observations:
             return traces
 
 
-        def mk_annotation(code_id: CodeId) -> FuncAnnotation|None:
-            func_info = self.functions_visited[code_id]
-            traces = most_common_traces(code_id)
+        def mk_annotation(code: CodeType) -> FuncAnnotation|None:
+            func_info = self.functions_visited[code]
+            traces = most_common_traces(code)
 
             parents_arg_types = None
             if func_info.overrides:
@@ -541,11 +556,11 @@ class Observations:
                         or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
                     )
                 ):
-                    parent_code_id = id(parents_func.__code__) if hasattr(parents_func, "__code__") else None
+                    parent_code = parents_func.__code__ if hasattr(parents_func, "__code__") else None
                     if (
-                        parent_code_id
-                        and parent_code_id in self.traces
-                        and (ann := mk_annotation(parent_code_id))
+                        parent_code
+                        and parent_code in self.traces
+                        and (ann := mk_annotation(parent_code))
                     ):
                         parents_arg_types = [arg[1] for arg in ann.args]
 
@@ -577,12 +592,12 @@ class Observations:
                 kwargs=func_info.kwargs,
                 variables=[
                     (var_name, merged_types(var_types))
-                    for var_name, var_types in self.variables[code_id].items()
+                    for var_name, var_types in self.variables[code].items()
                 ]
             )
 
             if logger.level == logging.DEBUG:
-                trace_counter = self.traces[code_id]
+                trace_counter = self.traces[code]
                 for trace, count in list(trace_counter.items()):
                     logger.debug(
                         "trace " + func_info.func_id.func_name +
@@ -593,7 +608,7 @@ class Observations:
                     "ann   " + func_info.func_id.func_name +
                     str((*(str(arg[1]) for arg in ann.args), str(ann.retval)))
                 )
-                for var, var_type in list(self.variables[code_id].items()):
+                for var, var_type in list(self.variables[code].items()):
                     logger.debug(
                         "var {func_info.func_id.func_name} {var_type}"
                     )
@@ -618,10 +633,10 @@ class Observations:
                 node = super().visit(node)
 
                 # if 'args' is there, the function is already annotated
-                if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.traces:
+                if node.code and (options.ignore_annotations or not node.args) and node.code in self.traces:
                     # TODO we only need the retval, can we avoid computing the entire annotation?
-                    if (ann := mk_annotation(node.code_id)):
-                        func_info = self.functions_visited[node.code_id]
+                    if (ann := mk_annotation(node.code)):
+                        func_info = self.functions_visited[node.code]
                         # Clone (rather than link to) types from Callable, Generator, etc.,
                         # clearing is_self, as these types may be later replaced with typing.Self.
                         if node.type_obj is abc.Callable:
@@ -781,13 +796,15 @@ class Observations:
                 finally:
                     vself._level -= 1
 
-        class ClearTypeObjTransformer(TypeInfo.Transformer):
-            """Clears type_obj on all TypeInfo: annotations are pickled by 'multiprocessing',
-               but many type objects (such as local ones, or from __main__) aren't pickleable.
+        class MakePickleableTransformer(TypeInfo.Transformer):
+            """Clears code and type_obj on all TypeInfo: annotations are pickled by 'multiprocessing',
+               but these objects may not be pickleable.
             """
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 if node.type_obj is not None:
                     node = node.replace(type_obj=None)
+                if node.code is not None:
+                    node = node.replace(code=None)
                 return super().visit(node)
 
         finalizers: list[TypeInfo.Transformer] = []
@@ -798,33 +815,33 @@ class Observations:
         if options.use_typing_union:
             finalizers.append(TypingUnionT())
 
-        finalizers.append(ClearTypeObjTransformer())
+        finalizers.append(MakePickleableTransformer())
 
         def finalize(t: TypeInfo) -> TypeInfo:
             for f in finalizers:
                 t = f.visit(t)
             return t
 
-        non_func_codeids = self.variables.keys() - self.traces.keys()
+        non_func_codes = self.variables.keys() - self.traces.keys()
 
         annotations = {
-            self.functions_visited[code_id].func_id: FuncAnnotation(
+            self.functions_visited[code].func_id: FuncAnnotation(
                 args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
                 retval=finalize(annotation.retval),
                 varargs=annotation.varargs,
                 kwargs=annotation.kwargs,
                 variables=[(var[0], finalize(var[1])) for var in annotation.variables]
             )
-            for code_id in self.traces
-            if (annotation := mk_annotation(code_id)) is not None
+            for code in self.traces
+            if (annotation := mk_annotation(code)) is not None
         }
 
         module_vars = {
-            self.functions_visited[code_id].func_id: ModuleVars([
+            self.functions_visited[code].func_id: ModuleVars([
                 (var_name, finalize(merged_types(var_types)))
-                for var_name, var_types in self.variables[code_id].items()
+                for var_name, var_types in self.variables[code].items()
             ])
-            for code_id in non_func_codeids
+            for code in non_func_codes
         }
 
         return annotations, module_vars
@@ -887,11 +904,11 @@ def start_handler(code: CodeType, offset: int) -> Any:
     Process the function entry point, perform monitoring related operations,
     and manage the profiling of function execution.
     """
-    if id(code) in disabled_code:
+    if code in disabled_code:
         return sys.monitoring.DISABLE
 
     if should_skip_function(code):
-        disabled_code.add(id(code))
+        disabled_code.add(code)
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -919,7 +936,7 @@ def yield_handler(
     instruction_offset (int): position of the current instruction.
     yield_value (Any): return value of the function.
     """
-    if id(code) in disabled_code:
+    if code in disabled_code:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -947,7 +964,7 @@ def return_handler(
     instruction_offset (int): position of the current instruction.
     return_value (Any): return value of the function.
     """
-    if id(code) in disabled_code:
+    if code in disabled_code:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -965,8 +982,8 @@ def return_handler(
             and no_sampling_for.search(code.co_qualname)
         )
     ):
-        disabled_code.add(id(code))
-        obs.pending_traces[id(code)].clear()
+        disabled_code.add(code)
+        obs.pending_traces[code].clear()
         return sys.monitoring.DISABLE
 
     return None
@@ -979,7 +996,7 @@ def unwind_handler(
     exception: BaseException,
 ) -> Any:
 
-    if id(code) in disabled_code:
+    if code in disabled_code:
         return None # PY_UNWIND can't be disabled
 
     frame = inspect.currentframe()
@@ -997,8 +1014,8 @@ def unwind_handler(
             and no_sampling_for.search(code.co_qualname)
         )
     ):
-        disabled_code.add(id(code))
-        obs.pending_traces[id(code)].clear()
+        disabled_code.add(code)
+        obs.pending_traces[code].clear()
 
     return None # PY_UNWIND can't be disabled
 
@@ -1085,7 +1102,7 @@ samples_instrumentation = []
 samples_total = []
 instrumentation_overhead = []
 instrumentation_restarted = []
-disabled_code: set[CodeId] = set()
+disabled_code: set[CodeType] = set()
 
 def exp_smooth(value: float, previous: float|None) -> float:
     """Exponentially smooths a value."""
@@ -1726,6 +1743,7 @@ def run(
 
     try:
         execute_script_or_module(script, is_module=bool(module), args=args)
+        obs.try_close_generators()
     finally:
         reset_monitoring()
         alarm.stop()
