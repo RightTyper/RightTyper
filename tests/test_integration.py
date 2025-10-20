@@ -4642,3 +4642,30 @@ def test_json_variables_generator():
     t_data = data['files'].get(str(Path('t.py').resolve()), {})
     gen_data = t_data['functions']['gen']
     assert 'str' == gen_data['vars'].get('x')
+
+
+def test_json_variables_generator_async():
+    Path("t.py").write_text(textwrap.dedent("""\
+        import asyncio
+
+        async def gen():
+            x = "foo"
+            yield 1
+            yield 2
+
+        g = gen()
+        async def main():
+            await anext(g)
+
+        asyncio.run(main())
+        """
+    ))
+
+    rt_run('--json-output', 't.py')
+    print(Path("righttyper.json").read_text())
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    t_data = data['files'].get(str(Path('t.py').resolve()), {})
+    f_data = t_data['functions']['gen']
+    assert 'str' == f_data['vars'].get('x')

@@ -507,10 +507,10 @@ class Observations:
         for code in pending_generators:
             import gc
             for obj in gc.get_referrers(code):
-                if isinstance(obj, (GeneratorType, AsyncGeneratorType, CoroutineType)):
+                # In Python 3.13+, close() doesn't generate a PY_UNWIND
+                # https://github.com/python/cpython/issues/140373
+                if isinstance(obj, GeneratorType):
                     try:
-                        # In Python 3.13+, close() doesn't generate a PY_UNWIND
-                        # https://github.com/python/cpython/issues/140373
                         obj.throw(GeneratorExit)
                     except:
                         pass
