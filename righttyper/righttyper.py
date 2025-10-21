@@ -1205,7 +1205,8 @@ def output_signatures(
 def process_collected(collected: dict[str, Any]):
     sig_changes: list[SignatureChanges] = process_files(
         collected['files'],
-        collected['type_annotations']
+        collected['type_annotations'],
+        collected['module_vars']
     )
 
     if options.json_output:
@@ -1291,6 +1292,7 @@ def process_file_wrapper(args) -> SignatureChanges:
 def process_files(
     files: list[list[str]],
     type_annotations: dict[FuncId, FuncAnnotation],
+    module_vars: dict[FuncId, ModuleVars]
 ) -> list[SignatureChanges]:
     if not files:
         return []
@@ -1300,6 +1302,7 @@ def process_files(
             file[0],    # path
             file[1],    # module_name
             type_annotations,
+            module_vars.get(FuncId(Filename(file[0]), 1, FunctionName('<module>')), None),
             options.output_files,
             options.generate_stubs,
             options.overwrite,

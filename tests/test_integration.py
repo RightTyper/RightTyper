@@ -4669,3 +4669,31 @@ def test_json_variables_generator_async():
     t_data = data['files'].get(str(Path('t.py').resolve()), {})
     f_data = t_data['functions']['gen']
     assert 'str' == f_data['vars'].get('x')
+
+
+def test_variables():
+    Path("t.py").write_text(textwrap.dedent("""\
+        C = 1.0
+
+        def f(p):
+            x = 1/p
+            return x+1
+
+        f(10)
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert code.code == textwrap.dedent("""\
+        C: float = 1.0
+
+        def f(p: int) -> float:
+            x: float = 1/p
+            return x+1
+
+        f(10)
+        """
+    )

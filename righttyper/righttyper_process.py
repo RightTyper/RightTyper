@@ -8,6 +8,7 @@ from righttyper.righttyper_types import (
     Filename,
     FuncId,
     FuncAnnotation,
+    ModuleVars,
     FunctionName,
 )
 from righttyper.righttyper_utils import (
@@ -78,6 +79,7 @@ def process_file(
     filename: Filename,
     module_name: str,
     type_annotations: dict[FuncId, FuncAnnotation],
+    module_vars: ModuleVars,
     output_files: bool,
     generate_stubs: bool,
     overwrite: bool,
@@ -104,7 +106,8 @@ def process_file(
             raise
 
     transformer = UnifiedTransformer(
-        filename, type_annotations, ignore_annotations, only_update_annotations, inline_generics,
+        filename, type_annotations, module_vars,
+        ignore_annotations, only_update_annotations, inline_generics,
         module_name=module_name
     )
 
@@ -117,7 +120,7 @@ def process_file(
 
     changes = transformer.get_signature_changes()
 
-    if output_files and changes:
+    if output_files: # and changes:  FIXME variable changes aren't captured in 'changes' yet
         if overwrite:
             with open(filename + ".bak", "w") as file:
                 file.write(source)

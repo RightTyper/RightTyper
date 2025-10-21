@@ -11,6 +11,8 @@ from righttyper.righttyper_types import (
     TypeInfo,
     NoneTypeInfo,
     FuncAnnotation,
+    ModuleVars,
+    VariableName,
     AnyTypeInfo
 )
 from righttyper.righttyper_runtime import get_type_name
@@ -187,6 +189,7 @@ def test_transform_function():
                     NoneTypeInfo,
                 )
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             inline_generics=False,
@@ -267,6 +270,7 @@ def test_transform_method():
                     TypeInfo.from_type(float, module=''),
                 )
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name='foo',
@@ -340,6 +344,7 @@ def test_transform_local_function():
                     TypeInfo.from_type(float, module=''),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name='foo',
@@ -386,6 +391,7 @@ def test_override_annotations():
                     TypeInfo.from_type(float, module=''),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=True,
             only_update_annotations=False,
             module_name='foo',
@@ -423,6 +429,7 @@ def test_transform_adds_typing_import_for_typing_names():
                     TypeInfo.from_type(list, module='', args=(TypeInfo(module='typing', name='Never'),)),
                 )
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name='foo',
@@ -461,6 +468,7 @@ def test_transform_unknown_type_as_string():
                     TypeInfo(module='x', name='z.FloatingPointNumber'),
                 )
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -503,6 +511,7 @@ def test_transform_unknown_type_with_import_annotations():
                     TypeInfo(module='x', name='z.FloatingPointNumber'),
                 )
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -533,6 +542,7 @@ def test_transform_empty_body_but_from_future():
     t = UnifiedTransformer(
             filename='foo.py',
             type_annotations = {},
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -567,6 +577,7 @@ def test_transform_deletes_type_hint_comments_in_header():
                     NoneTypeInfo,
                 )
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -615,6 +626,7 @@ def test_transform_deletes_type_hint_comments_in_parameters():
                     NoneTypeInfo,
                 )
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -667,6 +679,7 @@ def test_transform_deletes_type_hint_comments_for_retval():
                     TypeInfo.from_type(float, module=''),
                 )
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -736,6 +749,7 @@ def test_transform_locally_defined_types():
                     TypeInfo(module='foo', name='F'),
                 )
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -787,6 +801,7 @@ def test_uses_imported_aliases():
                     TypeInfo(module='r', name='t.T'),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -830,6 +845,7 @@ def test_uses_imported_domains():
                     TypeInfo(module='r', name='t.T'),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -866,6 +882,7 @@ def test_imports_subdomain_if_needed():
                     TypeInfo(module='a', name='b'),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -908,6 +925,7 @@ def test_existing_typing_imports():
                     TypeInfo(module='typing', name='List'),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -959,6 +977,7 @@ def test_inserts_imports_after_docstring_and_space():
                     TypeInfo(module='typing', name='List'),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1013,6 +1032,7 @@ def test_relative_import():
                     NoneTypeInfo,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'pkg.a.a',
@@ -1077,6 +1097,7 @@ def test_uses_local_imports():
                     NoneTypeInfo,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1136,6 +1157,7 @@ def test_nonglobal_imported_modules_are_ignored():
                     TypeInfo(module='m', name='T'),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1194,6 +1216,7 @@ def test_nonglobal_assignments_are_ignored():
                     NoneTypeInfo,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1237,6 +1260,7 @@ def test_if_type_checking_insertion():
                     NoneTypeInfo,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1272,6 +1296,7 @@ def test_import_conflicts_with_import():
                     NoneTypeInfo,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1321,6 +1346,7 @@ def test_import_conflicts_with_definitions():
                     NoneTypeInfo,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1371,6 +1397,7 @@ def test_import_conflicts_with_assignments():
                     NoneTypeInfo,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1419,6 +1446,7 @@ def test_import_conflicts_with_with():
                     NoneTypeInfo,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1465,6 +1493,7 @@ def test_builtin_name_conflicts():
                     TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int, module=''), TypeInfo.from_type(float, module=''))),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1506,6 +1535,7 @@ def test_class_names_dont_affect_body_of_methods():
                     TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int, module=''),)),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1561,6 +1591,7 @@ def test_inner_function():
                 i: _mkAnnotation([], tuple_int_float),
                 j: _mkAnnotation([], tuple_int_float)
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1616,6 +1647,7 @@ def test_builtin_name_conflicts_even_module_name():
                     )),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1722,6 +1754,7 @@ def test_generics_inline_simple():
                     T1,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1756,6 +1789,7 @@ def test_generics_arg_already_annotated(override):
                     T1,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=override,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1796,6 +1830,7 @@ def test_generics_ret_already_annotated(override):
                     T1,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=override,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1835,6 +1870,7 @@ def test_generics_existing_generics(override):
                     T1,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=override,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1872,6 +1908,7 @@ def test_generics_existing_unused_generics():
                     NoneTypeInfo,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1905,6 +1942,7 @@ def test_generics_existing_generics_nested(override):
                     T1,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=override,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1945,6 +1983,7 @@ def test_generics_existing_generics_overlaps_name():
                     T2,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -1981,6 +2020,7 @@ def test_generics_inline_multiple():
                     NoneTypeInfo,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -2014,6 +2054,7 @@ def test_generics_inline_nested():
                     TypeInfo("", "list", (T1,)),
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -2047,6 +2088,7 @@ def test_generics_defined_simple():
                     T1,
                 ),
             },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             module_name = 'foo',
@@ -2090,7 +2132,9 @@ def test_overload_preserve():
                         (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
                     ],
                     TypeInfo.from_type(int, module=""),
-                ),},
+                ),
+            },
+            module_variables = ModuleVars([]),
             override_annotations=False,
             only_update_annotations=False,
             inline_generics=False,
@@ -2130,7 +2174,9 @@ def test_overload_remove():
                         (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
                     ],
                     TypeInfo.from_type(int, module=""),
-                ),},
+                ),
+            },
+            module_variables = ModuleVars([]),
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
@@ -2176,7 +2222,9 @@ def test_overload_aliased():
                         (ArgumentName("bar"), TypeInfo.from_type(str, module="")),
                     ],
                     TypeInfo.from_type(int, module=""),
-                ),},
+                ),
+            },
+            module_variables = ModuleVars([]),
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
@@ -2209,7 +2257,9 @@ def test_dont_annotate_with_any():
                         (ArgumentName("bar"), AnyTypeInfo),
                     ],
                     AnyTypeInfo,
-                ),},
+                ),
+            },
+            module_variables = ModuleVars([]),
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
@@ -2243,7 +2293,9 @@ def test_local_aliases_known():
                         (ArgumentName("x"), TypeInfo("foo", "D")),
                     ],
                     TypeInfo("foo", "D"),
-                ),},
+                ),
+            },
+            module_variables = ModuleVars([]),
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
@@ -2277,7 +2329,9 @@ def test_local_aliases_known_multiple():
                         (ArgumentName("x"), TypeInfo("foo", "D")),
                     ],
                     TypeInfo("foo", "D"),
-                ),},
+                ),
+            },
+            module_variables = ModuleVars([]),
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
@@ -2313,7 +2367,9 @@ def test_local_aliases_known_annotated():
                         (ArgumentName("x"), TypeInfo("foo", "D")),
                     ],
                     TypeInfo("foo", "D"),
-                ),},
+                ),
+            },
+            module_variables = ModuleVars([]),
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
@@ -2348,7 +2404,9 @@ def test_local_aliases_known_namedexpr():
                         (ArgumentName("x"), TypeInfo("foo", "D")),
                     ],
                     TypeInfo("foo", "D"),
-                ),},
+                ),
+            },
+            module_variables = ModuleVars([]),
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
@@ -2360,4 +2418,185 @@ def test_local_aliases_known_namedexpr():
     assert function == textwrap.dedent("""\
         def f(x: D) -> D:
             ...
+        """)
+
+
+def mk_var_transformer(filename, code, *, override_annotations=True, only_update_annotations=False):
+    return UnifiedTransformer(
+            filename=filename,
+            type_annotations = {
+                get_funcid(filename, code, 'C.__init__'): FuncAnnotation(
+                    [],
+                    TypeInfo("", "None"),
+                    varargs=None, kwargs=None,
+                    variables=[
+                        (VariableName('self.y'), TypeInfo('', 'int'))
+                    ]
+                ),
+            },
+            module_variables = ModuleVars([
+                (VariableName('g'), TypeInfo("", "float")),
+                (VariableName('C.x'), TypeInfo("", "str")),
+                (VariableName('C.y'), TypeInfo("", "bool"))
+            ]),
+            override_annotations=override_annotations,
+            only_update_annotations=only_update_annotations,
+            inline_generics=False,
+            module_name='foo'
+        )
+
+
+@pytest.mark.parametrize('ignore, update', [
+    [False, False],
+    [True, False],
+    [False, True]
+])
+def test_variables_assign(ignore, update):
+    code = cst.parse_module(textwrap.dedent("""\
+        g = 1.0
+
+        class C:
+            x = 'foo'
+            x = x + x
+
+            def __init__(self, x):
+                self.y = x
+    """))
+
+    t = mk_var_transformer('foo.py', code,
+            override_annotations=ignore,
+            only_update_annotations=update)
+
+    code = t.transform_code(code)
+    if not update:
+        assert code.code == textwrap.dedent("""\
+            g: float = 1.0
+
+            class C:
+                x: str = 'foo'
+                x = x + x
+
+                def __init__(self, x) -> None:
+                    self.y: int = x
+            """)
+    else:
+        assert code.code == textwrap.dedent("""\
+            g = 1.0
+
+            class C:
+                x = 'foo'
+                x = x + x
+
+                def __init__(self, x):
+                    self.y = x
+            """)
+
+
+@pytest.mark.parametrize('ignore, update', [
+    [False, False],
+    [True, False],
+    [False, True]
+])
+def test_variables_annassign(ignore, update):
+    code = cst.parse_module(textwrap.dedent("""\
+        g: str = 1.0
+
+        class C:
+            x: int = 'foo'
+            x = x + x
+
+            def __init__(self, x):
+                self.y: None = x
+    """))
+
+    t = mk_var_transformer('foo.py', code,
+            override_annotations=ignore,
+            only_update_annotations=update)
+
+    code = t.transform_code(code)
+
+    if ignore:
+        assert code.code == textwrap.dedent("""\
+            g: float = 1.0
+
+            class C:
+                x: str = 'foo'
+                x = x + x
+
+                def __init__(self, x) -> None:
+                    self.y: int = x
+            """)
+    elif update:
+        assert code.code == textwrap.dedent("""\
+            g: float = 1.0
+
+            class C:
+                x: str = 'foo'
+                x = x + x
+
+                def __init__(self, x):
+                    self.y: int = x
+            """)
+    else:
+        assert code.code == textwrap.dedent("""\
+            g: str = 1.0
+
+            class C:
+                x: int = 'foo'
+                x = x + x
+
+                def __init__(self, x) -> None:
+                    self.y: None = x
+            """)
+
+
+def test_variables_assign_multiple():
+    # not yet supported
+    code = cst.parse_module(textwrap.dedent("""\
+        g = h = 1.0
+
+        class C:
+            x, y = 'foo'
+
+            def __init__(self, x):
+                self.y = self.z = x
+    """))
+
+    t = mk_var_transformer('foo.py', code)
+
+    code = t.transform_code(code)
+    assert code.code == textwrap.dedent("""\
+        g = h = 1.0
+
+        class C:
+            x, y = 'foo'
+
+            def __init__(self, x) -> None:
+                self.y = self.z = x
+        """)
+
+
+def test_variables_assign_tuple():
+    # not yet supported
+    code = cst.parse_module(textwrap.dedent("""\
+        h, (g, i) = 1, (1.0, 0)
+
+        class C:
+            x, y = 'foo', True
+
+            def __init__(self, x):
+                self.y, self.z = x, None
+    """))
+
+    t = mk_var_transformer('foo.py', code)
+
+    code = t.transform_code(code)
+    assert code.code == textwrap.dedent("""\
+        h, (g, i) = 1, (1.0, 0)
+
+        class C:
+            x, y = 'foo', True
+
+            def __init__(self, x) -> None:
+                self.y, self.z = x, None
         """)
