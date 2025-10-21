@@ -144,8 +144,11 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.name2module: dict[str, str] = {
             t.fullname(): t.module
             for ann in type_annotations.values()
-            for root in [arg[1] for arg in ann.args] + [ann.retval]
+            for root in [arg[1] for arg in ann.args] + [ann.retval] + [var[1] for var in ann.variables]
             for t in iter_types(root)
+        } | {
+            t.fullname(): t.module
+            for t in self.module_variables.values()
         }
 
     def _module_for(self, name: str) -> tuple[str, str]:
