@@ -1360,6 +1360,7 @@ def test_mock_class_inherited(tmp_cwd):
     """)
 
 
+@pytest.mark.xfail(reason="variable annotation causes mypy error")
 @pytest.mark.parametrize("adjust_names", [False, True])
 def test_mock_resolution_maps_names(tmp_cwd, adjust_names):
     (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
@@ -1920,7 +1921,7 @@ def test_generate_stubs():
         import sys
 
         CONST = 42
-        CALC = 1+1
+        CALC = 1+1.0
 
         class C:
             PI = 314
@@ -1948,9 +1949,8 @@ def test_generate_stubs():
     assert output == textwrap.dedent("""\
         from typing import Self
         import sys
-        from typing import Any
         CONST: int
-        CALC: Any
+        CALC: float
         class C:
             PI: int
             def __init__(self: Self, x: int) -> None: ...

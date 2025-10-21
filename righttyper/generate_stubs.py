@@ -54,6 +54,10 @@ class PyiTransformer(cst.CSTTransformer):
                             value=None
                         )
                     ]))
+            elif (isinstance(stmt, cst.SimpleStatementLine) and isinstance(stmt.body[0], cst.AnnAssign)):
+                result.append(cst.SimpleStatementLine(body=[
+                    stmt.body[0].with_changes(value=None)
+                ]))
 
         return result
 
