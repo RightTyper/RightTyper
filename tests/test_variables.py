@@ -61,12 +61,11 @@ def test_namedexpr_walrus_and_nested():
 
 def test_attribute_chains_and_subscripts():
     src = textwrap.dedent("""
-        def h(p):
-            (self.x).y = 5
-            self.x[0] = 2
+        x.y = 1
+        z[2] = None
         """)
     m = map_variables(src)
-    assert get(m, "h") == {"self.x.y", "self.x"}
+    assert get(m, "<module>") == set()
 
 
 def test_for_asyncfor_with_targets():
@@ -130,19 +129,32 @@ def test_import():
 
 def test_class_and_method_bodies():
     src = textwrap.dedent("""
+        class A:
+            def __init__(myself):
+                myself.a = None
+
         class C:
             y = 0
             def __init__(self):
                 self.z = 3
+                self.a = A()
+                self.a.a = 1
 
             class D:
                 z = "foo"
+
+        c = C()
+        c.z = 1
         """)
     m = map_variables(src)
-    assert get(m, "<module>") == {"C"}
+    assert get(m, "<module>") == {"A", "C", "c"}
+
+    assert get(m, "A") == set()
+    assert get(m, "A.__init__") == {"myself.a"}
+
     assert get(m, "C") == {"C.y", "C.D"}
     assert get(m, "C.D") == {"C.D.z"}
-    assert get(m, "C.__init__") == {"self.z"}
+    assert get(m, "C.__init__") == {"self.z", "self.a"}
 
 
 def test_class_and_method_bodies_nested():
@@ -161,6 +173,78 @@ def test_class_and_method_bodies_nested():
     assert get(m, "f.<locals>.C") == {"C.y", "C.D"}
     assert get(m, "f.<locals>.C.D") == {"C.D.z"}
     assert get(m, "f.<locals>.C.__init__") == {"self.z"}
+
+
+def test_self_not_in_method():
+    src = textwrap.dedent("""
+        def __init__(self):
+            self.a = None
+
+        class C:
+            @staticmethod
+            def foo(self):  # not the self you want
+                self.x = 0
+
+            @classmethod
+            def bar(self):  # class, not self
+                self.y = 0
+        """)
+    m = map_variables(src)
+
+    assert get(m, "__init__") == set()
+    assert get(m, "C.foo") == set()
+    assert get(m, "C.bar") == set()
+
+
+def test_self_nested_in_method():
+    src = textwrap.dedent("""
+        class C:
+            def f1(self):
+                def f():
+                    def g():
+                        self.x = 0
+
+            def f2(self):
+                def f():
+                    self = None
+                    def g():
+                        self.y = 0
+
+            def f3(self):
+                def f(self):
+                    def g():
+                        self.z = 0
+        """)
+    m = map_variables(src)
+
+    assert get(m, "C.f1.<locals>.f.<locals>.g") == {"self.x"}
+    assert get(m, "C.f2.<locals>.f.<locals>.g") == set()
+    assert get(m, "C.f3.<locals>.f.<locals>.g") == set()
+
+
+def test_self_attribute_in_various_methods():
+    src = textwrap.dedent("""
+        class C:
+            def __init__(self):
+                self.x = 1
+                def f():
+                    self.y = 2
+
+            def f(me):
+                me.x = 1
+                me.z = 3
+
+            def f2(myself):
+                myself.x = 1
+                myself.y = 2
+                myself.z = 3
+        """)
+    m = map_variables(src)
+
+    assert get(m, "C.__init__") == {"self.x"}
+    assert get(m, "C.__init__.<locals>.f") == {"self.y"}
+    assert get(m, "C.f") == {"me.z"}
+    assert get(m, "C.f2") == set()
 
 
 def test_lambdas_and_comprehensions_have_their_own_code_objects():

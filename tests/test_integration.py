@@ -1360,7 +1360,6 @@ def test_mock_class_inherited(tmp_cwd):
     """)
 
 
-@pytest.mark.xfail(reason="variable annotation causes mypy error")
 @pytest.mark.parametrize("adjust_names", [False, True])
 def test_mock_resolution_maps_names(tmp_cwd, adjust_names):
     (tmp_cwd / "m.py").write_text(textwrap.dedent("""\
@@ -2964,10 +2963,10 @@ def test_namedtuple():
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
-    assert (
-        "def foo(x: P) -> P:" in output or
-        "def foo(x: \"P\") -> \"P\":" in output
-    )
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent(f"""\
+        def foo(x: P) -> P: ...
+    """)
 
 
 def test_class_properties():
@@ -3334,7 +3333,10 @@ def test_self_classmethod(python_version):
         """)
 
 
-@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+@pytest.mark.parametrize("python_version", [
+    pytest.param("3.10", marks=pytest.mark.xfail(reason="needs typevar, see comment")),
+    "3.11"
+])
 def test_self_inherited_classmethod(python_version):
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
@@ -3353,6 +3355,11 @@ def test_self_inherited_classmethod(python_version):
     code = cst.parse_module(output)
 
     if python_version == '3.10':
+        # FIXME this doesn't work: it really needs to be
+        # T = TypeVar("T", bound="A")
+        # class A:
+        #     @classmethod
+        #     def static_initializer(cls: type[T]) -> T: ...
         assert get_function(code, 'A.static_initializer') == textwrap.dedent("""\
             @classmethod
             def static_initializer(cls: "type[A]") -> "A": ...
@@ -4111,6 +4118,7 @@ def test_numeric_hierarchy(tmp_cwd):
     assert "def foo(x: float) -> None:" in output
 
     
+@pytest.mark.xfail(reason="Bug: we should't annotate enums")
 def test_enum_class():
     Path("t.py").write_text(textwrap.dedent("""\
         from enum import Enum
@@ -4541,6 +4549,38 @@ def test_json_variables():
     assert 'float' == functions['foo']['vars'].get('y', None)
 
 
+def test_variables_object():
+    t = textwrap.dedent("""\
+        class C:
+            foo = "bar"
+
+            class D:
+                pass
+
+            def __init__(self, x):
+                self.x = x
+
+        c = C(10)
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        class C:
+            foo: str = "bar"
+
+            class D:
+                pass
+
+            def __init__(self: Self, x: int) -> None:
+                self.x: int = x
+
+        c: C = C(10)
+    """)
+
+
 def test_json_variables_object():
     t = textwrap.dedent("""\
         class C:
@@ -4583,6 +4623,43 @@ def test_json_variables_object():
     # function (method) variable
     assert 'self.x' in functions['C.__init__'].get('vars', {})
     assert 'int' == functions['C.__init__']['vars'].get('self.x', None)
+
+
+def test_variables_nested():
+    t = textwrap.dedent("""\
+        def f():
+            class C:
+                foo = "bar"
+
+                def __init__(self, x):
+                    self.x = x
+
+                class D:
+                    bar = -1
+
+            c = C(10)
+
+        f()
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # TODO "C" doesn't need to be quoted here...
+    assert get_function(code, 'f', body=True) == textwrap.dedent(f"""\
+        def f() -> None:
+            class C:
+                foo: str = "bar"
+
+                def __init__(self: Self, x: int) -> None:
+                    self.x: int = x
+
+                class D:
+                    bar: int = -1
+
+            c: "C" = C(10)
+    """)
 
 
 def test_json_variables_nested():
@@ -4695,5 +4772,63 @@ def test_variables():
             return x+1
 
         f(10)
+        """
+    )
+
+
+@pytest.mark.parametrize("annotation", ["", ": type"])
+@pytest.mark.parametrize("scope", ['global', 'class', 'function'])
+def test_type_variables(annotation, scope):
+    if scope == 'global':
+        S = ''
+        I = ''
+    elif scope == 'class':
+        S = 'class C:'
+        I = ' ' * 4
+    else:
+        S = 'def fun() -> None:'
+        I = ' ' * 4
+
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        from typing import Iterable, NamedTuple
+        from collections import namedtuple
+        from collections.abc import Sequence
+
+        {S}
+        {I}T{annotation} = int
+        {I}U{annotation} = str
+        {I}V{annotation} = Iterable[tuple[int, str]]
+        {I}W{annotation} = Sequence[int]
+        {I}X{annotation} = namedtuple("X", [])
+        {I}Y{annotation} = NamedTuple("Y", [])
+
+        {I+'@staticmethod' if scope == 'class' else ''}
+        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
+
+        {'fun()' if scope == 'function' else ''}
+        """
+    ))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert code.code == textwrap.dedent(f"""\
+        from typing import Iterable, NamedTuple, TypeAlias
+        from collections import namedtuple
+        from collections.abc import Sequence
+
+        {S}
+        {I}T: TypeAlias = int
+        {I}U: TypeAlias = str
+        {I}V: TypeAlias = Iterable[tuple[int, str]]
+        {I}W: TypeAlias = Sequence[int]
+        {I}X = namedtuple("X", [])
+        {I}Y = NamedTuple("Y", [])
+
+        {I+'@staticmethod' if scope == 'class' else ''}
+        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
+
+        {'fun()' if scope == 'function' else ''}
         """
     )

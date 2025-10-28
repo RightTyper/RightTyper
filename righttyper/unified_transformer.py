@@ -4,7 +4,7 @@ import collections.abc as abc
 from dataclasses import dataclass
 import libcst as cst
 import libcst.matchers as cstm
-from libcst.metadata import MetadataWrapper, PositionProvider
+from libcst.metadata import MetadataWrapper, PositionProvider, QualifiedNameProvider
 import re
 
 from righttyper.righttyper_types import (
@@ -107,7 +107,7 @@ def _quote(s: str) -> str:
 
 
 class UnifiedTransformer(cst.CSTTransformer):
-    METADATA_DEPENDENCIES = (PositionProvider,)
+    METADATA_DEPENDENCIES = (PositionProvider, QualifiedNameProvider)
 
     def __init__(
         self,
@@ -399,7 +399,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def _get_var(self, target: cst.Name|cst.Attribute) -> tuple[str, TypeInfo] | None:
         if (func_scope_index := list_rindex(self.name_stack, '<locals>')):
-            func_scope_index = len(self.name_stack) - func_scope_index
+            func_scope_index = len(self.name_stack) + func_scope_index + 1
 
         name = ".".join(self.name_stack[func_scope_index:] + [_nodes_to_dotted_name(target)])
         if name in self.vars_handled_stack[-1]:
@@ -432,6 +432,16 @@ class UnifiedTransformer(cst.CSTTransformer):
         return True
 
 
+    def _is_namedtuple(self, assign_value: cst.CSTNode) -> bool:
+        if isinstance(assign_value, cst.Call):
+            return any(
+                qn.name in ('collections.namedtuple', 'typing.NamedTuple')
+                for qn in self.get_metadata(QualifiedNameProvider, assign_value.func)
+            )
+
+        return False
+
+
     def leave_Assign(self, node: cst.Assign, updated_node: cst.Assign) -> cst.Assign|cst.AnnAssign:
         if (
             len(updated_node.targets) != 1  # no a = b = ...
@@ -448,6 +458,13 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         if self.only_update_annotations:
             return updated_node
+
+        if var_type.fullname() == 'type':
+            if self._is_namedtuple(node.value):
+                return updated_node
+
+            # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
+            var_type = TypeInfo('typing', 'TypeAlias')
 
         return cst.AnnAssign(
             target=updated_node.targets[0].target,
@@ -470,6 +487,16 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         if not self.override_annotations and not self.only_update_annotations:
             return updated_node
+
+        if var_type.fullname() == 'type':
+            if self._is_namedtuple(node.value):
+                return cst.Assign(
+                    targets=[cst.AssignTarget(updated_node.target)],
+                    value=updated_node.value
+                )
+
+            # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
+            var_type = TypeInfo('typing', 'TypeAlias')
 
         return updated_node.with_changes(
             annotation=cst.Annotation(annotation=self._get_annotation_expr(var_type))
@@ -527,7 +554,17 @@ class UnifiedTransformer(cst.CSTTransformer):
         fr = FindGenerics()
         fr.visit(annotation)
 
-        annotation_expr: cst.BaseExpression = cst.parse_expression(str(annotation))
+        ann_str = str(annotation)
+        # check for function-local types
+        if '.<locals>.' in ann_str:
+            context = ".".join([self.module_name] + self.name_stack) + "."
+            if ann_str.startswith(context):
+                ann_str = ann_str[len(context):]
+
+            if '.<locals>.' in ann_str: # type is from a function within this one
+                return None
+
+        annotation_expr: cst.BaseExpression = cst.parse_expression(ann_str)
         annotation_expr = self._rename_types(annotation_expr)
         unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
         self.unknown_types |= unknown_types - fr.generics

@@ -74,6 +74,8 @@ class VariableFinder(ast.NodeVisitor):
         self._qualname_stack: list[str] = []
         self._code_stack: list[str] = ['<module>']
         self._scope_stack: list[list[str]] = [[]]
+        self._self_stack: list[str|None] = [None]
+        self._known_attributes: list[set[str]] = [set()]
         self.code_vars: dict[str, tuple[str, dict[str, str]]] = dict()
 
     def _record_name(self, name: str) -> None:
@@ -86,18 +88,65 @@ class VariableFinder(ast.NodeVisitor):
         codevars[1][dst_name] = name
 
     def _record_target(self, t: ast.AST) -> None:
-        self._record_name(_extract_name(t))
+        if isinstance(t, ast.Name):
+            self._record_name(t.id)
+            if t.id == self._self_stack[-1]:
+                self._self_stack[-1] = None # a new assignment masked 'self'
+        elif (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)):
+            if t.value.id == self._self_stack[-1]:
+                # attributes can only be annotated once
+                # TODO check this in the transformer instead?
+                if t.attr not in self._known_attributes[-1]:
+                    self._record_name(f"{t.value.id}.{t.attr}")
+                    self._known_attributes[-1].add(t.attr)
 
     def _qualname(self) -> str:
         return '.'.join(self._qualname_stack)
 
     def visit_FunctionDef(self, node: ast.FunctionDef|ast.AsyncFunctionDef) -> None:
+        decorator_names = [
+            n.id
+            for n in node.decorator_list
+            if isinstance(n, ast.Name)
+        ]
+
+        is_method = (
+            bool(self._qualname_stack)
+            and self._qualname_stack[-1] != '<locals>'
+            and 'staticmethod' not in decorator_names
+            and 'classmethod' not in decorator_names
+        )
+
+        self_visible = (
+            bool(self._self_stack[-1])
+            and not any(
+                # 'self' masked by an inner function's argument
+                n.arg == self._self_stack[-1]
+                for n in ast.walk(node.args)
+                if isinstance(n, ast.arg)
+            )
+        )
+
         self._qualname_stack.append(node.name)
         self._code_stack.append(self._qualname())
         self._qualname_stack.append('<locals>')
         self._scope_stack.append([*self._qualname_stack])
+        if is_method:
+            self._self_stack.append(next((
+                    n.arg
+                    for n in ast.walk(node.args)
+                    if isinstance(n, ast.arg)
+                ), None
+            ))
+        elif self_visible:
+            self._self_stack.append(self._self_stack[-1])
+        else:
+            self._self_stack.append(None)
+
         self.generic_visit(node)
-        self._qualname_stack.pop();
+
+        self._self_stack.pop()
+        self._qualname_stack.pop()
         self._code_stack.pop()
         self._scope_stack.pop()
         self._qualname_stack.pop()
@@ -109,9 +158,13 @@ class VariableFinder(ast.NodeVisitor):
         self._record_name(node.name)
         self._qualname_stack.append(node.name)
         self._code_stack.append(self._qualname())
+        self._known_attributes.append(set())
+
         self.generic_visit(node)
+
+        self._known_attributes.pop()
         self._code_stack.pop()
-        self._qualname_stack.pop();
+        self._qualname_stack.pop()
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         # any NamedExpr within stay within the lambda's scope
