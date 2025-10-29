@@ -4774,6 +4774,40 @@ def test_variables():
     )
 
 
+def test_variables_type_from_nested():
+    # TODO we could instead just not annotate the variable...
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f():
+            def g():
+                class C:
+                    pass
+                return C()
+
+            c = g()
+
+        f()
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert code.code == textwrap.dedent("""\
+        from typing import Any
+        def f() -> None:
+            def g():
+                class C:
+                    pass
+                return C()
+
+            c: Any = g()
+
+        f()
+        """
+    )
+
+
 @pytest.mark.parametrize("annotation", ["", ": type"])
 @pytest.mark.parametrize("scope", ['global', 'class', 'function'])
 def test_type_variables(annotation, scope):
