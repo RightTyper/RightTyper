@@ -316,12 +316,10 @@ class UnifiedTransformer(cst.CSTTransformer):
         
         return (updated_ann, tr.generics)
                     
-    def _is_overload(self, decorator: cst.Decorator):
-        """Test if the given decorator is an `@overload` decorator."""
-
+    def _decorator_is(self, decorator: cst.Decorator, qualified_name: str):
         try:
             return any(
-                qn.name == 'typing.overload'
+                qn.name == qualified_name
                 for qn in self.get_metadata(QualifiedNameProvider, decorator)
             )
         except NameError:
@@ -603,8 +601,13 @@ class UnifiedTransformer(cst.CSTTransformer):
             if base.keyword is None
             for qn in self.get_metadata(QualifiedNameProvider, base.value)
         )
+        is_dataclass = any(
+            self._decorator_is(decorator, 'dataclasses.dataclass')
+            for decorator in node.decorators
+        )
+
         self.class_is_enum[name] = is_enum
-        self.annotate_vars_stack.append(not is_enum)
+        self.annotate_vars_stack.append(not (is_enum or is_dataclass))
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
@@ -739,8 +742,10 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.overload_stack[-1] = []
             self.overload_name_stack[-1] = func_name
 
-        is_overload = any(self._is_overload(decorator)
-                          for decorator in original_node.decorators)
+        is_overload = any(
+            self._decorator_is(decorator, 'typing.overload')
+            for decorator in original_node.decorators
+        )
 
         # If our function is an overload signature, we append it to the overload list.
         # NOTE: This check technically misses if @overload is aliased or used as

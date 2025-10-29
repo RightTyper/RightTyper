@@ -4940,3 +4940,123 @@ def test_type_variables(annotation, scope):
         {'fun()' if scope == 'function' else ''}
         """
     )
+
+
+@pytest.mark.dont_run_mypy # annotations in source are wrong to test if they are corrected
+def test_variables_dataclass():
+    # TODO dataclasses are not yet supported
+    Path("t.py").write_text(textwrap.dedent("""\
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class C:
+            x: bool
+            y: str = 1
+            z: int = field(default_factory=set)
+
+        c = C('tada')
+        """
+    ))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class C:
+            x: bool
+            y: str = 1
+            z: int = field(default_factory=set)
+
+        c: C = C('tada')
+        """
+    )
+#    assert output == textwrap.dedent("""\
+#        from dataclasses import dataclass, field
+#
+#        @dataclass
+#        class C:
+#            x: str
+#            y: int = 1
+#            z: set = field(default_factory=set)
+#
+#        c: C = C('tada')
+#        """
+#    )
+
+
+def test_variables_slots():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            __slots__ = ('x', 'y', 'z')
+
+            def __init__(self, x):
+                self.x = x
+                self.y = {}
+
+        c = C('tada')
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import Never, Self
+        class C:
+            __slots__: tuple[str, str, str] = ('x', 'y', 'z')
+
+            def __init__(self: Self, x: str) -> None:
+                self.x: str = x
+                self.y: dict[Never, Never] = {}
+
+        c: C = C('tada')
+        """
+    )
+
+
+@pytest.mark.xfail(reason="self._x type leads to mypy error")
+def test_variables_properties():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x = None
+
+            @property
+            def x(self):
+                return str(self._x)
+
+            @x.setter
+            def x(self, value):
+                self._x = value
+
+        c = C()
+        c.x = 10  # type: ignore[assignment]
+        y = c.x
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        class C:
+            def __init__(self: Self) -> None:
+                self._x: None = None
+
+            @property
+            def x(self: Self) -> str:
+                return str(self._x)
+
+            @x.setter
+            def x(self: Self, value: int) -> None:
+                self._x = value
+
+        c: C = C()
+        c.x = 10  # type: ignore[assignment]
+        y: str = c.x
+        """
+    )
