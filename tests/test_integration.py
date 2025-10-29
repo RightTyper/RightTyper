@@ -4118,7 +4118,6 @@ def test_numeric_hierarchy(tmp_cwd):
     assert "def foo(x: float) -> None:" in output
 
     
-@pytest.mark.xfail(reason="Bug: we should't annotate enums")
 def test_enum_class():
     Path("t.py").write_text(textwrap.dedent("""\
         from enum import Enum
@@ -4155,6 +4154,82 @@ def test_enum_class():
         @classmethod
         def from_str(cls: "type[Decision]", s: str) -> "Decision": ...
     """)
+
+
+def test_enum_class_indirect():
+    source = textwrap.dedent("""\
+        from enum import Enum
+
+        class A:
+            pass
+
+        class B:
+            class B2(Enum):
+                pass
+
+        class C(A, B.B2):
+            NO = 0
+            YES = 1
+            MAYBE = 2
+
+            def foo(self):
+                x = 10
+
+        C(0).foo()
+        """
+    )
+
+    Path("t.py").write_text(source)
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        from enum import Enum
+
+        class A:
+            pass
+
+        class B:
+            class B2(Enum):
+                pass
+
+        class C(A, B.B2):
+            NO = 0
+            YES = 1
+            MAYBE = 2
+
+            def foo(self: Self) -> None:
+                x: int = 10
+
+        C(0).foo()
+        """)
+
+
+def test_enum_class_other_classes():
+    source = textwrap.dedent("""\
+        import enum
+
+        class A(enum.StrEnum):
+            RED = "red"
+            GREEN = "green"
+
+        @enum.verify(enum.NAMED_FLAGS)
+        class B(enum.Flag):
+            ONE = 1
+            TWO = 2
+
+        class StrictFlag(enum.Flag, boundary=enum.STRICT):
+            RED = enum.auto()
+            GREEN = enum.auto()
+        """
+    )
+
+    Path("t.py").write_text(source)
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert output == source
 
 
 @pytest.mark.parametrize("options", [

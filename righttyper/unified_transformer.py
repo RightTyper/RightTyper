@@ -340,8 +340,17 @@ class UnifiedTransformer(cst.CSTTransformer):
         # The current list of overloaded function names that are in each scope.
         self.overload_name_stack: list[str] = [""]
 
+        # The annotation for the current function, if any
         self.func_ann_stack: list[FuncAnnotation|None] = [None]
+
+        # The variables already handled in this scope
         self.vars_handled_stack: list[set] = [set()]
+
+        # Whether to annotate variables in this scope
+        self.annotate_vars_stack: list[bool] = [True]
+
+        # A map indicating whether classes seen in this module inherit from enum.Enum
+        self.class_is_enum: dict[str, bool] = dict()
         return True
 
 
@@ -447,7 +456,8 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def leave_Assign(self, node: cst.Assign, updated_node: cst.Assign) -> cst.Assign|cst.AnnAssign:
         if (
-            len(updated_node.targets) != 1  # no a = b = ...
+            not self.annotate_vars_stack[-1]
+            or len(updated_node.targets) != 1  # no a = b = ...
             or not (
                 isinstance(target := updated_node.targets[0].target, cst.Name)
                 or (isinstance(target, cst.Attribute) and isinstance(target.value, cst.Name))
@@ -483,9 +493,12 @@ class UnifiedTransformer(cst.CSTTransformer):
         return True
 
     def leave_AnnAssign(self, node: cst.AnnAssign, updated_node: cst.AnnAssign) -> cst.AnnAssign|cst.Assign:
-        if not (
-            isinstance(target := updated_node.target, cst.Name)
-            or (isinstance(target, cst.Attribute) and isinstance(target.value, cst.Name))
+        if (
+            not self.annotate_vars_stack[-1]
+            or not (
+                isinstance(target := updated_node.target, cst.Name)
+                or (isinstance(target, cst.Attribute) and isinstance(target.value, cst.Name))
+            )
         ):
             return updated_node
 
@@ -524,9 +537,20 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         self.overload_stack.append([])
         self.overload_name_stack.append("")
+
+        name = '.'.join(self.name_stack)
+        is_enum = any(
+            qn.name.startswith('enum.') or self.class_is_enum.get(qn.name, False)
+            for base in node.bases
+            if base.keyword is None
+            for qn in self.get_metadata(QualifiedNameProvider, base.value)
+        )
+        self.class_is_enum[name] = is_enum
+        self.annotate_vars_stack.append(not is_enum)
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
+        self.annotate_vars_stack.pop()
         # a class is known once its definition is done
         self.known_names.add(".".join(self.name_stack))
         self.name_stack.pop()
@@ -550,6 +574,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         key = FuncId(Filename(self.filename), first_line, FunctionName(name))
         self.func_ann_stack.append(self.type_annotations.get(key))
         self.vars_handled_stack.append(set())
+        self.annotate_vars_stack.append(True)
         return True
 
     def _get_annotation_expr(self, annotation: TypeInfo) -> cst.BaseExpression:
@@ -639,6 +664,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef | cst.FlattenSentinel | cst.RemovalSentinel:
         func_name = ".".join(self.name_stack[:-1])
+        self.annotate_vars_stack.pop()
         self.name_stack.pop()
         self.name_stack.pop()
         self.used_names.pop()
