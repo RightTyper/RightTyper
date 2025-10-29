@@ -4284,8 +4284,6 @@ def test_overload_ignore_annotations_generic(tmp_cwd):
     assert function_list[0].strip() == "def foo[T1: (int, str)](bar: T1) -> T1: ..."
 
 
-# Currently, we don't handle multiple aliases of the same module.
-@pytest.mark.xfail()
 def test_overload_alias_multiple(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         import typing as alias1, typing as alias2
