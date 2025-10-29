@@ -2600,3 +2600,48 @@ def test_variables_assign_tuple():
             def __init__(self, x) -> None:
                 self.y, self.z = x, None
         """)
+
+
+def test_attribute_of_subscript():
+    """Replicates a bug not sufficiently checking assignment targets in unified_transformer.
+       Note that "self.x[0].x: int = 2" is not a valid annotation.
+    """
+    code = cst.parse_module(textwrap.dedent("""\
+        from typing import NamedTuple, Self
+        T = NamedTuple("T", ['x'])
+
+        class C:
+            def __init__(self):
+                self.x = [T(0), T(1)]
+                self.x[0].x: int = 2
+                self.x[0].x = 2
+
+        s = C()
+        """))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                get_funcid('foo.py', code, 'C.__init__'): FuncAnnotation(
+                    [],
+                    TypeInfo("", "None"),
+                    varargs=None, kwargs=None,
+                    variables=[
+                        (VariableName('self.x'), TypeInfo('', 'list', args=(TypeInfo("foo", "T"),)))
+                    ]
+                ),
+            },
+            module_variables = ModuleVars([]),
+            override_annotations=True,
+            only_update_annotations=False,
+            inline_generics=False,
+            module_name='foo'
+        )
+
+    code = t.transform_code(code)
+    function = get_function(code, "C.__init__")
+    assert function == textwrap.dedent("""\
+        def __init__(self) -> None:
+            self.x: list[T] = [T(0), T(1)]
+            self.x[0].x: int = 2
+            self.x[0].x = 2
+        """)

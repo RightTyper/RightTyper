@@ -447,12 +447,14 @@ class UnifiedTransformer(cst.CSTTransformer):
     def leave_Assign(self, node: cst.Assign, updated_node: cst.Assign) -> cst.Assign|cst.AnnAssign:
         if (
             len(updated_node.targets) != 1  # no a = b = ...
-            # no tuples (a, b) = ...
-            or not isinstance(updated_node.targets[0].target, (cst.Name, cst.Attribute))
+            or not (
+                isinstance(target := updated_node.targets[0].target, cst.Name)
+                or (isinstance(target, cst.Attribute) and isinstance(target.value, cst.Name))
+            )
         ):
             return updated_node
 
-        if not (var_name_and_type := self._get_var(updated_node.targets[0].target)):
+        if not (var_name_and_type := self._get_var(target)):
             return updated_node
 
         name, var_type = var_name_and_type
@@ -469,7 +471,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             var_type = TypeInfo('typing', 'TypeAlias')
 
         return cst.AnnAssign(
-            target=updated_node.targets[0].target,
+            target=target,
             annotation=cst.Annotation(annotation=self._get_annotation_expr(var_type)),
             value=updated_node.value
         )
@@ -479,9 +481,14 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.known_names.add(".".join(self.name_stack + [node.target.value]))
         return True
 
-    def leave_AnnAssign(self, node: cst.AnnAssign, updated_node: cst.AnnAssign) -> cst.AnnAssign:
-        assert isinstance(updated_node.target, (cst.Name, cst.Attribute))
-        if not (var_name_and_type := self._get_var(updated_node.target)):
+    def leave_AnnAssign(self, node: cst.AnnAssign, updated_node: cst.AnnAssign) -> cst.AnnAssign|cst.Assign:
+        if not (
+            isinstance(target := updated_node.target, cst.Name)
+            or (isinstance(target, cst.Attribute) and isinstance(target.value, cst.Name))
+        ):
+            return updated_node
+
+        if not (var_name_and_type := self._get_var(target)):
             return updated_node
 
         name, var_type = var_name_and_type
@@ -493,7 +500,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         if var_type.fullname() == 'type':
             if self._is_namedtuple(node.value):
                 return cst.Assign(
-                    targets=[cst.AssignTarget(updated_node.target)],
+                    targets=[cst.AssignTarget(target)],
                     value=updated_node.value
                 )
 
