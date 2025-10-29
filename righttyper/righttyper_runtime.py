@@ -664,7 +664,7 @@ def get_value_type(
         return _type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
     elif isinstance(value, type) and value is not type:
         return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
-    elif isinstance(value, (typing._GenericAlias, GenericAlias)):
+    elif isinstance(value, (type(typing.Generic[T]), GenericAlias)):    # type: ignore[index]
         return TypeInfo("", "type")
     elif t.__module__ == "builtins":
         if in_builtins_import(t):

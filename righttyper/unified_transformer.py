@@ -13,7 +13,8 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     ModuleVars,
     FunctionName,
-    TypeInfo
+    TypeInfo,
+    UnknownTypeInfo
 )
 
 
@@ -117,7 +118,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         override_annotations: bool,
         only_update_annotations: bool,
         inline_generics: bool,
-        module_name: str|None
+        module_name: str
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
@@ -431,7 +432,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         return True
 
 
-    def _is_namedtuple(self, assign_value: cst.CSTNode) -> bool:
+    def _is_namedtuple(self, assign_value: cst.BaseExpression | None) -> bool:
         if isinstance(assign_value, cst.Call):
             try:
                 return any(
@@ -499,6 +500,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         if var_type.fullname() == 'type':
             if self._is_namedtuple(node.value):
+                assert updated_node.value is not None # checked by is_namedtuple
                 return cst.Assign(
                     targets=[cst.AssignTarget(target)],
                     value=updated_node.value
@@ -570,8 +572,9 @@ class UnifiedTransformer(cst.CSTTransformer):
             if ann_str.startswith(context):
                 ann_str = ann_str[len(context):]
 
-            if '.<locals>.' in ann_str: # type is from a function within this one
-                return None
+            if '.<locals>.' in ann_str:
+                # the type comes from a nested function; we can't refer to it
+                ann_str = str(UnknownTypeInfo)
 
         annotation_expr: cst.BaseExpression = cst.parse_expression(ann_str)
         annotation_expr = self._rename_types(annotation_expr)
