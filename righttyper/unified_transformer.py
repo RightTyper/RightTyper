@@ -18,13 +18,51 @@ from righttyper.righttyper_types import (
 )
 
 
-@dataclass(eq=True, frozen=True)
-class ExtendedFunctionDef:
-    # The list of CST elements before the actual `FunctionDef` node which are
-    # associated with that node
-    prefix: typing.Sequence[cst.SimpleStatementLine | cst.BaseCompoundStatement]
-    # The primary `FunctionDef` node
-    primary: cst.FunctionDef
+ChangeStmtList: typing.TypeAlias = typing.Sequence[cst.SimpleStatementLine | cst.BaseCompoundStatement | cst.FunctionDef]
+
+@dataclass(frozen=True)
+class Change:
+    """Describes a change made to the source code."""
+    scope: str
+    before: ChangeStmtList
+    after: ChangeStmtList
+
+
+    @staticmethod
+    def _format_stmts(stmts: ChangeStmtList) -> str:
+        """Formats change statements."""
+
+        class FuncBodyRemover(cst.CSTTransformer):
+            def leave_FunctionDef(
+                self,
+                original_node: cst.FunctionDef,
+                updated_node: cst.FunctionDef
+            ) -> cst.FunctionDef:
+                return updated_node.with_changes(
+                    body=cst.SimpleStatementSuite([cst.Expr(cst.Ellipsis())])
+                )
+
+            def leave_Decorator(
+                self,
+                original_node: cst.Decorator,
+                updated_node: cst.Decorator
+            ) -> cst.RemovalSentinel:
+                return cst.RemoveFromParent()
+
+        bodyless = [
+            typing.cast(cst.FunctionDef, it.visit(FuncBodyRemover())) if isinstance(it, cst.FunctionDef) else it
+            for it in stmts
+        ]
+
+        # remove " ..." from the FunctionDef body deletion, if present
+        return cst.Module(bodyless).code.strip().removesuffix(" ...")
+
+    def format(self) -> tuple[str, str, str]:
+        return (
+            self.scope,
+            Change._format_stmts(self.before),
+            Change._format_stmts(self.after)
+        )
 
 
 _BUILTIN_TYPES : frozenset[str] = frozenset({
@@ -133,7 +171,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.inline_generics = inline_generics
         self.has_future_annotations = False
         self.module_name = module_name
-        self.change_list: list[tuple[FunctionName, ExtendedFunctionDef, ExtendedFunctionDef]] = []
+        self.change_list: list[Change] = []
 
         # TODO Ideally we'd use TypeInfo.module and avoid this as well as _module_for
         def iter_types(t: TypeInfo):
@@ -453,6 +491,12 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         return False
 
+    def _record_var_change(self, old: cst.Assign|cst.AnnAssign, new: cst.Assign|cst.AnnAssign) -> None:
+        self.change_list.append(Change(
+            ".".join(self.name_stack) if self.name_stack else '<module>',
+            [cst.SimpleStatementLine([old])],
+            [cst.SimpleStatementLine([new])]
+        ))
 
     def leave_Assign(self, node: cst.Assign, updated_node: cst.Assign) -> cst.Assign|cst.AnnAssign:
         if (
@@ -481,11 +525,15 @@ class UnifiedTransformer(cst.CSTTransformer):
             # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
             var_type = TypeInfo('typing', 'TypeAlias')
 
-        return cst.AnnAssign(
+        new_node = cst.AnnAssign(
             target=target,
             annotation=cst.Annotation(annotation=self._get_annotation_expr(var_type)),
             value=updated_node.value
         )
+
+        self._record_var_change(node, new_node)
+        return new_node
+
 
     def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
         if isinstance(node.target, cst.Name):
@@ -511,20 +559,30 @@ class UnifiedTransformer(cst.CSTTransformer):
         if not self.override_annotations and not self.only_update_annotations:
             return updated_node
 
+        new_node: cst.AnnAssign|cst.Assign
+
         if var_type.fullname() == 'type':
             if self._is_namedtuple(node.value):
                 assert updated_node.value is not None # checked by is_namedtuple
-                return cst.Assign(
+
+                new_node = cst.Assign(
                     targets=[cst.AssignTarget(target)],
                     value=updated_node.value
                 )
 
+                self._record_var_change(node, new_node)
+                return new_node
+
             # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
             var_type = TypeInfo('typing', 'TypeAlias')
 
-        return updated_node.with_changes(
+        new_node = updated_node.with_changes(
             annotation=cst.Annotation(annotation=self._get_annotation_expr(var_type))
         )
+
+        self._record_var_change(node, new_node)
+        return new_node
+
 
     def visit_NamedExpr(self, node: cst.NamedExpr) -> bool:
         if isinstance(node.target, cst.Name):
@@ -826,9 +884,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                     pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:first_comment])
                     updated_node = updated_node.with_changes(leading_lines=leading_lines[first_comment:])
 
-            original_function_def = ExtendedFunctionDef(original_overloads, original_node)
-            updated_function_def = ExtendedFunctionDef(pre_function, updated_node)
-            self.change_list.append((FunctionName(func_name), original_function_def, updated_function_def))
+            self.change_list.append(Change(
+                func_name,
+                original_overloads + [original_node],
+                pre_function + [updated_node]
+            ))
             
             return cst.FlattenSentinel([*pre_function, updated_node]) if pre_function else updated_node
 
@@ -974,14 +1034,10 @@ class UnifiedTransformer(cst.CSTTransformer):
         return updated_node.with_changes(body=new_body)
 
 
-    def get_signature_changes(self: typing.Self) -> list[tuple[FunctionName, str, str]]:
+    def get_changes(self: typing.Self) -> list[tuple[str, str, str]]:
         return [
-            (name, old_sig, new_sig)
-            for name, old_sig, new_sig in (
-                (name, format_signature(old), format_signature(new))
-                for name, old, new in self.change_list
-            )
-            if new_sig != old_sig
+            change.format()
+            for change in self.change_list
         ]
 
 
@@ -1089,32 +1145,3 @@ def list_rindex(lst: list, item: object) -> int:
         return -1 - lst[::-1].index(item)
     except ValueError:
         return 0
-
-
-def format_signature(f: ExtendedFunctionDef) -> str:
-    """Formats the signature of a function."""
-
-    class BodyRemover(cst.CSTTransformer):
-        def leave_FunctionDef(
-            self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
-        ) -> cst.FunctionDef:
-            return updated_node.with_changes(body=cst.IndentedBlock(body=[
-                cst.SimpleStatementLine(body=[])
-            ]))
-
-        def leave_Decorator(
-            self, original_node: cst.Decorator, updated_node: cst.Decorator
-        ) -> cst.RemovalSentinel:
-            return cst.RemoveFromParent()
-
-    # Here, we remove the body from the primary function and convert the whole
-    # sequence (prefix, primary) into a string
-    bodyless = typing.cast(cst.FunctionDef, f.primary.visit(BodyRemover()))
-    sig = cst.Module([*f.prefix, bodyless]).code.strip()
-
-    # It's easier to let libcst generate "pass" for an empty body and then remove it
-    # than to find a way to have it emit a bodyless function...
-    if sig.endswith("pass"):
-        sig = sig[:-4].strip()
-
-    return sig

@@ -214,8 +214,8 @@ def test_transform_function():
 
     assert get_if_type_checking(code) is None
 
-    sig_changes = sorted(t.get_signature_changes())
-    it = iter(sig_changes)
+    changes = sorted(t.get_changes())
+    it = iter(changes)
 
     name, old, new = next(it)
     assert name == 'baz'
@@ -297,8 +297,8 @@ def test_transform_method():
 
     assert get_if_type_checking(code) is None
 
-    sig_changes = sorted(t.get_signature_changes())
-    it = iter(sig_changes)
+    changes = sorted(t.get_changes())
+    it = iter(changes)
 
     name, old, new = next(it)
     assert name == 'C.bar'

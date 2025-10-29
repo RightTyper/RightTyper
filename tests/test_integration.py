@@ -4437,7 +4437,7 @@ def test_overload_alias(tmp_cwd, impoht, decorator):
     assert function_list[0].strip() == "def foo(x: int|str, y: int|str) -> None: ..."
 
 
-def test_capture_non_inline_typevar():
+def test_log_includes_non_inline_typevar():
     t = textwrap.dedent("""\
         ...
         # comment and emptyline
@@ -4451,6 +4451,7 @@ def test_capture_non_inline_typevar():
 
     rt_run("--no-sampling", "--python-version=3.11", "t.py")
     output = Path("righttyper.out").read_text()
+    print(output)
 
     res = textwrap.dedent("""\
         + rt_T1 = TypeVar("rt_T1", int, str)

@@ -1,5 +1,6 @@
 import logging
 import pathlib
+from typing import TypeAlias
 
 import libcst as cst
 
@@ -17,7 +18,7 @@ from righttyper.righttyper_utils import (
 from righttyper.unified_transformer import UnifiedTransformer
 from righttyper.logger import logger
 
-SignatureChanges = tuple[Filename, list[tuple[FunctionName, str, str]]]
+SignatureChanges: TypeAlias = tuple[Filename, list[tuple[str, str, str]]]
 
 
 def correct_indentation_issues(file_contents: str) -> str:
@@ -118,9 +119,9 @@ def process_file(
         print(f"Failed to transform {filename}.")
         raise
 
-    changes = transformer.get_signature_changes()
+    changes = transformer.get_changes()
 
-    if output_files: # and changes:  FIXME variable changes aren't captured in 'changes' yet
+    if output_files and changes:
         if overwrite:
             with open(filename + ".bak", "w") as file:
                 file.write(source)
