@@ -1,14 +1,20 @@
 import ast
 import types
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from collections import defaultdict
 import collections.abc as abc
 
 
-@dataclass(eq=True, frozen=True)
+@dataclass
 class CodeVars:
-    scope: types.CodeType       # code object in whose scope we're storing variables
-    variables: dict[str, str]   # maps name in f_locals to name in scope
+    # qualified name of code object in whose scope we're storing variables
+    scope: str
+
+    # that code object
+    scope_code: types.CodeType | None = None
+
+    # maps name in f_locals to name in scope
+    variables: dict[str, str] = field(default_factory=dict)
 
 
 """Maps code objects to the variables assigned/bound within each object."""
@@ -76,16 +82,15 @@ class VariableFinder(ast.NodeVisitor):
         self._scope_stack: list[list[str]] = [[]]
         self._self_stack: list[str|None] = [None]
         self._known_attributes: list[set[str]] = [set()]
-        self.code_vars: dict[str, tuple[str, dict[str, str]]] = dict()
+        self.code_vars: dict[str, CodeVars] = dict()
 
     def _record_name(self, name: str) -> None:
         scope = self._scope_stack[-1]
         codevars = self.code_vars.setdefault(self._code_stack[-1],
-            # -1 to omit "<locals>"
-            ('.'.join(scope[:-1]) if scope else '<module>', {})
+            CodeVars('.'.join(scope[:-1]) if scope else '<module>') # -1 to omit "<locals>"
         )
         dst_name = '.'.join(self._qualname_stack[len(scope):] + [name])
-        codevars[1][name] = dst_name
+        codevars.variables[name] = dst_name
 
     def _record_target(self, t: ast.AST) -> None:
         if isinstance(t, ast.Name):
@@ -258,8 +263,8 @@ def map_variables(tree: ast.Module, module_code: types.CodeType) -> dict[types.C
     }
 
     return {
-        co: CodeVars(scope, code_vars[1])
+        co: replace(codevars, scope_code=scope_code)
         for co in qualname2code.values()
-        if (code_vars := f.code_vars.get(co.co_qualname))
-        if (scope := qualname2code.get(code_vars[0]))
+        if (codevars := f.code_vars.get(co.co_qualname))
+        if (scope_code := qualname2code.get(codevars.scope))
     }
