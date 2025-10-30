@@ -38,7 +38,7 @@ import click
 
 from righttyper.righttyper_process import (
     process_file,
-    SignatureChanges
+    CodeChanges
 )
 from righttyper.righttyper_runtime import (
     find_function,
@@ -1184,13 +1184,13 @@ def execute_script_or_module(
             raise
 
 
-def output_signatures(
-    sig_changes: list[SignatureChanges],
+def output_changes(
+    code_changes: list[CodeChanges],
     file: TextIO = sys.stdout,
 ) -> None:
     import difflib
 
-    for filename, changes in sorted(sig_changes):
+    for filename, changes in sorted(code_changes):
         if not changes:
             continue
 
@@ -1210,90 +1210,95 @@ def output_signatures(
             print("".join(diffs), file=file)
 
 
+def emit_json(collected: dict[str, Any], code_changes: list[CodeChanges]) -> dict[str, Any]:
+    file2module = {file: module for file, module in collected['files']}
+    file_func2sigs = {
+        (file, funcname): (old_sig, new_sig)
+        for file, changes in code_changes
+        for funcname, old_sig, new_sig in changes
+    }
+
+    data: dict[str, Any] = {
+        'meta': {
+            'software': TOOL_NAME,
+            'version': importlib.metadata.version(TOOL_NAME),
+            'timestamp': datetime.datetime.now().isoformat(),
+        },
+        'files': {
+            funcid.file_name: {
+                'module': file2module.get(funcid.file_name),
+                'functions': {},
+            }
+            for funcid in sorted(
+                collected.get('type_annotations', {}) | collected.get('module_vars', {})
+            )
+        }
+    }
+
+    # fill in functions
+    for funcid, ann in collected['type_annotations'].items():
+        if funcid.func_name.endswith(">"):  # <genexpr> and such
+            continue
+
+        func_json_name = funcid.func_name.replace(".<locals>.", ".")
+        file_functions: dict[str, Any] = data['files'][funcid.file_name]['functions']
+        if func_json_name in file_functions:
+            continue  # TODO handle functions with the same name
+
+        # varargs/kwargs arguments are implicitly tuples and dicts in annotations,
+        # but lacking the context given by their names prefixed by * or **, in JSON
+        # we want to be explicit about those types.
+        def argtype(name: str, t: TypeInfo) -> str:
+            if name == ann.varargs:
+                return str(TypeInfo.from_type(tuple, module='', args=(t, ...)))
+            if name == ann.kwargs:
+                return str(TypeInfo.from_type(dict, module='', args=(TypeInfo.from_type(str, module=''), t)))
+            return str(t)
+
+        func_entry = file_functions[func_json_name] = {
+            'args': {
+                a[0]: argtype(*a).replace(".<locals>.", ".")
+                for a in ann.args
+            },
+            'retval': str(ann.retval).replace(".<locals>.", "."),
+            'vars': {
+                v[0]: str(v[1]).replace(".<locals>.", ".")
+                for v in ann.variables
+            }
+        }
+
+        if changes := file_func2sigs.get((funcid.file_name, funcid.func_name)):
+            func_entry['old_sig'] = changes[0]
+            func_entry['new_sig'] = changes[1]
+
+    # fill in module vars
+    for funcid, mv in collected.get('module_vars', dict()).items():
+        data['files'][funcid.file_name]['vars'] = {
+            k: str(v).replace(".<locals>.", ".")
+            for k, v in mv.variables
+        }
+
+    return data
+
+
 def process_collected(collected: dict[str, Any]):
-    sig_changes: list[SignatureChanges] = process_files(
+    code_changes: list[CodeChanges] = process_files(
         collected['files'],
         collected['type_annotations'],
         collected['module_vars']
     )
 
     if options.json_output:
-        file2module = {file: module for file, module in collected['files']}
-        file_func2sigs = {
-            (file, funcname): (old_sig, new_sig)
-            for file, changes in sig_changes
-            for funcname, old_sig, new_sig in changes
-        }
-
-        data: dict[str, Any] = {
-            'meta': {
-                'software': TOOL_NAME,
-                'version': importlib.metadata.version(TOOL_NAME),
-                'timestamp': datetime.datetime.now().isoformat(),
-            },
-            'files': {
-                funcid.file_name: {
-                    'module': file2module.get(funcid.file_name),
-                    'functions': {},
-                }
-                for funcid in sorted(
-                    collected.get('type_annotations', {}) | collected.get('module_vars', {})
-                )
-            }
-        }
-
-        # fill in functions
-        for funcid, ann in collected['type_annotations'].items():
-            if funcid.func_name.endswith(">"):  # <genexpr> and such
-                continue
-
-            func_json_name = funcid.func_name.replace(".<locals>.", ".")
-            file_functions: dict[str, Any] = data['files'][funcid.file_name]['functions']
-            if func_json_name in file_functions:
-                continue  # TODO handle functions with the same name
-
-            # varargs/kwargs arguments are implicitly tuples and dicts in annotations,
-            # but lacking the context given by their names prefixed by * or **, in JSON
-            # we want to be explicit about those types.
-            def argtype(name: str, t: TypeInfo) -> str:
-                if name == ann.varargs:
-                    return str(TypeInfo.from_type(tuple, module='', args=(t, ...)))
-                if name == ann.kwargs:
-                    return str(TypeInfo.from_type(dict, module='', args=(TypeInfo.from_type(str, module=''), t)))
-                return str(t)
-
-            func_entry = file_functions[func_json_name] = {
-                'args': {
-                    a[0]: argtype(*a).replace(".<locals>.", ".")
-                    for a in ann.args
-                },
-                'retval': str(ann.retval).replace(".<locals>.", "."),
-                'vars': {
-                    v[0]: str(v[1]).replace(".<locals>.", ".")
-                    for v in ann.variables
-                }
-            }
-
-            if changes := file_func2sigs.get((funcid.file_name, funcid.func_name)):
-                func_entry['old_sig'] = changes[0]
-                func_entry['new_sig'] = changes[1]
-
-        # fill in module vars
-        for funcid, mv in collected.get('module_vars', dict()).items():
-            data['files'][funcid.file_name]['vars'] = {
-                k: str(v).replace(".<locals>.", ".")
-                for k, v in mv.variables
-            }
-
+        data = emit_json(collected, code_changes)
         with open(f"{TOOL_NAME}.json", "w") as f:
             json.dump(data, f, indent=2)
 
     else:
         with open(f"{TOOL_NAME}.out", "w+") as f:
-            output_signatures(sig_changes, f)
+            output_changes(code_changes, f)
 
 
-def process_file_wrapper(args) -> SignatureChanges:
+def process_file_wrapper(args) -> CodeChanges:
     return process_file(*args)
 
 
@@ -1301,7 +1306,7 @@ def process_files(
     files: list[list[str]],
     type_annotations: dict[FuncId, FuncAnnotation],
     module_vars: dict[FuncId, ModuleVars]
-) -> list[SignatureChanges]:
+) -> list[CodeChanges]:
     if not files:
         return []
 
@@ -1343,7 +1348,7 @@ def process_files(
     import rich.progress
     from rich.table import Column
 
-    sig_changes = []
+    code_changes = []
 
     with rich.progress.Progress(
         rich.progress.BarColumn(table_column=Column(ratio=1)),
@@ -1356,11 +1361,11 @@ def process_files(
         task1 = progress.add_task(description="", total=len(files))
 
         for result in results:
-            sig_changes.append(result)
+            code_changes.append(result)
             progress.update(task1, advance=1)
             progress.refresh()
 
-    return sig_changes
+    return code_changes
 
 
 def validate_module(ctx, param, value):

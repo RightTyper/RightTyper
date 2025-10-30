@@ -18,7 +18,7 @@ from righttyper.righttyper_utils import (
 from righttyper.unified_transformer import UnifiedTransformer
 from righttyper.logger import logger
 
-SignatureChanges: TypeAlias = tuple[Filename, list[tuple[str, str, str]]]
+CodeChanges: TypeAlias = tuple[Filename, list[tuple[str, str, str]]]
 
 
 def correct_indentation_issues(file_contents: str) -> str:
@@ -87,7 +87,7 @@ def process_file(
     ignore_annotations: bool = False,
     only_update_annotations: bool = False,
     inline_generics: bool = False,
-) -> SignatureChanges:
+) -> CodeChanges:
     logger.debug(f"process_file: {filename}")
     try:
         with open(filename, "r") as file:
