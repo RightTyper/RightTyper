@@ -4634,7 +4634,11 @@ def test_variables_object():
             def __init__(self, x):
                 self.x = x
 
+            def set_x(self, x):
+                self.x = x
+
         c = C(10)
+        c.set_x("boo!")
         """)
 
     Path("t.py").write_text(t)
@@ -4649,9 +4653,13 @@ def test_variables_object():
                 pass
 
             def __init__(self: Self, x: int) -> None:
-                self.x: int = x
+                self.x: int|str = x
+
+            def set_x(self: Self, x: str) -> None:
+                self.x = x
 
         c: C = C(10)
+        c.set_x("boo!")
     """)
 
 
@@ -4666,7 +4674,11 @@ def test_json_variables_object():
             def __init__(self, x):
                 self.x = x
 
+            def set_x(self, x):
+                self.x = x
+
         c = C(10)
+        c.set_x("boo!")
         """)
 
     Path("t.py").write_text(t)
@@ -4696,7 +4708,7 @@ def test_json_variables_object():
 
     # function (method) variable
     assert 'self.x' in functions['C.__init__'].get('vars', {})
-    assert 'int' == functions['C.__init__']['vars'].get('self.x', None)
+    assert 'int|str' == functions['C.__init__']['vars'].get('self.x', None)
 
 
 def test_variables_nested():
@@ -5017,7 +5029,6 @@ def test_variables_slots():
     )
 
 
-@pytest.mark.xfail(reason="self._x type leads to mypy error")
 def test_variables_properties():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
@@ -5045,7 +5056,7 @@ def test_variables_properties():
         from typing import Self
         class C:
             def __init__(self: Self) -> None:
-                self._x: None = None
+                self._x: int|None = None
 
             @property
             def x(self: Self) -> str:

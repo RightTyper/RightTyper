@@ -268,6 +268,10 @@ class Observations:
     variables: dict[CodeType, dict[VariableName, set[TypeInfo]]] = field(
                                                     default_factory=lambda: defaultdict(lambda: defaultdict(set)))
 
+    # Object attributes: class_key -> attr_name -> set[TypeInfo]
+    object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = field(
+                                                    default_factory=lambda: defaultdict(lambda: defaultdict(set)))
+
     # Completed traces
     traces: dict[CodeType, Counter[CallTrace]] = field(default_factory=dict)
 
@@ -399,23 +403,27 @@ class Observations:
 
 
     def _record_variables(self, code: CodeType, frame: FrameType) -> None:
+        """Records variables."""
+        # print(f"record_variables {code.co_qualname}")
+
         if not (codevars := code2variables.get(code)):
             return
 
-        def follow_attr_path(attr_path: list[str], obj: object) -> object | None:
-            for p in attr_path:
-                if (obj := getattr(obj, p, NO_OBJECT)) is NO_OBJECT:
-                    break
-            return obj
-
-        scope_vars = self.variables[codevars.scope_code]
+        scope_vars = self.variables[typing.cast(CodeType, codevars.scope_code)]
+        f_locals = frame.f_locals
+        value: Any
+        dst: str|None
         for src, dst in codevars.variables.items():
-            (var, *attr_path) = src.split('.')
-            value = follow_attr_path(attr_path, frame.f_locals.get(var, NO_OBJECT))
-            if value is NO_OBJECT:
-                continue
-            scope_vars[VariableName(dst)].add(get_value_type(value))
+            if (value := f_locals.get(src, NO_OBJECT)) is not NO_OBJECT:
+                scope_vars[VariableName(dst)].add(get_value_type(value))
 
+        if codevars.self and (self_obj := f_locals.get(codevars.self)):
+            obj_attrs = self.object_attributes[codevars.class_key]
+            for src, dst in codevars.attributes.items():
+                if (value := getattr(self_obj, src, NO_OBJECT)) is not NO_OBJECT:
+                    type_set = obj_attrs[VariableName(src)]
+                    type_set.add(get_value_type(value))
+                    if dst: scope_vars[VariableName(dst)] = type_set
 
     def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:
         """Records a pending call trace's return type, finishing the trace."""

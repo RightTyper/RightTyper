@@ -7,6 +7,8 @@ import collections.abc as abc
 
 @dataclass
 class CodeVars:
+    """Identifies variables for a code object."""
+
     # qualified name of code object in whose scope we're storing variables
     scope: str
 
@@ -15,6 +17,18 @@ class CodeVars:
 
     # maps name in f_locals to name in scope
     variables: dict[str, str] = field(default_factory=dict)
+
+    # qualified name of this code object's class, if it's a method
+    class_name: str | None = None
+
+    # unique object that identifies the class
+    class_key: object | None = None
+
+    # name of 'self' for this object, if any
+    self: str | None = None
+
+    # maps attributes to their name under the local 'self'
+    attributes: dict[str, str|None] = field(default_factory=dict)
 
 
 """Maps code objects to the variables assigned/bound within each object."""
@@ -80,17 +94,27 @@ class VariableFinder(ast.NodeVisitor):
         self._qualname_stack: list[str] = []
         self._code_stack: list[str] = ['<module>']
         self._scope_stack: list[list[str]] = [[]]
+        self._class_stack: list[str] = []
         self._self_stack: list[str|None] = [None]
         self._known_attributes: list[set[str]] = [set()]
         self.code_vars: dict[str, CodeVars] = dict()
 
-    def _record_name(self, name: str) -> None:
+    def _record_name(self, name: str, attribute: str|None = None) -> None:
         scope = self._scope_stack[-1]
         codevars = self.code_vars.setdefault(self._code_stack[-1],
             CodeVars('.'.join(scope[:-1]) if scope else '<module>') # -1 to omit "<locals>"
         )
-        dst_name = '.'.join(self._qualname_stack[len(scope):] + [name])
-        codevars.variables[name] = dst_name
+        if attribute:
+            codevars.class_name = self._class_stack[-1]
+            codevars.self = name
+            if attribute not in self._known_attributes[-1]:
+                codevars.attributes[attribute] = f"{name}.{attribute}"
+                self._known_attributes[-1].add(attribute)
+            else:
+                # record, but don't annotate, as attributes can only be annotated once
+                codevars.attributes[attribute] = None
+        else:
+            codevars.variables[name] = '.'.join(self._qualname_stack[len(scope):] + [name])
 
     def _record_target(self, t: ast.AST) -> None:
         if isinstance(t, ast.Name):
@@ -99,11 +123,7 @@ class VariableFinder(ast.NodeVisitor):
                 self._self_stack[-1] = None # a new assignment masked 'self'
         elif (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)):
             if t.value.id == self._self_stack[-1]:
-                # attributes can only be annotated once
-                # TODO check this in the transformer instead?
-                if t.attr not in self._known_attributes[-1]:
-                    self._record_name(f"{t.value.id}.{t.attr}")
-                    self._known_attributes[-1].add(t.attr)
+                self._record_name(t.value.id, t.attr)
 
     def _qualname(self) -> str:
         return '.'.join(self._qualname_stack)
@@ -163,11 +183,13 @@ class VariableFinder(ast.NodeVisitor):
         self._record_name(node.name)
         self._qualname_stack.append(node.name)
         self._code_stack.append(self._qualname())
+        self._class_stack.append(self._code_stack[-1])
         self._known_attributes.append(set())
 
         self.generic_visit(node)
 
         self._known_attributes.pop()
+        self._class_stack.pop()
         self._code_stack.pop()
         self._qualname_stack.pop()
 
@@ -257,13 +279,17 @@ def map_variables(tree: ast.Module, module_code: types.CodeType) -> dict[types.C
     f = VariableFinder()
     f.visit(tree)
 
-    qualname2code = {
+    qualname2code: dict[str|None, types.CodeType] = {
         co.co_qualname: co
         for co in _walk_code_objects(module_code)
     }
 
     return {
-        co: replace(codevars, scope_code=scope_code)
+        co: replace(
+            codevars,
+            scope_code=scope_code,
+            class_key=qualname2code.get(codevars.class_name)
+        )
         for co in qualname2code.values()
         if (codevars := f.code_vars.get(co.co_qualname))
         if (scope_code := qualname2code.get(codevars.scope))

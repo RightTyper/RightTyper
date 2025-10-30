@@ -15,7 +15,7 @@ def get(mapping: dict[types.CodeType, variables.CodeVars], name: str):
     """Returns a code->variables mapping by code name only."""
     for co, codevars in mapping.items():
         if co.co_qualname == name:
-            return set(codevars.variables.values())
+            return set(codevars.variables.values()) | {v for v in codevars.attributes.values() if v is not None}
     return set()
 
 
