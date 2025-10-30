@@ -417,7 +417,7 @@ class Observations:
             if (value := f_locals.get(src, NO_OBJECT)) is not NO_OBJECT:
                 scope_vars[VariableName(dst)].add(get_value_type(value))
 
-        if codevars.self and (self_obj := f_locals.get(codevars.self)):
+        if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
             obj_attrs = self.object_attributes[codevars.class_key]
             for src, dst in codevars.attributes.items():
                 if (value := getattr(self_obj, src, NO_OBJECT)) is not NO_OBJECT:

@@ -5071,3 +5071,34 @@ def test_variables_properties():
         y: str = c.x
         """
     )
+
+
+def test_variables_obj_defines_bool():
+    # This replicates a bug while running tqdm tests
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x = None
+
+            def __bool__(self):
+                raise RuntimeError("don't call me!")
+
+        c = C()
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        class C:
+            def __init__(self: Self) -> None:
+                self._x: None = None
+
+            def __bool__(self):
+                raise RuntimeError("don't call me!")
+
+        c: C = C()
+        """
+    )
