@@ -19,7 +19,8 @@ from types import (
     CoroutineType,
     GenericAlias,
     ModuleType,
-    MappingProxyType
+    MappingProxyType,
+    UnionType
 )
 from typing import Any, cast, TypeAlias, get_type_hints, get_origin, get_args, Callable
 import typing
@@ -664,7 +665,7 @@ def get_value_type(
         return _type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
     elif isinstance(value, type) and value is not type:
         return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
-    elif isinstance(value, (type(typing.Generic[T]), GenericAlias)):    # type: ignore[index]
+    elif isinstance(value, (type(typing.Generic[T]), GenericAlias, UnionType)):    # type: ignore[index]
         return TypeInfo("", "type")
     elif t.__module__ == "builtins":
         if in_builtins_import(t):

@@ -489,12 +489,38 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         return False
 
+
     def _record_var_change(self, old: cst.Assign|cst.AnnAssign, new: cst.Assign|cst.AnnAssign) -> None:
         self.change_list.append(Change(
             ".".join(self.name_stack) if self.name_stack else '<module>',
             [cst.SimpleStatementLine([old])],
             [cst.SimpleStatementLine([new])]
         ))
+
+
+    def _seems_type_like(self, node: cst.CSTNode) -> bool:
+        ALLOWED_NODES = (
+            # Base identifiers and attributes
+            cst.Name, cst.Attribute,
+            # Literals and constants
+            cst.SimpleString, cst.Integer, cst.Float, cst.Imaginary, cst.Ellipsis,
+            # Subscripted types and tuples
+            cst.Subscript, cst.Index, cst.Element, cst.Tuple, cst.StarredElement,
+            # Bitwise union / binary ops
+            cst.BitOr, cst.BinaryOperation,
+            # Expression wrapper
+            cst.Expr,
+        )
+
+        if not isinstance(node, ALLOWED_NODES):
+            print(f"failed: {node}")
+
+        return isinstance(node, ALLOWED_NODES) and all(
+            self._seems_type_like(child)
+            for child in node.children
+            if isinstance(child, cst.BaseExpression)
+        )
+
 
     def leave_Assign(self, node: cst.Assign, updated_node: cst.Assign) -> cst.Assign|cst.AnnAssign:
         if (
@@ -520,8 +546,9 @@ class UnifiedTransformer(cst.CSTTransformer):
             if self._is_namedtuple(node.value):
                 return updated_node
 
-            # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
-            var_type = TypeInfo('typing', 'TypeAlias')
+            if self._seems_type_like(node.value):
+                # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
+                var_type = TypeInfo('typing', 'TypeAlias')
 
         new_node = cst.AnnAssign(
             target=target,
@@ -571,8 +598,9 @@ class UnifiedTransformer(cst.CSTTransformer):
                 self._record_var_change(node, new_node)
                 return new_node
 
-            # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
-            var_type = TypeInfo('typing', 'TypeAlias')
+            if self._seems_type_like(node.value):
+                # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
+                var_type = TypeInfo('typing', 'TypeAlias')
 
         new_node = updated_node.with_changes(
             annotation=cst.Annotation(annotation=self._get_annotation_expr(var_type))

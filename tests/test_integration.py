@@ -4916,11 +4916,12 @@ def test_type_variables(annotation, scope):
 
         {S}
         {I}T{annotation} = int
-        {I}U{annotation} = str
+        {I}U{annotation} = str|bool
         {I}V{annotation} = Iterable[tuple[int, str]]
         {I}W{annotation} = Sequence[int]
         {I}X{annotation} = namedtuple("X", [])
         {I}Y{annotation} = NamedTuple("Y", [])
+        {I}Z{annotation} = (int if 2+2==4 else int)
 
         {I+'@staticmethod' if scope == 'class' else ''}
         {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
@@ -4940,11 +4941,12 @@ def test_type_variables(annotation, scope):
 
         {S}
         {I}T: TypeAlias = int
-        {I}U: TypeAlias = str
+        {I}U: TypeAlias = str|bool
         {I}V: TypeAlias = Iterable[tuple[int, str]]
         {I}W: TypeAlias = Sequence[int]
         {I}X = namedtuple("X", [])
         {I}Y = NamedTuple("Y", [])
+        {I}Z: type[int] = (int if 2+2==4 else int)
 
         {I+'@staticmethod' if scope == 'class' else ''}
         {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
