@@ -498,7 +498,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         ))
 
 
-    def _seems_type_like(self, node: cst.CSTNode) -> bool:
+    def _seems_type_like(self, expr: cst.BaseExpression | None) -> bool:
         ALLOWED_NODES = (
             # Base identifiers and attributes
             cst.Name, cst.Attribute,
@@ -512,12 +512,9 @@ class UnifiedTransformer(cst.CSTTransformer):
             cst.Expr,
         )
 
-        if not isinstance(node, ALLOWED_NODES):
-            print(f"failed: {node}")
-
-        return isinstance(node, ALLOWED_NODES) and all(
+        return isinstance(expr, ALLOWED_NODES) and all(
             self._seems_type_like(child)
-            for child in node.children
+            for child in expr.children
             if isinstance(child, cst.BaseExpression)
         )
 
