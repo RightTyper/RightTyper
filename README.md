@@ -97,6 +97,7 @@ Below is the full list of options for the run command:
 
 ```
 $ python3 -m righttyper run --help
+
 Usage: python -m righttyper run [OPTIONS] [SCRIPT] [ARGS]...
 
   Runs a given script or module, collecting type information.
@@ -194,6 +195,8 @@ Options:
                                   Whether to attempt to simplify type sets,
                                   such as int|bool|float -> float.  [default:
                                   simplify-type-sets]
+  --variables / --no-variables    Whether to (observe and) annotate variables.
+                                  [default: variables]
   --debug                         Include diagnostic information in log file.
   --help                          Show this message and exit.
 ```

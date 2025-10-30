@@ -44,6 +44,7 @@ class Options:
     test_modules: tuple[str, ...] = ('pytest', '_pytest', 'py.test', 'unittest')
     adjust_type_names: bool = True
     simplify_type_sets: bool = True
+    variables: bool = True
     save_profiling: str|None = None
 
 

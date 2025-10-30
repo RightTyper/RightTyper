@@ -406,7 +406,7 @@ class Observations:
         """Records variables."""
         # print(f"record_variables {code.co_qualname}")
 
-        if not (codevars := code2variables.get(code)):
+        if not options.variables or not (codevars := code2variables.get(code)):
             return
 
         scope_vars = self.variables[typing.cast(CodeType, codevars.scope_code)]
@@ -1628,6 +1628,11 @@ def cli(debug: bool):
     help="Whether to attempt to simplify type sets, such as int|bool|float -> float.",
 )
 @click.option(
+    "--variables/--no-variables",
+    default=options.variables,
+    help="Whether to (observe and) annotate variables.",
+)
+@click.option(
     "--debug",
     is_flag=True,
     help="Include diagnostic information in log file.",
@@ -1667,6 +1672,7 @@ def run(
     use_typing_never: bool,
     adjust_type_names: bool,
     simplify_type_sets: bool,
+    variables: bool,
     debug: bool
 ) -> None:
     """Runs a given script or module, collecting type information."""
@@ -1741,6 +1747,7 @@ def run(
     options.test_modules = test_modules
     options.adjust_type_names = adjust_type_names
     options.simplify_type_sets = simplify_type_sets
+    options.variables = variables
     options.save_profiling = save_profiling
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
