@@ -8,7 +8,7 @@ import collections.abc as abc
 @dataclass(eq=True, frozen=True)
 class CodeVars:
     scope: types.CodeType       # code object in whose scope we're storing variables
-    variables: dict[str, str]   # maps name in scope to name in f_locals
+    variables: dict[str, str]   # maps name in f_locals to name in scope
 
 
 """Maps code objects to the variables assigned/bound within each object."""
@@ -85,7 +85,7 @@ class VariableFinder(ast.NodeVisitor):
             ('.'.join(scope[:-1]) if scope else '<module>', {})
         )
         dst_name = '.'.join(self._qualname_stack[len(scope):] + [name])
-        codevars[1][dst_name] = name
+        codevars[1][name] = dst_name
 
     def _record_target(self, t: ast.AST) -> None:
         if isinstance(t, ast.Name):

@@ -409,7 +409,7 @@ class Observations:
             return obj
 
         scope_vars = self.variables[codevars.scope]
-        for dst, src in codevars.variables.items():
+        for src, dst in codevars.variables.items():
             (var, *attr_path) = src.split('.')
             value = follow_attr_path(attr_path, frame.f_locals.get(var, NO_OBJECT))
             if value is NO_OBJECT:
