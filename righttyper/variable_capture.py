@@ -7,7 +7,7 @@ import collections.abc as abc
 
 @dataclass
 class CodeVars:
-    """Identifies variables for a code object."""
+    """Identifies variables and attributes for a code object, facilitating their capture."""
 
     # qualified name of code object in whose scope we're storing variables
     scope: str

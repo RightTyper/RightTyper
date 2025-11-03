@@ -11,7 +11,7 @@ import types
 import typing
 
 from righttyper.ast_instrument import instrument
-from righttyper.variables import code2variables, map_variables
+from righttyper.variable_capture import code2variables, map_variables
 from righttyper.righttyper_utils import skip_this_file
 
 

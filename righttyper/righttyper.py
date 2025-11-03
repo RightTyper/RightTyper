@@ -97,7 +97,7 @@ from righttyper.options import Options, options
 from righttyper.logger import logger
 from righttyper.typemap import AdjustTypeNamesT
 from righttyper.atomic import AtomicCounter
-from righttyper.variables import code2variables
+from righttyper.variable_capture import code2variables
 
 
 def find_co_newlocals():

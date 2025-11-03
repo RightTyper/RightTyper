@@ -1,6 +1,6 @@
 import textwrap
 import pytest
-import righttyper.variables as variables
+import righttyper.variable_capture as variables
 import ast
 import types
 
