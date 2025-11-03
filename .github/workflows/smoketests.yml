@@ -39,9 +39,7 @@ jobs:
     - working-directory: ./rich
       run: |
         python3 -m pip install pygments==2.17.2 # avoids apparent issues in 2.19.[01]
-        pip install -U "poetry>=1.5"  # for built-in "export"
-        poetry export --with dev --format requirements.txt --output requirements-dev.txt
-        pip install -r requirements-dev.txt
+        pip install "attrs>=21.4.0"
         pip install -e .
 
     # Using SIGINT to interrupt usually gives a traceback, indicating where it was hung.
