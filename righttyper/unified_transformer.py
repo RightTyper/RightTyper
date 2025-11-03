@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import libcst as cst
 import libcst.matchers as cstm
 from libcst.metadata import MetadataWrapper, PositionProvider, QualifiedNameProvider
+from righttyper.variable_binding import VariableBindingProvider
 import re
 
 from righttyper.righttyper_types import (
@@ -137,6 +138,7 @@ def _get_str_attr(obj: object, path: str) -> str|None:
 
     return obj if isinstance(obj, str) else None
 
+
 def _annotation_as_string(annotation: cst.BaseExpression) -> str:
     return cst.Module([cst.SimpleStatementLine([cst.Expr(annotation)])]).code.strip('\n')
 
@@ -146,7 +148,7 @@ def _quote(s: str) -> str:
 
 
 class UnifiedTransformer(cst.CSTTransformer):
-    METADATA_DEPENDENCIES = (PositionProvider, QualifiedNameProvider)
+    METADATA_DEPENDENCIES = (PositionProvider, QualifiedNameProvider, VariableBindingProvider)
 
     def __init__(
         self,
@@ -379,9 +381,6 @@ class UnifiedTransformer(cst.CSTTransformer):
         # The annotation for the current function, if any
         self.func_ann_stack: list[FuncAnnotation|None] = [None]
 
-        # The variables already handled in this scope
-        self.vars_handled_stack: list[set] = [set()]
-
         # Whether to annotate variables in this scope
         self.annotate_vars_stack: list[bool] = [True]
 
@@ -442,28 +441,24 @@ class UnifiedTransformer(cst.CSTTransformer):
         return False
 
 
-    def _get_var(self, target: cst.Name|cst.Attribute) -> tuple[str, TypeInfo] | None:
+    def _get_var(self, target: cst.Name|cst.Attribute) -> TypeInfo | None:
         if (func_scope_index := list_rindex(self.name_stack, '<locals>')):
             func_scope_index = len(self.name_stack) + func_scope_index + 1
 
-        name = ".".join(self.name_stack[func_scope_index:] + [_nodes_to_dotted_name(target)])
-        if name in self.vars_handled_stack[-1]:
-            return None
-
-        var_type = None
+        qualname = ".".join(self.name_stack[func_scope_index:] + [_nodes_to_dotted_name(target)])
         if func_scope_index:
             if (ann := self.func_ann_stack[-1]):
-                var_type = next(
+                return next(
                     (
                         var_type
                         for var_name, var_type in ann.variables
-                        if var_name == name
+                        if var_name == qualname
                     ), None
                 )
         else:
-            var_type = self.module_variables.get(name)
+            return self.module_variables.get(qualname)
 
-        return (name, var_type) if var_type else None
+        return None
 
 
     def visit_Assign(self, node: cst.Assign) -> bool:
@@ -519,24 +514,34 @@ class UnifiedTransformer(cst.CSTTransformer):
         )
 
 
+    def _node_defines(self, node: cst.CSTNode, target: cst.BaseExpression) -> cst.Name|cst.Attribute|None:
+        """Returns the target iff the given node is first to define it.
+           Note that currently the target must be cstm.OneOf(cstm.Name(), cstm.Atttribute(value=cstm.Name()))"""
+        try:
+            if isinstance(target, cst.Name):
+                binding = self.get_metadata(VariableBindingProvider, node)
+                return target if target.value in binding.defines_vars else None
+
+            if isinstance(target, cst.Attribute) and isinstance(target.value, cst.Name):
+                binding = self.get_metadata(VariableBindingProvider, node)
+                return target if (
+                    target.value.value == binding.self_name
+                    and target.attr.value in binding.defines_attrs
+                ) else None
+        except:
+            pass
+
+        return None
+
+
     def leave_Assign(self, node: cst.Assign, updated_node: cst.Assign) -> cst.Assign|cst.AnnAssign:
         if (
             not self.annotate_vars_stack[-1]
             or len(updated_node.targets) != 1  # no a = b = ...
-            or not (
-                isinstance(target := updated_node.targets[0].target, cst.Name)
-                or (isinstance(target, cst.Attribute) and isinstance(target.value, cst.Name))
-            )
+            or not (target := self._node_defines(node, node.targets[0].target))
+            or not (var_type := self._get_var(target))
+            or self.only_update_annotations
         ):
-            return updated_node
-
-        if not (var_name_and_type := self._get_var(target)):
-            return updated_node
-
-        name, var_type = var_name_and_type
-        self.vars_handled_stack[-1].add(name)
-
-        if self.only_update_annotations:
             return updated_node
 
         if var_type.fullname() == 'type':
@@ -562,23 +567,14 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.known_names.add(".".join(self.name_stack + [node.target.value]))
         return True
 
+
     def leave_AnnAssign(self, node: cst.AnnAssign, updated_node: cst.AnnAssign) -> cst.AnnAssign|cst.Assign:
         if (
             not self.annotate_vars_stack[-1]
-            or not (
-                isinstance(target := updated_node.target, cst.Name)
-                or (isinstance(target, cst.Attribute) and isinstance(target.value, cst.Name))
-            )
+            or not (target := self._node_defines(node, node.target))
+            or not (var_type := self._get_var(target))
+            or not (self.override_annotations or self.only_update_annotations)
         ):
-            return updated_node
-
-        if not (var_name_and_type := self._get_var(target)):
-            return updated_node
-
-        name, var_type = var_name_and_type
-        self.vars_handled_stack[-1].add(name)
-
-        if not self.override_annotations and not self.only_update_annotations:
             return updated_node
 
         new_node: cst.AnnAssign|cst.Assign
@@ -611,6 +607,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         if isinstance(node.target, cst.Name):
             self.known_names.add(".".join(self.name_stack + [node.target.value]))
         return True
+
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
         name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
@@ -659,7 +656,6 @@ class UnifiedTransformer(cst.CSTTransformer):
         )
         key = FuncId(Filename(self.filename), first_line, FunctionName(name))
         self.func_ann_stack.append(self.type_annotations.get(key))
-        self.vars_handled_stack.append(set())
         self.annotate_vars_stack.append(True)
         return True
 
@@ -756,7 +752,6 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.pop()
         self.overload_stack.pop()
         self.overload_name_stack.pop()
-        self.vars_handled_stack.pop()
 
         # If we encounter a function whose name doesn't match the current
         # overload sequence, we discard the overload stack and update the

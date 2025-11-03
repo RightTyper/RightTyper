@@ -2422,18 +2422,24 @@ def test_local_aliases_known_namedexpr():
 
 
 def mk_var_transformer(filename, code, *, override_annotations=True, only_update_annotations=False):
+    try:
+        C_init = get_funcid(filename, code, 'C.__init__')
+    except:
+        C_init = None
+
     return UnifiedTransformer(
             filename=filename,
             type_annotations = {
-                get_funcid(filename, code, 'C.__init__'): FuncAnnotation(
+                C_init: FuncAnnotation(
                     [],
                     TypeInfo("", "None"),
                     varargs=None, kwargs=None,
                     variables=[
+                        (VariableName('self.x'), TypeInfo('', 'int')),
                         (VariableName('self.y'), TypeInfo('', 'int'))
                     ]
                 ),
-            },
+            } if C_init else {},
             module_variables = ModuleVars([
                 (VariableName('g'), TypeInfo("", "float")),
                 (VariableName('C.x'), TypeInfo("", "str")),
@@ -2548,6 +2554,155 @@ def test_variables_annassign(ignore, update):
                 def __init__(self, x) -> None:
                     self.y: None = x
             """)
+
+
+def test_variables_assign_already_defined():
+    code = cst.parse_module(textwrap.dedent(f"""\
+        (a, g) = 0, 1
+        g = 1.0
+
+        class C:
+            x = y = 0
+            x = 'foo'
+
+            def __init__(self, x):
+                self.x, blah = 0, 1
+                self.y, foo = 0, 1
+                self.x = x
+                self.y = x
+        """))
+
+    t = mk_var_transformer('foo.py', code)
+    code = t.transform_code(code)
+
+    assert code.code == textwrap.dedent(f"""\
+        (a, g) = 0, 1
+        g = 1.0
+
+        class C:
+            x = y = 0
+            x = 'foo'
+
+            def __init__(self, x) -> None:
+                self.x, blah = 0, 1
+                self.y, foo = 0, 1
+                self.x = x
+                self.y = x
+        """)
+
+
+@pytest.mark.parametrize("var, expr", [
+    ("g", "range(2)"),
+    ("g, h", "enumerate(range(2))")
+])
+def test_variables_assign_already_defined_for(var, expr):
+    code = cst.parse_module(textwrap.dedent(f"""\
+        for {var} in {expr}:
+            pass
+        g = 1.0
+        """))
+
+    t = mk_var_transformer('foo.py', code)
+    code = t.transform_code(code)
+
+    assert code.code == textwrap.dedent(f"""\
+        for {var} in {expr}:
+            pass
+        g = 1.0
+        """)
+
+
+@pytest.mark.parametrize('ignore, update', [
+    [False, False],
+    [True, False],
+    [False, True]
+])
+def test_variables_assign_already_declared(ignore, update):
+    code = cst.parse_module(textwrap.dedent(f"""\
+        g: None
+        g = 1.0
+
+        class C:
+            x: None
+            x = 'foo'
+
+            def __init__(self, x):
+                self.x: None
+                self.x = x
+                self.y = x
+        """))
+
+    t = mk_var_transformer('foo.py', code,
+            override_annotations=ignore,
+            only_update_annotations=update)
+    code = t.transform_code(code)
+
+    if ignore:
+        assert code.code == textwrap.dedent(f"""\
+            g: float
+            g = 1.0
+
+            class C:
+                x: str
+                x = 'foo'
+
+                def __init__(self, x) -> None:
+                    self.x: int
+                    self.x = x
+                    self.y: int = x
+            """)
+    elif update:
+        assert code.code == textwrap.dedent(f"""\
+            g: float
+            g = 1.0
+
+            class C:
+                x: str
+                x = 'foo'
+
+                def __init__(self, x):
+                    self.x: int
+                    self.x = x
+                    self.y = x
+            """)
+    else:
+        assert code.code == textwrap.dedent(f"""\
+            g: None
+            g = 1.0
+
+            class C:
+                x: None
+                x = 'foo'
+
+                def __init__(self, x) -> None:
+                    self.x: None
+                    self.x = x
+                    self.y: int = x
+            """)
+
+
+@pytest.mark.parametrize('from_zoo', ['', 'from zoo '])
+def test_variables_already_defined_import(from_zoo):
+    code = cst.parse_module(textwrap.dedent(f"""\
+        {from_zoo}import g
+        g = 1.0
+
+        class C:
+            {from_zoo}import elephant as x
+            x = 'foo'
+        """))
+
+    t = mk_var_transformer('foo.py', code)
+    code = t.transform_code(code)
+
+    assert code.code == textwrap.dedent(f"""\
+        {from_zoo}import g
+        g = 1.0
+
+        class C:
+            {from_zoo}import elephant as x
+            x = 'foo'
+        """)
 
 
 def test_variables_assign_multiple():

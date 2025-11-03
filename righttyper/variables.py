@@ -28,7 +28,7 @@ class CodeVars:
     self: str | None = None
 
     # maps attributes to their name under the local 'self'
-    attributes: dict[str, str|None] = field(default_factory=dict)
+    attributes: dict[str, str] = field(default_factory=dict)
 
 
 """Maps code objects to the variables assigned/bound within each object."""
@@ -91,15 +91,35 @@ class VariableFinder(ast.NodeVisitor):
     Imports, comprehensions, generator expressions are ignored.
     """
     def __init__(self) -> None:
+        # Used to build an item's qualified name
         self._qualname_stack: list[str] = []
+
+        # Holds the qualified name of the code object assigning to the variable
         self._code_stack: list[str] = ['<module>']
+
+        # _qualname_stack at the beginning of the current function; used to determine
+        # where and under which name we store variables
         self._scope_stack: list[list[str]] = [[]]
+
+        # Qualified name of the current class
         self._class_stack: list[str] = []
+
+        # Holds the current name of 'self', or None if none
         self._self_stack: list[str|None] = [None]
-        self._known_attributes: list[set[str]] = [set()]
+
+        # Holds the set of names that aren't local variables;
+        # includes arguments, 'global' and 'nonlocal' vars
+        self._not_locals_stack: list[set] = [set()]
+
+        # Resulting map of executing code object to their CodeVars
         self.code_vars: dict[str, CodeVars] = dict()
 
     def _record_name(self, name: str, attribute: str|None = None) -> None:
+        # TODO instead not not capturing these variables, we should capture and store them
+        # in the scope they belong...
+        if not attribute and name in self._not_locals_stack[-1]:
+            return
+
         scope = self._scope_stack[-1]
         codevars = self.code_vars.setdefault(self._code_stack[-1],
             CodeVars('.'.join(scope[:-1]) if scope else '<module>') # -1 to omit "<locals>"
@@ -107,12 +127,7 @@ class VariableFinder(ast.NodeVisitor):
         if attribute:
             codevars.class_name = self._class_stack[-1]
             codevars.self = name
-            if attribute not in self._known_attributes[-1]:
-                codevars.attributes[attribute] = f"{name}.{attribute}"
-                self._known_attributes[-1].add(attribute)
-            else:
-                # record, but don't annotate, as attributes can only be annotated once
-                codevars.attributes[attribute] = None
+            codevars.attributes[attribute] = f"{name}.{attribute}"
         else:
             codevars.variables[name] = '.'.join(self._qualname_stack[len(scope):] + [name])
 
@@ -128,6 +143,13 @@ class VariableFinder(ast.NodeVisitor):
     def _qualname(self) -> str:
         return '.'.join(self._qualname_stack)
 
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        self._not_locals_stack[-1].update(set(node.names))
+
+    def visit_Global(self, node: ast.Global) -> None:
+        if self._qualname_stack:    # global 'global' statements don't change anything for us
+            self._not_locals_stack[-1].update(set(node.names))
+
     def visit_FunctionDef(self, node: ast.FunctionDef|ast.AsyncFunctionDef) -> None:
         decorator_names = [
             n.id
@@ -142,13 +164,18 @@ class VariableFinder(ast.NodeVisitor):
             and 'classmethod' not in decorator_names
         )
 
+        arguments = [
+            n.arg
+            for n in ast.walk(node.args)
+            if isinstance(n, ast.arg)
+        ]
+
         self_visible = (
             bool(self._self_stack[-1])
             and not any(
                 # 'self' masked by an inner function's argument
-                n.arg == self._self_stack[-1]
-                for n in ast.walk(node.args)
-                if isinstance(n, ast.arg)
+                arg == self._self_stack[-1]
+                for arg in arguments
             )
         )
 
@@ -157,19 +184,16 @@ class VariableFinder(ast.NodeVisitor):
         self._qualname_stack.append('<locals>')
         self._scope_stack.append([*self._qualname_stack])
         if is_method:
-            self._self_stack.append(next((
-                    n.arg
-                    for n in ast.walk(node.args)
-                    if isinstance(n, ast.arg)
-                ), None
-            ))
+            self._self_stack.append(arguments[0] if arguments else None)
         elif self_visible:
             self._self_stack.append(self._self_stack[-1])
         else:
             self._self_stack.append(None)
+        self._not_locals_stack.append(set(arguments))
 
         self.generic_visit(node)
 
+        self._not_locals_stack.pop()
         self._self_stack.pop()
         self._qualname_stack.pop()
         self._code_stack.pop()
@@ -184,11 +208,9 @@ class VariableFinder(ast.NodeVisitor):
         self._qualname_stack.append(node.name)
         self._code_stack.append(self._qualname())
         self._class_stack.append(self._code_stack[-1])
-        self._known_attributes.append(set())
 
         self.generic_visit(node)
 
-        self._known_attributes.pop()
         self._class_stack.pop()
         self._code_stack.pop()
         self._qualname_stack.pop()

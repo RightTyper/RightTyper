@@ -25,6 +25,7 @@ def test_simple_assign_and_augassign():
         def f(y):
             a = 2
             a += 3
+            y = 1
         """)
 
     m = map_variables(src)
@@ -233,6 +234,7 @@ def test_self_attribute_in_various_methods():
             def f(me):
                 me.x = 1
                 me.z = 3
+                self.y = None   # an error
 
             def f2(myself):
                 myself.x = 1
@@ -243,8 +245,8 @@ def test_self_attribute_in_various_methods():
 
     assert get(m, "C.__init__") == {"self.x"}
     assert get(m, "C.__init__.<locals>.f") == {"self.y"}
-    assert get(m, "C.f") == {"me.z"}
-    assert get(m, "C.f2") == set()
+    assert get(m, "C.f") == {"me.x", "me.z"}
+    assert get(m, "C.f2") == {"myself.x", "myself.y", "myself.z"}
 
 
 def test_lambdas_and_comprehensions_have_their_own_code_objects():
@@ -348,3 +350,26 @@ def test_match_as_simple_name_only():
         """)
     m = map_variables(src)
     assert get(m, "f") == {"y", "z"}
+
+
+def test_nonlocal_and_global():
+    src = textwrap.dedent("""
+        global a
+
+        def f(x):
+            def g(y):
+                global a
+                nonlocal b
+                a = 1
+                b = 2
+
+            b = 0
+            g(0)
+
+        a = 1
+        """)
+
+    m = map_variables(src)
+    assert get(m, "<module>") == {"a"}
+    assert get(m, "f") == {"b"}
+    assert get(m, "f.<locals>.g") == set()
