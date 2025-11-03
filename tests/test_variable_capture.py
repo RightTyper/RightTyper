@@ -350,26 +350,3 @@ def test_match_as_simple_name_only():
         """)
     m = map_variables(src)
     assert get(m, "f") == {"y", "z"}
-
-
-def test_nonlocal_and_global():
-    src = textwrap.dedent("""
-        global a
-
-        def f(x):
-            def g(y):
-                global a
-                nonlocal b
-                a = 1
-                b = 2
-
-            b = 0
-            g(0)
-
-        a = 1
-        """)
-
-    m = map_variables(src)
-    assert get(m, "<module>") == {"a"}
-    assert get(m, "f") == {"b"}
-    assert get(m, "f.<locals>.g") == set()

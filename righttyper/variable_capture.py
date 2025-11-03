@@ -108,15 +108,13 @@ class VariableFinder(ast.NodeVisitor):
         self._self_stack: list[str|None] = [None]
 
         # Holds the set of names that aren't local variables;
-        # includes arguments, 'global' and 'nonlocal' vars
+        # currently only includes arguments
         self._not_locals_stack: list[set] = [set()]
 
         # Resulting map of executing code object to their CodeVars
         self.code_vars: dict[str, CodeVars] = dict()
 
     def _record_name(self, name: str, attribute: str|None = None) -> None:
-        # TODO instead not not capturing these variables, we should capture and store them
-        # in the scope they belong...
         if not attribute and name in self._not_locals_stack[-1]:
             return
 
@@ -142,13 +140,6 @@ class VariableFinder(ast.NodeVisitor):
 
     def _qualname(self) -> str:
         return '.'.join(self._qualname_stack)
-
-    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
-        self._not_locals_stack[-1].update(set(node.names))
-
-    def visit_Global(self, node: ast.Global) -> None:
-        if self._qualname_stack:    # global 'global' statements don't change anything for us
-            self._not_locals_stack[-1].update(set(node.names))
 
     def visit_FunctionDef(self, node: ast.FunctionDef|ast.AsyncFunctionDef) -> None:
         decorator_names = [
