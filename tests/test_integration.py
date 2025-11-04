@@ -1472,7 +1472,6 @@ def test_mock_with_obj_spec(tmp_cwd):
     """)
 
 
-@pytest.mark.xfail(reason="Doesn't quite work yet")
 def test_local_class_name(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def f():
@@ -4741,7 +4740,6 @@ def test_variables_nested():
     rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
-    # TODO "C" doesn't need to be quoted here...
     assert get_function(code, 'f', body=True) == textwrap.dedent(f"""\
         def f() -> None:
             class C:
@@ -4753,7 +4751,7 @@ def test_variables_nested():
                 class D:
                     bar: int = -1
 
-            c: "C" = C(10)
+            c: C = C(10)
     """)
 
 

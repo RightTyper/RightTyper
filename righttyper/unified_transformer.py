@@ -298,8 +298,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         # names used somewhere in a module or class scope
         self.used_names: list[set[str]] = [used_names(node)]
 
-        # currently known global names
-        self.known_names: set[str] = set(_BUILTIN_TYPES)
+        # stack of known names
+        self.known_names: list[set[str]] = [set(_BUILTIN_TYPES)]
 
         # global aliases from 'from .. import ..' and 'import .. as ..';
         # maps from qualified name to local name
@@ -369,7 +369,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             if isinstance(node.names, abc.Sequence):
                 for alias in node.names:
                     if alias.asname is not None:
-                        self.known_names.add(_nodes_to_top_level_name(alias.asname.name))
+                        self.known_names[-1].add(_nodes_to_top_level_name(alias.asname.name))
                         self.aliases[_nodes_to_dotted_name(alias.name)] = _nodes_to_dotted_name(alias.asname.name)
                     else:
                         self.imported_modules |= set(_nodes_to_all_dotted_names(alias.name))
@@ -380,7 +380,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             # node.names could also be cst.ImportStar
             if isinstance(node.names, abc.Sequence):
                 for alias in node.names:
-                    self.known_names.add(
+                    self.known_names[-1].add(
                         _nodes_to_top_level_name(
                             alias.asname.name if alias.asname is not None else alias.name
                         )
@@ -431,11 +431,11 @@ class UnifiedTransformer(cst.CSTTransformer):
     def visit_Assign(self, node: cst.Assign) -> bool:
         for t in node.targets:
             if isinstance(t.target, cst.Name):
-                self.known_names.add(".".join(self.name_stack + [t.target.value]))
+                self.known_names[-1].add(t.target.value)
             elif isinstance(t.target, cst.Tuple):
                 for el in t.target.elements:
                     if isinstance(el.value, cst.Name):
-                        self.known_names.add(".".join(self.name_stack + [el.value.value]))
+                        self.known_names[-1].add(el.value.value)
         return True
 
 
@@ -534,7 +534,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
         if isinstance(node.target, cst.Name):
-            self.known_names.add(".".join(self.name_stack + [node.target.value]))
+            self.known_names[-1].add(node.target.value)
         return True
 
 
@@ -578,7 +578,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def visit_NamedExpr(self, node: cst.NamedExpr) -> bool:
         if isinstance(node.target, cst.Name):
-            self.known_names.add(".".join(self.name_stack + [node.target.value]))
+            self.known_names[-1].add(node.target.value)
         return True
 
 
@@ -588,6 +588,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         self.overload_stack.append([])
         self.overload_name_stack.append("")
+        self.known_names.append(set(self.known_names[0]))   # current globals ([0]) are also known
 
         name = '.'.join(self.name_stack)
         is_enum = any(
@@ -608,7 +609,8 @@ class UnifiedTransformer(cst.CSTTransformer):
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
         self.annotate_vars_stack.pop()
         # a class is known once its definition is done
-        self.known_names.add(".".join(self.name_stack))
+        self.known_names.pop()
+        self.known_names[-1].add(self.name_stack[-1])
         self.name_stack.pop()
         self.used_names.pop()
         self.overload_stack.pop()
@@ -621,6 +623,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         self.overload_stack.append([])
         self.overload_name_stack.append("")
+        self.known_names.append(set(self.known_names[0]))   # current globals ([0]) are also known
 
         name = ".".join(self.name_stack[:-1])
         first_line = min(
@@ -649,7 +652,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                     node.typevar_name is None                       # we'll define these
                     and (fullname := node.fullname()) != 'types.UnionType' # ignore: used to build sets
                     and fullname != ''                                     # ignore: used to build lists
-                    and fullname.split('.')[0] not in self.known_names
+                    and fullname.split('.')[0] not in self.known_names[-1]
                     and node.module not in self.imported_modules
                 ):
                     me.types.add(node.fullname())
@@ -723,6 +726,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.pop()
         self.overload_stack.pop()
         self.overload_name_stack.pop()
+        self.known_names.pop()
 
         # If we encounter a function whose name doesn't match the current
         # overload sequence, we discard the overload stack and update the
@@ -922,7 +926,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 self._module_for(t)[0]
                 for t in self.unknown_types - _TYPING_TYPES
                 if '.' in t
-                and t.split('.')[0] not in self.known_names
+                and t.split('.')[0] not in self.known_names[-1]
             )
             if mod != ''
         }
@@ -988,7 +992,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 if_type_checking_position = find_beginning(new_body)
                 new_body.insert(if_type_checking_position, new_stmt)
 
-            if 'TYPE_CHECKING' not in self.known_names:
+            if 'TYPE_CHECKING' not in self.known_names[-1]:
                 self.unknown_types.add('TYPE_CHECKING')
 
         # Emit "from typing import ..."
