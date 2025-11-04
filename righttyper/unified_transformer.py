@@ -139,9 +139,6 @@ def _get_str_attr(obj: object, path: str) -> str|None:
     return obj if isinstance(obj, str) else None
 
 
-def _annotation_as_string(annotation: cst.BaseExpression) -> str:
-    return cst.Module([cst.SimpleStatementLine([cst.Expr(annotation)])]).code.strip('\n')
-
 def _quote(s: str) -> str:
     s = s.replace('\\', '\\\\')
     return '"' + s.replace('"', '\\"') + '"'
@@ -202,79 +199,47 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         return '', name
 
-    def _is_valid(self, annotation: TypeInfo) -> bool:
-        """Returns whether the annotation can be parsed."""
-        # local names such as foo.<locals>.Bar yield this exception
-        try:
-            cst.parse_expression(str(annotation))
-            return True
-        except cst.ParserSyntaxError:
-            return False
-
-    def _rename_types(self, annotation: cst.BaseExpression) -> cst.BaseExpression:
+    def _rename_types(self, annotation: TypeInfo) -> TypeInfo:
         """Renames types in an annotation based on the module name and on any aliases."""
 
-        class Renamer(cst.CSTTransformer):
-            def __init__(self, transformer: 'UnifiedTransformer'):
-                self.t = transformer
+        class Renamer(TypeInfo.Transformer):
+            def visit(tt, node: TypeInfo) -> TypeInfo:
+                node = super().visit(node)
 
-            def visit_Attribute(self, node: cst.Attribute) -> bool:
-                return False    # we read the whole name at once, so don't recurse
+                if node.module in ('', 'builtins') and node.name in _BUILTIN_TYPES:
+                    if node.name not in self.used_names[-1]:
+                        return node.replace(module='')  # don't need the module
 
-            def try_replace(self, node: cst.Name|cst.Attribute) -> cst.Name|cst.Attribute:
-                name = _nodes_to_dotted_name(node)
+                    # somebody overrode a builtin name(!), qualify it
+                    node = node.replace(module='builtins') 
 
-                if name in _BUILTIN_TYPES:
-                    if name not in self.t.used_names[-1]:
-                        return node
+                # use local names where possible (shorter)
+                if a := self.aliases.get(node.fullname()):
+                    return node.replace(module='', name=a)
 
-                    name = f"builtins.{name}" # somebody overrode a builtin name(!)
+                if node.module:
+                    if node.module == self.module_name:
+                        # Use local name if possible; when <locals> are
+                        # involved, this may be the only way to refer to it
+                        name_parts = node.name.split('.')
+                        if name_parts[:-1] == self.name_stack:
+                            return node.replace(module='', name=name_parts[-1])
 
-                if a := self.t.aliases.get(name):
-                    return _dotted_name_to_nodes(a)
+                        return node.replace(module='')  # it's us, refer by (global) name
 
-                module, rest = self.t._module_for(name)
-                if module:
-                    if module == self.t.module_name:
-                        return _dotted_name_to_nodes(rest)
+                    # use local names for the module where possible (shorter)
+                    if a := self.aliases.get(node.module):
+                        return node.replace(module=a)
 
-                    if a := self.t.aliases.get(module):
-                        return _dotted_name_to_nodes(f"{a}.{rest}")
-
-                    # does the package name conflict with other definitions?
-                    if name.split('.')[0] in self.t.used_names[-1]:
-                        alias = "_rt_" + "_".join(module.split("."))
-                        self.t.if_checking_aliases[module] = alias
-                        return _dotted_name_to_nodes(alias + ("" if rest == "" else f".{rest}"))
-
-                if module == 'builtins':
-                    return _dotted_name_to_nodes(name)
+                    # does the module's first part conflict with other definitions?
+                    if node.module.split('.')[0] in self.used_names[-1]:
+                        alias = "_rt_" + "_".join(node.module.split("."))
+                        self.if_checking_aliases[node.module] = alias
+                        return node.replace(module=alias)
 
                 return node
 
-            def leave_Name(self,
-                orig_node: cst.Name,
-                updated_node: cst.Name
-            ) -> cst.Name|cst.Attribute:
-                return self.try_replace(updated_node)
-
-            def leave_Attribute(self,
-                orig_node: cst.Attribute,
-                updated_node: cst.Attribute
-            ) -> cst.Name|cst.Attribute:
-                return self.try_replace(updated_node)
-
-        return typing.cast(cst.BaseExpression, annotation.visit(Renamer(self)))
-
-
-    def _unknown_types(self, types: set[str]) -> abc.Iterator[str]:
-        """Yields types among those given that are unknown."""
-        for t in types:
-            if not (
-                t.split('.')[0] in self.known_names
-                or self._module_for(t)[0] in self.imported_modules
-            ):
-                yield t
+        return Renamer().visit(annotation)
 
 
     def _process_generics(
@@ -336,8 +301,10 @@ class UnifiedTransformer(cst.CSTTransformer):
         # currently known global names
         self.known_names: set[str] = set(_BUILTIN_TYPES)
 
-        # global aliases from 'from .. import ..' and 'import .. as ..'
+        # global aliases from 'from .. import ..' and 'import .. as ..';
+        # maps from qualified name to local name
         self.aliases: dict[str, str] = {
+            # we will add any such "typing." names, so add them as aliases
             f"typing.{t}": t
             for t in _TYPING_TYPES
         }
@@ -552,9 +519,12 @@ class UnifiedTransformer(cst.CSTTransformer):
                 # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
                 var_type = TypeInfo('typing', 'TypeAlias')
 
+        if not (expr := self._get_annotation_expr(var_type)):
+            return updated_node
+
         new_node = cst.AnnAssign(
             target=target,
-            annotation=cst.Annotation(annotation=self._get_annotation_expr(var_type)),
+            annotation=cst.Annotation(annotation=expr),
             value=updated_node.value
         )
 
@@ -595,8 +565,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                 # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
                 var_type = TypeInfo('typing', 'TypeAlias')
 
+        if not (expr := self._get_annotation_expr(var_type)):
+            return updated_node
+
         new_node = updated_node.with_changes(
-            annotation=cst.Annotation(annotation=self._get_annotation_expr(var_type))
+            annotation=cst.Annotation(annotation=expr)
         )
 
         self._record_var_change(node, new_node)
@@ -659,37 +632,36 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.annotate_vars_stack.append(True)
         return True
 
-    def _get_annotation_expr(self, annotation: TypeInfo) -> cst.BaseExpression:
-        class FindGenerics(TypeInfo.Transformer):
-            def __init__(self):
-                self.generics = set()
+    def _get_annotation_expr(self, annotation: TypeInfo) -> cst.BaseExpression | None:
+        annotation = self._rename_types(annotation)
 
-            def visit(self, node: TypeInfo) -> TypeInfo:
-                if node.typevar_name is not None:
-                    self.generics.add(node.typevar_name)
+        try:
+            annotation_expr: cst.BaseExpression = cst.parse_expression(str(annotation))
+        except cst.ParserSyntaxError:
+            return None # result would be invalid; most likely it contains "<locals>"
+
+        class UnknownTypeExtractor(TypeInfo.Transformer):
+            def __init__(me):
+                me.types = set()
+
+            def visit(me, node: TypeInfo) -> TypeInfo:
+                if (
+                    node.typevar_name is None                       # we'll define these
+                    and (fullname := node.fullname()) != 'types.UnionType' # ignore: used to build sets
+                    and fullname != ''                                     # ignore: used to build lists
+                    and fullname.split('.')[0] not in self.known_names
+                    and node.module not in self.imported_modules
+                ):
+                    me.types.add(node.fullname())
+
                 return super().visit(node)
         
-        fr = FindGenerics()
-        fr.visit(annotation)
+        unknown = UnknownTypeExtractor()
+        unknown.visit(annotation)
+        self.unknown_types |= unknown.types 
 
-        ann_str = str(annotation)
-        # check for function-local types
-        if '.<locals>.' in ann_str:
-            context = ".".join([self.module_name] + self.name_stack) + "."
-            if ann_str.startswith(context):
-                ann_str = ann_str[len(context):]
-
-            if '.<locals>.' in ann_str:
-                # the type comes from a nested function; we can't refer to it
-                ann_str = str(UnknownTypeInfo)
-
-        annotation_expr: cst.BaseExpression = cst.parse_expression(ann_str)
-        annotation_expr = self._rename_types(annotation_expr)
-        unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
-        self.unknown_types |= unknown_types - fr.generics
-
-        if not self.has_future_annotations and (unknown_types - fr.generics - _TYPING_TYPES):
-            annotation_expr = cst.SimpleString(_quote(_annotation_as_string(annotation_expr)))
+        if not self.has_future_annotations and (unknown.types - _TYPING_TYPES):
+            annotation_expr = cst.SimpleString(_quote(str(annotation)))
 
         return annotation_expr
     
@@ -709,13 +681,12 @@ class UnifiedTransformer(cst.CSTTransformer):
         ):
             return parameter
 
-        if not self._is_valid(annotation):
-            return parameter
-
-        if annotation.fullname() == "typing.Any":
+        if (
+            annotation.fullname() == "typing.Any"
+            or not (annotation_expr := self._get_annotation_expr(annotation))
+        ):
             new_par = parameter.with_changes(annotation=None)
         else:
-            annotation_expr = self._get_annotation_expr(annotation)
             new_par = parameter.with_changes(
                 annotation=cst.Annotation(annotation=annotation_expr)
             )
@@ -819,8 +790,10 @@ class UnifiedTransformer(cst.CSTTransformer):
                         type_params.append(cst.TypeParam(param=cst.TypeVar(
                             name=cst.Name(value=str(generic)),
                             bound=cst.Tuple(elements=[
-                                cst.Element(value=self._get_annotation_expr(typing.cast(TypeInfo, arg)))
+                                cst.Element(value=expr)
                                 for arg in generic.args
+                                if isinstance(arg, TypeInfo)
+                                if (expr := self._get_annotation_expr(arg))
                             ])
                         )))
 
@@ -840,9 +813,10 @@ class UnifiedTransformer(cst.CSTTransformer):
                             cst.Assign(targets=[cst.AssignTarget(target=cst.Name(generic.typevar_name))],
                                        value=cst.Call(func=cst.Name("TypeVar"), args=[
                                            cst.Arg(value=cst.SimpleString(_quote(str(generic)))),
-                                           *(cst.Arg(value=self._get_annotation_expr(
-                                               typing.cast(TypeInfo, arg)))
+                                           *(cst.Arg(value=expr)
                                              for arg in generic.args
+                                             if isinstance(arg, TypeInfo)
+                                             if (expr := self._get_annotation_expr(arg))
                                             )
                                        ])
                             )
@@ -862,26 +836,25 @@ class UnifiedTransformer(cst.CSTTransformer):
                     or (not self.only_update_annotations and updated_node.returns is None)
                 )
                 if should_update_ret:
-                    if self._is_valid(ann.retval):
+                    if (
+                        ann.retval.fullname() == "typing.Any"
+                        or not (annotation_expr := self._get_annotation_expr(ann.retval))
+                    ):
+                        updated_node = updated_node.with_changes(returns=None)
+                    else:
+                        updated_node = updated_node.with_changes(
+                            returns=cst.Annotation(annotation=annotation_expr),
+                        )
 
-                        if ann.retval.fullname() == "typing.Any":
-                            updated_node = updated_node.with_changes(returns=None)
-                        else:
-                            annotation_expr = self._get_annotation_expr(ann.retval)
-
-                            updated_node = updated_node.with_changes(
-                                returns=cst.Annotation(annotation=annotation_expr),
+                    # remove "(...) -> retval"-style type hint comment
+                    if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
+                        and _TYPE_HINT_COMMENT_FUNC.match(comment)):
+                        updated_node = updated_node.with_changes(
+                            body=updated_node.body.with_changes(
+                                body=(updated_node.body.body[0].with_changes(leading_lines=[]),
+                                      *updated_node.body.body[1:])
                             )
-
-                        # remove "(...) -> retval"-style type hint comment
-                        if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
-                            and _TYPE_HINT_COMMENT_FUNC.match(comment)):
-                            updated_node = updated_node.with_changes(
-                                body=updated_node.body.with_changes(
-                                    body=(updated_node.body.body[0].with_changes(leading_lines=[]),
-                                          *updated_node.body.body[1:])
-                                )
-                            )
+                        )
 
                 # remove single-line type hint comment in the same line as the 'def'
                 if ((comment := _get_str_attr(updated_node, "body.header.comment.value"))

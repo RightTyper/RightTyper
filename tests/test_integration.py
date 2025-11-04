@@ -1472,7 +1472,7 @@ def test_mock_with_obj_spec(tmp_cwd):
     """)
 
 
-@pytest.mark.xfail(reason="Doesn't work yet")
+@pytest.mark.xfail(reason="Doesn't quite work yet")
 def test_local_class_name(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def f():
@@ -1490,8 +1490,10 @@ def test_local_class_name(tmp_cwd):
 
     rt_run('t.py')
     output = (tmp_cwd / "t.py").read_text()
-
-    assert "def g(x: C) -> int" in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\
+        def g(x: C) -> int: ...
+    """)
 
 
 def test_return_private_class():
@@ -1513,8 +1515,15 @@ def test_return_private_class():
 
     # that local class name is "f.<locals>.fC"; this yields a CST ParserSyntaxError
     assert "import fC" not in output
-    assert "def f():" in output # FIXME what is a good way to express the return type?
-    assert "def g(x) -> None:" in output # FIXME what is a good way to express the type?
+
+    code = cst.parse_module(output)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(): ...
+    """)
+
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(x) -> None: ...
+    """)
 
 
 def test_default_inner_function():
@@ -4863,7 +4872,6 @@ def test_variables():
 
 
 def test_variables_type_from_nested():
-    # TODO we could instead just not annotate the variable...
     Path("t.py").write_text(textwrap.dedent("""\
         def f():
             def g():
@@ -4882,14 +4890,13 @@ def test_variables_type_from_nested():
     code = cst.parse_module(output)
 
     assert code.code == textwrap.dedent("""\
-        from typing import Any
         def f() -> None:
             def g():
                 class C:
                     pass
                 return C()
 
-            c: Any = g()
+            c = g()
 
         f()
         """
