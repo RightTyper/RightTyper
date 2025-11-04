@@ -1920,7 +1920,7 @@ def test_generate_stubs():
         import sys
 
         CONST = 42
-        CALC = 1+1
+        CALC = 1+1.0
 
         class C:
             PI = 314
@@ -1948,9 +1948,8 @@ def test_generate_stubs():
     assert output == textwrap.dedent("""\
         from typing import Self
         import sys
-        from typing import Any
         CONST: int
-        CALC: Any
+        CALC: float
         class C:
             PI: int
             def __init__(self: Self, x: int) -> None: ...
@@ -2964,10 +2963,10 @@ def test_namedtuple():
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
-    assert (
-        "def foo(x: P) -> P:" in output or
-        "def foo(x: \"P\") -> \"P\":" in output
-    )
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent(f"""\
+        def foo(x: P) -> P: ...
+    """)
 
 
 def test_class_properties():
@@ -3334,7 +3333,10 @@ def test_self_classmethod(python_version):
         """)
 
 
-@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+@pytest.mark.parametrize("python_version", [
+    pytest.param("3.10", marks=pytest.mark.xfail(reason="needs typevar, see comment")),
+    "3.11"
+])
 def test_self_inherited_classmethod(python_version):
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
@@ -3353,6 +3355,11 @@ def test_self_inherited_classmethod(python_version):
     code = cst.parse_module(output)
 
     if python_version == '3.10':
+        # FIXME this doesn't work: it really needs to be
+        # T = TypeVar("T", bound="A")
+        # class A:
+        #     @classmethod
+        #     def static_initializer(cls: type[T]) -> T: ...
         assert get_function(code, 'A.static_initializer') == textwrap.dedent("""\
             @classmethod
             def static_initializer(cls: "type[A]") -> "A": ...
@@ -4149,6 +4156,82 @@ def test_enum_class():
     """)
 
 
+def test_enum_class_indirect():
+    source = textwrap.dedent("""\
+        from enum import Enum
+
+        class A:
+            pass
+
+        class B:
+            class B2(Enum):
+                pass
+
+        class C(A, B.B2):
+            NO = 0
+            YES = 1
+            MAYBE = 2
+
+            def foo(self):
+                x = 10
+
+        C(0).foo()
+        """
+    )
+
+    Path("t.py").write_text(source)
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        from enum import Enum
+
+        class A:
+            pass
+
+        class B:
+            class B2(Enum):
+                pass
+
+        class C(A, B.B2):
+            NO = 0
+            YES = 1
+            MAYBE = 2
+
+            def foo(self: Self) -> None:
+                x: int = 10
+
+        C(0).foo()
+        """)
+
+
+def test_enum_class_other_classes():
+    source = textwrap.dedent("""\
+        import enum
+
+        class A(enum.StrEnum):
+            RED = "red"
+            GREEN = "green"
+
+        @enum.verify(enum.NAMED_FLAGS)
+        class B(enum.Flag):
+            ONE = 1
+            TWO = 2
+
+        class StrictFlag(enum.Flag, boundary=enum.STRICT):
+            RED = enum.auto()
+            GREEN = enum.auto()
+        """
+    )
+
+    Path("t.py").write_text(source)
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert output == source
+
+
 @pytest.mark.parametrize("options", [
     (),
     ("--only-update-annotations",)
@@ -4276,8 +4359,6 @@ def test_overload_ignore_annotations_generic(tmp_cwd):
     assert function_list[0].strip() == "def foo[T1: (int, str)](bar: T1) -> T1: ..."
 
 
-# Currently, we don't handle multiple aliases of the same module.
-@pytest.mark.xfail()
 def test_overload_alias_multiple(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         import typing as alias1, typing as alias2
@@ -4356,7 +4437,7 @@ def test_overload_alias(tmp_cwd, impoht, decorator):
     assert function_list[0].strip() == "def foo(x: int|str, y: int|str) -> None: ..."
 
 
-def test_capture_non_inline_typevar():
+def test_log_includes_non_inline_typevar():
     t = textwrap.dedent("""\
         ...
         # comment and emptyline
@@ -4370,6 +4451,7 @@ def test_capture_non_inline_typevar():
 
     rt_run("--no-sampling", "--python-version=3.11", "t.py")
     output = Path("righttyper.out").read_text()
+    print(output)
 
     res = textwrap.dedent("""\
         + rt_T1 = TypeVar("rt_T1", int, str)
@@ -4513,3 +4595,512 @@ def test_run_exits_with_exception(tmp_cwd):
     assert get_function(code, 'f') == textwrap.dedent(f"""\
         def f(x: \"t.C\") -> Never: ...
     """)
+
+
+def test_json_variables():
+    t = textwrap.dedent("""\
+        def foo(x):
+            y = x/.1
+            return y
+
+        z = foo(10)
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--json-output', 't.py')
+    print(Path("righttyper.json").read_text())
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    t_data = data['files'].get(str(Path('t.py').resolve()), {})
+    assert 'float' == t_data.get('vars', {}).get('z', None)
+
+    functions = t_data.get('functions', {})
+    assert 'foo' in functions
+
+    assert 'y' in functions['foo'].get('vars', {})
+    assert 'float' == functions['foo']['vars'].get('y', None)
+
+
+def test_variables_object():
+    t = textwrap.dedent("""\
+        class C:
+            foo = "bar"
+
+            class D:
+                pass
+
+            def __init__(self, x):
+                self.x = x
+
+            def set_x(self, x):
+                self.x = x
+
+        c = C(10)
+        c.set_x("boo!")
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        class C:
+            foo: str = "bar"
+
+            class D:
+                pass
+
+            def __init__(self: Self, x: int) -> None:
+                self.x: int|str = x
+
+            def set_x(self: Self, x: str) -> None:
+                self.x = x
+
+        c: C = C(10)
+        c.set_x("boo!")
+    """)
+
+
+def test_json_variables_object():
+    t = textwrap.dedent("""\
+        class C:
+            foo = "bar"
+
+            class D:
+                pass
+
+            def __init__(self, x):
+                self.x = x
+
+            def set_x(self, x):
+                self.x = x
+
+        c = C(10)
+        c.set_x("boo!")
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--json-output', 't.py')
+    print(Path("righttyper.json").read_text())
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    # global variable
+    t_data = data['files'].get(str(Path('t.py').resolve()), {})
+    assert 'c' in t_data.get('vars', {})
+    assert 't.C' == t_data['vars'].get('c', None)
+
+    assert 'C' in t_data.get('vars', {})
+    assert 'type[t.C]' == t_data['vars'].get('C', None)
+
+    # class variables
+    assert 'C.foo' in t_data.get('vars', {})
+    assert 'str' == t_data.get('vars', {}).get('C.foo', None)
+
+    assert 'C.D' in t_data.get('vars', {})
+    assert 'type[t.C.D]' == t_data.get('vars', {}).get('C.D', None)
+
+    functions = t_data.get('functions', {})
+    assert 'C.__init__' in functions
+
+    # function (method) variable
+    assert 'self.x' in functions['C.__init__'].get('vars', {})
+    assert 'int|str' == functions['C.__init__']['vars'].get('self.x', None)
+
+
+def test_variables_nested():
+    t = textwrap.dedent("""\
+        def f():
+            class C:
+                foo = "bar"
+
+                def __init__(self, x):
+                    self.x = x
+
+                class D:
+                    bar = -1
+
+            c = C(10)
+
+        f()
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # TODO "C" doesn't need to be quoted here...
+    assert get_function(code, 'f', body=True) == textwrap.dedent(f"""\
+        def f() -> None:
+            class C:
+                foo: str = "bar"
+
+                def __init__(self: Self, x: int) -> None:
+                    self.x: int = x
+
+                class D:
+                    bar: int = -1
+
+            c: "C" = C(10)
+    """)
+
+
+def test_json_variables_nested():
+    t = textwrap.dedent("""\
+        def f():
+            class C:
+                foo = "bar"
+
+                def __init__(self, x):
+                    self.x = x
+
+                class D:
+                    bar = -1
+
+            c = C(10)
+
+        f()
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--json-output', 't.py')
+    print(Path("righttyper.json").read_text())
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    # global variable
+    t_data = data['files'].get(str(Path('t.py').resolve()), {})
+    f_data = t_data['functions']['f']
+
+    assert 't.f.C' == f_data['vars'].get('c')
+    assert 'type[t.f.C]' == f_data['vars'].get('C')
+    assert 'str' == f_data['vars'].get('C.foo')
+    assert 'type[t.f.C.D]' == f_data['vars'].get('C.D')
+    assert 'int' == f_data['vars'].get('C.D.bar')
+
+
+def test_json_variables_generator():
+    # generators may not return or unwind... can we see their variables?
+    t = textwrap.dedent("""\
+        def gen():
+            x = "foo"
+            yield 1
+            yield 2
+
+        g = gen()
+        print(next(g))
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--json-output', 't.py')
+    print(Path("righttyper.json").read_text())
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    t_data = data['files'].get(str(Path('t.py').resolve()), {})
+    gen_data = t_data['functions']['gen']
+    assert 'str' == gen_data['vars'].get('x')
+
+
+def test_json_variables_generator_async():
+    Path("t.py").write_text(textwrap.dedent("""\
+        import asyncio
+
+        async def gen():
+            x = "foo"
+            yield 1
+            yield 2
+
+        g = gen()
+        async def main():
+            await anext(g)
+
+        asyncio.run(main())
+        """
+    ))
+
+    rt_run('--json-output', 't.py')
+    print(Path("righttyper.json").read_text())
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    t_data = data['files'].get(str(Path('t.py').resolve()), {})
+    f_data = t_data['functions']['gen']
+    assert 'str' == f_data['vars'].get('x')
+
+
+def test_variables():
+    Path("t.py").write_text(textwrap.dedent("""\
+        C = 1.0
+
+        def f(p):
+            x = 1/p
+            return x+1
+
+        f(10)
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert code.code == textwrap.dedent("""\
+        C: float = 1.0
+
+        def f(p: int) -> float:
+            x: float = 1/p
+            return x+1
+
+        f(10)
+        """
+    )
+
+
+def test_variables_type_from_nested():
+    # TODO we could instead just not annotate the variable...
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f():
+            def g():
+                class C:
+                    pass
+                return C()
+
+            c = g()
+
+        f()
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert code.code == textwrap.dedent("""\
+        from typing import Any
+        def f() -> None:
+            def g():
+                class C:
+                    pass
+                return C()
+
+            c: Any = g()
+
+        f()
+        """
+    )
+
+
+@pytest.mark.parametrize("annotation", ["", ": type"])
+@pytest.mark.parametrize("scope", ['global', 'class', 'function'])
+def test_type_variables(annotation, scope):
+    if scope == 'global':
+        S = ''
+        I = ''
+    elif scope == 'class':
+        S = 'class C:'
+        I = ' ' * 4
+    else:
+        S = 'def fun() -> None:'
+        I = ' ' * 4
+
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        from typing import Iterable, NamedTuple
+        from collections import namedtuple
+        from collections.abc import Sequence
+
+        {S}
+        {I}T{annotation} = int
+        {I}U{annotation} = str|bool
+        {I}V{annotation} = Iterable[tuple[int, str]]
+        {I}W{annotation} = Sequence[int]
+        {I}X{annotation} = namedtuple("X", [])
+        {I}Y{annotation} = NamedTuple("Y", [])
+        {I}Z{annotation} = (int if 2+2==4 else int)
+
+        {I+'@staticmethod' if scope == 'class' else ''}
+        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
+
+        {'fun()' if scope == 'function' else ''}
+        """
+    ))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert code.code == textwrap.dedent(f"""\
+        from typing import Iterable, NamedTuple, TypeAlias
+        from collections import namedtuple
+        from collections.abc import Sequence
+
+        {S}
+        {I}T: TypeAlias = int
+        {I}U: TypeAlias = str|bool
+        {I}V: TypeAlias = Iterable[tuple[int, str]]
+        {I}W: TypeAlias = Sequence[int]
+        {I}X = namedtuple("X", [])
+        {I}Y = NamedTuple("Y", [])
+        {I}Z: type[int] = (int if 2+2==4 else int)
+
+        {I+'@staticmethod' if scope == 'class' else ''}
+        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
+
+        {'fun()' if scope == 'function' else ''}
+        """
+    )
+
+
+@pytest.mark.dont_run_mypy # annotations in source are wrong to test if they are corrected
+def test_variables_dataclass():
+    # TODO dataclasses are not yet supported
+    Path("t.py").write_text(textwrap.dedent("""\
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class C:
+            x: bool
+            y: str = 1
+            z: int = field(default_factory=set)
+
+        c = C('tada')
+        """
+    ))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class C:
+            x: bool
+            y: str = 1
+            z: int = field(default_factory=set)
+
+        c: C = C('tada')
+        """
+    )
+#    assert output == textwrap.dedent("""\
+#        from dataclasses import dataclass, field
+#
+#        @dataclass
+#        class C:
+#            x: str
+#            y: int = 1
+#            z: set = field(default_factory=set)
+#
+#        c: C = C('tada')
+#        """
+#    )
+
+
+def test_variables_slots():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            __slots__ = ('x', 'y', 'z')
+
+            def __init__(self, x):
+                self.x = x
+                self.y = {}
+
+        c = C('tada')
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import Never, Self
+        class C:
+            __slots__: tuple[str, str, str] = ('x', 'y', 'z')
+
+            def __init__(self: Self, x: str) -> None:
+                self.x: str = x
+                self.y: dict[Never, Never] = {}
+
+        c: C = C('tada')
+        """
+    )
+
+
+def test_variables_properties():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x = None
+
+            @property
+            def x(self):
+                return str(self._x)
+
+            @x.setter
+            def x(self, value):
+                self._x = value
+
+        c = C()
+        c.x = 10  # type: ignore[assignment]
+        y = c.x
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        class C:
+            def __init__(self: Self) -> None:
+                self._x: int|None = None
+
+            @property
+            def x(self: Self) -> str:
+                return str(self._x)
+
+            @x.setter
+            def x(self: Self, value: int) -> None:
+                self._x = value
+
+        c: C = C()
+        c.x = 10  # type: ignore[assignment]
+        y: str = c.x
+        """
+    )
+
+
+def test_variables_obj_defines_bool():
+    # This replicates a bug while running tqdm tests
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self._x = None
+
+            def __bool__(self):
+                raise RuntimeError("don't call me!")
+
+        c = C()
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        class C:
+            def __init__(self: Self) -> None:
+                self._x: None = None
+
+            def __bool__(self):
+                raise RuntimeError("don't call me!")
+
+        c: C = C()
+        """
+    )

@@ -19,7 +19,8 @@ from types import (
     CoroutineType,
     GenericAlias,
     ModuleType,
-    MappingProxyType
+    MappingProxyType,
+    UnionType
 )
 from typing import Any, cast, TypeAlias, get_type_hints, get_origin, get_args, Callable
 import typing
@@ -144,7 +145,7 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
 
     return TypeInfo("typing", "Callable",
         args=args,
-        code_id=CodeId(id(func.__code__)),
+        code=func.__code__,
         type_obj=cast(type, abc.Callable),
         is_bound=isinstance(func, MethodType)
     )
@@ -396,11 +397,11 @@ def _type_for_generator(
         try:
             hints = get_type_hints(f)
             if 'return' in hints:
-                return hint2type(hints['return']).replace(code_id=CodeId(id(code)))
+                return hint2type(hints['return']).replace(code=code)
         except:
             pass
 
-    return TypeInfo.from_type(type_obj, module="typing", code_id=CodeId(id(code)))
+    return TypeInfo.from_type(type_obj, module="typing", code=code)
 
 
 def _random_item[T](container: abc.Collection[T]) -> T:
@@ -664,6 +665,8 @@ def get_value_type(
         return _type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
     elif isinstance(value, type) and value is not type:
         return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
+    elif isinstance(value, (type(typing.Generic[T]), GenericAlias, UnionType)):    # type: ignore[index]
+        return TypeInfo("", "type")
     elif t.__module__ == "builtins":
         if in_builtins_import(t):
             return TypeInfo.from_type(t, module="") # these are "well known", so no module name needed

@@ -4,25 +4,66 @@ import collections.abc as abc
 from dataclasses import dataclass
 import libcst as cst
 import libcst.matchers as cstm
-from libcst.metadata import MetadataWrapper, PositionProvider
+from libcst.metadata import MetadataWrapper, PositionProvider, QualifiedNameProvider
+from righttyper.variable_binding import VariableBindingProvider
 import re
 
 from righttyper.righttyper_types import (
     Filename,
     FuncId,
     FuncAnnotation,
+    ModuleVars,
     FunctionName,
-    TypeInfo
+    TypeInfo,
+    UnknownTypeInfo
 )
 
 
-@dataclass(eq=True, frozen=True)
-class ExtendedFunctionDef:
-    # The list of CST elements before the actual `FunctionDef` node which are
-    # associated with that node
-    prefix: typing.Sequence[cst.SimpleStatementLine | cst.BaseCompoundStatement]
-    # The primary `FunctionDef` node
-    primary: cst.FunctionDef
+ChangeStmtList: typing.TypeAlias = typing.Sequence[cst.SimpleStatementLine | cst.BaseCompoundStatement | cst.FunctionDef]
+
+@dataclass(frozen=True)
+class Change:
+    """Describes a change made to the source code."""
+    scope: str
+    before: ChangeStmtList
+    after: ChangeStmtList
+
+
+    @staticmethod
+    def _format_stmts(stmts: ChangeStmtList) -> str:
+        """Formats change statements."""
+
+        class FuncBodyRemover(cst.CSTTransformer):
+            def leave_FunctionDef(
+                self,
+                original_node: cst.FunctionDef,
+                updated_node: cst.FunctionDef
+            ) -> cst.FunctionDef:
+                return updated_node.with_changes(
+                    body=cst.SimpleStatementSuite([cst.Expr(cst.Ellipsis())])
+                )
+
+            def leave_Decorator(
+                self,
+                original_node: cst.Decorator,
+                updated_node: cst.Decorator
+            ) -> cst.RemovalSentinel:
+                return cst.RemoveFromParent()
+
+        bodyless = [
+            typing.cast(cst.FunctionDef, it.visit(FuncBodyRemover())) if isinstance(it, cst.FunctionDef) else it
+            for it in stmts
+        ]
+
+        # remove " ..." from the FunctionDef body deletion, if present
+        return cst.Module(bodyless).code.strip().removesuffix(" ...")
+
+    def format(self) -> tuple[str, str, str]:
+        return (
+            self.scope,
+            Change._format_stmts(self.before),
+            Change._format_stmts(self.after)
+        )
 
 
 _BUILTIN_TYPES : frozenset[str] = frozenset({
@@ -97,6 +138,7 @@ def _get_str_attr(obj: object, path: str) -> str|None:
 
     return obj if isinstance(obj, str) else None
 
+
 def _annotation_as_string(annotation: cst.BaseExpression) -> str:
     return cst.Module([cst.SimpleStatementLine([cst.Expr(annotation)])]).code.strip('\n')
 
@@ -106,25 +148,32 @@ def _quote(s: str) -> str:
 
 
 class UnifiedTransformer(cst.CSTTransformer):
-    METADATA_DEPENDENCIES = (PositionProvider,)
+    METADATA_DEPENDENCIES = (PositionProvider, QualifiedNameProvider, VariableBindingProvider)
 
     def __init__(
         self,
         filename: str,
         type_annotations: dict[FuncId, FuncAnnotation],
+        module_variables: ModuleVars | None,
         override_annotations: bool,
         only_update_annotations: bool,
         inline_generics: bool,
-        module_name: str|None
+        module_name: str
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
+        self.module_variables: dict[str, TypeInfo] = {}
+        if module_variables:
+            self.module_variables = {
+                var_name: var_type
+                for var_name, var_type in module_variables.variables
+            }
         self.override_annotations = override_annotations
         self.only_update_annotations = only_update_annotations
         self.inline_generics = inline_generics
         self.has_future_annotations = False
         self.module_name = module_name
-        self.change_list: list[tuple[FunctionName, ExtendedFunctionDef, ExtendedFunctionDef]] = []
+        self.change_list: list[Change] = []
 
         # TODO Ideally we'd use TypeInfo.module and avoid this as well as _module_for
         def iter_types(t: TypeInfo):
@@ -136,8 +185,11 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.name2module: dict[str, str] = {
             t.fullname(): t.module
             for ann in type_annotations.values()
-            for root in [arg[1] for arg in ann.args] + [ann.retval]
+            for root in [arg[1] for arg in ann.args] + [ann.retval] + [var[1] for var in ann.variables]
             for t in iter_types(root)
+        } | {
+            t.fullname(): t.module
+            for t in self.module_variables.values()
         }
 
     def _module_for(self, name: str) -> tuple[str, str]:
@@ -260,22 +312,20 @@ class UnifiedTransformer(cst.CSTTransformer):
         updated_ann = FuncAnnotation(
             [(name, tr.visit(ti)) for name, ti in ann.args],
             tr.visit(ann.retval),
-            varargs=ann.varargs, kwargs=ann.kwargs
+            varargs=ann.varargs, kwargs=ann.kwargs,
+            variables=[(name, tr.visit(ti)) for name, ti in ann.variables],
         )
         
         return (updated_ann, tr.generics)
                     
-    def _is_overload(self, decorator: cst.Decorator):
-        """Test if the given decorator is an `@overload` decorator.
-        
-        Note that this is not a perfect test -- it is based on `self.aliases`
-        and only handles global includes and aliases thereof."""
-        if isinstance(decorator.decorator, cst.Name):
-            return decorator.decorator.value == self.aliases["typing.overload"]
-        if isinstance(decorator.decorator, cst.Attribute) and isinstance(decorator.decorator.value, cst.Name):
-            typing_alias = self.aliases["typing"] if "typing" in self.aliases else "typing"
-            return decorator.decorator.value.value == typing_alias and decorator.decorator.attr.value == "overload"
-        return False
+    def _decorator_is(self, decorator: cst.Decorator, qualified_name: str):
+        try:
+            return any(
+                qn.name == qualified_name
+                for qn in self.get_metadata(QualifiedNameProvider, decorator)
+            )
+        except NameError:
+            return False
 
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
@@ -328,6 +378,14 @@ class UnifiedTransformer(cst.CSTTransformer):
         # The current list of overloaded function names that are in each scope.
         self.overload_name_stack: list[str] = [""]
 
+        # The annotation for the current function, if any
+        self.func_ann_stack: list[FuncAnnotation|None] = [None]
+
+        # Whether to annotate variables in this scope
+        self.annotate_vars_stack: list[bool] = [True]
+
+        # A map indicating whether classes seen in this module inherit from enum.Enum
+        self.class_is_enum: dict[str, bool] = dict()
         return True
 
 
@@ -382,6 +440,27 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         return False
 
+
+    def _get_var(self, target: cst.Name|cst.Attribute) -> TypeInfo | None:
+        if (func_scope_index := list_rindex(self.name_stack, '<locals>')):
+            func_scope_index = len(self.name_stack) + func_scope_index + 1
+
+        qualname = ".".join(self.name_stack[func_scope_index:] + [_nodes_to_dotted_name(target)])
+        if func_scope_index:
+            if (ann := self.func_ann_stack[-1]):
+                return next(
+                    (
+                        var_type
+                        for var_name, var_type in ann.variables
+                        if var_name == qualname
+                    ), None
+                )
+        else:
+            return self.module_variables.get(qualname)
+
+        return None
+
+
     def visit_Assign(self, node: cst.Assign) -> bool:
         for t in node.targets:
             if isinstance(t.target, cst.Name):
@@ -392,15 +471,143 @@ class UnifiedTransformer(cst.CSTTransformer):
                         self.known_names.add(".".join(self.name_stack + [el.value.value]))
         return True
 
+
+    def _is_namedtuple(self, assign_value: cst.BaseExpression | None) -> bool:
+        if isinstance(assign_value, cst.Call):
+            try:
+                return any(
+                    qn.name in ('collections.namedtuple', 'typing.NamedTuple')
+                    for qn in self.get_metadata(QualifiedNameProvider, assign_value.func)
+                )
+            except NameError:
+                pass
+
+        return False
+
+
+    def _record_var_change(self, old: cst.Assign|cst.AnnAssign, new: cst.Assign|cst.AnnAssign) -> None:
+        self.change_list.append(Change(
+            ".".join(self.name_stack) if self.name_stack else '<module>',
+            [cst.SimpleStatementLine([old])],
+            [cst.SimpleStatementLine([new])]
+        ))
+
+
+    def _seems_type_like(self, expr: cst.BaseExpression | None) -> bool:
+        ALLOWED_NODES = (
+            # Base identifiers and attributes
+            cst.Name, cst.Attribute,
+            # Literals and constants
+            cst.SimpleString, cst.Integer, cst.Float, cst.Imaginary, cst.Ellipsis,
+            # Subscripted types and tuples
+            cst.Subscript, cst.Index, cst.Element, cst.Tuple, cst.StarredElement,
+            # Bitwise union / binary ops
+            cst.BitOr, cst.BinaryOperation,
+            # Expression wrapper
+            cst.Expr,
+        )
+
+        return isinstance(expr, ALLOWED_NODES) and all(
+            self._seems_type_like(child)
+            for child in expr.children
+            if isinstance(child, cst.BaseExpression)
+        )
+
+
+    def _node_defines(self, node: cst.CSTNode, target: cst.BaseExpression) -> cst.Name|cst.Attribute|None:
+        """Returns the target iff the given node is first to define it.
+           Note that currently the target must be cstm.OneOf(cstm.Name(), cstm.Atttribute(value=cstm.Name()))"""
+        try:
+            if isinstance(target, cst.Name):
+                binding = self.get_metadata(VariableBindingProvider, node)
+                return target if target.value in binding.defines_vars else None
+
+            if isinstance(target, cst.Attribute) and isinstance(target.value, cst.Name):
+                binding = self.get_metadata(VariableBindingProvider, node)
+                return target if (
+                    target.value.value == binding.self_name
+                    and target.attr.value in binding.defines_attrs
+                ) else None
+        except:
+            pass
+
+        return None
+
+
+    def leave_Assign(self, node: cst.Assign, updated_node: cst.Assign) -> cst.Assign|cst.AnnAssign:
+        if (
+            not self.annotate_vars_stack[-1]
+            or len(updated_node.targets) != 1  # no a = b = ...
+            or not (target := self._node_defines(node, node.targets[0].target))
+            or not (var_type := self._get_var(target))
+            or self.only_update_annotations
+        ):
+            return updated_node
+
+        if var_type.fullname() == 'type':
+            if self._is_namedtuple(node.value):
+                return updated_node
+
+            if self._seems_type_like(node.value):
+                # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
+                var_type = TypeInfo('typing', 'TypeAlias')
+
+        new_node = cst.AnnAssign(
+            target=target,
+            annotation=cst.Annotation(annotation=self._get_annotation_expr(var_type)),
+            value=updated_node.value
+        )
+
+        self._record_var_change(node, new_node)
+        return new_node
+
+
     def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
         if isinstance(node.target, cst.Name):
             self.known_names.add(".".join(self.name_stack + [node.target.value]))
         return True
 
+
+    def leave_AnnAssign(self, node: cst.AnnAssign, updated_node: cst.AnnAssign) -> cst.AnnAssign|cst.Assign:
+        if (
+            not self.annotate_vars_stack[-1]
+            or not (target := self._node_defines(node, node.target))
+            or not (var_type := self._get_var(target))
+            or not (self.override_annotations or self.only_update_annotations)
+        ):
+            return updated_node
+
+        new_node: cst.AnnAssign|cst.Assign
+
+        if var_type.fullname() == 'type':
+            if self._is_namedtuple(node.value):
+                assert updated_node.value is not None # checked by is_namedtuple
+
+                new_node = cst.Assign(
+                    targets=[cst.AssignTarget(target)],
+                    value=updated_node.value
+                )
+
+                self._record_var_change(node, new_node)
+                return new_node
+
+            if self._seems_type_like(node.value):
+                # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
+                var_type = TypeInfo('typing', 'TypeAlias')
+
+        new_node = updated_node.with_changes(
+            annotation=cst.Annotation(annotation=self._get_annotation_expr(var_type))
+        )
+
+        self._record_var_change(node, new_node)
+        return new_node
+
+
     def visit_NamedExpr(self, node: cst.NamedExpr) -> bool:
         if isinstance(node.target, cst.Name):
             self.known_names.add(".".join(self.name_stack + [node.target.value]))
         return True
+
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
         name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
@@ -408,9 +615,25 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         self.overload_stack.append([])
         self.overload_name_stack.append("")
+
+        name = '.'.join(self.name_stack)
+        is_enum = any(
+            qn.name.startswith('enum.') or self.class_is_enum.get(qn.name, False)
+            for base in node.bases
+            if base.keyword is None
+            for qn in self.get_metadata(QualifiedNameProvider, base.value)
+        )
+        is_dataclass = any(
+            self._decorator_is(decorator, 'dataclasses.dataclass')
+            for decorator in node.decorators
+        )
+
+        self.class_is_enum[name] = is_enum
+        self.annotate_vars_stack.append(not (is_enum or is_dataclass))
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
+        self.annotate_vars_stack.pop()
         # a class is known once its definition is done
         self.known_names.add(".".join(self.name_stack))
         self.name_stack.pop()
@@ -425,6 +648,15 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.used_names.append(self.used_names[name_source] | used_names(node))
         self.overload_stack.append([])
         self.overload_name_stack.append("")
+
+        name = ".".join(self.name_stack[:-1])
+        first_line = min(
+            self.get_metadata(PositionProvider, node).start.line
+            for node in (node, *node.decorators)
+        )
+        key = FuncId(Filename(self.filename), first_line, FunctionName(name))
+        self.func_ann_stack.append(self.type_annotations.get(key))
+        self.annotate_vars_stack.append(True)
         return True
 
     def _get_annotation_expr(self, annotation: TypeInfo) -> cst.BaseExpression:
@@ -440,7 +672,18 @@ class UnifiedTransformer(cst.CSTTransformer):
         fr = FindGenerics()
         fr.visit(annotation)
 
-        annotation_expr: cst.BaseExpression = cst.parse_expression(str(annotation))
+        ann_str = str(annotation)
+        # check for function-local types
+        if '.<locals>.' in ann_str:
+            context = ".".join([self.module_name] + self.name_stack) + "."
+            if ann_str.startswith(context):
+                ann_str = ann_str[len(context):]
+
+            if '.<locals>.' in ann_str:
+                # the type comes from a nested function; we can't refer to it
+                ann_str = str(UnknownTypeInfo)
+
+        annotation_expr: cst.BaseExpression = cst.parse_expression(ann_str)
         annotation_expr = self._rename_types(annotation_expr)
         unknown_types = set(self._unknown_types(types_in_annotation(annotation_expr)))
         self.unknown_types |= unknown_types - fr.generics
@@ -502,30 +745,27 @@ class UnifiedTransformer(cst.CSTTransformer):
     def leave_FunctionDef(
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef | cst.FlattenSentinel | cst.RemovalSentinel:
-        name = ".".join(self.name_stack[:-1])
+        func_name = ".".join(self.name_stack[:-1])
+        self.annotate_vars_stack.pop()
         self.name_stack.pop()
         self.name_stack.pop()
         self.used_names.pop()
         self.overload_stack.pop()
         self.overload_name_stack.pop()
 
-        first_line = min(
-            self.get_metadata(PositionProvider, node).start.line
-            for node in (original_node, *original_node.decorators)
-        )
-        key = FuncId(Filename(self.filename), first_line, FunctionName(name))
-
         # If we encounter a function whose name doesn't match the current
         # overload sequence, we discard the overload stack and update the
         # current overload sequence.
         # This also has the side effect of cleaning up orphan overload
         # signatures, which is good.
-        if name != self.overload_name_stack[-1]:
+        if func_name != self.overload_name_stack[-1]:
             self.overload_stack[-1] = []
-            self.overload_name_stack[-1] = name
+            self.overload_name_stack[-1] = func_name
 
-        is_overload = any(self._is_overload(decorator)
-                          for decorator in updated_node.decorators)
+        is_overload = any(
+            self._decorator_is(decorator, 'typing.overload')
+            for decorator in original_node.decorators
+        )
 
         # If our function is an overload signature, we append it to the overload list.
         # NOTE: This check technically misses if @overload is aliased or used as
@@ -534,7 +774,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.overload_stack[-1].append(original_node)
             return cst.RemoveFromParent()
 
-        if ann := typing.cast(FuncAnnotation, self.type_annotations.get(key)):  # cast to make mypy happy
+        if ann := typing.cast(FuncAnnotation, self.func_ann_stack.pop()):  # cast to make mypy happy
             pre_function: list[cst.SimpleStatementLine | cst.BaseCompoundStatement] = []
             argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
             overloads = self.overload_stack[-1]
@@ -669,9 +909,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                     pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:first_comment])
                     updated_node = updated_node.with_changes(leading_lines=leading_lines[first_comment:])
 
-            original_function_def = ExtendedFunctionDef(original_overloads, original_node)
-            updated_function_def = ExtendedFunctionDef(pre_function, updated_node)
-            self.change_list.append((key.func_name, original_function_def, updated_function_def))
+            self.change_list.append(Change(
+                func_name,
+                original_overloads + [original_node],
+                pre_function + [updated_node]
+            ))
             
             return cst.FlattenSentinel([*pre_function, updated_node]) if pre_function else updated_node
 
@@ -817,14 +1059,10 @@ class UnifiedTransformer(cst.CSTTransformer):
         return updated_node.with_changes(body=new_body)
 
 
-    def get_signature_changes(self: typing.Self) -> list[tuple[FunctionName, str, str]]:
+    def get_changes(self: typing.Self) -> list[tuple[str, str, str]]:
         return [
-            (name, old_sig, new_sig)
-            for name, old_sig, new_sig in (
-                (name, format_signature(old), format_signature(new))
-                for name, old, new in self.change_list
-            )
-            if new_sig != old_sig
+            change.format()
+            for change in self.change_list
         ]
 
 
@@ -932,32 +1170,3 @@ def list_rindex(lst: list, item: object) -> int:
         return -1 - lst[::-1].index(item)
     except ValueError:
         return 0
-
-
-def format_signature(f: ExtendedFunctionDef) -> str:
-    """Formats the signature of a function."""
-
-    class BodyRemover(cst.CSTTransformer):
-        def leave_FunctionDef(
-            self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
-        ) -> cst.FunctionDef:
-            return updated_node.with_changes(body=cst.IndentedBlock(body=[
-                cst.SimpleStatementLine(body=[])
-            ]))
-
-        def leave_Decorator(
-            self, original_node: cst.Decorator, updated_node: cst.Decorator
-        ) -> cst.RemovalSentinel:
-            return cst.RemoveFromParent()
-
-    # Here, we remove the body from the primary function and convert the whole
-    # sequence (prefix, primary) into a string
-    bodyless = typing.cast(cst.FunctionDef, f.primary.visit(BodyRemover()))
-    sig = cst.Module([*f.prefix, bodyless]).code.strip()
-
-    # It's easier to let libcst generate "pass" for an empty body and then remove it
-    # than to find a way to have it emit a bodyless function...
-    if sig.endswith("pass"):
-        sig = sig[:-4].strip()
-
-    return sig

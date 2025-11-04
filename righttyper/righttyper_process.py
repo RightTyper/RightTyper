@@ -1,5 +1,6 @@
 import logging
 import pathlib
+from typing import TypeAlias
 
 import libcst as cst
 
@@ -8,6 +9,7 @@ from righttyper.righttyper_types import (
     Filename,
     FuncId,
     FuncAnnotation,
+    ModuleVars,
     FunctionName,
 )
 from righttyper.righttyper_utils import (
@@ -16,7 +18,7 @@ from righttyper.righttyper_utils import (
 from righttyper.unified_transformer import UnifiedTransformer
 from righttyper.logger import logger
 
-SignatureChanges = tuple[Filename, list[tuple[FunctionName, str, str]]]
+CodeChanges: TypeAlias = tuple[Filename, list[tuple[str, str, str]]]
 
 
 def correct_indentation_issues(file_contents: str) -> str:
@@ -78,13 +80,14 @@ def process_file(
     filename: Filename,
     module_name: str,
     type_annotations: dict[FuncId, FuncAnnotation],
+    module_vars: ModuleVars,
     output_files: bool,
     generate_stubs: bool,
     overwrite: bool,
     ignore_annotations: bool = False,
     only_update_annotations: bool = False,
     inline_generics: bool = False,
-) -> SignatureChanges:
+) -> CodeChanges:
     logger.debug(f"process_file: {filename}")
     try:
         with open(filename, "r") as file:
@@ -104,7 +107,8 @@ def process_file(
             raise
 
     transformer = UnifiedTransformer(
-        filename, type_annotations, ignore_annotations, only_update_annotations, inline_generics,
+        filename, type_annotations, module_vars,
+        ignore_annotations, only_update_annotations, inline_generics,
         module_name=module_name
     )
 
@@ -115,7 +119,7 @@ def process_file(
         print(f"Failed to transform {filename}.")
         raise
 
-    changes = transformer.get_signature_changes()
+    changes = transformer.get_changes()
 
     if output_files and changes:
         if overwrite:
