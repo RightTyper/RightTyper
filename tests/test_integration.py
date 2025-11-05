@@ -4901,9 +4901,14 @@ def test_variables_type_from_nested():
     )
 
 
-@pytest.mark.parametrize("annotation", ["", ": type"])
-@pytest.mark.parametrize("scope", ['global', 'class', 'function'])
-def test_type_variables(annotation, scope):
+@pytest.mark.parametrize("scope, plain", [
+    ('global', True),
+    ('global', False),
+    ('class', False),
+    ('function', False),
+])
+@pytest.mark.parametrize("python_version", ["3.11", "3.12"])
+def test_type_variables(scope, plain, python_version):
     if scope == 'global':
         S = ''
         I = ''
@@ -4914,47 +4919,53 @@ def test_type_variables(annotation, scope):
         S = 'def fun() -> None:'
         I = ' ' * 4
 
+    if plain:
+        annotation = kw = ''
+    elif python_version == '3.12':
+        # mypy discourages use of 'TypeAlias' by claiming it doesn't exist in 'typing'...
+        kw = 'type '
+        annotation = ''
+    else:
+        kw = ''
+        annotation = ': TypeAlias'
+
+    # 'def f(...)' below is to see if mypy will accept these as types;
+    # mypy requires the ': TypeAlias' annotation in non-global scope
     Path("t.py").write_text(textwrap.dedent(f"""\
-        from typing import Iterable, NamedTuple
-        from collections import namedtuple
+        from typing import Iterable, NamedTuple, TypeAlias
         from collections.abc import Sequence
 
         {S}
-        {I}T{annotation} = int
-        {I}U{annotation} = str|bool
-        {I}V{annotation} = Iterable[tuple[int, str]]
-        {I}W{annotation} = Sequence[int]
-        {I}X{annotation} = namedtuple("X", [])
-        {I}Y{annotation} = NamedTuple("Y", [])
-        {I}Z{annotation} = (int if 2+2==4 else int)
+        {I}{kw}T{annotation} = int
+        {I}{kw}U{annotation} = str|bool
+        {I}{kw}V{annotation} = Iterable[tuple[int, str]]
+        {I}{kw}W{annotation} = Sequence[int]
+        {I}X = (int if 2+2==4 else int)
 
         {I+'@staticmethod' if scope == 'class' else ''}
-        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
+        {I}def f(a:T, b:U, c:V, d:W) -> None: ...
 
         {'fun()' if scope == 'function' else ''}
         """
     ))
 
-    rt_run('--ignore-annotations', 't.py')
+    rt_run('--ignore-annotations', f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
     assert code.code == textwrap.dedent(f"""\
         from typing import Iterable, NamedTuple, TypeAlias
-        from collections import namedtuple
         from collections.abc import Sequence
 
         {S}
-        {I}T: TypeAlias = int
-        {I}U: TypeAlias = str|bool
-        {I}V: TypeAlias = Iterable[tuple[int, str]]
-        {I}W: TypeAlias = Sequence[int]
-        {I}X = namedtuple("X", [])
-        {I}Y = NamedTuple("Y", [])
-        {I}Z: type[int] = (int if 2+2==4 else int)
+        {I}{kw}T{annotation} = int
+        {I}{kw}U{annotation} = str|bool
+        {I}{kw}V{annotation} = Iterable[tuple[int, str]]
+        {I}{kw}W{annotation} = Sequence[int]
+        {I}X = (int if 2+2==4 else int)
 
         {I+'@staticmethod' if scope == 'class' else ''}
-        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
+        {I}def f(a:T, b:U, c:V, d:W) -> None: ...
 
         {'fun()' if scope == 'function' else ''}
         """
@@ -5112,19 +5123,22 @@ def test_variables_obj_defines_bool():
 
 
 @pytest.mark.parametrize("prev", ["", ": Any "])
-@pytest.mark.parametrize("mod", ["", "typing."])
-def test_variables_special_typing(prev, mod):
-    # This replicates a bug while running tqdm tests
+@pytest.mark.parametrize("type_mod, coll_mod", [("", ""), ("typing.", "collections.")])
+def test_variables_special_typing(prev, type_mod, coll_mod):
     Path("t.py").write_text(textwrap.dedent(f"""\
-        from typing import Annotated, Any, Literal, NewType, ParamSpec, TypeVar, TypeVarTuple
+        from typing import Annotated, Any, Literal, NamedTuple, NewType, ParamSpec, TypeVar, TypeVarTuple
+        from collections import namedtuple
+        import collections
         import typing
 
-        T{prev} = {mod}TypeVar("T")
-        P{prev} = {mod}ParamSpec("P")
-        Ts{prev} = {mod}TypeVarTuple("Ts")
-        L{prev} = {mod}Literal["x"]
-        n{prev} = {mod}NewType("n", int)
-        a{prev} = {mod}Annotated[int, "meta"]
+        T{prev} = {type_mod}TypeVar("T")
+        P{prev} = {type_mod}ParamSpec("P")
+        Ts{prev} = {type_mod}TypeVarTuple("Ts")
+        L{prev} = {type_mod}Literal["x"]
+        n{prev} = {type_mod}NewType("n", int)
+        a{prev} = {type_mod}Annotated[int, "meta"]
+        X{prev} = {coll_mod}namedtuple("X", [])
+        Y{prev} = {type_mod}NamedTuple("Y", [])
         """
     ))
 
@@ -5132,14 +5146,18 @@ def test_variables_special_typing(prev, mod):
     output = Path("t.py").read_text()
 
     assert output == textwrap.dedent(f"""\
-        from typing import Annotated, Any, Literal, NewType, ParamSpec, TypeVar, TypeVarTuple
+        from typing import Annotated, Any, Literal, NamedTuple, NewType, ParamSpec, TypeVar, TypeVarTuple
+        from collections import namedtuple
+        import collections
         import typing
 
-        T = {mod}TypeVar("T")
-        P = {mod}ParamSpec("P")
-        Ts = {mod}TypeVarTuple("Ts")
-        L = {mod}Literal["x"]
-        n = {mod}NewType("n", int)
-        a = {mod}Annotated[int, "meta"]
+        T = {type_mod}TypeVar("T")
+        P = {type_mod}ParamSpec("P")
+        Ts = {type_mod}TypeVarTuple("Ts")
+        L = {type_mod}Literal["x"]
+        n = {type_mod}NewType("n", int)
+        a = {type_mod}Annotated[int, "meta"]
+        X = {coll_mod}namedtuple("X", [])
+        Y = {type_mod}NamedTuple("Y", [])
         """
     )

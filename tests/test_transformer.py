@@ -190,10 +190,10 @@ def test_transform_function():
                 )
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=False,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo',
         )
 
     code = t.transform_code(code)
@@ -271,9 +271,9 @@ def test_transform_method():
                 )
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name='foo',
             inline_generics=False
         )
 
@@ -345,9 +345,9 @@ def test_transform_local_function():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name='foo',
             inline_generics=False
         )
 
@@ -392,9 +392,9 @@ def test_override_annotations():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=True,
             only_update_annotations=False,
-            module_name='foo',
             inline_generics=False
         )
 
@@ -430,9 +430,9 @@ def test_transform_adds_typing_import_for_typing_names():
                 )
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name='foo',
             inline_generics=False
         )
 
@@ -469,9 +469,9 @@ def test_transform_unknown_type_as_string():
                 )
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -512,9 +512,9 @@ def test_transform_unknown_type_with_import_annotations():
                 )
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -543,9 +543,9 @@ def test_transform_empty_body_but_from_future():
             filename='foo.py',
             type_annotations = {},
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -578,9 +578,9 @@ def test_transform_deletes_type_hint_comments_in_header():
                 )
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -627,9 +627,9 @@ def test_transform_deletes_type_hint_comments_in_parameters():
                 )
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -680,9 +680,9 @@ def test_transform_deletes_type_hint_comments_for_retval():
                 )
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -750,9 +750,9 @@ def test_transform_locally_defined_types():
                 )
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -802,9 +802,9 @@ def test_uses_imported_aliases():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -846,9 +846,9 @@ def test_uses_imported_domains():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -883,9 +883,9 @@ def test_imports_subdomain_if_needed():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -926,9 +926,9 @@ def test_existing_typing_imports():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -978,9 +978,9 @@ def test_inserts_imports_after_docstring_and_space():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1033,9 +1033,9 @@ def test_relative_import():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'pkg.a.a',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'pkg.a.a',
             inline_generics=False
         )
 
@@ -1098,9 +1098,9 @@ def test_uses_local_imports():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1158,9 +1158,9 @@ def test_nonglobal_imported_modules_are_ignored():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1217,9 +1217,9 @@ def test_nonglobal_assignments_are_ignored():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1261,9 +1261,9 @@ def test_if_type_checking_insertion():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1297,9 +1297,9 @@ def test_import_conflicts_with_import():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1347,9 +1347,9 @@ def test_import_conflicts_with_definitions():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1398,9 +1398,9 @@ def test_import_conflicts_with_assignments():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1447,9 +1447,9 @@ def test_import_conflicts_with_with():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1494,9 +1494,9 @@ def test_builtin_name_conflicts():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1536,9 +1536,9 @@ def test_class_names_dont_affect_body_of_methods():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1592,9 +1592,9 @@ def test_inner_function():
                 j: _mkAnnotation([], tuple_int_float)
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1648,9 +1648,9 @@ def test_builtin_name_conflicts_even_module_name():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -1755,9 +1755,9 @@ def test_generics_inline_simple():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=True
         )
 
@@ -1790,9 +1790,9 @@ def test_generics_arg_already_annotated(override):
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=override,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=True
         )
 
@@ -1831,9 +1831,9 @@ def test_generics_ret_already_annotated(override):
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=override,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=True
         )
 
@@ -1871,9 +1871,9 @@ def test_generics_existing_generics(override):
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=override,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=True
         )
 
@@ -1909,9 +1909,9 @@ def test_generics_existing_unused_generics():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=True
         )
 
@@ -1943,9 +1943,9 @@ def test_generics_existing_generics_nested(override):
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=override,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=True
         )
 
@@ -1984,9 +1984,9 @@ def test_generics_existing_generics_overlaps_name():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=True
         )
 
@@ -2021,9 +2021,9 @@ def test_generics_inline_multiple():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=True
         )
 
@@ -2055,9 +2055,9 @@ def test_generics_inline_nested():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=True
         )
 
@@ -2089,9 +2089,9 @@ def test_generics_defined_simple():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name = 'foo',
             override_annotations=False,
             only_update_annotations=False,
-            module_name = 'foo',
             inline_generics=False
         )
 
@@ -2135,10 +2135,10 @@ def test_overload_preserve():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=False,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo'
         )
 
     output_code = t.transform_code(input_code)
@@ -2177,10 +2177,10 @@ def test_overload_remove():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo'
         )
 
     code = t.transform_code(code)
@@ -2225,10 +2225,10 @@ def test_overload_aliased():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo'
         )
 
     code = t.transform_code(code)
@@ -2260,10 +2260,10 @@ def test_dont_annotate_with_any():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo'
         )
 
     code = t.transform_code(code)
@@ -2296,10 +2296,10 @@ def test_local_aliases_known():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo'
         )
 
     code = t.transform_code(code)
@@ -2332,10 +2332,10 @@ def test_local_aliases_known_multiple():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo'
         )
 
     code = t.transform_code(code)
@@ -2370,10 +2370,10 @@ def test_local_aliases_known_annotated():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo'
         )
 
     code = t.transform_code(code)
@@ -2407,10 +2407,10 @@ def test_local_aliases_known_namedexpr():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo'
         )
 
     code = t.transform_code(code)
@@ -2445,10 +2445,10 @@ def mk_var_transformer(filename, code, *, override_annotations=True, only_update
                 (VariableName('C.x'), TypeInfo("", "str")),
                 (VariableName('C.y'), TypeInfo("", "bool"))
             ]),
+            module_name='foo',
             override_annotations=override_annotations,
             only_update_annotations=only_update_annotations,
             inline_generics=False,
-            module_name='foo'
         )
 
 
@@ -2786,10 +2786,10 @@ def test_attribute_of_subscript():
                 ),
             },
             module_variables = ModuleVars([]),
+            module_name='foo',
             override_annotations=True,
             only_update_annotations=False,
             inline_generics=False,
-            module_name='foo'
         )
 
     code = t.transform_code(code)

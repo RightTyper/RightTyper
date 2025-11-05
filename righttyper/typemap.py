@@ -11,6 +11,7 @@ from righttyper.logger import logger
 from righttyper.righttyper_utils import source_to_module_fqn, is_test_module
 
 
+# TODO use TypeAliasType-valued names when possible (the type is in its __value__)
 # TODO add policy to prefer type names added using TypeAlias ("foo: TypeAlias = bar")
 class TypeMap:
     """Maps type objects to a canonical name for the type, if possible."""

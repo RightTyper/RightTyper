@@ -152,10 +152,11 @@ class UnifiedTransformer(cst.CSTTransformer):
         filename: str,
         type_annotations: dict[FuncId, FuncAnnotation],
         module_variables: ModuleVars | None,
-        override_annotations: bool,
-        only_update_annotations: bool,
-        inline_generics: bool,
-        module_name: str
+        module_name: str,
+        *,
+        override_annotations: bool = True,
+        only_update_annotations: bool = False,
+        inline_generics: bool = True,
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
@@ -165,11 +166,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                 var_name: var_type
                 for var_name, var_type in module_variables.variables
             }
+        self.module_name = module_name
         self.override_annotations = override_annotations
         self.only_update_annotations = only_update_annotations
         self.inline_generics = inline_generics
         self.has_future_annotations = False
-        self.module_name = module_name
         self.change_list: list[Change] = []
 
         # TODO Ideally we'd use TypeInfo.module and avoid this as well as _module_for
@@ -463,7 +464,10 @@ class UnifiedTransformer(cst.CSTTransformer):
         return False
 
 
-    def _record_var_change(self, old: cst.Assign|cst.AnnAssign, new: cst.Assign|cst.AnnAssign) -> None:
+    def _record_var_change(self,
+        old: cst.Assign|cst.AnnAssign|cst.TypeAlias,
+        new: cst.Assign|cst.AnnAssign|cst.TypeAlias
+    ) -> None:
         self.change_list.append(Change(
             ".".join(self.name_stack) if self.name_stack else '<module>',
             [cst.SimpleStatementLine([old])],
@@ -512,35 +516,85 @@ class UnifiedTransformer(cst.CSTTransformer):
         return None
 
 
-    def leave_Assign(self, node: cst.Assign, updated_node: cst.Assign) -> cst.Assign|cst.AnnAssign:
+    def _handle_assign(
+        self,
+        node: cst.Assign|cst.AnnAssign|cst.TypeAlias,
+        node_target: cst.BaseExpression,
+        annotation: cst.Annotation|None
+    ) -> cst.Assign|cst.AnnAssign|cst.TypeAlias|None:
         if (
             not self.annotate_vars_stack[-1]
-            or len(updated_node.targets) != 1  # no a = b = ...
-            or not (target := self._node_defines(node, node.targets[0].target))
+            or not (target := self._node_defines(node, node_target))
             or not (var_type := self._get_var(target))
-            or self.only_update_annotations
         ):
-            return updated_node
+            return None
 
-        if self._is_typing_construct(node.value):
-            return updated_node
+        new_node: cst.AnnAssign|cst.Assign|cst.TypeAlias
+
+        if node.value and self._is_typing_construct(node.value):
+            new_node = cst.Assign(
+                targets=[cst.AssignTarget(target)],
+                value=node.value
+            )
+            self._record_var_change(node, new_node)
+            return new_node
+
+        # Type-valued definitions present a special challenge: the 'TypeAlias' annotation
+        # introduced in Python 3.10 now leads to mypy (1.18.2) errors, as users are
+        # encouraged to move to Python 3.12's 'type' statement.  Even when supported,
+        # converting every type-valued assignment to 'type' doesn't work in general,
+        # as the resulting TypeAliasType does not support all that the assignment does
+        # (for example, using the name as a class base or calling to instantiate an object).
+        # The most compatible course of action seems to be to forgo annotating them.
+        # In non-global (i.e., class and function) scope, using 'type' or a 'TypeAlias'
+        # annotation is required (by mypy) to use the name as a type; we are here just
+        # careful not to remove a previous annotation.
 
         if var_type.fullname() == 'type':
-            if self._seems_type_like(node.value):
-                # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
-                var_type = TypeInfo('typing', 'TypeAlias')
+            return None
+
+#        if var_type.fullname() == 'type' and self._seems_type_like(node.value):
+#            # Our type map, based only on dynamic analysis, may use local variables
+#            # pointing to a type as type names... for that reason, if the assignment
+#            # looks type-like, declare it a TypeAlias.
+#
+#            assert node.value is not None # implicitly checked by seems_type_like
+#
+#            if self.use_type_keyword and isinstance(target, cst.Name):
+#                new_node = cst.TypeAlias(
+#                    name=target,
+#                    value=node.value,
+#                )
+#                self._record_var_change(node, new_node)
+#                return new_node
+#
+#            var_type = TypeInfo('typing', 'TypeAlias')
 
         if not (expr := self._get_annotation_expr(var_type)):
-            return updated_node
+            return None
 
         new_node = cst.AnnAssign(
             target=target,
             annotation=cst.Annotation(annotation=expr),
-            value=updated_node.value
+            value=node.value
         )
-
         self._record_var_change(node, new_node)
         return new_node
+
+
+    def leave_Assign(
+        self,
+        node: cst.Assign,
+        updated_node: cst.Assign
+    ) -> cst.Assign|cst.AnnAssign|cst.TypeAlias:
+        if (
+            len(node.targets) == 1  # no a = b = ...
+            and not self.only_update_annotations
+            and (new_node := self._handle_assign(node, node.targets[0].target, annotation=None))
+        ):
+            return new_node
+
+        return updated_node
 
 
     def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
@@ -548,41 +602,29 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.known_names[-1].add(node.target.value)
         return True
 
-
-    def leave_AnnAssign(self, node: cst.AnnAssign, updated_node: cst.AnnAssign) -> cst.AnnAssign|cst.Assign:
+    def leave_AnnAssign(
+        self,
+        node: cst.AnnAssign,
+        updated_node: cst.AnnAssign
+    ) -> cst.AnnAssign|cst.Assign|cst.TypeAlias:
         if (
-            not self.annotate_vars_stack[-1]
-            or not (target := self._node_defines(node, node.target))
-            or not (var_type := self._get_var(target))
-            or not (self.override_annotations or self.only_update_annotations)
+            (self.override_annotations or self.only_update_annotations)
+            and (new_node := self._handle_assign(node, node.target, node.annotation))
         ):
-            return updated_node
-
-        new_node: cst.AnnAssign|cst.Assign
-
-        if node.value and self._is_typing_construct(node.value):
-            new_node = cst.Assign(
-                targets=[cst.AssignTarget(target)],
-                value=updated_node.value
-            )
-
-            self._record_var_change(node, new_node)
             return new_node
 
-        if var_type.fullname() == 'type':
-            if self._seems_type_like(node.value):
-                # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
-                var_type = TypeInfo('typing', 'TypeAlias')
+        return updated_node
 
-        if not (expr := self._get_annotation_expr(var_type)):
-            return updated_node
 
-        new_node = updated_node.with_changes(
-            annotation=cst.Annotation(annotation=expr)
-        )
-
-        self._record_var_change(node, new_node)
-        return new_node
+#    def leave_TypeAlias(
+#        self,
+#        node: cst.TypeAlias,
+#        updated_node: cst.TypeAlias
+#    ) -> cst.TypeAlias|cst.Assign|cst.AnnAssign:
+#        if (new_node := self._handle_assign(node, node.name)):
+#            return new_node
+#
+#        return updated_node
 
 
     def visit_NamedExpr(self, node: cst.NamedExpr) -> bool:

@@ -62,6 +62,18 @@ def test_assign():
     assert m['d'] == 'd: int'
 
 
+def test_typealias():
+    src = textwrap.dedent("""
+        type x = int
+        type y[t: int] = list[t]
+        x = 10      # invalid, but...
+        y = 0       # invalid, but...
+        """)
+    m = get_first_defs(src)
+    assert m['x'] == 'type x = int'
+    assert m['y'] == 'type y[t: int] = list[t]'
+
+
 def test_namedexpr():
     src = textwrap.dedent("""
         a = (b := 1)

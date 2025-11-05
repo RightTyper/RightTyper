@@ -42,6 +42,15 @@ def test_annassign_requires_value():
     assert get(m, "<module>") == {"y"}
 
 
+def test_typealias():
+    src = textwrap.dedent("""
+        type x = int
+        type y[T: int] = list[T]
+        """)
+    m = map_variables(src)
+    assert get(m, "<module>") == {"x", "y"}
+
+
 def test_unpacking_tuple_list_starred():
     src = textwrap.dedent("""
         (a, (b, *c)) = (1, (2, 3, 4))
