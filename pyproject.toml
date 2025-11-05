@@ -57,7 +57,7 @@ dependencies = [
 ]
 	 
 description = "A fast runtime type hint assistant for Python code."
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"        # changes in 3.14 require adjustments
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
