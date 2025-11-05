@@ -2802,24 +2802,34 @@ def test_attribute_of_subscript():
         """)
 
 
-def test_variables_retains_final():
+@pytest.mark.parametrize('wrap_in, wrap_out', [
+    ('Final', 'Final[{t}]'),
+    ('ClassVar', 'ClassVar[{t}]'),
+    ('Final[ClassVar]', 'Final[ClassVar[{t}]]'),
+    ('ClassVar[Final]', 'ClassVar[Final[{t}]]'),
+    ('Final[{t}]',) * 2,
+    ('ClassVar[{t}]',) * 2,
+    ('Final[ClassVar[{t}]]',) * 2,
+    ('ClassVar[Final[{t}]]',) * 2
+])
+def test_variables_retains_final_and_classvar(wrap_in, wrap_out):
     code = cst.parse_module(textwrap.dedent(f"""\
-        from typing import Final
+        from typing import ClassVar, Final
 
         g: Final = 1.0
 
         class C:
-            x: Final[int] = 'foo'
+            x: {wrap_in.format(t='int')} = 'foo'
         """))
 
     t = mk_var_transformer('foo.py', code)
     code = t.transform_code(code)
 
     assert code.code == textwrap.dedent(f"""\
-        from typing import Final
+        from typing import ClassVar, Final
 
         g: Final[float] = 1.0
 
         class C:
-            x: Final[str] = 'foo'
+            x: {wrap_out.format(t='str')} = 'foo'
         """)

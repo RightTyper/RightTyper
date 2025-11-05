@@ -284,12 +284,12 @@ class UnifiedTransformer(cst.CSTTransformer):
         
         return (updated_ann, tr.generics)
                     
-    def _node_is(self, decorator: cst.Decorator, qualified_name: str):
+    def _qualified_name_in(self, decorator: cst.Decorator, names: set[str]):
         try:
-            return any(
-                qn.name == qualified_name
+            return bool(names & {
+                qn.name
                 for qn in self.get_metadata(QualifiedNameProvider, decorator)
-            )
+            })
         except NameError:
             return False
 
@@ -570,24 +570,27 @@ class UnifiedTransformer(cst.CSTTransformer):
 #
 #            var_type = TypeInfo('typing', 'TypeAlias')
 
-        # TODO this only handles top-level Final
-        was_final = (
-            annotation is not None and (
-                isinstance(name := annotation.annotation, cst.Name)
-                or (
-                    isinstance(annotation.annotation, cst.Subscript)
-                    and isinstance(name := annotation.annotation.value, cst.Name)
+        # Don't throw away (presumably human-generated) "Final" and "ClassVar" annotations
+        wrappers = []
+        if annotation:
+            # TODO this only handles top-level Final/ClassVar
+            expr = annotation.annotation
+            while (
+                (
+                    isinstance(name := expr, cst.Name)
+                    or (isinstance(expr, cst.Subscript) and isinstance(name := expr.value, cst.Name))
                 )
-            )
-            and self._node_is(name, "typing.Final")
-        )
+                and self._qualified_name_in(name, {'typing.Final', 'typing.ClassVar'})
+            ):
+                wrappers.append(name)
+                expr = expr.slice[0].slice.value if isinstance(expr, cst.Subscript) else None
 
         if not (expr := self._get_annotation_expr(var_type)):
             return None
 
-        if was_final:
+        for w in reversed(wrappers):
             expr = cst.Subscript(
-                value=cst.Name('Final'),
+                value=w,
                 slice=[cst.SubscriptElement(cst.Index(expr))]
             )
 
@@ -667,7 +670,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             for qn in self.get_metadata(QualifiedNameProvider, base.value)
         )
         is_dataclass = any(
-            self._node_is(decorator, 'dataclasses.dataclass')
+            self._qualified_name_in(decorator, {'dataclasses.dataclass'})
             for decorator in node.decorators
         )
 
@@ -807,7 +810,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.overload_name_stack[-1] = func_name
 
         is_overload = any(
-            self._node_is(decorator, 'typing.overload')
+            self._qualified_name_in(decorator, {'typing.overload'})
             for decorator in original_node.decorators
         )
 
