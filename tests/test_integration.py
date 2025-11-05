@@ -4932,7 +4932,7 @@ def test_type_variables(scope, plain, python_version):
     # 'def f(...)' below is to see if mypy will accept these as types;
     # mypy requires the ': TypeAlias' annotation in non-global scope
     Path("t.py").write_text(textwrap.dedent(f"""\
-        from typing import Iterable, NamedTuple, TypeAlias
+        from typing import Iterable, NamedTuple, Optional, TypeAlias, Union
         from collections.abc import Sequence
 
         {S}
@@ -4940,10 +4940,12 @@ def test_type_variables(scope, plain, python_version):
         {I}{kw}U{annotation} = str|bool
         {I}{kw}V{annotation} = Iterable[tuple[int, str]]
         {I}{kw}W{annotation} = Sequence[int]
-        {I}X = (int if 2+2==4 else int)
+        {I}{kw}X{annotation} = Union[int, str]
+        {I}{kw}Y{annotation} = Optional[int]
+        {I}Z = (int if 2+2==4 else int)
 
         {I+'@staticmethod' if scope == 'class' else ''}
-        {I}def f(a:T, b:U, c:V, d:W) -> None: ...
+        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
 
         {'fun()' if scope == 'function' else ''}
         """
@@ -4954,7 +4956,7 @@ def test_type_variables(scope, plain, python_version):
     code = cst.parse_module(output)
 
     assert code.code == textwrap.dedent(f"""\
-        from typing import Iterable, NamedTuple, TypeAlias
+        from typing import Iterable, NamedTuple, Optional, TypeAlias, Union
         from collections.abc import Sequence
 
         {S}
@@ -4962,10 +4964,12 @@ def test_type_variables(scope, plain, python_version):
         {I}{kw}U{annotation} = str|bool
         {I}{kw}V{annotation} = Iterable[tuple[int, str]]
         {I}{kw}W{annotation} = Sequence[int]
-        {I}X = (int if 2+2==4 else int)
+        {I}{kw}X{annotation} = Union[int, str]
+        {I}{kw}Y{annotation} = Optional[int]
+        {I}Z = (int if 2+2==4 else int)
 
         {I+'@staticmethod' if scope == 'class' else ''}
-        {I}def f(a:T, b:U, c:V, d:W) -> None: ...
+        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
 
         {'fun()' if scope == 'function' else ''}
         """

@@ -619,6 +619,7 @@ _type2handler: dict[type, Callable[[Any, int], TypeInfo|None]] = {
     zip: _handle_zip,
     enumerate: _handle_enumerate,
     type(typing.Generic[T]): lambda v, d: TypeInfo("", "type"),
+    type(typing.Union[int, str]): lambda v, d: TypeInfo("", "type"),
     GenericAlias: lambda v, d: TypeInfo("", "type"),
     UnionType: lambda v, d: TypeInfo("", "type"),
 }
