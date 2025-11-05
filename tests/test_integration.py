@@ -4932,8 +4932,8 @@ def test_type_variables(scope, plain, python_version):
     # 'def f(...)' below is to see if mypy will accept these as types;
     # mypy requires the ': TypeAlias' annotation in non-global scope
     Path("t.py").write_text(textwrap.dedent(f"""\
-        from typing import Iterable, NamedTuple, Optional, TypeAlias, Union
-        from collections.abc import Sequence
+        from typing import Callable, Iterable, NamedTuple, Optional, TypeAlias, Union
+        from collections.abc import Sequence, Callable as abc_Callable
 
         {S}
         {I}{kw}T{annotation} = int
@@ -4942,10 +4942,12 @@ def test_type_variables(scope, plain, python_version):
         {I}{kw}W{annotation} = Sequence[int]
         {I}{kw}X{annotation} = Union[int, str]
         {I}{kw}Y{annotation} = Optional[int]
+        {I}{kw}C{annotation} = Callable[[int], None]
+        {I}{kw}C2{annotation} = abc_Callable[[int], None]
         {I}Z = (int if 2+2==4 else int)
 
         {I+'@staticmethod' if scope == 'class' else ''}
-        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
+        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y, g:C, h:C2) -> None: ...
 
         {'fun()' if scope == 'function' else ''}
         """
@@ -4956,8 +4958,8 @@ def test_type_variables(scope, plain, python_version):
     code = cst.parse_module(output)
 
     assert code.code == textwrap.dedent(f"""\
-        from typing import Iterable, NamedTuple, Optional, TypeAlias, Union
-        from collections.abc import Sequence
+        from typing import Callable, Iterable, NamedTuple, Optional, TypeAlias, Union
+        from collections.abc import Sequence, Callable as abc_Callable
 
         {S}
         {I}{kw}T{annotation} = int
@@ -4966,10 +4968,12 @@ def test_type_variables(scope, plain, python_version):
         {I}{kw}W{annotation} = Sequence[int]
         {I}{kw}X{annotation} = Union[int, str]
         {I}{kw}Y{annotation} = Optional[int]
+        {I}{kw}C{annotation} = Callable[[int], None]
+        {I}{kw}C2{annotation} = abc_Callable[[int], None]
         {I}Z = (int if 2+2==4 else int)
 
         {I+'@staticmethod' if scope == 'class' else ''}
-        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y) -> None: ...
+        {I}def f(a:T, b:U, c:V, d:W, e:X, f:Y, g:C, h:C2) -> None: ...
 
         {'fun()' if scope == 'function' else ''}
         """
