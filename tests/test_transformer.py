@@ -2800,3 +2800,26 @@ def test_attribute_of_subscript():
             self.x[0].x: int = 2
             self.x[0].x = 2
         """)
+
+
+def test_variables_retains_final():
+    code = cst.parse_module(textwrap.dedent(f"""\
+        from typing import Final
+
+        g: Final = 1.0
+
+        class C:
+            x: Final[int] = 'foo'
+        """))
+
+    t = mk_var_transformer('foo.py', code)
+    code = t.transform_code(code)
+
+    assert code.code == textwrap.dedent(f"""\
+        from typing import Final
+
+        g: Final[float] = 1.0
+
+        class C:
+            x: Final[str] = 'foo'
+        """)

@@ -284,7 +284,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         
         return (updated_ann, tr.generics)
                     
-    def _decorator_is(self, decorator: cst.Decorator, qualified_name: str):
+    def _node_is(self, decorator: cst.Decorator, qualified_name: str):
         try:
             return any(
                 qn.name == qualified_name
@@ -570,8 +570,26 @@ class UnifiedTransformer(cst.CSTTransformer):
 #
 #            var_type = TypeInfo('typing', 'TypeAlias')
 
+        # TODO this only handles top-level Final
+        was_final = (
+            annotation is not None and (
+                isinstance(name := annotation.annotation, cst.Name)
+                or (
+                    isinstance(annotation.annotation, cst.Subscript)
+                    and isinstance(name := annotation.annotation.value, cst.Name)
+                )
+            )
+            and self._node_is(name, "typing.Final")
+        )
+
         if not (expr := self._get_annotation_expr(var_type)):
             return None
+
+        if was_final:
+            expr = cst.Subscript(
+                value=cst.Name('Final'),
+                slice=[cst.SubscriptElement(cst.Index(expr))]
+            )
 
         new_node = cst.AnnAssign(
             target=target,
@@ -649,7 +667,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             for qn in self.get_metadata(QualifiedNameProvider, base.value)
         )
         is_dataclass = any(
-            self._decorator_is(decorator, 'dataclasses.dataclass')
+            self._node_is(decorator, 'dataclasses.dataclass')
             for decorator in node.decorators
         )
 
@@ -789,7 +807,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.overload_name_stack[-1] = func_name
 
         is_overload = any(
-            self._decorator_is(decorator, 'typing.overload')
+            self._node_is(decorator, 'typing.overload')
             for decorator in original_node.decorators
         )
 
