@@ -1316,12 +1316,7 @@ def process_files(
             file[1],    # module_name
             type_annotations,
             module_vars.get(FuncId(Filename(file[0]), 1, FunctionName('<module>')), None),
-            options.output_files,
-            options.generate_stubs,
-            options.overwrite,
-            options.ignore_annotations,
-            options.only_update_annotations,
-            options.inline_generics
+            options
         )
         for file in files
     )

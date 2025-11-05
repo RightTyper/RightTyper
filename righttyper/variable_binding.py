@@ -159,6 +159,10 @@ class VariableBindingProvider(BatchableMetadataProvider[VarBindings]):
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
         self._record_name(node, node.target)
 
+    def visit_TypeAlias(self, node: cst.TypeAlias) -> None:
+        for n in _iter_binder_names(node.name):
+            self._record_name(node, n)
+
     def visit_NamedExpr(self, node: cst.NamedExpr) -> None:
         self._record_name(node, cast(cst.BaseAssignTargetExpression, node.target))
 

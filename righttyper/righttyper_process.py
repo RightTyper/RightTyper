@@ -17,6 +17,7 @@ from righttyper.righttyper_utils import (
 )
 from righttyper.unified_transformer import UnifiedTransformer
 from righttyper.logger import logger
+from righttyper.options import Options
 
 CodeChanges: TypeAlias = tuple[Filename, list[tuple[str, str, str]]]
 
@@ -81,12 +82,7 @@ def process_file(
     module_name: str,
     type_annotations: dict[FuncId, FuncAnnotation],
     module_vars: ModuleVars,
-    output_files: bool,
-    generate_stubs: bool,
-    overwrite: bool,
-    ignore_annotations: bool = False,
-    only_update_annotations: bool = False,
-    inline_generics: bool = False,
+    options: Options
 ) -> CodeChanges:
     logger.debug(f"process_file: {filename}")
     try:
@@ -107,9 +103,10 @@ def process_file(
             raise
 
     transformer = UnifiedTransformer(
-        filename, type_annotations, module_vars,
-        ignore_annotations, only_update_annotations, inline_generics,
-        module_name=module_name
+        filename, type_annotations, module_vars, module_name,
+        override_annotations=options.ignore_annotations,
+        only_update_annotations=options.only_update_annotations,
+        inline_generics=options.inline_generics
     )
 
     try:
@@ -121,8 +118,8 @@ def process_file(
 
     changes = transformer.get_changes()
 
-    if output_files and changes:
-        if overwrite:
+    if options.output_files and changes:
+        if options.overwrite:
             with open(filename + ".bak", "w") as file:
                 file.write(source)
 
@@ -133,7 +130,7 @@ def process_file(
             with open(filename + ".typed", "w") as file:
                 file.write(transformed.code)
 
-    if generate_stubs:
+    if options.generate_stubs:
         stub_file = pathlib.Path(filename).with_suffix(".pyi")
 
         stubs = transformed.visit(PyiTransformer())

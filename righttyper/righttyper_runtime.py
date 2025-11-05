@@ -22,7 +22,7 @@ from types import (
     MappingProxyType,
     UnionType
 )
-from typing import Any, cast, TypeAlias, get_type_hints, get_origin, get_args, Callable
+from typing import Any, cast, get_type_hints, get_origin, get_args, Callable
 import typing
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -618,6 +618,12 @@ _type2handler: dict[type, Callable[[Any, int], TypeInfo|None]] = {
     GETITEM_ITER: _handle_getitem_iter,
     zip: _handle_zip,
     enumerate: _handle_enumerate,
+    type(typing.Generic[T]): lambda v, d: TypeInfo("", "type"),
+    type(typing.Union[int, str]): lambda v, d: TypeInfo("", "type"),
+    type(typing.Callable[[], None]): lambda v, d: TypeInfo("", "type"),
+    type(abc.Callable[[], None]): lambda v, d: TypeInfo("", "type"),
+    GenericAlias: lambda v, d: TypeInfo("", "type"),
+    UnionType: lambda v, d: TypeInfo("", "type"),
 }
 
 
@@ -665,8 +671,6 @@ def get_value_type(
         return _type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
     elif isinstance(value, type) and value is not type:
         return TypeInfo("", "type", args=(get_type_name(value, depth+1),))
-    elif isinstance(value, (type(typing.Generic[T]), GenericAlias, UnionType)):    # type: ignore[index]
-        return TypeInfo("", "type")
     elif t.__module__ == "builtins":
         if in_builtins_import(t):
             return TypeInfo.from_type(t, module="") # these are "well known", so no module name needed

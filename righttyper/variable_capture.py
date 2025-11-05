@@ -223,6 +223,13 @@ class VariableFinder(ast.NodeVisitor):
                 self._record_target(t)
         self.generic_visit(node)
 
+    def visit_TypeAlias(self, node: ast.TypeAlias) -> None:
+        # Is 'type X = ...' a declaration or variable definition?
+        # For now, we err on the side of capturing it.
+        for t in _iter_target_atoms(node.name):
+            self._record_target(t)
+        self.generic_visit(node)
+
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         for t in _iter_target_atoms(node.target):
             self._record_target(t)
