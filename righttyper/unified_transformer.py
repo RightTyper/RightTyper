@@ -439,12 +439,23 @@ class UnifiedTransformer(cst.CSTTransformer):
         return True
 
 
-    def _is_namedtuple(self, assign_value: cst.BaseExpression | None) -> bool:
+    def _is_typing_construct(self, assign_value: cst.BaseExpression | None) -> bool:
         if isinstance(assign_value, cst.Call):
             try:
                 return any(
-                    qn.name in ('collections.namedtuple', 'typing.NamedTuple')
+                    qn.name in ('collections.namedtuple', 'typing.NamedTuple',
+                                'typing.TypeVar', 'typing.ParamSpec', 'typing.TypeVarTuple',
+                                'typing.NewType')
                     for qn in self.get_metadata(QualifiedNameProvider, assign_value.func)
+                )
+            except NameError:
+                pass
+
+        elif isinstance(assign_value, cst.Subscript):
+            try:
+                return any(
+                    qn.name in ('typing.Literal', 'typing.Annotated')
+                    for qn in self.get_metadata(QualifiedNameProvider, assign_value.value)
                 )
             except NameError:
                 pass
@@ -511,10 +522,10 @@ class UnifiedTransformer(cst.CSTTransformer):
         ):
             return updated_node
 
-        if var_type.fullname() == 'type':
-            if self._is_namedtuple(node.value):
-                return updated_node
+        if self._is_typing_construct(node.value):
+            return updated_node
 
+        if var_type.fullname() == 'type':
             if self._seems_type_like(node.value):
                 # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
                 var_type = TypeInfo('typing', 'TypeAlias')
@@ -549,18 +560,16 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         new_node: cst.AnnAssign|cst.Assign
 
+        if node.value and self._is_typing_construct(node.value):
+            new_node = cst.Assign(
+                targets=[cst.AssignTarget(target)],
+                value=updated_node.value
+            )
+
+            self._record_var_change(node, new_node)
+            return new_node
+
         if var_type.fullname() == 'type':
-            if self._is_namedtuple(node.value):
-                assert updated_node.value is not None # checked by is_namedtuple
-
-                new_node = cst.Assign(
-                    targets=[cst.AssignTarget(target)],
-                    value=updated_node.value
-                )
-
-                self._record_var_change(node, new_node)
-                return new_node
-
             if self._seems_type_like(node.value):
                 # Annotate as TypeAlias, so that the name introduced by the variable can be used as a type.
                 var_type = TypeInfo('typing', 'TypeAlias')

@@ -5109,3 +5109,37 @@ def test_variables_obj_defines_bool():
         c: C = C()
         """
     )
+
+
+@pytest.mark.parametrize("prev", ["", ": Any "])
+@pytest.mark.parametrize("mod", ["", "typing."])
+def test_variables_special_typing(prev, mod):
+    # This replicates a bug while running tqdm tests
+    Path("t.py").write_text(textwrap.dedent(f"""\
+        from typing import Annotated, Any, Literal, NewType, ParamSpec, TypeVar, TypeVarTuple
+        import typing
+
+        T{prev} = {mod}TypeVar("T")
+        P{prev} = {mod}ParamSpec("P")
+        Ts{prev} = {mod}TypeVarTuple("Ts")
+        L{prev} = {mod}Literal["x"]
+        n{prev} = {mod}NewType("n", int)
+        a{prev} = {mod}Annotated[int, "meta"]
+        """
+    ))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent(f"""\
+        from typing import Annotated, Any, Literal, NewType, ParamSpec, TypeVar, TypeVarTuple
+        import typing
+
+        T = {mod}TypeVar("T")
+        P = {mod}ParamSpec("P")
+        Ts = {mod}TypeVarTuple("Ts")
+        L = {mod}Literal["x"]
+        n = {mod}NewType("n", int)
+        a = {mod}Annotated[int, "meta"]
+        """
+    )
