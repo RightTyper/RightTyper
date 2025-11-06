@@ -245,7 +245,6 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
 
     samples: a sequence of tuples with type information. Each type in a tuple corresponds to
         a parameter (or return) type.
-    typevars: a dictionary from type tuples (indicating a type usage pattern) to variable names.
     returns: a list of parameter (or return) type annotations.
     """
 
