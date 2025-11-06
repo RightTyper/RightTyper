@@ -3755,8 +3755,11 @@ def test_object_with_empty_dir():
 @pytest.mark.parametrize("opt", ['--use-typing-never', '--no-use-typing-never'])
 def test_empty_container(python_version, opt):
     t = textwrap.dedent("""\
+        g = {}
+
         def f(x):
-            return len(x)
+            y = x
+            return len(y)
 
         f([])
         f({})
@@ -3769,13 +3772,20 @@ def test_empty_container(python_version, opt):
     code = cst.parse_module(output)
 
     if python_version == "3.11" and opt == '--use-typing-never':
-        assert get_function(code, 'f') == textwrap.dedent("""\
-            def f(x: dict[Never, Never]|list[Never]) -> int: ...
+        assert get_function(code, 'f', body=True) == textwrap.dedent("""\
+            def f(x: dict[Never, Never]|list[Never]) -> int:
+                y: dict[Never, Never]|list[Never] = x
+                return len(y)
         """)
+        assert "g: dict[Never, Never] = {}" in output
+
     else:
-        assert get_function(code, 'f') == textwrap.dedent("""\
-            def f(x: dict[Any, Any]|list[Any]) -> int: ...
+        assert get_function(code, 'f', body=True) == textwrap.dedent("""\
+            def f(x: dict[Any, Any]|list[Any]) -> int:
+                y: dict[Any, Any]|list[Any] = x
+                return len(y)
         """)
+        assert "g: dict[Any, Any] = {}" in output
 
 
 def test_empty_and_nonempty_container():
