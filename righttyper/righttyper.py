@@ -1399,7 +1399,25 @@ def validate_regexes(ctx, param, value):
         raise click.BadParameter(str(e))
 
 
+class HelpfulGroup(click.Group):
+    def __init__(self, *args, extra_help_subcommands=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._extra_help_subcommands = tuple(extra_help_subcommands or ())
+
+    def get_help(self, ctx):
+        help_text = [super().get_help(ctx)]
+
+        for name in ('run',):
+            cmd = self.get_command(ctx, name)
+            if cmd is not None:
+                subctx = cmd.make_context(name, [], parent=ctx, resilient_parsing=True)
+                help_text.append(f"\n\n---- Help for '{name}': ----\n{cmd.get_help(subctx)}")
+
+        return "".join(help_text)
+
+
 @click.group(
+    cls=HelpfulGroup,
     context_settings={
         "show_default": True
     }
