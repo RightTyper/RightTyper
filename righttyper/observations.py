@@ -1,8 +1,8 @@
 import ast
-import typeshed_client as ts
+import typeshed_client as typeshed
 from types import CodeType, FrameType, FunctionType, GeneratorType
 import typing
-from typing import Final, overload, Any
+from typing import Final, Any, overload, cast
 import builtins
 import inspect
 from collections import defaultdict, Counter
@@ -29,19 +29,15 @@ from righttyper.type_transformers import (
 )
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
 from righttyper.righttyper_types import (
-    ArgInfo,
     ArgumentName,
     VariableName,
     CodeId,
     Filename,
     FuncId,
-    FuncInfo,
     FrameId,
     FuncAnnotation,
     FunctionName,
-    FunctionDescriptor,
     CallTrace,
-    PendingCallTrace,
     ModuleVars
 )
 from righttyper.righttyper_utils import source_to_module_fqn, get_main_module_fqn
@@ -84,166 +80,79 @@ def id(obj):
     return builtins.id(obj)
 
 
-def get_inline_arg_types(
-    parents_func: FunctionType|FunctionDescriptor,
-    child_args: tuple[ArgInfo, ...]
-) -> list[TypeInfo|None] | None:
-    """Returns inline type annotations for a parent's method's arguments."""
-
-    if not (co := getattr(parents_func, "__code__", None)):
-        return None
-
-    try:
-        if not (hints := typing.get_type_hints(parents_func)):
-            return None
-    except (NameError, TypeError) as e:
-        logger.info(f"Error getting type hints for {parents_func} " + 
-                    f"({parents_func.__annotations__}): {e}.\n")
-        return None
-
-    return (
-        # first the positional, looking up by their names given in the parent
-        [
-            hint2type(hints[arg]) if arg in hints else None
-            for arg in co.co_varnames[:co.co_argcount]
-        ]
-        +
-        # then kwonly, going by the order in the child
-        [
-            hint2type(hints[arg.arg_name]) if arg.arg_name in hints else None
-            for arg in child_args[co.co_argcount:]
-        ]
-    )
+@dataclass
+class ArgInfo:
+    arg_name: ArgumentName
+    default: TypeInfo|None
 
 
-def get_typeshed_arg_types(
-    parents_func: FunctionDescriptor|FunctionType,
-    child_args: tuple[ArgInfo, ...]
-) -> list[TypeInfo|None] | None:
-    """Returns typeshed type annotations for a parent's method's arguments."""
-
-    def find_def(tree: ast.AST, qualified_name: str) -> list[ast.FunctionDef|ast.AsyncFunctionDef]:
-        parts = qualified_name.split('.')
-        results = []
-
-        def visit(node, path):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                full_name = '.'.join(path + [node.name])
-                if full_name == qualified_name:
-                    results.append(node)
-            elif isinstance(node, ast.ClassDef):
-                new_path = path + [node.name]
-                for body_item in node.body:
-                    visit(body_item, new_path)
-            elif isinstance(node, ast.Module):
-                for body_item in node.body:
-                    visit(body_item, path)
-
-        visit(tree, [])
-        return results
-
-    if stub_ast := ts.get_stub_ast(parents_func.__module__):    # FIXME replace __main__?
-        if defs := find_def(stub_ast, parents_func.__qualname__):
-            #print(ast.dump(defs[0], indent=4))
-
-            # FIXME use eval() in the context of the module and hint2type so
-            # as not to have an unqualified string for a "type"
-
-            # first the positional, looking up by their names given in the parent
-            pos_args = [
-                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
-                for a in (defs[0].args.posonlyargs + defs[0].args.args)
-                if isinstance(a, ast.arg)
-            ]
-
-            # then kwonly, going by the order in the child
-            kw_args = [
-                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
-                for child_arg_name in child_args[len(pos_args):]
-                for a in defs[0].args.kwonlyargs
-                if isinstance(a, ast.arg)
-                if a.arg == child_arg_name
-            ]
-
-            return pos_args + kw_args
-
-    return None
+@dataclass
+class FunctionDescriptor:
+    """Describes a function by name; stands in for a FunctionType where the function
+       is a wrapper_descriptor (or possibly other objects), lacking __module__
+    """
+    __module__: str
+    __qualname__: str
 
 
-def get_self_type(code, args) -> tuple[TypeInfo|None, TypeInfo|None, FunctionType|FunctionDescriptor|None]:
-    if args.args:
-        first_arg = args.locals[args.args[0]]
-
-        name = code.co_name
-        if (
-            name.startswith("__")
-            and not name.endswith("__")
-            and len(parts := code.co_qualname.split(".")) > 1
-        ):
-            # parts[-2] may be "<locals>"... that's ok, as we then have
-            # a local function and there is no 'Self' to find.
-            name = f"_{parts[-2]}{name}"    # private attribute/method
-
-        # if type(first_arg) is type, we may have a @classmethod
-        first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
-
-        # @property?
-        is_property = isinstance(getattr(type(first_arg), name, None), property)
-
-        # find class that defines that name, in case it's inherited
-        defining_class, next_index = next(
-            (
-                (ancestor, i+1)
-                for i, ancestor in enumerate(first_arg_class.__mro__)
-                if (
-                    (is_property and name in ancestor.__dict__)
-                    or (
-                        (f := unwrap(ancestor.__dict__.get(name, None)))
-                        and getattr(f, "__code__", None) is code
-                    )
-                )
-            ),
-            (None, None)
-        )
-
-        if not defining_class:
-            return None, None, None
-
-        # The first argument is 'Self' and the type of 'Self', in the context of
-        # its definition, is "defining_class"; now let's see if this method
-        # overrides another
-        overrides = None
-        if not (
-            is_property
-            or name in ('__init__', '__new__')  # irrelevant for Liskov
-        ):
-            overrides = next(
-                (
-                    # wrapper_descriptor and possibly other native objects may lack __module__
-                    f if hasattr(f, "__module__")
-                    else FunctionDescriptor(ancestor.__module__, f.__qualname__)
-                    for ancestor in first_arg_class.__mro__[next_index:]
-                    if (f := unwrap(ancestor.__dict__.get(name, None)))
-                    if getattr(f, "__code__", None) is not code
-                ),
-                None
-            )
-
-        return get_type_name(first_arg_class), get_type_name(defining_class), overrides
-
-    return None, None, None
+@dataclass(eq=True, frozen=True)
+class FuncInfo:
+    func_id: FuncId
+    args: tuple[ArgInfo, ...]
+    varargs: ArgumentName|None
+    kwargs: ArgumentName|None
+    overrides: FunctionType|FunctionDescriptor|None
 
 
-def get_defaults(code, frame) -> dict[str, TypeInfo]:
-    if (function := find_function(frame, code)):
-        return {
-            param_name: get_value_type(param.default)
-            for param_name, param in inspect.signature(function).parameters.items()
-            if param.default != inspect._empty
-        }
+@dataclass
+class PendingCallTrace:
+    arg_info: inspect.ArgInfo
+    args: tuple[TypeInfo, ...]
+    yields: set[TypeInfo] = field(default_factory=set)
+    sends: set[TypeInfo] = field(default_factory=set)
+    returns: TypeInfo = NoneTypeInfo
+    is_async: bool = False
+    is_generator: bool = False
+    self_type: TypeInfo | None = None
+    self_replacement: TypeInfo | None = None
 
-    return {}
 
+    def process(self) -> CallTrace:
+        retval = self.returns
+
+        if self.is_generator:
+            y = TypeInfo.from_set(self.yields)
+            s = TypeInfo.from_set(self.sends)
+
+            if self.is_async:
+                retval = TypeInfo.from_type(abc.AsyncGenerator, module="typing", args=(y, s))
+            else:
+                retval = TypeInfo.from_type(abc.Generator, module="typing", args=(y, s, self.returns))
+            
+        type_data = (*self.args, retval)
+
+        if self.self_type and self.self_replacement:
+            self_type = cast(TypeInfo, self.self_type)
+            self_replacement = cast(TypeInfo, self.self_replacement)
+
+            class SelfTransformer(TypeInfo.Transformer):
+                """Replaces 'self' types with the type of the class that defines them,
+                   also setting is_self for possible later replacement with typing.Self."""
+
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    if (
+                        hasattr(node.type_obj, "__mro__")
+                        and self_type.type_obj in cast(type, node.type_obj).__mro__
+                    ):
+                        node = self_replacement.replace(is_self=True)
+
+                    return super().visit(node)
+
+
+            tr = SelfTransformer()
+            type_data = (*(tr.visit(arg) for arg in type_data),)
+
+        return type_data
 
 
 @dataclass
@@ -741,3 +650,166 @@ class Observations:
         }
 
         return annotations, module_vars
+
+
+def get_inline_arg_types(
+    parents_func: FunctionType|FunctionDescriptor,
+    child_args: tuple[ArgInfo, ...]
+) -> list[TypeInfo|None] | None:
+    """Returns inline type annotations for a parent's method's arguments."""
+
+    if not (co := getattr(parents_func, "__code__", None)):
+        return None
+
+    try:
+        if not (hints := typing.get_type_hints(parents_func)):
+            return None
+    except (NameError, TypeError) as e:
+        logger.info(f"Error getting type hints for {parents_func} " + 
+                    f"({parents_func.__annotations__}): {e}.\n")
+        return None
+
+    return (
+        # first the positional, looking up by their names given in the parent
+        [
+            hint2type(hints[arg]) if arg in hints else None
+            for arg in co.co_varnames[:co.co_argcount]
+        ]
+        +
+        # then kwonly, going by the order in the child
+        [
+            hint2type(hints[arg.arg_name]) if arg.arg_name in hints else None
+            for arg in child_args[co.co_argcount:]
+        ]
+    )
+
+
+def get_typeshed_arg_types(
+    parents_func: FunctionDescriptor|FunctionType,
+    child_args: tuple[ArgInfo, ...]
+) -> list[TypeInfo|None] | None:
+    """Returns typeshed type annotations for a parent's method's arguments."""
+
+    def find_def(tree: ast.AST, qualified_name: str) -> list[ast.FunctionDef|ast.AsyncFunctionDef]:
+        parts = qualified_name.split('.')
+        results = []
+
+        def visit(node, path):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                full_name = '.'.join(path + [node.name])
+                if full_name == qualified_name:
+                    results.append(node)
+            elif isinstance(node, ast.ClassDef):
+                new_path = path + [node.name]
+                for body_item in node.body:
+                    visit(body_item, new_path)
+            elif isinstance(node, ast.Module):
+                for body_item in node.body:
+                    visit(body_item, path)
+
+        visit(tree, [])
+        return results
+
+    if stub_ast := typeshed.get_stub_ast(parents_func.__module__):    # FIXME replace __main__?
+        if defs := find_def(stub_ast, parents_func.__qualname__):
+            #print(ast.dump(defs[0], indent=4))
+
+            # FIXME use eval() in the context of the module and hint2type so
+            # as not to have an unqualified string for a "type"
+
+            # first the positional, looking up by their names given in the parent
+            pos_args = [
+                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
+                for a in (defs[0].args.posonlyargs + defs[0].args.args)
+                if isinstance(a, ast.arg)
+            ]
+
+            # then kwonly, going by the order in the child
+            kw_args = [
+                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
+                for child_arg_name in child_args[len(pos_args):]
+                for a in defs[0].args.kwonlyargs
+                if isinstance(a, ast.arg)
+                if a.arg == child_arg_name
+            ]
+
+            return pos_args + kw_args
+
+    return None
+
+
+def get_self_type(code, args) -> tuple[TypeInfo|None, TypeInfo|None, FunctionType|FunctionDescriptor|None]:
+    if args.args:
+        first_arg = args.locals[args.args[0]]
+
+        name = code.co_name
+        if (
+            name.startswith("__")
+            and not name.endswith("__")
+            and len(parts := code.co_qualname.split(".")) > 1
+        ):
+            # parts[-2] may be "<locals>"... that's ok, as we then have
+            # a local function and there is no 'Self' to find.
+            name = f"_{parts[-2]}{name}"    # private attribute/method
+
+        # if type(first_arg) is type, we may have a @classmethod
+        first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
+
+        # @property?
+        is_property = isinstance(getattr(type(first_arg), name, None), property)
+
+        # find class that defines that name, in case it's inherited
+        defining_class, next_index = next(
+            (
+                (ancestor, i+1)
+                for i, ancestor in enumerate(first_arg_class.__mro__)
+                if (
+                    (is_property and name in ancestor.__dict__)
+                    or (
+                        (f := unwrap(ancestor.__dict__.get(name, None)))
+                        and getattr(f, "__code__", None) is code
+                    )
+                )
+            ),
+            (None, None)
+        )
+
+        if not defining_class:
+            return None, None, None
+
+        # The first argument is 'Self' and the type of 'Self', in the context of
+        # its definition, is "defining_class"; now let's see if this method
+        # overrides another
+        overrides = None
+        if not (
+            is_property
+            or name in ('__init__', '__new__')  # irrelevant for Liskov
+        ):
+            overrides = next(
+                (
+                    # wrapper_descriptor and possibly other native objects may lack __module__
+                    f if hasattr(f, "__module__")
+                    else FunctionDescriptor(ancestor.__module__, f.__qualname__)
+                    for ancestor in first_arg_class.__mro__[next_index:]
+                    if (f := unwrap(ancestor.__dict__.get(name, None)))
+                    if getattr(f, "__code__", None) is not code
+                ),
+                None
+            )
+
+        return get_type_name(first_arg_class), get_type_name(defining_class), overrides
+
+    return None, None, None
+
+
+def get_defaults(code, frame) -> dict[str, TypeInfo]:
+    if (function := find_function(frame, code)):
+        return {
+            param_name: get_value_type(param.default)
+            for param_name, param in inspect.signature(function).parameters.items()
+            if param.default != inspect._empty
+        }
+
+    return {}
+
+
