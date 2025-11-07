@@ -302,16 +302,16 @@ class Observations:
         self,
         code: CodeType,
         frame: FrameType,
-        args: inspect.ArgInfo,
+        arg_info: inspect.ArgInfo,
         overrides: FunctionType|FunctionDescriptor|None
     ) -> None:
         """Records that a function was visited, along with some details about it."""
 
         if code not in self.functions_visited:
             arg_names = (
-                *(a for a in args.args),
-                *((args.varargs,) if args.varargs else ()),
-                *((args.keywords,) if args.keywords else ())
+                *(a for a in arg_info.args),
+                *((arg_info.varargs,) if arg_info.varargs else ()),
+                *((arg_info.keywords,) if arg_info.keywords else ())
             )
 
             defaults = get_defaults(code, frame)
@@ -326,8 +326,8 @@ class Observations:
                     ArgInfo(ArgumentName(name), defaults.get(name))
                     for name in arg_names
                 ),
-                ArgumentName(args.varargs) if args.varargs else None,
-                ArgumentName(args.keywords) if args.keywords else None,
+                ArgumentName(arg_info.varargs) if arg_info.varargs else None,
+                ArgumentName(arg_info.keywords) if arg_info.keywords else None,
                 overrides
             )
 
@@ -424,6 +424,7 @@ class Observations:
                     type_set = obj_attrs[VariableName(src)]
                     type_set.add(get_value_type(value))
                     if dst: scope_vars[VariableName(dst)] = type_set
+
 
     def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:
         """Records a pending call trace's return type, finishing the trace."""
