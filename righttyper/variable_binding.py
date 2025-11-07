@@ -1,5 +1,5 @@
 import libcst as cst
-from typing import Any, cast
+from typing import cast
 from libcst.metadata import BatchableMetadataProvider, QualifiedNameProvider
 from libcst.helpers import get_full_name_for_node
 import libcst.matchers as cstm

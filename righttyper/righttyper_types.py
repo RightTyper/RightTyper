@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 from typing import NewType, cast
-import typing
 import collections.abc as abc
 import types
 import inspect

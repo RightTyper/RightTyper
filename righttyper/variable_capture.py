@@ -1,7 +1,6 @@
 import ast
 import types
 from dataclasses import dataclass, field, replace
-from collections import defaultdict
 import collections.abc as abc
 
 

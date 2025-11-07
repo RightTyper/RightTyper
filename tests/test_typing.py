@@ -4,7 +4,7 @@ import righttyper.righttyper_runtime as rt
 import collections.abc as abc
 from collections import namedtuple
 import typing
-from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal, cast, Self, Never
+from typing import Any, Callable, get_type_hints, Union, Optional, List, Literal, cast, Self, Never
 import pytest
 import importlib
 import types
@@ -511,7 +511,6 @@ def test_merged_types_superclass_checks_attributes():
         def bar(self): pass
     class E(B):
         def _shouldnt_matter(self): pass
-        pass
 
     assert f"{name(C)}|{name(D)}" == str(merged_types({
             TypeInfo.from_type(C),

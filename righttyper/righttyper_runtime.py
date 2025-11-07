@@ -2,7 +2,6 @@ import inspect
 import random
 import re
 import sys
-import logging
 
 import collections
 import collections.abc as abc
@@ -25,7 +24,6 @@ from types import (
 from typing import Any, cast, get_type_hints, get_origin, get_args, Callable
 import typing
 from pathlib import Path
-from dataclasses import dataclass, field
 
 from righttyper.random_dict import RandomDict
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
