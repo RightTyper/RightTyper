@@ -8,11 +8,6 @@ from dataclasses import dataclass, replace, field
 type SpecialForms = typing.Any|typing.Never
 
 
-# Valid non-None TypeInfo.type_obj types: allows static casting
-# 'None' away in situations where mypy doesn't recognize it.
-type TYPE_OBJ_TYPES = type|SpecialForms
-
-
 @dataclass(eq=True, frozen=True)
 class TypeInfo:
     module: str
@@ -22,7 +17,7 @@ class TypeInfo:
     # These fields are included for convenience, but don't affect what type is meant
     code: types.CodeType | None = field(default=None, compare=False)  # if a callable, generator or coroutine, the CodeType
     is_bound: bool = field(default=False, compare=False)    # if a callable, whether bound
-    type_obj: TYPE_OBJ_TYPES|None = field(default=None, compare=False)
+    type_obj: type|SpecialForms|None = field(default=None, compare=False)
     typevar_index: int = field(default=0, compare=False)
     typevar_name: str|None = field(default=None, compare=False) # TODO delete me?
 
@@ -70,7 +65,7 @@ class TypeInfo:
 
 
     @staticmethod
-    def from_type(t: TYPE_OBJ_TYPES, module: str|None = None, **kwargs) -> "TypeInfo":
+    def from_type(t: type|SpecialForms, module: str|None = None, **kwargs) -> "TypeInfo":
         if t is types.NoneType:
             return NoneTypeInfo
 

@@ -2,9 +2,9 @@ from typing import cast, Sequence, Iterator
 import collections.abc as abc
 from collections import defaultdict, Counter
 from types import EllipsisType
-from righttyper.typeinfo import TypeInfo, TYPE_OBJ_TYPES
+from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_runtime import get_type_name
-from righttyper.righttyper_types import CallTrace
+from righttyper.righttyper_types import CallTrace, cast_not_None
 from righttyper.options import options
 
 
@@ -110,7 +110,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
         *(
             set(
                 attr
-                for attr in dir(cast(TYPE_OBJ_TYPES, t.type_obj))
+                for attr in dir(cast_not_None(t.type_obj))
                 if getattr(t.type_obj, attr, None) is not None
                 if not attr.startswith("_") or attr.startswith("__")
             ) for t in mergeable_types
