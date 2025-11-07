@@ -284,7 +284,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         
         return (updated_ann, tr.generics)
                     
-    def _qualified_name_in(self, decorator: cst.Decorator, names: set[str]):
+    def _qualified_name_in(self, decorator: cst.CSTNode, names: set[str]):
         try:
             return bool(names & {
                 qn.name
@@ -574,7 +574,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         wrappers = []
         if annotation:
             # TODO this only handles top-level Final/ClassVar
-            expr = annotation.annotation
+            expr: cst.BaseExpression|None = annotation.annotation
             while (
                 (
                     isinstance(name := expr, cst.Name)
@@ -583,7 +583,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                 and self._qualified_name_in(name, {'typing.Final', 'typing.ClassVar'})
             ):
                 wrappers.append(name)
-                expr = expr.slice[0].slice.value if isinstance(expr, cst.Subscript) else None
+                expr = (
+                    expr.slice[0].slice.value
+                    if (isinstance(expr, cst.Subscript) and isinstance(expr.slice[0].slice, cst.Index))
+                    else None
+                )
 
         if not (expr := self._get_annotation_expr(var_type)):
             return None
