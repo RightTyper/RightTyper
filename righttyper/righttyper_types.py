@@ -1,13 +1,11 @@
-from __future__ import annotations
-
-from dataclasses import dataclass, replace, field
-from typing import NewType, TypeVar, Self, TypeAlias, List, Iterator, cast
+from dataclasses import dataclass, field
+from typing import NewType, cast
 import typing
 import collections.abc as abc
 import types
 import inspect
+from righttyper.typeinfo import TypeInfo, NoneTypeInfo
 
-T = TypeVar("T")
 
 ArgumentName = NewType("ArgumentName", str)
 VariableName = NewType("VariableName", str)
@@ -40,155 +38,6 @@ class ModuleVars:
     variables: list[tuple[VariableName, TypeInfo]]
 
 
-# The typing module does not define a type for such "typing special forms".
-SpecialForms: TypeAlias = typing.Any|typing.Never
-
-# Valid non-None TypeInfo.type_obj types: allows static casting
-# 'None' away in situations where mypy doesn't recognize it.
-TYPE_OBJ_TYPES: TypeAlias = type|SpecialForms
-
-@dataclass(eq=True, frozen=True)
-class TypeInfo:
-    module: str
-    name: str
-    args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()    # arguments within []
-
-    # These fields are included for convenience, but don't affect what type is meant
-    code: types.CodeType | None = field(default=None, compare=False)  # if a callable, generator or coroutine, the CodeType
-    is_bound: bool = field(default=False, compare=False)    # if a callable, whether bound
-    type_obj: TYPE_OBJ_TYPES|None = field(default=None, compare=False)
-    typevar_index: int = field(default=0, compare=False)
-    typevar_name: str|None = field(default=None, compare=False) # TODO delete me?
-
-    # Indicates equivalence to typing.Self. Note that is_self may be true for one
-    # type (class) in one trace, but false for the exact same type in another,
-    # so that is_self matters for equivalence
-    is_self: bool = field(default=False, compare=True)
-
-
-    def __str__(self: Self) -> str:
-        if self.typevar_name: # FIXME subclass?
-            return self.typevar_name
-
-        # We can't use type_obj here because we need to clear them before using 'multiprocessing',
-        # since type objects aren't pickleable
-        if (self.module, self.name) == ('types', 'UnionType') and self.args: # FIXME subclass?
-            return "|".join(str(a) for a in self.args)
-        
-        if self.args or self.name == '':
-            def arg2str(a: TypeInfo|str|ellipsis) -> str:
-                if a is Ellipsis:
-                    return '...'
-                if isinstance(a, str):
-                    return f'"{a}"'
-                return str(a)
-            
-            return (
-                f"{self.fullname()}[" +
-                    ", ".join(arg2str(a) for a in self.args) +
-                "]"
-            )
-
-        return self.fullname()
-
-
-    @staticmethod
-    def list(args: "list[TypeInfo|str|ellipsis]") -> "TypeInfo":
-        """Builds a list argument, such as the first argument of a Callable"""
-        return TypeInfo('', '', args=tuple(args))   # FIXME subclass?
-
-
-    def is_list(self) -> bool:
-        """Returns whether this TypeInfo is really a list of types, created by our 'list' factory method above."""
-        return self.name == '' and self.module == ''
-
-
-    @staticmethod
-    def from_type(t: TYPE_OBJ_TYPES, module: str|None = None, **kwargs) -> "TypeInfo":
-        if t is types.NoneType:
-            return NoneTypeInfo
-
-        return TypeInfo(
-            name=getattr(t, "__qualname__"), # sidesteps mypy errors for special forms
-            module=(getattr(t, "__module__") if module is None else module),
-            type_obj=t,
-            **kwargs
-        )
-
-
-    @staticmethod
-    def from_set(s: "set[TypeInfo]", **kwargs) -> "TypeInfo":
-        if not s:
-            return NoneTypeInfo
-
-        def expand_unions(t: "TypeInfo") -> Iterator["TypeInfo"]:
-            # Don't merge unions designated as typevars, or the typevar gets lost.
-            if t.type_obj is types.UnionType and not t.typevar_index:
-                for a in t.args:
-                    if isinstance(a, TypeInfo):
-                        yield from expand_unions(a)
-            else:
-                yield t
-
-        s = {expanded for t in s for expanded in expand_unions(t)}
-
-        if len(s) == 1:
-            return next(iter(s))
-
-        # If "Any" is present, the union reduces to "Any"
-        if t := next((t for t in s if t.type_obj is typing.Any), None):
-            return t
-
-        # Any others subsume "Never" and "NoReturn", so delete them
-        not_never = {t for t in s if t.type_obj not in (typing.Never, typing.NoReturn)}
-        if not_never:
-            s = not_never
-
-        return TypeInfo(
-            module='types',
-            name='UnionType',
-            type_obj=types.UnionType,
-            # 'None' at the end is seen as more readable
-            args=tuple(sorted(s, key = lambda x: (x == NoneTypeInfo, str(x)))),
-            **kwargs
-        )
-
-
-    def replace(self, **kwargs) -> "TypeInfo":
-        return replace(self, **kwargs)
-
-
-    def is_typevar(self) -> bool:
-        """Returns whether this TypeInfo is (or encloses) a typevar."""
-        return bool(self.typevar_index) or any(
-            a.is_typevar()
-            for a in self.args
-            if isinstance(a, TypeInfo)
-        )
-
-
-    def fullname(self) -> str:
-        return self.module + '.' + self.name if self.module else self.name
-
-
-    class Transformer:
-        def visit(self, node: "TypeInfo") -> "TypeInfo":
-            new_args = tuple(
-                self.visit(arg) if isinstance(arg, TypeInfo) else arg
-                for arg in node.args
-            )
-            # Use identity rather than ==, as only non-essential attributes may have changed
-            if any(old is not new for old, new in zip(node.args, new_args)):
-                return node.replace(args=new_args)
-
-            return node
-
-
-NoneTypeInfo = TypeInfo("", "None", type_obj=types.NoneType)
-UnknownTypeInfo = TypeInfo.from_type(typing.Any)
-AnyTypeInfo = TypeInfo.from_type(typing.Any)
-
-
 @dataclass
 class ArgInfo:
     arg_name: ArgumentName
@@ -213,7 +62,7 @@ class FuncInfo:
     overrides: types.FunctionType|FunctionDescriptor|None
 
 
-CallTrace: TypeAlias = tuple[TypeInfo, ...]
+type CallTrace = tuple[TypeInfo, ...]
 
 @dataclass
 class PendingCallTrace:

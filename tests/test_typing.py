@@ -1,5 +1,5 @@
-from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, PendingCallTrace, UnknownTypeInfo, T
-from righttyper.typeinfo import merged_types, generalize
+from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
+from righttyper.generalize import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
 from collections import namedtuple
@@ -43,6 +43,7 @@ class IterableClass(abc.Iterable):
 class MyGeneric[A, B](dict): pass
 
 
+T = typing.TypeVar("T")
 class MyOldGeneric(typing.Generic[T]): pass
 
 

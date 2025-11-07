@@ -1,7 +1,7 @@
 import typing
 import types
 import collections.abc as abc
-from righttyper.righttyper_types import TypeInfo, AnyTypeInfo, NoneTypeInfo
+from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo
 from righttyper.righttyper_utils import is_test_module
 from righttyper.typemap import AdjustTypeNamesT
 from righttyper.righttyper_runtime import get_type_name
@@ -152,6 +152,22 @@ class ResolveMocksT(TypeInfo.Transformer):
         node = super().visit(node)
         if (resolved := _resolve_mock(node, self._adjuster)):
             return resolved
+        return node
+
+
+class GeneratorToIteratorT(TypeInfo.Transformer):
+    """Converts Generator[X, None, None] -> Iterator[X]"""
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        node = super().visit(node)
+
+        if (
+            node.type_obj is abc.Generator
+            and len(node.args) == 3
+            and node.args[1] == NoneTypeInfo
+            and node.args[2] == NoneTypeInfo
+        ):
+            return TypeInfo("typing", "Iterator", (node.args[0],))
+
         return node
 
 

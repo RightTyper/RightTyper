@@ -6,7 +6,7 @@ from collections import defaultdict
 import sys
 import logging
 from pathlib import Path
-from righttyper.righttyper_types import TypeInfo, UnknownTypeInfo
+from righttyper.typeinfo import TypeInfo, UnknownTypeInfo
 from righttyper.logger import logger
 from righttyper.righttyper_utils import source_to_module_fqn, is_test_module
 

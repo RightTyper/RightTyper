@@ -8,14 +8,13 @@ from libcst.metadata import MetadataWrapper, PositionProvider, QualifiedNameProv
 from righttyper.variable_binding import VariableBindingProvider
 import re
 
+from righttyper.typeinfo import TypeInfo, UnknownTypeInfo
 from righttyper.righttyper_types import (
     Filename,
     FuncId,
     FuncAnnotation,
     ModuleVars,
     FunctionName,
-    TypeInfo,
-    UnknownTypeInfo
 )
 
 

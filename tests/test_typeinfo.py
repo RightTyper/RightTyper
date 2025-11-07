@@ -1,5 +1,5 @@
-from righttyper.righttyper_types import TypeInfo
-import righttyper.typeinfo
+from righttyper.typeinfo import TypeInfo
+import righttyper.generalize
 from typing import Any
 import pytest
 from righttyper.options import options
@@ -10,7 +10,7 @@ def ti(name: str, **kwargs) -> TypeInfo:
 
 
 def generalize(samples):
-    result = righttyper.typeinfo.generalize(samples)
+    result = righttyper.generalize.generalize(samples)
     if result:
         class Renamer(TypeInfo.Transformer):
             def visit(vself, node: TypeInfo) -> TypeInfo:
@@ -32,7 +32,7 @@ def test_no_simplify_types(monkeypatch):
 
     # in Python, issubclass(bool, int)
     both = {TypeInfo.from_type(int), TypeInfo.from_type(bool)}
-    assert righttyper.typeinfo.merged_types(both) == TypeInfo.from_set(both)
+    assert righttyper.generalize.merged_types(both) == TypeInfo.from_set(both)
     assert len(TypeInfo.from_set(both).args) == 2
 
 

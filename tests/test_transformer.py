@@ -3,17 +3,15 @@ import libcst.matchers as cstm
 from libcst.metadata import MetadataWrapper, PositionProvider
 import textwrap
 from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation, used_names
+from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo
 from righttyper.righttyper_types import (
     FuncId,
     Filename,
     FunctionName,
     ArgumentName,
-    TypeInfo,
-    NoneTypeInfo,
     FuncAnnotation,
     ModuleVars,
     VariableName,
-    AnyTypeInfo
 )
 from righttyper.righttyper_runtime import get_type_name
 import typing

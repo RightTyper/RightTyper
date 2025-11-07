@@ -28,20 +28,18 @@ from pathlib import Path
 from dataclasses import dataclass, field
 
 from righttyper.random_dict import RandomDict
+from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
 from righttyper.righttyper_types import (
     CodeId,
     Filename,
     FunctionName,
     FuncId,
-    T,
-    TypeInfo,
-    NoneTypeInfo,
-    AnyTypeInfo,
-    UnknownTypeInfo
 )
 from righttyper.righttyper_utils import is_test_module, get_main_module_fqn
 from righttyper.options import options
 from righttyper.logger import logger
+
+T = typing.TypeVar("T")
 
 @cache
 def get_jaxtyping():

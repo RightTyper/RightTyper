@@ -54,6 +54,7 @@ from righttyper.righttyper_tool import (
     register_monitoring_callbacks,
     reset_monitoring
 )
+from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
 from righttyper.righttyper_types import (
     ArgInfo,
     ArgumentName,
@@ -66,18 +67,11 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     FunctionName,
     FunctionDescriptor,
-    TypeInfo,
-    NoneTypeInfo,
-    AnyTypeInfo,
     CallTrace,
     PendingCallTrace,
-    UnknownTypeInfo,
     ModuleVars
 )
-from righttyper.typeinfo import (
-    merged_types,
-    generalize,
-)
+from righttyper.generalize import merged_types, generalize
 from righttyper.righttyper_utils import (
     skip_this_file,
     should_skip_function,
@@ -98,6 +92,7 @@ from righttyper.type_transformers import (
     NoReturnToNeverT,
     ExcludeTestTypesT,
     ResolveMocksT,
+    GeneratorToIteratorT,
     TypesUnionT,
     DepthLimitT,
     MakePickleableT
@@ -697,6 +692,7 @@ class Observations:
         if options.use_typing_union:
             finalizers.append(TypesUnionT())
 
+        finalizers.append(GeneratorToIteratorT())
         finalizers.append(MakePickleableT())
 
         non_func_codes = self.variables.keys() - self.traces.keys()
