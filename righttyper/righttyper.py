@@ -343,12 +343,16 @@ def emit_json(collected: dict[str, Any], code_changes: list[CodeChanges]) -> dic
             'timestamp': datetime.datetime.now().isoformat(),
         },
         'files': {
-            funcid.file_name: {
-                'module': file2module.get(funcid.file_name),
+            filename: {
+                'module': file2module.get(filename),
                 'functions': {},
             }
-            for funcid in sorted(
-                collected.get('type_annotations', {}) | collected.get('module_vars', {})
+            for filename in sorted(
+                {
+                    funcid.file_name
+                    for funcid in collected.get('type_annotations', {})
+                }
+                | set(collected.get('module_vars', {}))
             )
         }
     }
@@ -390,8 +394,8 @@ def emit_json(collected: dict[str, Any], code_changes: list[CodeChanges]) -> dic
             func_entry['new_sig'] = changes[1]
 
     # fill in module vars
-    for funcid, mv in collected.get('module_vars', dict()).items():
-        data['files'][funcid.file_name]['vars'] = {
+    for filename, mv in collected.get('module_vars', dict()).items():
+        data['files'][filename]['vars'] = {
             k: str(v).replace(".<locals>.", ".")
             for k, v in mv.variables
         }
@@ -421,9 +425,9 @@ def process_file_wrapper(args) -> CodeChanges:
 
 
 def process_files(
-    files: list[list[str]],
+    files: list[tuple[Filename, str]],
     type_annotations: dict[FuncId, FuncAnnotation],
-    module_vars: dict[FuncId, ModuleVars]
+    module_vars: dict[Filename, ModuleVars]
 ) -> list[CodeChanges]:
     if not files:
         return []
@@ -433,7 +437,7 @@ def process_files(
             file[0],    # path
             file[1],    # module_name
             type_annotations,
-            module_vars.get(FuncId(Filename(file[0]), 1, FunctionName('<module>')), None),
+            module_vars.get(file[0]),
             options
         )
         for file in files

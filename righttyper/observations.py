@@ -38,7 +38,8 @@ from righttyper.righttyper_types import (
     FuncAnnotation,
     FunctionName,
     CallTrace,
-    ModuleVars
+    ModuleVars,
+    cast_not_None
 )
 from righttyper.righttyper_utils import source_to_module_fqn, get_main_module_fqn
 from righttyper.righttyper_runtime import (
@@ -104,6 +105,10 @@ class FuncInfo:
     overrides: FunctionType|FunctionDescriptor|None
 
     traces: Counter[CallTrace] = field(default_factory=Counter)
+
+    # TODO ideally the variables should be included in the trace, so that they can be filtered
+    # and also included in any type patterns.
+    variables: dict[VariableName, set[TypeInfo]] = field(default_factory=lambda: defaultdict(set))
 
 
     def most_common_traces(self) -> list[CallTrace]:
@@ -180,10 +185,8 @@ class Observations:
     # Started, but not (yet) completed traces
     pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = field(default_factory=lambda: defaultdict(dict))
 
-    # Variables
-    # TODO ideally the variables should be included in the trace, so that they can be filtered
-    # and also included in any type patterns.
-    variables: dict[CodeType, dict[VariableName, set[TypeInfo]]] = field(
+    # per-module variables
+    module_variables: dict[Filename, dict[VariableName, set[TypeInfo]]] = field(
                                                     default_factory=lambda: defaultdict(lambda: defaultdict(set)))
 
     # Object attributes: class_key -> attr_name -> set[TypeInfo]
@@ -315,7 +318,12 @@ class Observations:
         if not options.variables or not (codevars := code2variables.get(code)):
             return
 
-        scope_vars = self.variables[typing.cast(CodeType, codevars.scope_code)]
+        # scope_code is guaranteed non-None in code2variables
+        if (func_info := self.func_info.get(cast_not_None(codevars.scope_code))):
+            scope_vars = func_info.variables
+        else:
+            scope_vars = self.module_variables[Filename(code.co_filename)]
+
         f_locals = frame.f_locals
         value: Any
         dst: str|None
@@ -403,8 +411,10 @@ class Observations:
                     del func_info.traces[trace]
                     func_info.traces[trace_prime] = count
 
-        # TODO how can self.variables change size during iteration?
-        for code, var_dict in list(self.variables.items()):
+            for var_name, var_types in list(func_info.variables.items()):
+                func_info.variables[var_name] = set(tr.visit(t) for t in var_types)
+
+        for var_dict in list(self.module_variables.values()):
             for var_name, var_types in list(var_dict.items()):
                 var_dict[var_name] = set(tr.visit(t) for t in var_types)
 
@@ -428,7 +438,7 @@ class Observations:
                         pass
 
 
-    def collect_annotations(self) -> tuple[dict[FuncId, FuncAnnotation], dict[FuncId, ModuleVars]]:
+    def collect_annotations(self) -> tuple[dict[FuncId, FuncAnnotation], dict[Filename, ModuleVars]]:
         """Collects function type annotations from the observed types."""
 
         # Finish traces for any generators that may be still running
@@ -438,8 +448,7 @@ class Observations:
                     self._record_return_type(tr, code, None)
 
 
-        def mk_annotation(code: CodeType) -> FuncAnnotation|None:
-            func_info = self.func_info[code]
+        def mk_annotation(func_info: FuncInfo) -> FuncAnnotation|None:
             traces = func_info.most_common_traces()
             if not traces:
                 return None
@@ -459,7 +468,7 @@ class Observations:
                     if (
                         parent_code
                         and parent_code in self.func_info
-                        and (ann := mk_annotation(parent_code))
+                        and (ann := mk_annotation(self.func_info[parent_code]))
                     ):
                         parents_arg_types = [arg[1] for arg in ann.args]
 
@@ -491,12 +500,11 @@ class Observations:
                 kwargs=func_info.kwargs,
                 variables=[
                     (var_name, merged_types(var_types))
-                    for var_name, var_types in self.variables[code].items()
+                    for var_name, var_types in func_info.variables.items()
                 ]
             )
 
             if logger.level == logging.DEBUG:
-                # TODO refactor to FuncInfo
                 for trace, count in list(func_info.traces.items()):
                     logger.debug(
                         "trace " + func_info.func_id.func_name +
@@ -507,7 +515,7 @@ class Observations:
                     "ann   " + func_info.func_id.func_name +
                     str((*(str(arg[1]) for arg in ann.args), str(ann.retval)))
                 )
-                for var, var_type in list(self.variables[code].items()):
+                for var, var_type in list(func_info.variables.items()):
                     logger.debug(
                         "var {func_info.func_id.func_name} {var_type}"
                     )
@@ -533,9 +541,8 @@ class Observations:
 
                 # if 'args' is there, the function is already annotated
                 if node.code and (options.ignore_annotations or not node.args) and node.code in self.func_info:
-                    # TODO we only need the retval, can we avoid computing the entire annotation?
-                    if (ann := mk_annotation(node.code)):
-                        func_info = self.func_info[node.code]
+                    func_info = self.func_info[node.code]
+                    if (ann := mk_annotation(func_info)):
                         # Clone (rather than link to) types from Callable, Generator, etc.,
                         # clearing is_self, as these types may be later replaced with typing.Self.
                         if node.type_obj is abc.Callable:
@@ -614,8 +621,6 @@ class Observations:
         finalizers.append(GeneratorToIteratorT())
         finalizers.append(MakePickleableT())
 
-        non_func_codes = self.variables.keys() - self.func_info.keys()
-
         annotations = {
             func_info.func_id: FuncAnnotation(
                 args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
@@ -624,23 +629,16 @@ class Observations:
                 kwargs=annotation.kwargs,
                 variables=[(var[0], finalize(var[1])) for var in annotation.variables]
             )
-            for code, func_info in self.func_info.items()
-            if (annotation := mk_annotation(code)) is not None
+            for func_info in self.func_info.values()
+            if (annotation := mk_annotation(func_info)) is not None
         }
 
-        def func_id_for_code(code: CodeType):
-            return FuncId(
-                Filename(code.co_filename),
-                code.co_firstlineno,
-                FunctionName(code.co_qualname)
-            )
-
         module_vars = {
-            func_id_for_code(code): ModuleVars([
+            filename: ModuleVars([
                 (var_name, finalize(merged_types(var_types)))
-                for var_name, var_types in self.variables[code].items()
+                for var_name, var_types in var_dict.items()
             ])
-            for code in non_func_codes
+            for filename, var_dict in self.module_variables.items()
         }
 
         return annotations, module_vars

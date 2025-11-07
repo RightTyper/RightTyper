@@ -33,4 +33,10 @@ class FuncAnnotation:
 class ModuleVars:
     variables: list[tuple[VariableName, TypeInfo]]
 
+
 type CallTrace = tuple[TypeInfo, ...]
+
+
+def cast_not_None[T](x: T | None) -> T:
+    """Small utility to just cast off None from x's type"""
+    return x    # type: ignore[return-value]
