@@ -103,6 +103,23 @@ class FuncInfo:
     kwargs: ArgumentName|None
     overrides: FunctionType|FunctionDescriptor|None
 
+    traces: Counter[CallTrace] = field(default_factory=Counter)
+
+
+    def most_common_traces(self) -> list[CallTrace]:
+        """Returns the top X% most common call traces, turning type checking into anomaly detection."""
+        threshold = sum(self.traces.values()) * options.use_top_pct / 100
+        cumulative = 0
+
+        traces = list()
+        for trace, count in self.traces.most_common():
+            if cumulative >= threshold:
+                break
+            cumulative += count
+            traces.append(trace)
+
+        return traces
+
 
 @dataclass
 class PendingCallTrace:
@@ -158,7 +175,7 @@ class PendingCallTrace:
 @dataclass
 class Observations:
     # Visited functions' and information about them
-    functions_visited: dict[CodeType, FuncInfo] = field(default_factory=dict)
+    func_info: dict[CodeType, FuncInfo] = field(default_factory=dict)
 
     # Started, but not (yet) completed traces
     pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = field(default_factory=lambda: defaultdict(dict))
@@ -172,9 +189,6 @@ class Observations:
     # Object attributes: class_key -> attr_name -> set[TypeInfo]
     object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = field(
                                                     default_factory=lambda: defaultdict(lambda: defaultdict(set)))
-
-    # Completed traces
-    traces: dict[CodeType, Counter[CallTrace]] = field(default_factory=dict)
 
     # Mapping of sources to their module names
     # TODO handle cases where modules are loaded more than once, e.g. through pytest
@@ -208,7 +222,7 @@ class Observations:
     ) -> None:
         """Records that a function was visited, along with some details about it."""
 
-        if code not in self.functions_visited:
+        if code not in self.func_info:
             arg_names = (
                 *(a for a in arg_info.args),
                 *((arg_info.varargs,) if arg_info.varargs else ()),
@@ -217,7 +231,7 @@ class Observations:
 
             defaults = get_defaults(code, frame)
 
-            self.functions_visited[code] = FuncInfo(
+            self.func_info[code] = FuncInfo(
                 FuncId(
                     Filename(code.co_filename),
                     code.co_firstlineno,
@@ -265,16 +279,7 @@ class Observations:
 
         self.record_module(code, frame)
 
-        if not (code.co_flags & CO_NEWLOCALS):
-            self.functions_visited[code] = FuncInfo(
-                FuncId(
-                    Filename(code.co_filename),
-                    code.co_firstlineno,
-                    FunctionName(code.co_qualname),
-                ),
-                args=(), varargs=None, kwargs=None, overrides=None
-            )
-        else:
+        if (code.co_flags & CO_NEWLOCALS):
             self_type, self_replacement, overrides = get_self_type(code, arg_info)
             self.record_function(code, frame, arg_info, overrides)
 
@@ -340,13 +345,12 @@ class Observations:
             )
         )
 
-        if code not in self.traces:
-            self.traces[code] = Counter()
-        self.traces[code].update((tr.process(),))
+        func_info = self.func_info[code]
+        func_info.traces.update((tr.process(),))
 
         # Resample arguments in case they change during execution (e.g., containers)
         tr.args = self._get_arg_types(tr.arg_info)
-        self.traces[code].update((tr.process(),))
+        func_info.traces.update((tr.process(),))
 
 
     def record_return(self, code: CodeType, frame: FrameType, return_value: Any) -> bool:
@@ -359,7 +363,7 @@ class Observations:
             self._record_variables(code, frame)
             del per_frame[frame_id]
             return True # found it
-        elif code in self.functions_visited:
+        else:
             self._record_variables(code, frame)
 
         return False
@@ -375,7 +379,7 @@ class Observations:
             self._record_variables(code, frame)
             del per_frame[frame_id]
             return True # found it
-        elif code in self.functions_visited:
+        else:
             self._record_variables(code, frame)
 
         return False
@@ -384,22 +388,20 @@ class Observations:
     def _transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
 
-        for code, trace_counter in self.traces.items():
-            for trace, count in list(trace_counter.items()):
+        for code, func_info in self.func_info.items():
+            for trace, count in list(func_info.traces.items()):
                 trace_prime = tuple(tr.visit(t) for t in trace)
                 # Use identity rather than ==, as only non-essential attributes may have changed
                 if any(old is not new for old, new in zip(trace, trace_prime)):
                     if logger.level == logging.DEBUG:
-                        func_info = self.functions_visited.get(code, None)
                         logger.debug(
-                            type(tr).__name__ + " " +
-                            (func_info.func_id.func_name if func_info else "?") +
+                            type(tr).__name__ + " " + func_info.func_id.func_name +
                             str(tuple(str(t) for t in trace)) +
                             " -> " +
                             str(tuple(str(t) for t in trace_prime))
                         )
-                    del trace_counter[trace]
-                    trace_counter[trace_prime] = count
+                    del func_info.traces[trace]
+                    func_info.traces[trace_prime] = count
 
         # TODO how can self.variables change size during iteration?
         for code, var_dict in list(self.variables.items()):
@@ -436,26 +438,11 @@ class Observations:
                     self._record_return_type(tr, code, None)
 
 
-        def most_common_traces(code: CodeType) -> list[CallTrace]:
-            """Returns the top X% most common call traces, turning type checking into anomaly detection."""
-            counter = self.traces[code]
-
-            threshold = sum(counter.values()) * options.use_top_pct / 100
-            cumulative = 0
-
-            traces = list()
-            for trace, count in self.traces[code].most_common():
-                if cumulative >= threshold:
-                    break
-                cumulative += count
-                traces.append(trace)
-
-            return traces
-
-
         def mk_annotation(code: CodeType) -> FuncAnnotation|None:
-            func_info = self.functions_visited[code]
-            traces = most_common_traces(code)
+            func_info = self.func_info[code]
+            traces = func_info.most_common_traces()
+            if not traces:
+                return None
 
             parents_arg_types = None
             if func_info.overrides:
@@ -471,7 +458,7 @@ class Observations:
                     parent_code = parents_func.__code__ if hasattr(parents_func, "__code__") else None
                     if (
                         parent_code
-                        and parent_code in self.traces
+                        and parent_code in self.func_info
                         and (ann := mk_annotation(parent_code))
                     ):
                         parents_arg_types = [arg[1] for arg in ann.args]
@@ -509,8 +496,8 @@ class Observations:
             )
 
             if logger.level == logging.DEBUG:
-                trace_counter = self.traces[code]
-                for trace, count in list(trace_counter.items()):
+                # TODO refactor to FuncInfo
+                for trace, count in list(func_info.traces.items()):
                     logger.debug(
                         "trace " + func_info.func_id.func_name +
                         str(tuple(str(t) for t in trace)) +
@@ -545,10 +532,10 @@ class Observations:
                 node = super().visit(node)
 
                 # if 'args' is there, the function is already annotated
-                if node.code and (options.ignore_annotations or not node.args) and node.code in self.traces:
+                if node.code and (options.ignore_annotations or not node.args) and node.code in self.func_info:
                     # TODO we only need the retval, can we avoid computing the entire annotation?
                     if (ann := mk_annotation(node.code)):
-                        func_info = self.functions_visited[node.code]
+                        func_info = self.func_info[node.code]
                         # Clone (rather than link to) types from Callable, Generator, etc.,
                         # clearing is_self, as these types may be later replaced with typing.Self.
                         if node.type_obj is abc.Callable:
@@ -627,22 +614,29 @@ class Observations:
         finalizers.append(GeneratorToIteratorT())
         finalizers.append(MakePickleableT())
 
-        non_func_codes = self.variables.keys() - self.traces.keys()
+        non_func_codes = self.variables.keys() - self.func_info.keys()
 
         annotations = {
-            self.functions_visited[code].func_id: FuncAnnotation(
+            func_info.func_id: FuncAnnotation(
                 args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
                 retval=finalize(annotation.retval),
                 varargs=annotation.varargs,
                 kwargs=annotation.kwargs,
                 variables=[(var[0], finalize(var[1])) for var in annotation.variables]
             )
-            for code in self.traces
+            for code, func_info in self.func_info.items()
             if (annotation := mk_annotation(code)) is not None
         }
 
+        def func_id_for_code(code: CodeType):
+            return FuncId(
+                Filename(code.co_filename),
+                code.co_firstlineno,
+                FunctionName(code.co_qualname)
+            )
+
         module_vars = {
-            self.functions_visited[code].func_id: ModuleVars([
+            func_id_for_code(code): ModuleVars([
                 (var_name, finalize(merged_types(var_types)))
                 for var_name, var_types in self.variables[code].items()
             ])

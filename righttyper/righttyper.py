@@ -913,7 +913,7 @@ def run(
         if logger.level == logging.DEBUG:
             assert (keys := obs.source_to_module_name.keys()) == (oldset := set(
                 t.func_id.file_name
-                for t in obs.functions_visited.values()
+                for t in obs.func_info.values()
                 if not skip_this_file(t.func_id.file_name)
             )), f"{keys-oldset=}  {oldset-keys=}"
 
