@@ -5,6 +5,7 @@ from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo
 from righttyper.righttyper_utils import is_test_module
 from righttyper.typemap import AdjustTypeNamesT
 from righttyper.righttyper_runtime import get_type_name
+import pickle
 
 import logging
 from righttyper.logger import logger
@@ -177,5 +178,8 @@ class MakePickleableT(TypeInfo.Transformer):
     """
     def visit(self, node: TypeInfo) -> TypeInfo:
         if node.type_obj is not None:
-            node = node.replace(type_obj=None)
+            try:
+                pickle.dumps(node)
+            except:
+                node = node.replace(type_obj=None)
         return super().visit(node)

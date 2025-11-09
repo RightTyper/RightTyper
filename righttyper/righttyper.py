@@ -267,6 +267,8 @@ def self_profile() -> None:
         sample_count_instrumentation = sample_count_total = 0
 
 
+main_globals: dict[str, Any]|None = None
+
 def execute_script_or_module(
     script: str,
     is_module: bool,
@@ -274,24 +276,26 @@ def execute_script_or_module(
 ) -> None:
     """Executes the script or module, returning the __main__ module's globals."""
 
+    global main_globals
+
     try:
         sys.argv = [script, *args]
         if is_module:
             with loader.ImportManager(replace_dict=options.replace_dict):
-                obs.main_globals = runpy.run_module(
+                main_globals = runpy.run_module(
                     script,
                     run_name="__main__",
                     alter_sys=True,
                 )
         else:
             with loader.ImportManager(replace_dict=options.replace_dict):
-                obs.main_globals = runpy.run_path(script, run_name="__main__")
+                main_globals = runpy.run_path(script, run_name="__main__")
 
-    except Exception as e:
+    except BaseException as e:
         tb = e.__traceback__
         while tb is not None:
             if tb.tb_frame.f_globals.get("__name__", None) == "__main__":
-                obs.main_globals = dict(tb.tb_frame.f_globals)
+                main_globals = dict(tb.tb_frame.f_globals)
                 break
             tb = tb.tb_next
 
@@ -900,10 +904,13 @@ def run(
 
     try:
         execute_script_or_module(script, is_module=bool(module), args=args)
-        obs.try_close_generators()
     finally:
+        obs.try_close_generators()
         reset_monitoring()
         alarm.stop()
+
+        assert main_globals is not None
+        obs.finish_recording(main_globals)
 
         if exclude_test_files:
             # should_skip_function doesn't know to skip test files until they are detected,

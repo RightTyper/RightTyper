@@ -189,16 +189,13 @@ class Observations:
     # TODO handle cases where modules are loaded more than once, e.g. through pytest
     source_to_module_name: dict[str, str|None] = field(default_factory=dict)
 
-    # target __main__ module globals
-    main_globals: dict[str, Any]|None = None
-
 
     def record_module(
         self,
         code: CodeType,
         frame: FrameType
     ) -> None:
-        if code.co_filename not in self.source_to_module_name:
+        if code.co_filename and code.co_filename not in self.source_to_module_name:
             if (modname := frame.f_globals.get('__name__', None)):
                 if modname == "__main__":
                     modname = get_main_module_fqn()
@@ -427,15 +424,27 @@ class Observations:
                         pass
 
 
-    def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars]]:
-        """Collects function type annotations from the observed types."""
-
-        # Finish traces for any generators that may be still running
+    def finish_recording(self, main_globals: dict[str, Any]) -> None:
+        # Any generators left?
         for code, per_frame in self.pending_traces.items():
             for tr in per_frame.values():
                 if tr.is_generator:
                     self._record_return_type(tr, code, None)
 
+        # The type map depends on main_globals as well as the on the state
+        # of sys.modules, so we can't postpone them until collect_annotations,
+        # which operate on deserialized data (vs. data just collected).
+        type_name_adjuster = None
+        if options.adjust_type_names:
+            type_name_adjuster = AdjustTypeNamesT(main_globals)
+            self._transform_types(type_name_adjuster)
+
+        if options.resolve_mocks:
+            self._transform_types(ResolveMocksT(type_name_adjuster))
+
+
+    def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars]]:
+        """Collects function type annotations from the observed types."""
 
         def mk_annotation(func_info: FuncInfo) -> FuncAnnotation|None:
             traces = func_info.most_common_traces()
@@ -511,11 +520,6 @@ class Observations:
 
             return ann
 
-        type_name_adjuster = None
-        if options.adjust_type_names:
-            type_name_adjuster = AdjustTypeNamesT(self.main_globals)
-            self._transform_types(type_name_adjuster)
-
         class NonSelfCloningT(TypeInfo.Transformer):
             """Clones the given TypeInfo tree, clearing all 'is_self' flags,
                as the type information may not be equivalent to typing.Self in the new context.
@@ -586,9 +590,6 @@ class Observations:
             self._transform_types(NeverSayNeverT())
         else:
             self._transform_types(NoReturnToNeverT())
-
-        if options.resolve_mocks:
-            self._transform_types(ResolveMocksT(type_name_adjuster))
 
         if options.exclude_test_types:
             self._transform_types(ExcludeTestTypesT())
