@@ -700,7 +700,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.get_metadata(PositionProvider, node).start.line
             for node in (node, *node.decorators)
         )
-        key = CodeId(Filename(self.filename), first_line, FunctionName(name))
+        key = CodeId(Filename(self.filename), FunctionName(name), first_line, 0)
         self.func_ann_stack.append(self.type_annotations.get(key))
         self.annotate_vars_stack.append(True)
         return True

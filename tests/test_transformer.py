@@ -123,8 +123,9 @@ def get_code_id(filename: str, m: cst.Module, funcname: str) -> CodeId:
     if (f := find_function(m, funcname)):
         return CodeId(
             Filename(filename),
+            FunctionName(funcname),
             f[1],
-            FunctionName(funcname)
+            0
         )
 
     raise RuntimeError(f"Unable to find {funcname}")

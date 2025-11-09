@@ -169,7 +169,10 @@ class PendingCallTrace:
 @dataclass
 class Observations:
     # Visited functions' and information about them
-    func_info: dict[CodeType, FuncInfo] = field(default_factory=dict)
+    func_info: dict[CodeId, FuncInfo] = field(default_factory=dict)
+
+    # Finds FuncInfo by their CodeType
+    code2func_info: dict[CodeType, FuncInfo] = field(default_factory=dict)
 
     # Started, but not (yet) completed traces
     pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = field(default_factory=lambda: defaultdict(dict))
@@ -214,7 +217,7 @@ class Observations:
     ) -> None:
         """Records that a function was visited."""
 
-        if code not in self.func_info:
+        if code not in self.code2func_info:
             arg_names = (
                 *(a for a in arg_info.args),
                 *((arg_info.varargs,) if arg_info.varargs else ()),
@@ -223,7 +226,7 @@ class Observations:
 
             defaults = get_defaults(code, frame)
 
-            self.func_info[code] = FuncInfo(
+            self.code2func_info[code] = func_info = FuncInfo(
                 CodeId.from_code(code),
                 tuple(
                     ArgInfo(ArgumentName(name), defaults.get(name))
@@ -233,6 +236,7 @@ class Observations:
                 ArgumentName(arg_info.keywords) if arg_info.keywords else None,
                 overrides
             )
+            self.func_info[func_info.code_id] = func_info
 
 
     @staticmethod
@@ -304,7 +308,7 @@ class Observations:
             return
 
         # scope_code is guaranteed non-None in code2variables
-        if (func_info := self.func_info.get(cast_not_None(codevars.scope_code))):
+        if (func_info := self.code2func_info.get(cast_not_None(codevars.scope_code))):
             scope_vars = func_info.variables
         else:
             scope_vars = self.module_variables[Filename(code.co_filename)]
@@ -338,7 +342,7 @@ class Observations:
             )
         )
 
-        func_info = self.func_info[code]
+        func_info = self.code2func_info[code]
         func_info.traces.update((tr.process(),))
 
         # Resample arguments in case they change during execution (e.g., containers)
@@ -381,7 +385,7 @@ class Observations:
     def _transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
 
-        for code, func_info in self.func_info.items():
+        for func_info in self.func_info.values():
             for trace, count in list(func_info.traces.items()):
                 trace_prime = tuple(tr.visit(t) for t in trace)
                 # Use identity rather than ==, as only non-essential attributes may have changed
@@ -452,8 +456,8 @@ class Observations:
                     parent_code = parents_func.__code__ if hasattr(parents_func, "__code__") else None
                     if (
                         parent_code
-                        and parent_code in self.func_info
-                        and (ann := mk_annotation(self.func_info[parent_code]))
+                        and parent_code in self.code2func_info
+                        and (ann := mk_annotation(self.code2func_info[parent_code]))
                     ):
                         parents_arg_types = [arg[1] for arg in ann.args]
 
@@ -525,8 +529,8 @@ class Observations:
                 node = super().visit(node)
 
                 # if 'args' is there, the function is already annotated
-                if node.code and (options.ignore_annotations or not node.args) and node.code in self.func_info:
-                    func_info = self.func_info[node.code]
+                if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.func_info:
+                    func_info = self.func_info[node.code_id]
                     if (ann := mk_annotation(func_info)):
                         # Clone (rather than link to) types from Callable, Generator, etc.,
                         # clearing is_self, as these types may be later replaced with typing.Self.

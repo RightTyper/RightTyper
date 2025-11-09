@@ -2,6 +2,7 @@ import typing
 from typing import Iterator, Final
 import types
 from dataclasses import dataclass, replace, field
+from righttyper.righttyper_types import CodeId
 
 
 # The typing module does not define a type for such "typing special forms".
@@ -15,7 +16,7 @@ class TypeInfo:
     args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()    # arguments within []
 
     # These fields are included for convenience, but don't affect what type is meant
-    code: types.CodeType | None = field(default=None, compare=False)  # if a callable, generator or coroutine, the CodeType
+    code_id: CodeId | None = field(default=None, compare=False)  # if a callable, generator or coroutine, the CodeId
     is_bound: bool = field(default=False, compare=False)    # if a callable, whether bound
     type_obj: type|SpecialForms|None = field(default=None, compare=False)
     typevar_index: int = field(default=0, compare=False)

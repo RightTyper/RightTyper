@@ -178,6 +178,4 @@ class MakePickleableT(TypeInfo.Transformer):
     def visit(self, node: TypeInfo) -> TypeInfo:
         if node.type_obj is not None:
             node = node.replace(type_obj=None)
-        if node.code is not None:
-            node = node.replace(code=None)
         return super().visit(node)

@@ -11,16 +11,20 @@ FunctionName = NewType("FunctionName", str)
 @dataclass(eq=True, order=True, frozen=True)
 class CodeId:
     file_name: Filename
-    first_code_line: int
     func_name: FunctionName
+    first_code_line: int
+
+    # if a <genexpr> or such, hash(code) to be able to differentiate same-line objects
+    code_hash: int
 
 
     @staticmethod
     def from_code(code: types.CodeType) -> "CodeId":
         return CodeId(
             Filename(code.co_filename),
-            code.co_firstlineno,
             FunctionName(code.co_qualname),
+            code.co_firstlineno,
+            hash(code) if code.co_qualname.endswith('>') else 0
         )
 
 
