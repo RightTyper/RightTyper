@@ -2,7 +2,7 @@ import ast
 import typeshed_client as typeshed
 from types import CodeType, FrameType, FunctionType, GeneratorType
 import typing
-from typing import Final, Any, overload, cast
+from typing import Final, Any, NewType, overload, cast
 import builtins
 import inspect
 from collections import defaultdict, Counter
@@ -33,7 +33,6 @@ from righttyper.righttyper_types import (
     VariableName,
     Filename,
     FuncId,
-    FrameId,
     FuncAnnotation,
     FunctionName,
     CallTrace,
@@ -67,6 +66,8 @@ CO_NEWLOCALS: Final = find_co_newlocals()
 # Singleton used to differentiate from None
 NO_OBJECT: Final = object()
 
+
+FrameId = NewType("FrameId", int)   # obtained from id(frame) where code is-a FrameType
 
 
 # Overloads so we don't have to always write FrameId(id(code)), etc.
@@ -292,19 +293,19 @@ class Observations:
             )
 
 
-    def record_yield(self, code: CodeType, frame_id: FrameId, yield_value: Any) -> None:
+    def record_yield(self, code: CodeType, frame: FrameType, yield_value: Any) -> None:
         """Records a yield."""
 
         # print(f"record_yield {code.co_qualname}")
-        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
+        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(id(frame))):
             tr.yields.add(get_value_type(yield_value))
 
 
-    def record_send(self, code: CodeType, frame_id: FrameId, send_value: Any) -> None:
+    def record_send(self, code: CodeType, frame: FrameType, send_value: Any) -> None:
         """Records a send."""
 
         # print(f"record_send {code.co_qualname}")
-        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
+        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(id(frame))):
             tr.sends.add(get_value_type(send_value))
 
 

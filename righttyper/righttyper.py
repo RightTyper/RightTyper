@@ -18,7 +18,7 @@ import time
 from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
-from types import CodeType, GeneratorType, AsyncGeneratorType
+from types import CodeType, FrameType, GeneratorType, AsyncGeneratorType
 from typing import Any, TextIO
 
 import click
@@ -40,8 +40,8 @@ from righttyper.righttyper_alarm import (
 )
 from righttyper.righttyper_utils import skip_this_file, should_skip_function, detected_test_files, detected_test_modules
 from righttyper.typeinfo import TypeInfo
-from righttyper.righttyper_types import FrameId, FuncId, FuncAnnotation, ModuleVars, Filename, FunctionName
-from righttyper.observations import Observations, id
+from righttyper.righttyper_types import FuncId, FuncAnnotation, ModuleVars, Filename, FunctionName
+from righttyper.observations import Observations
 from righttyper.options import Options, options
 from righttyper.logger import logger
 from righttyper.atomic import AtomicCounter
@@ -68,12 +68,8 @@ def is_instrumentation(f):
 
 
 @is_instrumentation
-def send_handler(code: CodeType, frame_id: FrameId, arg0: Any) -> None:
-    obs.record_send(
-        code,
-        frame_id, 
-        arg0
-    )
+def send_handler(code: CodeType, frame: FrameType, arg0: Any) -> None:
+    obs.record_send(code, frame, arg0)
 
 
 def wrap_send(obj: Any) -> Any:
@@ -85,7 +81,7 @@ def wrap_send(obj: Any) -> Any:
             @functools.wraps(obj)
             def wrapper(*args, **kwargs):
                 # generator.send takes exactly one argument
-                send_handler(self.gi_code, FrameId(id(self.gi_frame)), args[0])
+                send_handler(self.gi_code, self.gi_frame, args[0])
                 return obj(*args, **kwargs)
 
             return wrapper
@@ -93,7 +89,7 @@ def wrap_send(obj: Any) -> Any:
             @functools.wraps(obj)
             def wrapper(*args, **kwargs):
                 # generator.asend takes exactly one argument
-                send_handler(self.ag_code, FrameId(id(self.ag_frame)), args[0])
+                send_handler(self.ag_code, self.ag_frame, args[0])
                 return obj(*args, **kwargs)
 
             return wrapper
@@ -147,7 +143,7 @@ def yield_handler(
         frame = frame.f_back
 
     if frame:
-        obs.record_yield(code, id(frame), yield_value)
+        obs.record_yield(code, frame, yield_value)
         del frame
 
     return None
