@@ -37,7 +37,6 @@ from righttyper.righttyper_utils import is_test_module, get_main_module_fqn
 from righttyper.options import options
 from righttyper.logger import logger
 
-T = typing.TypeVar("T")
 
 @cache
 def get_jaxtyping():
@@ -117,6 +116,9 @@ def hint2type(hint) -> TypeInfo:
 
 
 def type_from_annotations(func: abc.Callable) -> TypeInfo:
+    if (orig_func := unwrap(func)): # in case this is a wrapper
+        func = orig_func
+
     try:
         signature = inspect.signature(func)
         hints = get_type_hints(func)
@@ -141,7 +143,7 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
 
     return TypeInfo("typing", "Callable",
         args=args,
-        code=func.__code__,
+        code=getattr(func, "__code__", None),   # native callables may lack this
         type_obj=cast(type, abc.Callable),
         is_bound=isinstance(func, MethodType)
     )
@@ -300,14 +302,15 @@ def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
     return None
 
 
-def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
+def unwrap(method: abc.Callable|None) -> abc.Callable|None:
     """Follows a chain of `__wrapped__` attributes to find the original function."""
 
-    visited = set()         # there shouldn't be a loop, but just in case...
+    # Remember objects by id to work around unhashable items, but point to object so
+    # that the object can't go away (possibly reusing the id)
+    visited = {}
     while hasattr(method, "__wrapped__"):
-        if method in visited:
-            return None
-        visited.add(method)
+        if id(method) in visited: return None
+        visited[id(method)] = method
 
         method = getattr(method, "__wrapped__")
 
@@ -335,7 +338,7 @@ def find_function(
 
     parts = code.co_qualname.split('.')
 
-    def find_in(namespace: dict|MappingProxyType, index: int=0) -> FunctionType|None:
+    def find_in(namespace: dict|MappingProxyType, index: int=0) -> abc.Callable|None:
         if index < len(parts):
             name = parts[index]
             if (
@@ -582,6 +585,8 @@ def _handle_enumerate(value: Any, depth: int) -> TypeInfo|None:
     return None
 
 
+T = typing.TypeVar("T")
+
 _type2handler: dict[type, Callable[[Any, int], TypeInfo|None]] = {
     NoneType: lambda value, depth: NoneTypeInfo,
     tuple: _handle_tuple,
@@ -693,6 +698,12 @@ def get_value_type(
                 return get_value_type(l, depth+1)
 
             return UnknownTypeInfo
+    elif (
+        t.__module__ == "functools"
+        and isinstance(value, abc.Callable) # type: ignore[arg-type]
+        and unwrap(value) is not value
+    ):
+        return type_from_annotations(value) # a function wrapper such as @cache
 
     if options.infer_shapes and hasattr(value, "dtype") and hasattr(value, "shape"):
         if (dtype := jx_dtype(value)) is not None:

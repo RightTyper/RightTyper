@@ -223,7 +223,7 @@ class Observations:
         arg_info: inspect.ArgInfo,
         overrides: FunctionType|FunctionDescriptor|None
     ) -> None:
-        """Records that a function was visited, along with some details about it."""
+        """Records that a function was visited."""
 
         if code not in self.func_info:
             arg_names = (
@@ -780,7 +780,7 @@ def get_self_type(code, args) -> tuple[TypeInfo|None, TypeInfo|None, FunctionTyp
             overrides = next(
                 (
                     # wrapper_descriptor and possibly other native objects may lack __module__
-                    f if hasattr(f, "__module__")
+                    f if (isinstance(f, FunctionType) and hasattr(f, "__module__"))
                     else FunctionDescriptor(ancestor.__module__, f.__qualname__)
                     for ancestor in first_arg_class.__mro__[next_index:]
                     if (f := unwrap(ancestor.__dict__.get(name, None)))

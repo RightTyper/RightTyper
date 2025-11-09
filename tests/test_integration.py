@@ -324,8 +324,12 @@ def test_builtins():
     assert "def func3(t: super) -> None" in output
 
 
-def test_callable_from_annotations():
-    t = textwrap.dedent("""\
+@pytest.mark.parametrize("cache", ["", "@cache"])
+def test_callable_from_annotations(cache):
+    t = textwrap.dedent(f"""\
+        from functools import cache
+
+        {cache}
         def f(x: int | float, y) -> float:
             return x/2
 
@@ -340,10 +344,22 @@ def test_callable_from_annotations():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g() -> Callable[[int|float, Any], float]:" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g() -> Callable[[int|float, Any], float]: ...
+    """)
+
     # TODO is it ok for 'y' to be typed as observed, while the Callable uses 'Any' ?
-    assert "def f(x: int | float, y: None) -> float:" in output
+    if cache:
+        assert get_function(code, 'f') == textwrap.dedent(f"""\
+            {cache}
+            def f(x: int | float, y: None) -> float: ...
+        """)
+    else:
+        assert get_function(code, 'f') == textwrap.dedent(f"""\
+            def f(x: int | float, y: None) -> float: ...
+        """)
 
 
 def test_callable_from_annotations_typing_special():
