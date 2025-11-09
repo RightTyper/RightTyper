@@ -662,13 +662,15 @@ def get_inline_arg_types(
         return None
 
     return (
-        # first the positional, looking up by their names given in the parent
+        # First the positional, looking up by their names given in the parent.
+        # Note that for the override to be valid, their signatures must have
+        # the same number of positional arguments.
         [
             hint2type(hints[arg]) if arg in hints else None
             for arg in co.co_varnames[:co.co_argcount]
         ]
         +
-        # then kwonly, going by the order in the child
+        # Then kwonly, going by the order (and quantity) in the child
         [
             hint2type(hints[arg.arg_name]) if arg.arg_name in hints else None
             for arg in child_args[co.co_argcount:]
@@ -707,16 +709,19 @@ def get_typeshed_arg_types(
             #print(ast.dump(defs[0], indent=4))
 
             # FIXME use eval() in the context of the module and hint2type so
-            # as not to have an unqualified string for a "type"
+            # as not to have an unqualified string for a "type", and also so
+            # as not to lack a type_obj
 
-            # first the positional, looking up by their names given in the parent
+            # First the positional, looking up by their names given in the parent.
+            # Note that for the override to be valid, their signatures must have
+            # the same number of positional arguments.
             pos_args = [
                 TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
                 for a in (defs[0].args.posonlyargs + defs[0].args.args)
                 if isinstance(a, ast.arg)
             ]
 
-            # then kwonly, going by the order in the child
+            # Then kwonly, going by the order (and quantity) in the child
             kw_args = [
                 TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
                 for child_arg_name in child_args[len(pos_args):]
