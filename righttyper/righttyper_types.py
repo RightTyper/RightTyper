@@ -9,8 +9,7 @@ VariableName = NewType("VariableName", str)
 Filename = NewType("Filename", str)
 FunctionName = NewType("FunctionName", str)
 
-CodeId = NewType("CodeId", int)     # obtained from id(code) where code is-a CodeType
-FrameId = NewType("FrameId", int)   # similarly from id(frame)
+FrameId = NewType("FrameId", int)   # obtained from id(frame) where code is-a FrameType
 
 
 @dataclass(eq=True, order=True, frozen=True)

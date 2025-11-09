@@ -31,7 +31,6 @@ from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownType
 from righttyper.righttyper_types import (
     ArgumentName,
     VariableName,
-    CodeId,
     Filename,
     FuncId,
     FrameId,
@@ -70,9 +69,7 @@ NO_OBJECT: Final = object()
 
 
 
-# Overloads so we don't have to always write CodeId(id(code)), etc.
-@overload
-def id(obj: CodeType) -> CodeId: ...
+# Overloads so we don't have to always write FrameId(id(code)), etc.
 @overload
 def id(obj: FrameType) -> FrameId: ...
 @overload
