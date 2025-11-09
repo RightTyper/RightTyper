@@ -32,9 +32,8 @@ from righttyper.righttyper_types import (
     ArgumentName,
     VariableName,
     Filename,
-    FuncId,
+    CodeId,
     FuncAnnotation,
-    FunctionName,
     CallTrace,
     ModuleVars,
     cast_not_None
@@ -96,7 +95,7 @@ class FunctionDescriptor:
 
 @dataclass(eq=True, frozen=True)
 class FuncInfo:
-    func_id: FuncId
+    code_id: CodeId
     args: tuple[ArgInfo, ...]
     varargs: ArgumentName|None
     kwargs: ArgumentName|None
@@ -233,11 +232,7 @@ class Observations:
             defaults = get_defaults(code, frame)
 
             self.func_info[code] = FuncInfo(
-                FuncId(
-                    Filename(code.co_filename),
-                    code.co_firstlineno,
-                    FunctionName(code.co_qualname),
-                ),
+                CodeId.from_code(code),
                 tuple(
                     ArgInfo(ArgumentName(name), defaults.get(name))
                     for name in arg_names
@@ -401,7 +396,7 @@ class Observations:
                 if any(old is not new for old, new in zip(trace, trace_prime)):
                     if logger.level == logging.DEBUG:
                         logger.debug(
-                            type(tr).__name__ + " " + func_info.func_id.func_name +
+                            type(tr).__name__ + " " + func_info.code_id.func_name +
                             str(tuple(str(t) for t in trace)) +
                             " -> " +
                             str(tuple(str(t) for t in trace_prime))
@@ -436,7 +431,7 @@ class Observations:
                         pass
 
 
-    def collect_annotations(self) -> tuple[dict[FuncId, FuncAnnotation], dict[Filename, ModuleVars]]:
+    def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars]]:
         """Collects function type annotations from the observed types."""
 
         # Finish traces for any generators that may be still running
@@ -471,7 +466,7 @@ class Observations:
                         parents_arg_types = [arg[1] for arg in ann.args]
 
             if (signature := generalize(traces)) is None:
-                logger.info(f"Unable to generalize {func_info.func_id}: inconsistent traces.\n" +
+                logger.info(f"Unable to generalize {func_info.code_id}: inconsistent traces.\n" +
                             f"{[tuple(str(t) for t in s) for s in traces]}")
                 return None
 
@@ -505,17 +500,17 @@ class Observations:
             if logger.level == logging.DEBUG:
                 for trace, count in list(func_info.traces.items()):
                     logger.debug(
-                        "trace " + func_info.func_id.func_name +
+                        "trace " + func_info.code_id.func_name +
                         str(tuple(str(t) for t in trace)) +
                         f" {count}x"
                     )
                 logger.debug(
-                    "ann   " + func_info.func_id.func_name +
+                    "ann   " + func_info.code_id.func_name +
                     str((*(str(arg[1]) for arg in ann.args), str(ann.retval)))
                 )
                 for var, var_type in list(func_info.variables.items()):
                     logger.debug(
-                        "var {func_info.func_id.func_name} {var_type}"
+                        "var {func_info.code_id.func_name} {var_type}"
                     )
 
             return ann
@@ -620,7 +615,7 @@ class Observations:
         finalizers.append(MakePickleableT())
 
         annotations = {
-            func_info.func_id: FuncAnnotation(
+            func_info.code_id: FuncAnnotation(
                 args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
                 retval=finalize(annotation.retval),
                 varargs=annotation.varargs,

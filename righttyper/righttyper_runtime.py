@@ -27,7 +27,7 @@ from pathlib import Path
 
 from righttyper.random_dict import RandomDict
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
-from righttyper.righttyper_types import Filename, FunctionName, FuncId
+from righttyper.righttyper_types import Filename, FunctionName, CodeId
 from righttyper.righttyper_utils import is_test_module, get_main_module_fqn
 from righttyper.options import options
 from righttyper.logger import logger

@@ -40,7 +40,7 @@ from righttyper.righttyper_alarm import (
 )
 from righttyper.righttyper_utils import skip_this_file, should_skip_function, detected_test_files, detected_test_modules
 from righttyper.typeinfo import TypeInfo
-from righttyper.righttyper_types import FuncId, FuncAnnotation, ModuleVars, Filename, FunctionName
+from righttyper.righttyper_types import CodeId, FuncAnnotation, ModuleVars, Filename, FunctionName
 from righttyper.observations import Observations
 from righttyper.options import Options, options
 from righttyper.logger import logger
@@ -422,7 +422,7 @@ def process_file_wrapper(args) -> CodeChanges:
 
 def process_files(
     files: list[tuple[Filename, str]],
-    type_annotations: dict[FuncId, FuncAnnotation],
+    type_annotations: dict[CodeId, FuncAnnotation],
     module_vars: dict[Filename, ModuleVars]
 ) -> list[CodeChanges]:
     if not files:
@@ -912,9 +912,9 @@ def run(
 
         if logger.level == logging.DEBUG:
             assert (keys := obs.source_to_module_name.keys()) == (oldset := set(
-                t.func_id.file_name
+                t.code_id.file_name
                 for t in obs.func_info.values()
-                if not skip_this_file(t.func_id.file_name)
+                if not skip_this_file(t.code_id.file_name)
             )), f"{keys-oldset=}  {oldset-keys=}"
 
         files = list(obs.source_to_module_name.items())

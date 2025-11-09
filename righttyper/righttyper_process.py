@@ -6,7 +6,7 @@ import libcst as cst
 from righttyper.generate_stubs import PyiTransformer
 from righttyper.righttyper_types import (
     Filename,
-    FuncId,
+    CodeId,
     FuncAnnotation,
     ModuleVars,
     FunctionName,
@@ -79,7 +79,7 @@ def correct_indentation_issues(file_contents: str) -> str:
 def process_file(
     filename: Filename,
     module_name: str,
-    type_annotations: dict[FuncId, FuncAnnotation],
+    type_annotations: dict[CodeId, FuncAnnotation],
     module_vars: ModuleVars,
     options: Options
 ) -> CodeChanges:

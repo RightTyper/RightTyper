@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import NewType
+import types
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo
 
 
@@ -10,10 +11,19 @@ Filename = NewType("Filename", str)
 FunctionName = NewType("FunctionName", str)
 
 @dataclass(eq=True, order=True, frozen=True)
-class FuncId:
+class CodeId:
     file_name: Filename
     first_code_line: int
     func_name: FunctionName
+
+
+    @staticmethod
+    def from_code(code: types.CodeType) -> "CodeId":
+        return CodeId(
+            Filename(code.co_filename),
+            code.co_firstlineno,
+            FunctionName(code.co_qualname),
+        )
 
 
 @dataclass(eq=True, frozen=True)

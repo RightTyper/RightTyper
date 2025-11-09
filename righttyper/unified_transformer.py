@@ -11,7 +11,7 @@ import re
 from righttyper.typeinfo import TypeInfo, UnknownTypeInfo
 from righttyper.righttyper_types import (
     Filename,
-    FuncId,
+    CodeId,
     FuncAnnotation,
     ModuleVars,
     FunctionName,
@@ -149,7 +149,7 @@ class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
         self,
         filename: str,
-        type_annotations: dict[FuncId, FuncAnnotation],
+        type_annotations: dict[CodeId, FuncAnnotation],
         module_variables: ModuleVars | None,
         module_name: str,
         *,
@@ -705,7 +705,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.get_metadata(PositionProvider, node).start.line
             for node in (node, *node.decorators)
         )
-        key = FuncId(Filename(self.filename), first_line, FunctionName(name))
+        key = CodeId(Filename(self.filename), first_line, FunctionName(name))
         self.func_ann_stack.append(self.type_annotations.get(key))
         self.annotate_vars_stack.append(True)
         return True
