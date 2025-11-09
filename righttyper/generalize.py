@@ -2,9 +2,9 @@ from typing import cast, Sequence, Iterator
 import collections.abc as abc
 from collections import defaultdict, Counter
 from types import EllipsisType
-from righttyper.typeinfo import TypeInfo
+from righttyper.typeinfo import TypeInfo, CallTrace
 from righttyper.righttyper_runtime import get_type_name
-from righttyper.righttyper_types import CallTrace, cast_not_None
+from righttyper.righttyper_types import cast_not_None
 from righttyper.options import options
 
 

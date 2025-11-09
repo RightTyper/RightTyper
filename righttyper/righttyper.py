@@ -40,7 +40,8 @@ from righttyper.righttyper_alarm import (
 )
 from righttyper.righttyper_utils import skip_this_file, should_skip_function, detected_test_files, detected_test_modules
 from righttyper.typeinfo import TypeInfo
-from righttyper.righttyper_types import CodeId, FuncAnnotation, ModuleVars, Filename, FunctionName
+from righttyper.righttyper_types import CodeId, Filename, FunctionName
+from righttyper.annotation import FuncAnnotation, ModuleVars
 from righttyper.observations import Observations
 from righttyper.options import Options, options
 from righttyper.logger import logger

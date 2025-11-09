@@ -9,13 +9,8 @@ from righttyper.variable_binding import VariableBindingProvider
 import re
 
 from righttyper.typeinfo import TypeInfo, UnknownTypeInfo
-from righttyper.righttyper_types import (
-    Filename,
-    CodeId,
-    FuncAnnotation,
-    ModuleVars,
-    FunctionName,
-)
+from righttyper.righttyper_types import Filename, CodeId, FunctionName
+from righttyper.annotation import FuncAnnotation, ModuleVars
 
 
 ChangeStmtList: typing.TypeAlias = typing.Sequence[cst.SimpleStatementLine | cst.BaseCompoundStatement | cst.FunctionDef]

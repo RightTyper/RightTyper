@@ -148,3 +148,6 @@ class TypeInfo:
 NoneTypeInfo: Final = TypeInfo("", "None", type_obj=types.NoneType)
 UnknownTypeInfo: Final = TypeInfo.from_type(typing.Any)
 AnyTypeInfo: Final = TypeInfo.from_type(typing.Any)
+
+
+type CallTrace = tuple[TypeInfo, ...]

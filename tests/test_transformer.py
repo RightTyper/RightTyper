@@ -4,15 +4,8 @@ from libcst.metadata import MetadataWrapper, PositionProvider
 import textwrap
 from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation, used_names
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo
-from righttyper.righttyper_types import (
-    CodeId,
-    Filename,
-    FunctionName,
-    ArgumentName,
-    FuncAnnotation,
-    ModuleVars,
-    VariableName,
-)
+from righttyper.righttyper_types import CodeId, Filename, FunctionName, ArgumentName, VariableName
+from righttyper.annotation import FuncAnnotation, ModuleVars
 from righttyper.righttyper_runtime import get_type_name
 import typing
 import pytest

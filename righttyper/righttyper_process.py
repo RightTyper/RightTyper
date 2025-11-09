@@ -4,13 +4,8 @@ from typing import TypeAlias
 import libcst as cst
 
 from righttyper.generate_stubs import PyiTransformer
-from righttyper.righttyper_types import (
-    Filename,
-    CodeId,
-    FuncAnnotation,
-    ModuleVars,
-    FunctionName,
-)
+from righttyper.righttyper_types import Filename, CodeId, FunctionName
+from righttyper.annotation import FuncAnnotation, ModuleVars
 from righttyper.righttyper_utils import (
     source_to_module_fqn
 )
