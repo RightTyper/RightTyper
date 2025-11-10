@@ -30,7 +30,7 @@ from righttyper.type_transformers import (
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo, CallTrace
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, cast_not_None
 from righttyper.annotation import FuncAnnotation, ModuleVars
-from righttyper.righttyper_utils import source_to_module_fqn, get_main_module_fqn
+from righttyper.righttyper_utils import source_to_module_fqn, get_main_module_fqn, skip_this_file, detected_test_files
 from righttyper.righttyper_runtime import (
     find_function,
     unwrap,
@@ -115,271 +115,19 @@ class FuncInfo:
         return traces
 
 
-@dataclass
-class PendingCallTrace:
-    arg_info: inspect.ArgInfo
-    args: tuple[TypeInfo, ...]
-    yields: set[TypeInfo] = field(default_factory=set)
-    sends: set[TypeInfo] = field(default_factory=set)
-    returns: TypeInfo = NoneTypeInfo
-    is_async: bool = False
-    is_generator: bool = False
-    self_type: TypeInfo | None = None
-    self_replacement: TypeInfo | None = None
-
-
-    def process(self) -> CallTrace:
-        retval = self.returns
-
-        if self.is_generator:
-            y = TypeInfo.from_set(self.yields)
-            s = TypeInfo.from_set(self.sends)
-
-            if self.is_async:
-                retval = TypeInfo.from_type(abc.AsyncGenerator, module="typing", args=(y, s))
-            else:
-                retval = TypeInfo.from_type(abc.Generator, module="typing", args=(y, s, self.returns))
-            
-        type_data = (*self.args, retval)
-
-        if self.self_type and self.self_replacement:
-            self_type = cast(TypeInfo, self.self_type)
-            self_replacement = cast(TypeInfo, self.self_replacement)
-
-            class SelfTransformer(TypeInfo.Transformer):
-                """Replaces 'self' types with the type of the class that defines them,
-                   also setting is_self for possible later replacement with typing.Self."""
-
-                def visit(vself, node: TypeInfo) -> TypeInfo:
-                    if (
-                        hasattr(node.type_obj, "__mro__")
-                        and self_type.type_obj in cast(type, node.type_obj).__mro__
-                    ):
-                        node = self_replacement.replace(is_self=True)
-
-                    return super().visit(node)
-
-
-            tr = SelfTransformer()
-            type_data = (*(tr.visit(arg) for arg in type_data),)
-
-        return type_data
-
-
-@dataclass
 class Observations:
-    # Visited functions' and information about them
-    func_info: dict[CodeId, FuncInfo] = field(default_factory=dict)
+    def __init__(self):
+        # Visited functions and information about them
+        self.func_info: dict[CodeId, FuncInfo] = dict()
 
-    # Finds FuncInfo by their CodeType
-    code2func_info: dict[CodeType, FuncInfo] = field(default_factory=dict)
+        # per-module variables
+        self.module_variables: dict[Filename, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
 
-    # Started, but not (yet) completed traces
-    pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = field(default_factory=lambda: defaultdict(dict))
-
-    # per-module variables
-    module_variables: dict[Filename, dict[VariableName, set[TypeInfo]]] = field(
-                                                    default_factory=lambda: defaultdict(lambda: defaultdict(set)))
-
-    # Object attributes: class_key -> attr_name -> set[TypeInfo]
-    object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = field(
-                                                    default_factory=lambda: defaultdict(lambda: defaultdict(set)))
-
-    # Mapping of sources to their module names
-    # TODO handle cases where modules are loaded more than once, e.g. through pytest
-    source_to_module_name: dict[str, str|None] = field(default_factory=dict)
+        # Mapping of sources to their module names
+        self.source_to_module_name: dict[str, str|None] = {}
 
 
-    def record_module(
-        self,
-        code: CodeType,
-        frame: FrameType
-    ) -> None:
-        if code.co_filename and code.co_filename not in self.source_to_module_name:
-            if (modname := frame.f_globals.get('__name__', None)):
-                if modname == "__main__":
-                    modname = get_main_module_fqn()
-            else:
-                modname = source_to_module_fqn(Path(code.co_filename))
-
-            self.source_to_module_name[code.co_filename] = modname
-
-
-    def record_function(
-        self,
-        code: CodeType,
-        frame: FrameType,
-        arg_info: inspect.ArgInfo,
-        overrides: FunctionType|FunctionDescriptor|None
-    ) -> None:
-        """Records that a function was visited."""
-
-        if code not in self.code2func_info:
-            arg_names = (
-                *(a for a in arg_info.args),
-                *((arg_info.varargs,) if arg_info.varargs else ()),
-                *((arg_info.keywords,) if arg_info.keywords else ())
-            )
-
-            defaults = get_defaults(code, frame)
-
-            self.code2func_info[code] = func_info = FuncInfo(
-                CodeId.from_code(code),
-                tuple(
-                    ArgInfo(ArgumentName(name), defaults.get(name))
-                    for name in arg_names
-                ),
-                ArgumentName(arg_info.varargs) if arg_info.varargs else None,
-                ArgumentName(arg_info.keywords) if arg_info.keywords else None,
-                overrides
-            )
-            self.func_info[func_info.code_id] = func_info
-
-
-    @staticmethod
-    def _get_arg_types(arg_info: inspect.ArgInfo) -> tuple[TypeInfo, ...]:
-        """Computes the types of the given arguments."""
-        return (
-            *(get_value_type(arg_info.locals[arg_name]) for arg_name in arg_info.args),
-            *(
-                (TypeInfo.from_set({
-                    get_value_type(val) for val in arg_info.locals[arg_info.varargs]
-                }),)
-                if arg_info.varargs else ()
-            ),
-            *(
-                (TypeInfo.from_set({
-                    get_value_type(val) for val in arg_info.locals[arg_info.keywords].values()
-                }),)
-                if arg_info.keywords else ()
-            )
-        )
-
-
-    def record_start(
-        self,
-        code: CodeType,
-        frame: FrameType,
-        arg_info: inspect.ArgInfo
-    ) -> None:
-        """Records a function start."""
-
-        # print(f"record_start {code.co_qualname} {arg_types}")
-
-        self.record_module(code, frame)
-
-        if (code.co_flags & CO_NEWLOCALS):
-            self_type, self_replacement, overrides = get_self_type(code, arg_info)
-            self.record_function(code, frame, arg_info, overrides)
-
-            self.pending_traces[code][id(frame)] = PendingCallTrace(
-                arg_info=arg_info,
-                args=self._get_arg_types(arg_info),
-                is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
-                is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
-                self_type=self_type, self_replacement=self_replacement
-            )
-
-
-    def record_yield(self, code: CodeType, frame: FrameType, yield_value: Any) -> None:
-        """Records a yield."""
-
-        # print(f"record_yield {code.co_qualname}")
-        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(id(frame))):
-            tr.yields.add(get_value_type(yield_value))
-
-
-    def record_send(self, code: CodeType, frame: FrameType, send_value: Any) -> None:
-        """Records a send."""
-
-        # print(f"record_send {code.co_qualname}")
-        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(id(frame))):
-            tr.sends.add(get_value_type(send_value))
-
-
-    def _record_variables(self, code: CodeType, frame: FrameType) -> None:
-        """Records variables."""
-        # print(f"record_variables {code.co_qualname}")
-
-        if not options.variables or not (codevars := code2variables.get(code)):
-            return
-
-        # scope_code is guaranteed non-None in code2variables
-        if (func_info := self.code2func_info.get(cast_not_None(codevars.scope_code))):
-            scope_vars = func_info.variables
-        else:
-            scope_vars = self.module_variables[Filename(code.co_filename)]
-
-        f_locals = frame.f_locals
-        value: Any
-        dst: str|None
-        for src, dst in codevars.variables.items():
-            if (value := f_locals.get(src, NO_OBJECT)) is not NO_OBJECT:
-                scope_vars[VariableName(dst)].add(get_value_type(value))
-
-        if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
-            obj_attrs = self.object_attributes[codevars.class_key]
-            for src, dst in codevars.attributes.items():
-                if (value := getattr(self_obj, src, NO_OBJECT)) is not NO_OBJECT:
-                    type_set = obj_attrs[VariableName(src)]
-                    type_set.add(get_value_type(value))
-                    if dst: scope_vars[VariableName(dst)] = type_set
-
-
-    def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:
-        """Records a pending call trace's return type, finishing the trace."""
-        assert tr is not None
-
-        tr.returns = (
-            ret_type if ret_type is not None
-            else (
-                # Generators may still be running, or exit with a GeneratorExit exception; we still
-                # want them marked as returning None, so they can be simplified to Iterator
-                NoneTypeInfo if tr.is_generator else TypeInfo.from_type(typing.NoReturn)
-            )
-        )
-
-        func_info = self.code2func_info[code]
-        func_info.traces.update((tr.process(),))
-
-        # Resample arguments in case they change during execution (e.g., containers)
-        tr.args = self._get_arg_types(tr.arg_info)
-        func_info.traces.update((tr.process(),))
-
-
-    def record_return(self, code: CodeType, frame: FrameType, return_value: Any) -> bool:
-        """Records a return."""
-
-        # print(f"record_return {code.co_qualname}")
-        frame_id = id(frame)
-        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
-            self._record_return_type(tr, code, get_value_type(return_value))
-            self._record_variables(code, frame)
-            del per_frame[frame_id]
-            return True # found it
-        else:
-            self._record_variables(code, frame)
-
-        return False
-
-
-    def record_no_return(self, code: CodeType, frame: FrameType) -> bool:
-        """Records the lack of a return (e.g., because an exception was raised)."""
-
-        # print(f"record_no_return {code.co_qualname}")
-        frame_id = id(frame)
-        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
-            self._record_return_type(tr, code, None)
-            self._record_variables(code, frame)
-            del per_frame[frame_id]
-            return True # found it
-        else:
-            self._record_variables(code, frame)
-
-        return False
-
-
-    def _transform_types(self, tr: TypeInfo.Transformer) -> None:
+    def transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
 
         for func_info in self.func_info.values():
@@ -405,44 +153,6 @@ class Observations:
                 var_dict[var_name] = set(tr.visit(t) for t in var_types)
 
 
-    def try_close_generators(self) -> None:
-        """Attempts to close any generators that may still be running."""
-        pending_generators = set()
-        for code, per_frame in self.pending_traces.items():
-            if any(tr.is_generator for tr in per_frame.values()):
-                pending_generators.add(code)
-
-        for code in pending_generators:
-            import gc
-            for obj in gc.get_referrers(code):
-                # In Python 3.13+, close() doesn't generate a PY_UNWIND
-                # https://github.com/python/cpython/issues/140373
-                if isinstance(obj, GeneratorType):
-                    try:
-                        obj.throw(GeneratorExit)
-                    except:
-                        pass
-
-
-    def finish_recording(self, main_globals: dict[str, Any]) -> None:
-        # Any generators left?
-        for code, per_frame in self.pending_traces.items():
-            for tr in per_frame.values():
-                if tr.is_generator:
-                    self._record_return_type(tr, code, None)
-
-        # The type map depends on main_globals as well as the on the state
-        # of sys.modules, so we can't postpone them until collect_annotations,
-        # which operate on deserialized data (vs. data just collected).
-        type_name_adjuster = None
-        if options.adjust_type_names:
-            type_name_adjuster = AdjustTypeNamesT(main_globals)
-            self._transform_types(type_name_adjuster)
-
-        if options.resolve_mocks:
-            self._transform_types(ResolveMocksT(type_name_adjuster))
-
-
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars]]:
         """Collects function type annotations from the observed types."""
 
@@ -462,11 +172,11 @@ class Observations:
                         or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
                     )
                 ):
-                    parent_code = parents_func.__code__ if hasattr(parents_func, "__code__") else None
+                    parent_code = CodeId.from_code(parents_func.__code__) if hasattr(parents_func, "__code__") else None
                     if (
                         parent_code
-                        and parent_code in self.code2func_info
-                        and (ann := mk_annotation(self.code2func_info[parent_code]))
+                        and parent_code in self.func_info
+                        and (ann := mk_annotation(self.func_info[parent_code]))
                     ):
                         parents_arg_types = [arg[1] for arg in ann.args]
 
@@ -558,7 +268,7 @@ class Observations:
 
                 return node
 
-        self._transform_types(CallableT())
+        self.transform_types(CallableT())
 
         class PostponedIteratorArgsT(TypeInfo.Transformer):
             """Replaces a postponed iterator argument evaluation marker with
@@ -581,18 +291,18 @@ class Observations:
 
                 return node
 
-        self._transform_types(PostponedIteratorArgsT())
+        self.transform_types(PostponedIteratorArgsT())
 
         if options.use_typing_self:
-            self._transform_types(SelfT())
+            self.transform_types(SelfT())
 
         if not options.use_typing_never:
-            self._transform_types(NeverSayNeverT())
+            self.transform_types(NeverSayNeverT())
         else:
-            self._transform_types(NoReturnToNeverT())
+            self.transform_types(NoReturnToNeverT())
 
         if options.exclude_test_types:
-            self._transform_types(ExcludeTestTypesT())
+            self.transform_types(ExcludeTestTypesT())
 
 
         finalizers: list[TypeInfo.Transformer] = []
@@ -632,6 +342,324 @@ class Observations:
         }
 
         return annotations, module_vars
+
+
+@dataclass
+class PendingCallTrace:
+    arg_info: inspect.ArgInfo
+    args: tuple[TypeInfo, ...]
+    yields: set[TypeInfo] = field(default_factory=set)
+    sends: set[TypeInfo] = field(default_factory=set)
+    returns: TypeInfo = NoneTypeInfo
+    is_async: bool = False
+    is_generator: bool = False
+    self_type: TypeInfo | None = None
+    self_replacement: TypeInfo | None = None
+
+
+    def process(self) -> CallTrace:
+        retval = self.returns
+
+        if self.is_generator:
+            y = TypeInfo.from_set(self.yields)
+            s = TypeInfo.from_set(self.sends)
+
+            if self.is_async:
+                retval = TypeInfo.from_type(abc.AsyncGenerator, module="typing", args=(y, s))
+            else:
+                retval = TypeInfo.from_type(abc.Generator, module="typing", args=(y, s, self.returns))
+            
+        type_data = (*self.args, retval)
+
+        if self.self_type and self.self_replacement:
+            self_type = cast(TypeInfo, self.self_type)
+            self_replacement = cast(TypeInfo, self.self_replacement)
+
+            class SelfTransformer(TypeInfo.Transformer):
+                """Replaces 'self' types with the type of the class that defines them,
+                   also setting is_self for possible later replacement with typing.Self."""
+
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    if (
+                        hasattr(node.type_obj, "__mro__")
+                        and self_type.type_obj in cast(type, node.type_obj).__mro__
+                    ):
+                        node = self_replacement.replace(is_self=True)
+
+                    return super().visit(node)
+
+
+            tr = SelfTransformer()
+            type_data = (*(tr.visit(arg) for arg in type_data),)
+
+        return type_data
+
+
+class ObservationsRecorder:
+    def __init__(self):
+        # Finds FuncInfo by their CodeType
+        self._code2func_info: dict[CodeType, FuncInfo] = {}
+
+        # Started, but not (yet) completed traces
+        self._pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = defaultdict(dict)
+
+        # Object attributes: class_key -> attr_name -> set[TypeInfo]
+        self._object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
+
+        self._obs = Observations()
+
+
+    def record_module(
+        self,
+        code: CodeType,
+        frame: FrameType
+    ) -> None:
+        # TODO handle cases where modules are loaded more than once, e.g. through pytest
+        if code.co_filename and code.co_filename not in self._obs.source_to_module_name:
+            if (modname := frame.f_globals.get('__name__', None)):
+                if modname == "__main__":
+                    modname = get_main_module_fqn()
+            else:
+                modname = source_to_module_fqn(Path(code.co_filename))
+
+            self._obs.source_to_module_name[code.co_filename] = modname
+
+
+    def record_function(
+        self,
+        code: CodeType,
+        frame: FrameType,
+        arg_info: inspect.ArgInfo,
+        overrides: FunctionType|FunctionDescriptor|None
+    ) -> None:
+        """Records that a function was visited."""
+
+        if code not in self._code2func_info:
+            arg_names = (
+                *(a for a in arg_info.args),
+                *((arg_info.varargs,) if arg_info.varargs else ()),
+                *((arg_info.keywords,) if arg_info.keywords else ())
+            )
+
+            defaults = get_defaults(code, frame)
+
+            self._code2func_info[code] = func_info = FuncInfo(
+                CodeId.from_code(code),
+                tuple(
+                    ArgInfo(ArgumentName(name), defaults.get(name))
+                    for name in arg_names
+                ),
+                ArgumentName(arg_info.varargs) if arg_info.varargs else None,
+                ArgumentName(arg_info.keywords) if arg_info.keywords else None,
+                overrides
+            )
+            self._obs.func_info[func_info.code_id] = func_info
+
+
+    @staticmethod
+    def _get_arg_types(arg_info: inspect.ArgInfo) -> tuple[TypeInfo, ...]:
+        """Computes the types of the given arguments."""
+        return (
+            *(get_value_type(arg_info.locals[arg_name]) for arg_name in arg_info.args),
+            *(
+                (TypeInfo.from_set({
+                    get_value_type(val) for val in arg_info.locals[arg_info.varargs]
+                }),)
+                if arg_info.varargs else ()
+            ),
+            *(
+                (TypeInfo.from_set({
+                    get_value_type(val) for val in arg_info.locals[arg_info.keywords].values()
+                }),)
+                if arg_info.keywords else ()
+            )
+        )
+
+
+    def record_start(
+        self,
+        code: CodeType,
+        frame: FrameType,
+        arg_info: inspect.ArgInfo
+    ) -> None:
+        """Records a function start."""
+
+        # print(f"record_start {code.co_qualname} {arg_types}")
+
+        self.record_module(code, frame)
+
+        if (code.co_flags & CO_NEWLOCALS):
+            self_type, self_replacement, overrides = get_self_type(code, arg_info)
+            self.record_function(code, frame, arg_info, overrides)
+
+            self._pending_traces[code][id(frame)] = PendingCallTrace(
+                arg_info=arg_info,
+                args=self._get_arg_types(arg_info),
+                is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
+                is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
+                self_type=self_type, self_replacement=self_replacement
+            )
+
+
+    def record_yield(self, code: CodeType, frame: FrameType, yield_value: Any) -> None:
+        """Records a yield."""
+
+        # print(f"record_yield {code.co_qualname}")
+        if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(id(frame))):
+            tr.yields.add(get_value_type(yield_value))
+
+
+    def record_send(self, code: CodeType, frame: FrameType, send_value: Any) -> None:
+        """Records a send."""
+
+        # print(f"record_send {code.co_qualname}")
+        if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(id(frame))):
+            tr.sends.add(get_value_type(send_value))
+
+
+    def _record_variables(self, code: CodeType, frame: FrameType) -> None:
+        """Records variables."""
+        # print(f"record_variables {code.co_qualname}")
+
+        if not options.variables or not (codevars := code2variables.get(code)):
+            return
+
+        # scope_code is guaranteed non-None in code2variables
+        if (func_info := self._code2func_info.get(cast_not_None(codevars.scope_code))):
+            scope_vars = func_info.variables
+        else:
+            scope_vars = self._obs.module_variables[Filename(code.co_filename)]
+
+        f_locals = frame.f_locals
+        value: Any
+        dst: str|None
+        for src, dst in codevars.variables.items():
+            if (value := f_locals.get(src, NO_OBJECT)) is not NO_OBJECT:
+                scope_vars[VariableName(dst)].add(get_value_type(value))
+
+        if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
+            obj_attrs = self._object_attributes[codevars.class_key]
+            for src, dst in codevars.attributes.items():
+                if (value := getattr(self_obj, src, NO_OBJECT)) is not NO_OBJECT:
+                    type_set = obj_attrs[VariableName(src)]
+                    type_set.add(get_value_type(value))
+                    if dst: scope_vars[VariableName(dst)] = type_set
+
+
+    def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:
+        """Records a pending call trace's return type, finishing the trace."""
+        assert tr is not None
+
+        tr.returns = (
+            ret_type if ret_type is not None
+            else (
+                # Generators may still be running, or exit with a GeneratorExit exception; we still
+                # want them marked as returning None, so they can be simplified to Iterator
+                NoneTypeInfo if tr.is_generator else TypeInfo.from_type(typing.NoReturn)
+            )
+        )
+
+        func_info = self._code2func_info[code]
+        func_info.traces.update((tr.process(),))
+
+        # Resample arguments in case they change during execution (e.g., containers)
+        tr.args = self._get_arg_types(tr.arg_info)
+        func_info.traces.update((tr.process(),))
+
+
+    def record_return(self, code: CodeType, frame: FrameType, return_value: Any) -> bool:
+        """Records a return."""
+
+        # print(f"record_return {code.co_qualname}")
+        frame_id = id(frame)
+        if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
+            self._record_return_type(tr, code, get_value_type(return_value))
+            self._record_variables(code, frame)
+            del per_frame[frame_id]
+            return True # found it
+        else:
+            self._record_variables(code, frame)
+
+        return False
+
+
+    def record_no_return(self, code: CodeType, frame: FrameType) -> bool:
+        """Records the lack of a return (e.g., because an exception was raised)."""
+
+        # print(f"record_no_return {code.co_qualname}")
+        frame_id = id(frame)
+        if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
+            self._record_return_type(tr, code, None)
+            self._record_variables(code, frame)
+            del per_frame[frame_id]
+            return True # found it
+        else:
+            self._record_variables(code, frame)
+
+        return False
+
+
+    def clear_pending(self, code: CodeType) -> None:
+        """Discards any pending traces for the given code."""
+        self._pending_traces[code].clear()
+
+
+    def try_close_generators(self) -> None:
+        """Attempts to close any generators that may still be running."""
+        pending_generators = set()
+        for code, per_frame in self._pending_traces.items():
+            if any(tr.is_generator for tr in per_frame.values()):
+                pending_generators.add(code)
+
+        for code in pending_generators:
+            import gc
+            for obj in gc.get_referrers(code):
+                # In Python 3.13+, close() doesn't generate a PY_UNWIND
+                # https://github.com/python/cpython/issues/140373
+                if isinstance(obj, GeneratorType):
+                    try:
+                        obj.throw(GeneratorExit)
+                    except:
+                        pass
+
+
+    def finish_recording(self, main_globals: dict[str, Any]) -> Observations:
+        # Any generators left?
+        for code, per_frame in self._pending_traces.items():
+            for tr in per_frame.values():
+                if tr.is_generator:
+                    self._record_return_type(tr, code, None)
+
+        obs, self._obs = self._obs, Observations()
+        self._code2func_info.clear()
+        self._pending_traces.clear()
+        self._object_attributes.clear()
+
+        # The type map depends on main_globals as well as the on the state
+        # of sys.modules, so we can't postpone them until collect_annotations,
+        # which operate on deserialized data (vs. data just collected).
+        type_name_adjuster = None
+        if options.adjust_type_names:
+            type_name_adjuster = AdjustTypeNamesT(main_globals)
+            obs.transform_types(type_name_adjuster)
+
+        if options.resolve_mocks:
+            obs.transform_types(ResolveMocksT(type_name_adjuster))
+
+        if options.exclude_test_files:
+            # should_skip_function doesn't know to skip test files until they are detected,
+            # so we can't help but get events for test modules while they are being loaded.
+            for f in obs.source_to_module_name.keys() & detected_test_files:
+                del obs.source_to_module_name[f]
+
+        if logger.level == logging.DEBUG:
+            assert (keys := obs.source_to_module_name.keys()) == (oldset := set(
+                t.code_id.file_name
+                for t in obs.func_info.values()
+                if not skip_this_file(t.code_id.file_name)
+            )), f"{keys-oldset=}  {oldset-keys=}"
+
+        return obs
 
 
 def get_inline_arg_types(

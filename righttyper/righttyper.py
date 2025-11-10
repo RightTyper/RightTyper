@@ -38,11 +38,11 @@ from righttyper.righttyper_alarm import (
     SignalAlarm,
     ThreadAlarm,
 )
-from righttyper.righttyper_utils import skip_this_file, should_skip_function, detected_test_files, detected_test_modules
+from righttyper.righttyper_utils import should_skip_function, detected_test_modules
 from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_types import CodeId, Filename, FunctionName
 from righttyper.annotation import FuncAnnotation, ModuleVars
-from righttyper.observations import Observations
+from righttyper.observations import ObservationsRecorder
 from righttyper.options import Options, options
 from righttyper.logger import logger
 from righttyper.atomic import AtomicCounter
@@ -52,7 +52,7 @@ PKL_FILE_NAME = f"{TOOL_NAME}.rt"
 PKL_FILE_VERSION = 4
 
 
-obs = Observations()
+rec = ObservationsRecorder()
 instrumentation_counter = AtomicCounter()
 
 
@@ -70,7 +70,7 @@ def is_instrumentation(f):
 
 @is_instrumentation
 def send_handler(code: CodeType, frame: FrameType, arg0: Any) -> None:
-    obs.record_send(code, frame, arg0)
+    rec.record_send(code, frame, arg0)
 
 
 def wrap_send(obj: Any) -> Any:
@@ -116,7 +116,7 @@ def start_handler(code: CodeType, offset: int) -> Any:
         frame = frame.f_back
 
     if frame:
-        obs.record_start(code, frame, inspect.getargvalues(frame))
+        rec.record_start(code, frame, inspect.getargvalues(frame))
         del frame
 
     return None
@@ -144,7 +144,7 @@ def yield_handler(
         frame = frame.f_back
 
     if frame:
-        obs.record_yield(code, frame, yield_value)
+        rec.record_yield(code, frame, yield_value)
         del frame
 
     return None
@@ -171,7 +171,7 @@ def return_handler(
     while frame and frame.f_code is not code:
         frame = frame.f_back
 
-    found = frame and obs.record_return(code, frame, return_value)
+    found = frame and rec.record_return(code, frame, return_value)
     del frame
 
     if (
@@ -183,7 +183,7 @@ def return_handler(
         )
     ):
         disabled_code.add(code)
-        obs.pending_traces[code].clear()
+        rec.clear_pending(code)
         return sys.monitoring.DISABLE
 
     return None
@@ -203,7 +203,7 @@ def unwind_handler(
     while frame and frame.f_code is not code:
         frame = frame.f_back
 
-    found = frame and obs.record_no_return(code, frame)
+    found = frame and rec.record_no_return(code, frame)
     del frame
 
     if (
@@ -215,7 +215,7 @@ def unwind_handler(
         )
     ):
         disabled_code.add(code)
-        obs.pending_traces[code].clear()
+        rec.clear_pending(code)
 
     return None # PY_UNWIND can't be disabled
 
@@ -905,25 +905,12 @@ def run(
     try:
         execute_script_or_module(script, is_module=bool(module), args=args)
     finally:
-        obs.try_close_generators()
+        rec.try_close_generators()
         reset_monitoring()
         alarm.stop()
 
         assert main_globals is not None
-        obs.finish_recording(main_globals)
-
-        if exclude_test_files:
-            # should_skip_function doesn't know to skip test files until they are detected,
-            # so we can't help but get events for test modules while they are being loaded.
-            for f in obs.source_to_module_name.keys() & detected_test_files:
-                del obs.source_to_module_name[f]
-
-        if logger.level == logging.DEBUG:
-            assert (keys := obs.source_to_module_name.keys()) == (oldset := set(
-                t.code_id.file_name
-                for t in obs.func_info.values()
-                if not skip_this_file(t.code_id.file_name)
-            )), f"{keys-oldset=}  {oldset-keys=}"
+        obs = rec.finish_recording(main_globals)
 
         files = list(obs.source_to_module_name.items())
         type_annotations, module_vars = obs.collect_annotations()
