@@ -5,7 +5,6 @@ from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo
 from righttyper.righttyper_utils import is_test_module
 from righttyper.typemap import AdjustTypeNamesT
 from righttyper.righttyper_runtime import get_type_name
-import pickle
 
 import logging
 from righttyper.logger import logger
@@ -173,13 +172,10 @@ class GeneratorToIteratorT(TypeInfo.Transformer):
 
 
 class MakePickleableT(TypeInfo.Transformer):
-    """Clears code and type_obj on all TypeInfo: annotations are pickled by 'multiprocessing',
+    """Clears type_obj on all TypeInfo: annotations are pickled by 'multiprocessing',
        but these objects may not be pickleable.
     """
     def visit(self, node: TypeInfo) -> TypeInfo:
         if node.type_obj is not None:
-            try:
-                pickle.dumps(node)
-            except:
-                node = node.replace(type_obj=None)
+            node = node.replace(type_obj=None)
         return super().visit(node)
