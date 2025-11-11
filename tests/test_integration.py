@@ -53,13 +53,18 @@ def runmypy(tmp_cwd, request):
 
 
 def rt_run(*args, capture: bool = False):
-    run_args = [sys.executable, '-m', 'righttyper', 'run', *args]
+    # --no-use-multiprocessing speeds up tests
+    run_args = [sys.executable, '-m', 'righttyper', 'run', '--no-use-multiprocessing', *args]
 
     if capture:
         p = subprocess.run(run_args, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if '--debug' in args:
+            print(Path("righttyper.log").read_text())
         return str(p.stdout, 'utf-8')
     else:
         subprocess.run(run_args, check=True)
+        if '--debug' in args:
+            print(Path("righttyper.log").read_text())
 
 
 @pytest.mark.parametrize("init, expected", [
@@ -147,10 +152,13 @@ def test_numpy_iterator():
     """)
 
 
-def test_getitem_iterator():
+@pytest.mark.parametrize("ann", ["", " -> float"])
+def test_getitem_iterator(ann):
     t = textwrap.dedent(f"""\
+        from collections.abc import Iterator
+
         class X:
-            def __getitem__(self, n):
+            def __getitem__(self, n){ann}:
                 if n < 10:
                     return (n & 2) == 0
                 raise IndexError()
@@ -163,24 +171,31 @@ def test_getitem_iterator():
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run('--debug', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'f') == textwrap.dedent("""\
-        def f(it: Iterator[bool]) -> None: ...
-    """)
+    if ann:
+        assert get_function(code, 'f') == textwrap.dedent("""\
+            def f(it: Iterator[float]) -> None: ...
+        """)
+    else:
+        assert get_function(code, 'f') == textwrap.dedent("""\
+            def f(it: Iterator[bool]) -> None: ...
+        """)
 
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module')
-def test_getitem_iterator_numpy():
+@pytest.mark.parametrize("size", [0, 10])
+def test_getitem_iterator_numpy(size):
     t = textwrap.dedent(f"""\
+        from collections.abc import Iterator
         import numpy as np
 
         def f(it):
-            return next(it)
+            next(it, None)
 
-        f(iter(np.arange(10, dtype=np.int64)))
+        f(iter(np.arange({size}, dtype=np.int64)))
         """)
 
     Path("t.py").write_text(t)
@@ -189,56 +204,14 @@ def test_getitem_iterator_numpy():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'f') == textwrap.dedent("""\
-        def f(it: Iterator[np.int64]) -> np.int64: ...
-    """)
-
-
-@pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module')
-def test_getitem_iterator_numpy_empty():
-    t = textwrap.dedent(f"""\
-        import numpy as np
-
-        def f(it):
-            pass
-
-        f(iter(np.arange(0, dtype=np.int64)))
+    if size:
+        assert get_function(code, 'f') == textwrap.dedent("""\
+            def f(it: Iterator[np.int64]) -> None: ...
         """)
-
-    Path("t.py").write_text(t)
-
-    rt_run('t.py')
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-
-    assert get_function(code, 'f') == textwrap.dedent("""\
-        def f(it: Iterator) -> None: ...
-    """)
-
-
-def test_getitem_iterator_from_annotation():
-    t = textwrap.dedent(f"""\
-        class X:
-            def __getitem__(self, n) -> float:
-                if n < 10:
-                    return n
-                raise IndexError()
-
-        def f(it):
-            pass
-
-        f(iter(X()))
+    else:
+        assert get_function(code, 'f') == textwrap.dedent("""\
+            def f(it: Iterator) -> None: ...
         """)
-
-    Path("t.py").write_text(t)
-
-    rt_run('t.py')
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-
-    assert get_function(code, 'f') == textwrap.dedent("""\
-        def f(it: Iterator[float]) -> None: ...
-    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.10", "3.12"])
@@ -325,12 +298,14 @@ def test_builtins():
 
 
 @pytest.mark.parametrize("cache", ["", "@cache"])
-def test_callable_from_annotations(cache):
+@pytest.mark.parametrize("ignore", [(), ('--ignore-annotations',)])
+def test_callable_from_annotations(cache, ignore):
     t = textwrap.dedent(f"""\
         from functools import cache
+        type MyFloat = float
 
         {cache}
-        def f(x: int | float, y) -> float:
+        def f(x: MyFloat, y) -> MyFloat:
             return x/2
 
         def g():
@@ -342,23 +317,28 @@ def test_callable_from_annotations(cache):
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run(*ignore, 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'g') == textwrap.dedent("""\
-        def g() -> Callable[[int|float, Any], float]: ...
-    """)
-
-    # TODO is it ok for 'y' to be typed as observed, while the Callable uses 'Any' ?
     if cache:
-        assert get_function(code, 'f') == textwrap.dedent(f"""\
-            {cache}
-            def f(x: int | float, y: None) -> float: ...
+        cache += '\n'
+
+    if ignore:
+        assert get_function(code, 'f') == textwrap.dedent("""\
+            {cache}def f(x: float, y: None) -> float: ...
+        """).format(**locals())
+
+        assert get_function(code, 'g') == textwrap.dedent("""\
+            def g() -> Callable[[float, None], float]: ...
         """)
     else:
-        assert get_function(code, 'f') == textwrap.dedent(f"""\
-            def f(x: int | float, y: None) -> float: ...
+        assert get_function(code, 'f') == textwrap.dedent("""\
+            {cache}def f(x: MyFloat, y: None) -> MyFloat: ...
+        """).format(**locals())
+
+        assert get_function(code, 'g') == textwrap.dedent("""\
+            def g() -> Callable[[MyFloat, None], MyFloat]: ...
         """)
 
 
@@ -429,29 +409,6 @@ def test_callable_annotation_errors():
     output = Path("t.py").read_text()
 
     assert "def g() -> Callable:" in output
-
-
-@pytest.mark.dont_run_mypy # fails because of SomethingUnknown
-def test_generator_annotation_errors():
-    t = textwrap.dedent("""\
-        from __future__ import annotations
-        from collections.abc import Generator
-
-        def f() -> Generator[SomethingUnknown, None, None]:
-            yield 1
-
-        def g(x):
-            pass
-
-        g(f())
-        """)
-
-    Path("t.py").write_text(t)
-
-    rt_run('t.py')
-    output = Path("t.py").read_text()
-
-    assert "def g(x: Generator) -> None" in output
 
 
 def test_callable_from_annotation_none_return():
@@ -1586,9 +1543,14 @@ def test_default_method():
     assert "def h(self: Self, x: int=1) -> float" in output
 
 
-def test_generator():
-    t = textwrap.dedent("""\
-        def gen():
+@pytest.mark.parametrize("ignore", [(), ('--ignore-annotations',)])
+@pytest.mark.parametrize("ann", ["", " -> Iterator[MyType]"])
+def test_generator(ann, ignore):
+    t = textwrap.dedent(f"""\
+        from collections.abc import Iterator
+        type MyType = float
+
+        def gen(){ann}:
             yield 10
             yield 1.2
 
@@ -1605,11 +1567,50 @@ def test_generator():
 
     Path("t.py").write_text(t)
 
+    rt_run(*ignore, 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    if ann and not ignore:
+        assert get_function(code, 'gen') == textwrap.dedent("""\
+            def gen() -> Iterator[MyType]: ...
+        """)
+        assert get_function(code, 'g') == textwrap.dedent("""\
+            def g(f: Iterator[MyType]) -> None: ...
+        """)
+    else:
+        assert get_function(code, 'gen') == textwrap.dedent("""\
+            def gen() -> Iterator[float|int]: ...
+        """)
+        assert get_function(code, 'g') == textwrap.dedent("""\
+            def g(f: Iterator[float|int]) -> None: ...
+        """)
+
+
+@pytest.mark.dont_run_mypy # fails because of SomethingUnknown
+def test_generator_annotation_errors():
+    t = textwrap.dedent("""\
+        from __future__ import annotations
+        from collections.abc import Generator
+
+        def f() -> Generator[SomethingUnknown, None, None]:
+            yield 1
+
+        def g(x):
+            pass
+
+        g(f())
+        """)
+
+    Path("t.py").write_text(t)
+
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> Iterator[float|int]:" in output
-    assert "def g(f: Iterator[float|int]) -> None" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(x: Generator) -> None: ...
+    """)
 
 
 def test_generator_with_return():
@@ -1640,69 +1641,6 @@ def test_generator_with_return():
 
     assert "def gen() -> Generator[int, None, str]:" in output
     assert "def g(f: Generator[int, None, str]) -> None" in output
-
-
-def test_generator_from_annotation():
-    t = textwrap.dedent("""\
-        from collections.abc import Generator
-
-        def gen() -> Generator[int|str, None, None]:
-            yield ""
-
-        def main():
-            for _ in gen():
-                pass
-
-        def g(f):
-            pass
-
-        main()
-        g(gen())
-        """)
-
-    Path("t.py").write_text(t)
-
-    rt_run('t.py')
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-
-    # we know it's from the annotation because we never observed an 'int' yield
-    assert (
-        get_function(code, 'g') == textwrap.dedent("""\
-            def g(f: Generator[int|str, None, None]) -> None: ...
-        """)
-        or 
-        get_function(code, 'g') == textwrap.dedent("""\
-            def g(f: Iterator[int|str]) -> None: ...
-        """)
-    )
-
-
-def test_generator_ignore_annotation():
-    t = textwrap.dedent("""\
-        from collections.abc import Generator
-
-        def gen() -> Generator[int|str, None, None]:
-            yield ""
-
-        def main():
-            for _ in gen():
-                pass
-
-        def g(f):
-            pass
-
-        main()
-        g(gen())
-        """)
-
-    Path("t.py").write_text(t)
-
-    rt_run('--ignore-annotations', 't.py')
-    output = Path("t.py").read_text()
-
-    # If from annotation, it'll include an 'int' yield
-    assert "def g(f: Iterator[str]) -> None" in output
 
 
 def test_async_generator():
@@ -1898,24 +1836,44 @@ def test_generator_exit_exception():
     assert "def f() -> Generator[int, int, None]" in output
 
 
-def test_coroutine():
-    Path("t.py").write_text(textwrap.dedent("""\
+@pytest.mark.parametrize("ignore", [(), ('--ignore-annotations',)])
+@pytest.mark.parametrize("ann", ["", " -> MyStr"])
+def test_coroutine(ignore, ann):
+    Path("t.py").write_text(textwrap.dedent(f"""\
         import asyncio
+        type MyStr = str
+
+        async def coro(){ann}:
+            return "did it"
 
         def foo():
-            async def coro():
-                return "did it"
-
             return coro()
 
         asyncio.run(foo())
         """
     ))
 
-    rt_run('t.py')
+    rt_run(*ignore, 't.py')
 
     output = Path("t.py").read_text()
-    assert "def foo() -> Coroutine[None, None, str]:" in output
+    code = cst.parse_module(output)
+
+    if ann and not ignore:
+        assert get_function(code, 'coro') == textwrap.dedent("""\
+            async def coro() -> MyStr: ...
+        """)
+
+        assert get_function(code, 'foo') == textwrap.dedent("""\
+            def foo() -> Coroutine[None, None, MyStr]: ...
+        """)
+    else:
+        assert get_function(code, 'coro') == textwrap.dedent("""\
+            async def coro() -> str: ...
+        """)
+
+        assert get_function(code, 'foo') == textwrap.dedent("""\
+            def foo() -> Coroutine[None, None, str]: ...
+        """)
 
 
 def test_coroutine_with_self():
@@ -1935,8 +1893,15 @@ def test_coroutine_with_self():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def coro(self: Self) -> Self:" in output
-    assert "def f(g: Coroutine[None, None, C]) -> None:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'C.coro') == textwrap.dedent("""\
+        async def coro(self: Self) -> Self: ...
+    """)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(g: Coroutine[None, None, C]) -> None: ...
+    """)
 
 
 def test_generate_stubs():
@@ -2098,8 +2063,13 @@ def test_function_type_in_annotation():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def bar(g: FunctionType, x: int) -> float:' in output
-    assert 'def baz(f: Callable[[FunctionType, Any], Any], g: Callable[[int], float], x: int) -> float:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'bar') == textwrap.dedent(f"""\
+        def bar(g: FunctionType, x: int) -> float: ...
+    """)
+    assert get_function(code, 'baz') == textwrap.dedent(f"""\
+        def baz(f: Callable[[FunctionType, int], float], g: Callable[[int], float], x: int) -> float: ...
+    """)
 
 
 def test_callable_varargs():

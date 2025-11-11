@@ -230,41 +230,49 @@ class Observations:
 
             return ann
 
-        class NonSelfCloningT(TypeInfo.Transformer):
-            """Clones the given TypeInfo tree, clearing all 'is_self' flags,
-               as the type information may not be equivalent to typing.Self in the new context.
-            """
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                return super().visit(node.replace(is_self=False))
+        # In the code below, clone (rather than link to) types from Callable, Generator, etc.,
+        # clearing is_self, as these types may be later replaced with typing.Self.
+        def clone(node: TypeInfo) -> TypeInfo:
+            class T(TypeInfo.Transformer):
+                """Clones the given TypeInfo tree, clearing all 'is_self' flags,
+                   as the type information may not be equivalent to typing.Self in the new context.
+                """
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    return super().visit(node.replace(is_self=False))
+
+            return T().visit(node)
 
         class CallableT(TypeInfo.Transformer):
-            """Updates Callable/Generator/Coroutine type declarations based on observations."""
+            """Updates Callable and other types based on runtime observations."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
 
-                # if 'args' is there, the function is already annotated
-                if node.code_id and (options.ignore_annotations or not node.args) and node.code_id in self.func_info:
-                    func_info = self.func_info[node.code_id]
+                if node.code_id and (func_info := self.func_info.get(node.code_id)):
                     if (ann := mk_annotation(func_info)):
-                        # Clone (rather than link to) types from Callable, Generator, etc.,
-                        # clearing is_self, as these types may be later replaced with typing.Self.
+                        # for Callable, we also merge arguments from annotations with observed ones.
                         if node.type_obj is abc.Callable:
+                            old_params = (
+                                node.args[0].args
+                                if node.args and isinstance(node.args[0], TypeInfo) and node.args[0].is_list()
+                                else ()
+                            )
+
+                            old_retval = node.args[-1] if node.args else UnknownTypeInfo
+
+                            def get_old_param(i: int) -> TypeInfo:
+                                return old_params[i] if i < len(old_params) else UnknownTypeInfo
+
                             node = node.replace(args=(
                                 TypeInfo.list([
-                                    NonSelfCloningT().visit(a[1]) for a in ann.args[int(node.is_bound):]
+                                    old if (old := get_old_param(i)) is not UnknownTypeInfo else clone(a[1])
+                                    for i, a in enumerate(ann.args[int(node.is_bound):])
                                 ])
                                 if not (func_info.varargs or func_info.kwargs) else
                                 ...,
-                                NonSelfCloningT().visit(ann.retval)
+                                old_retval if old_retval is not UnknownTypeInfo else clone(ann.retval)
                             ))
-                        elif node.type_obj in (abc.Generator, abc.AsyncGenerator):
-                            node = NonSelfCloningT().visit(ann.retval)
-                        elif node.type_obj is abc.Coroutine:
-                            node = node.replace(args=(
-                                NoneTypeInfo,
-                                NoneTypeInfo,
-                                NonSelfCloningT().visit(ann.retval)
-                            ))
+                        else:
+                            node = clone(ann.retval)
 
                 return node
 

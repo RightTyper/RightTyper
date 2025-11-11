@@ -112,7 +112,7 @@ def test_get_value_type():
     assert 0 == next(o), "changed state"
 
     o = (i for i in range(10))
-    assert "typing.Generator" == get_value_type(o)
+    assert get_value_type(o) in ("typing.Generator", "collections.abc.Generator")
     assert 0 == next(o), "changed state"
 
     assert f"{__name__}.IterableClass" == get_value_type(IterableClass())
@@ -127,8 +127,8 @@ def test_get_value_type():
         for i in range(start):
             yield i
 
-    assert "typing.AsyncGenerator" == get_value_type(async_range(10))
-    assert "typing.AsyncGenerator" == get_value_type(aiter(async_range(10)))
+    assert get_value_type(async_range(10)) in ("typing.AsyncGenerator", "collections.abc.AsyncGenerator")
+    assert get_value_type(aiter(async_range(10))) in ("typing.AsyncGenerator", "collections.abc.AsyncGenerator")
 
     assert f"{__name__}.MyGeneric[int, str]" == get_value_type(MyGeneric[int, str]())
     assert f"{__name__}.MyOldGeneric[int]" == get_value_type(MyOldGeneric[int]())
@@ -218,7 +218,7 @@ def test_get_value_type_coro():
         import asyncio
         await asyncio.sleep(1)
 
-    assert "typing.Coroutine" == get_value_type(coro())
+    assert "typing.Coroutine[None, None, typing.Any]" == get_value_type(coro())
 
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')

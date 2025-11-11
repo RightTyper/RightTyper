@@ -84,7 +84,7 @@ def hint2type(hint) -> TypeInfo:
 
         return TypeInfo.from_type(
                     origin,
-                    module=origin.__module__ if origin.__module__ != 'builtins' else '',
+                    module=normalize_module_name(origin.__module__),
                     args=tuple(
                         hint2type_arg(a) for a in get_args(hint)
                     )
@@ -105,7 +105,7 @@ def hint2type(hint) -> TypeInfo:
         ))
 
     if not hasattr(hint, "__qualname__"): # e.g., typing.TypeVar
-        return TypeInfo(name=hint.__name__, module=hint.__module__)
+        return TypeInfo(name=hint.__name__, module=normalize_module_name(hint.__module__))
 
     return get_type_name(hint)  # requires __module__ and __qualname__
 
@@ -114,27 +114,27 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
     if (orig_func := unwrap(func)): # in case this is a wrapper
         func = orig_func
 
-    try:
-        signature = inspect.signature(func)
-        hints = get_type_hints(func)
-    except (ValueError, NameError):
-        signature = None
-        hints = None
+    args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()
+    if not options.ignore_annotations:
+        try:
+            signature = inspect.signature(func)
+            hints = get_type_hints(func)
+        except (ValueError, NameError):
+            signature = None
+            hints = None
 
-    args: tuple = tuple() # default to just "Callable"
+        # any type hints?
+        if signature and hints:
+            arg_types = TypeInfo.list([
+                hint2type(hints[arg_name]) if arg_name in hints else UnknownTypeInfo
+                for arg_name in signature.parameters
+            ])
 
-    # any type hints?
-    if signature and hints:
-        arg_types = TypeInfo.list([
-            hint2type(hints[arg_name]) if arg_name in hints else UnknownTypeInfo
-            for arg_name in signature.parameters
-        ])
+            return_type = (
+                hint2type(hints['return']) if 'return' in hints else UnknownTypeInfo
+            )
 
-        return_type = (
-            hint2type(hints['return']) if 'return' in hints else UnknownTypeInfo
-        )
-
-        args = (arg_types, return_type)
+            args = (arg_types, return_type)
 
     code = cast(CodeType|None, getattr(func, "__code__", None)) # native callables may lack this
 
@@ -389,15 +389,29 @@ def _type_for_generator(
     frame: FrameType,
     code: CodeType,
 ) -> TypeInfo:
-    if (f := find_function(frame, code)):
+
+    retval: TypeInfo|None = None
+    # FIXME: using find_function here prevents us from using annotations from <locals> functions
+    if not options.ignore_annotations and (f := find_function(frame, code)):
         try:
-            hints = get_type_hints(f)
-            if 'return' in hints:
-                return hint2type(hints['return']).replace(code_id=CodeId.from_code(code))
+            if (retval_hint := get_type_hints(f).get('return')):
+                retval = hint2type(retval_hint)
         except:
             pass
 
-    return TypeInfo.from_type(type_obj, module="typing", code_id=CodeId.from_code(code))
+    if type_obj is abc.Coroutine:
+        if not retval:
+            retval = UnknownTypeInfo.replace(code_id=CodeId.from_code(code))
+
+        return TypeInfo.from_type(
+            type_obj,
+            module="typing",
+            args=(
+                NoneTypeInfo, NoneTypeInfo, retval
+            )
+        )
+
+    return retval if retval else TypeInfo.from_type(type_obj, code_id=CodeId.from_code(code))
 
 
 def _random_item[T](container: abc.Collection[T]) -> T:
@@ -525,16 +539,6 @@ def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
         (obj := _first_referent(value)) is not None
         and (getitem := getattr(type(obj), "__getitem__", None)) is not None
     ):
-        # If 'getitem' is a Python (non-native) function, we can intercept it;
-        # add a postponed evaluation entry.
-        if type(getitem) in (FunctionType, MethodType):
-            src = get_value_type(getitem, depth+1)
-            assert src.type_obj is abc.Callable
-            return TypeInfo("typing", "Iterator", args=(
-                    TypeInfo.from_type(PostponedIteratorArg, args=(src,)),
-                )
-            )
-
         if (
             (obj_t := type(obj)).__module__ == 'numpy'
             and obj_t.__qualname__ == 'ndarray'
@@ -543,6 +547,15 @@ def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
             # Use __getitem__, as obj.dtype contains classes from numpy.dtypes;
             # check size, as using typing.Never for size=0 leads to mypy errors
             return TypeInfo("typing", "Iterator", args=(get_type_name(type(getitem(obj, 0)), depth+1),))
+        
+        if type(getitem) in (FunctionType, MethodType): # get full type from runtime observations
+            callable_type = type_from_annotations(getitem)
+            retval: TypeInfo|None = callable_type.args[-1] if callable_type.args else None
+
+            if not retval:
+                retval = UnknownTypeInfo.replace(code_id=CodeId.from_code(getitem.__code__))
+
+            return TypeInfo("typing", "Iterator", args=(retval,))
 
         return TypeInfo("typing", "Iterator")
     return None
