@@ -635,6 +635,11 @@ class UnifiedTransformer(cst.CSTTransformer):
         return updated_node
 
 
+    def visit_TypeAlias(self, node: cst.TypeAlias) -> bool:
+        if isinstance(node.name, cst.Name):
+            self.known_names[-1].add(node.name.value)
+        return True
+
 #    def leave_TypeAlias(
 #        self,
 #        node: cst.TypeAlias,

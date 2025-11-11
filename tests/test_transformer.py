@@ -2825,3 +2825,34 @@ def test_variables_retains_final_and_classvar(wrap_in, wrap_out):
         class C:
             x: {wrap_out.format(t='str')} = 'foo'
         """)
+
+
+def test_type_keyword_is_known():
+    code = cst.parse_module(textwrap.dedent("""\
+        type MyStr = str
+
+        def foo(x):
+            pass
+        """))
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                get_code_id('foo.py', code, 'foo'): FuncAnnotation(
+                    [
+                        (ArgumentName('x'), TypeInfo("foo", "MyStr"))
+                    ],
+                    TypeInfo("", "None"),
+                    varargs=None, kwargs=None,
+                    variables=[]
+                ),
+            },
+            module_variables = ModuleVars([]),
+            module_name='foo',
+        )
+
+    code = t.transform_code(code)
+    function = get_function(code, "foo")
+    assert function == textwrap.dedent("""\
+        def foo(x: MyStr) -> None:
+            pass
+        """)
