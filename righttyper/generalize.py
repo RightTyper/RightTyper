@@ -290,15 +290,14 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
 
             return types[0].replace(args=args)
 
+        combined = TypeInfo.from_set(set(types))
+
         # replace type sequence with a variable
-        if occurrences[types] > 1:
+        if occurrences[types] > 1 and combined.is_union():
             if types not in typevars:
-                typevars[types] = TypeInfo.from_set(
-                    set(types),
-                    typevar_index = len(typevars)+1
-                )
+                typevars[types] = combined.replace(typevar_index = len(typevars)+1)
             return typevars[types]
 
-        return merged_types(set(types))
+        return merged_types(combined.to_set())
 
     return [rebuild(types) for types in transposed]

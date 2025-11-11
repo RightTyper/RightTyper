@@ -94,9 +94,6 @@ class TypeInfo:
 
         s = {expanded for t in s for expanded in expand_unions(t)}
 
-        if len(s) == 1:
-            return next(iter(s))
-
         # If "Any" is present, the union reduces to "Any"
         if t := next((t for t in s if t.type_obj is typing.Any), None):
             return t
@@ -106,6 +103,9 @@ class TypeInfo:
         if not_never:
             s = not_never
 
+        if len(s) == 1:
+            return next(iter(s))
+
         return TypeInfo(
             module='types',
             name='UnionType',
@@ -114,6 +114,17 @@ class TypeInfo:
             args=tuple(sorted(s, key = lambda x: (x == NoneTypeInfo, str(x)))),
             **kwargs
         )
+
+
+    def is_union(self) -> bool:
+        return (self.module, self.name) == ('types', 'UnionType')
+
+
+    def to_set(self) -> set["TypeInfo"]:
+        if self.is_union():
+            return set(t for t in self.args)
+
+        return {self}
 
 
     def replace(self, **kwargs) -> "TypeInfo":
