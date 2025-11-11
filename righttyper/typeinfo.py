@@ -146,6 +146,14 @@ class TypeInfo:
             return node
 
 
+    def walk(self) -> Iterator["TypeInfo"]:
+        """Walks through all TypeInfo objects within this TypeInfo."""
+        for arg in self.args:
+            if isinstance(arg, TypeInfo):
+                yield from arg.walk()
+        yield self
+
+
 NoneTypeInfo: Final = TypeInfo("", "None", type_obj=types.NoneType)
 UnknownTypeInfo: Final = TypeInfo.from_type(typing.Any)
 AnyTypeInfo: Final = TypeInfo.from_type(typing.Any)

@@ -37,7 +37,7 @@ from righttyper.righttyper_runtime import (
     get_value_type,
     get_type_name,
     hint2type,
-    PostponedIteratorArg,
+    PostponedArg0,
 )
 
 
@@ -242,8 +242,8 @@ class Observations:
 
             return T().visit(node)
 
-        class CallableT(TypeInfo.Transformer):
-            """Updates Callable and other types based on runtime observations."""
+        class ResolvingT(TypeInfo.Transformer):
+            """Resolves types that may not be fully known until observed at runtime."""
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
 
@@ -274,32 +274,13 @@ class Observations:
                         else:
                             node = clone(ann.retval)
 
-                return node
-
-        self.transform_types(CallableT())
-
-        class PostponedIteratorArgsT(TypeInfo.Transformer):
-            """Replaces a postponed iterator argument evaluation marker with
-               its evaluation (performed by CallableT).
-            """
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                node = super().visit(node)
-
-                if node.type_obj is PostponedIteratorArg:
-                    assert isinstance(node.args[0], TypeInfo)
-                    source = node.args[0]
-                    if source.args:
-                        if source.type_obj is abc.Callable:
-                            assert isinstance(source.args[1], TypeInfo)
-                            return source.args[1]   # Callable return value
-                        else:
-                            assert isinstance(source.args[0], TypeInfo)
-                            return source.args[0]   # Generator/Iterator yield value
-                    return UnknownTypeInfo
+                if node.type_obj is PostponedArg0:
+                    # e.g. PostponedArg0[Iterator[X]] -> X
+                    node = node.args[0].args[0] if node.args and node.args[0].args else UnknownTypeInfo
 
                 return node
 
-        self.transform_types(PostponedIteratorArgsT())
+        self.transform_types(ResolvingT())
 
         if options.use_typing_self:
             self.transform_types(SelfT())

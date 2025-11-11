@@ -379,10 +379,6 @@ def find_function(
     return None
 
 
-class PostponedIteratorArg:
-    """Type used to postpone evaluating generator-based iterators"""
-
-
 def _type_for_generator(
     obj: GeneratorType|AsyncGeneratorType|CoroutineType,
     type_obj: type,
@@ -561,17 +557,31 @@ def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
     return None
 
 
+class PostponedArg0:
+    """Type used to postpone extracting the first (yield) argument of
+       generators and iterators.  Their types may not be fully known
+       until observed at runtime and merged using their code_id.
+       Their code's annotated return value is Iterator[Y] or Generator[Y, S, R];
+       we wrap these in a TypeInfo.from_type(PostponedArg0) to extract Y
+       after resolution.
+    """
+
+
 def _handle_zip(value: Any, depth: int) -> TypeInfo|None:
     if (
         type(t := _first_referent(value)) is tuple
         and all(isinstance(s, abc.Iterator) for s in t)  # note a generator also IS-A abc.Iterator
     ):
-        zip_sources = tuple(get_value_type(s, depth+1) for s in t)
+        zip_sources = tuple(
+            get_value_type(s, depth+1)
+            for s in t
+        )
+
         args = (
-            # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
             TypeInfo.from_type(tuple, module="", args=tuple(
-                (src.args[0] if src.args else UnknownTypeInfo) if src.fullname() == "typing.Iterator"
-                else TypeInfo.from_type(PostponedIteratorArg, args=(src,))
+                TypeInfo.from_type(PostponedArg0, args=(src,)) if any(t.code_id for t in src.walk()) else (
+                    src.args[0] if src.args else UnknownTypeInfo
+                )
                 for src in zip_sources
             )),
         )
@@ -585,13 +595,12 @@ def _handle_enumerate(value: Any, depth: int) -> TypeInfo|None:
         and isinstance(l, abc.Iterator)
     ):
         src = get_value_type(l, depth+1)
-        args = (
-            # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
-            ((src.args[0] if src.args else UnknownTypeInfo),) if src.fullname() == "typing.Iterator"
-            else (TypeInfo.from_type(PostponedIteratorArg, args=(src,)),)
+        return TypeInfo.from_type(enumerate, module="",
+            args=(TypeInfo.from_type(PostponedArg0, args=(src,)) if any(t.code_id for t in src.walk()) else (
+                    src.args[0] if src.args else UnknownTypeInfo
+                ),
+            )
         )
-
-        return TypeInfo.from_type(enumerate, module="", args=args)
     return None
 
 
