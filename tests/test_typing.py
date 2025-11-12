@@ -1,10 +1,10 @@
-from righttyper.righttyper_types import TypeInfo, NoneTypeInfo, AnyTypeInfo, PendingCallTrace, UnknownTypeInfo, T
-from righttyper.typeinfo import merged_types, generalize
+from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
+from righttyper.generalize import merged_types, generalize
 import righttyper.righttyper_runtime as rt
 import collections.abc as abc
 from collections import namedtuple
 import typing
-from typing import Any, Callable, get_type_hints, Union, Optional, TypeVar, List, Literal, cast, Self, Never
+from typing import Any, Callable, get_type_hints, Union, Optional, List, Literal, cast, Self, Never
 import pytest
 import importlib
 import types
@@ -43,6 +43,7 @@ class IterableClass(abc.Iterable):
 class MyGeneric[A, B](dict): pass
 
 
+T = typing.TypeVar("T")
 class MyOldGeneric(typing.Generic[T]): pass
 
 
@@ -111,7 +112,7 @@ def test_get_value_type():
     assert 0 == next(o), "changed state"
 
     o = (i for i in range(10))
-    assert "typing.Generator" == get_value_type(o)
+    assert get_value_type(o) in ("typing.Generator", "collections.abc.Generator")
     assert 0 == next(o), "changed state"
 
     assert f"{__name__}.IterableClass" == get_value_type(IterableClass())
@@ -126,8 +127,8 @@ def test_get_value_type():
         for i in range(start):
             yield i
 
-    assert "typing.AsyncGenerator" == get_value_type(async_range(10))
-    assert "typing.AsyncGenerator" == get_value_type(aiter(async_range(10)))
+    assert get_value_type(async_range(10)) in ("typing.AsyncGenerator", "collections.abc.AsyncGenerator")
+    assert get_value_type(aiter(async_range(10))) in ("typing.AsyncGenerator", "collections.abc.AsyncGenerator")
 
     assert f"{__name__}.MyGeneric[int, str]" == get_value_type(MyGeneric[int, str]())
     assert f"{__name__}.MyOldGeneric[int]" == get_value_type(MyOldGeneric[int]())
@@ -217,7 +218,7 @@ def test_get_value_type_coro():
         import asyncio
         await asyncio.sleep(1)
 
-    assert "typing.Coroutine" == get_value_type(coro())
+    assert "typing.Coroutine[None, None, typing.Any]" == get_value_type(coro())
 
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
@@ -510,7 +511,6 @@ def test_merged_types_superclass_checks_attributes():
         def bar(self): pass
     class E(B):
         def _shouldnt_matter(self): pass
-        pass
 
     assert f"{name(C)}|{name(D)}" == str(merged_types({
             TypeInfo.from_type(C),

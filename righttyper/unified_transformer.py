@@ -8,15 +8,9 @@ from libcst.metadata import MetadataWrapper, PositionProvider, QualifiedNameProv
 from righttyper.variable_binding import VariableBindingProvider
 import re
 
-from righttyper.righttyper_types import (
-    Filename,
-    FuncId,
-    FuncAnnotation,
-    ModuleVars,
-    FunctionName,
-    TypeInfo,
-    UnknownTypeInfo
-)
+from righttyper.typeinfo import TypeInfo, UnknownTypeInfo
+from righttyper.righttyper_types import Filename, CodeId, FunctionName
+from righttyper.annotation import FuncAnnotation, ModuleVars
 
 
 ChangeStmtList: typing.TypeAlias = typing.Sequence[cst.SimpleStatementLine | cst.BaseCompoundStatement | cst.FunctionDef]
@@ -150,7 +144,7 @@ class UnifiedTransformer(cst.CSTTransformer):
     def __init__(
         self,
         filename: str,
-        type_annotations: dict[FuncId, FuncAnnotation],
+        type_annotations: dict[CodeId, FuncAnnotation],
         module_variables: ModuleVars | None,
         module_name: str,
         *,
@@ -284,7 +278,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         
         return (updated_ann, tr.generics)
                     
-    def _qualified_name_in(self, decorator: cst.Decorator, names: set[str]):
+    def _qualified_name_in(self, decorator: cst.CSTNode, names: set[str]):
         try:
             return bool(names & {
                 qn.name
@@ -574,7 +568,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         wrappers = []
         if annotation:
             # TODO this only handles top-level Final/ClassVar
-            expr = annotation.annotation
+            expr: cst.BaseExpression|None = annotation.annotation
             while (
                 (
                     isinstance(name := expr, cst.Name)
@@ -583,7 +577,11 @@ class UnifiedTransformer(cst.CSTTransformer):
                 and self._qualified_name_in(name, {'typing.Final', 'typing.ClassVar'})
             ):
                 wrappers.append(name)
-                expr = expr.slice[0].slice.value if isinstance(expr, cst.Subscript) else None
+                expr = (
+                    expr.slice[0].slice.value
+                    if (isinstance(expr, cst.Subscript) and isinstance(expr.slice[0].slice, cst.Index))
+                    else None
+                )
 
         if not (expr := self._get_annotation_expr(var_type)):
             return None
@@ -636,6 +634,11 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         return updated_node
 
+
+    def visit_TypeAlias(self, node: cst.TypeAlias) -> bool:
+        if isinstance(node.name, cst.Name):
+            self.known_names[-1].add(node.name.value)
+        return True
 
 #    def leave_TypeAlias(
 #        self,
@@ -702,7 +705,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             self.get_metadata(PositionProvider, node).start.line
             for node in (node, *node.decorators)
         )
-        key = FuncId(Filename(self.filename), first_line, FunctionName(name))
+        key = CodeId(Filename(self.filename), FunctionName(name), first_line, 0)
         self.func_ann_stack.append(self.type_annotations.get(key))
         self.annotate_vars_stack.append(True)
         return True

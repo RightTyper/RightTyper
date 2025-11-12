@@ -1,4 +1,3 @@
-import ast
 import concurrent.futures
 import importlib.metadata
 import importlib.util
@@ -7,32 +6,20 @@ import functools
 import logging
 import os
 import runpy
-import signal
 import sys
 import platform
-import typeshed_client as ts
 import pickle
 import datetime
 import json
 import subprocess
 import re
 import time
-import builtins
 
-
-import collections.abc as abc
-from collections import defaultdict, Counter
-from dataclasses import dataclass, field, asdict
+from collections import defaultdict
+from dataclasses import asdict
 from pathlib import Path
-from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType, AsyncGeneratorType, CoroutineType, UnionType
-import typing
-from typing import (
-    Any,
-    TextIO,
-    Self,
-    Sequence,
-    overload
-)
+from types import CodeType, FrameType, GeneratorType, AsyncGeneratorType
+from typing import Any, TextIO
 
 import click
 
@@ -40,825 +27,32 @@ from righttyper.righttyper_process import (
     process_file,
     CodeChanges
 )
-from righttyper.righttyper_runtime import (
-    find_function,
-    unwrap,
-    get_value_type,
-    get_type_name,
-    hint2type,
-    PostponedIteratorArg,
-)
 from righttyper.righttyper_tool import (
     TOOL_ID,
     TOOL_NAME,
     register_monitoring_callbacks,
     reset_monitoring
 )
-from righttyper.righttyper_types import (
-    ArgInfo,
-    ArgumentName,
-    VariableName,
-    CodeId,
-    Filename,
-    FuncId,
-    FuncInfo,
-    FrameId,
-    FuncAnnotation,
-    FunctionName,
-    FunctionDescriptor,
-    TypeInfo,
-    NoneTypeInfo,
-    AnyTypeInfo,
-    CallTrace,
-    PendingCallTrace,
-    UnknownTypeInfo,
-    ModuleVars
-)
-from righttyper.typeinfo import (
-    merged_types,
-    generalize,
-)
-from righttyper.righttyper_utils import (
-    skip_this_file,
-    should_skip_function,
-    detected_test_modules,
-    detected_test_files,
-    is_test_module,
-    source_to_module_fqn,
-    get_main_module_fqn,
-)
 import righttyper.loader as loader
 from righttyper.righttyper_alarm import (
     SignalAlarm,
     ThreadAlarm,
 )
-
+from righttyper.righttyper_utils import should_skip_function, detected_test_modules
+from righttyper.typeinfo import TypeInfo
+from righttyper.righttyper_types import CodeId, Filename, FunctionName
+from righttyper.annotation import FuncAnnotation, ModuleVars
+from righttyper.observations import ObservationsRecorder
 from righttyper.options import Options, options
 from righttyper.logger import logger
-from righttyper.typemap import AdjustTypeNamesT
 from righttyper.atomic import AtomicCounter
-from righttyper.variable_capture import code2variables
-
-
-def find_co_newlocals():
-    # CO_NEWLOCALS, when set within a CodeType's co_flags, indicates that
-    # a new "locals" dictionary is created; it roughly indicates a function
-    # call, as the new dictionary is created for the new scope.
-    import dis
-    return next(
-        flag
-        for flag, name in dis.COMPILER_FLAG_NAMES.items()
-        if name == "NEWLOCALS"
-    )
-CO_NEWLOCALS = find_co_newlocals()
 
 
 PKL_FILE_NAME = f"{TOOL_NAME}.rt"
 PKL_FILE_VERSION = 4
 
 
-# Singleton used to differentiate from None
-NO_OBJECT = object()
-
-
-# Overloads so we don't have to always write CodeId(id(code)), etc.
-@overload
-def id(obj: CodeType) -> CodeId: ...
-@overload
-def id(obj: FrameType) -> FrameId: ...
-@overload
-def id(obj: object) -> int: ...
-def id(obj):
-    return builtins.id(obj)
-
-
-def get_inline_arg_types(
-    parents_func: FunctionType|FunctionDescriptor,
-    child_args: tuple[ArgInfo, ...]
-) -> list[TypeInfo|None] | None:
-    """Returns inline type annotations for a parent's method's arguments."""
-
-    if not (co := getattr(parents_func, "__code__", None)):
-        return None
-
-    try:
-        if not (hints := typing.get_type_hints(parents_func)):
-            return None
-    except (NameError, TypeError) as e:
-        logger.info(f"Error getting type hints for {parents_func} " + 
-                    f"({parents_func.__annotations__}): {e}.\n")
-        return None
-
-    return (
-        # first the positional, looking up by their names given in the parent
-        [
-            hint2type(hints[arg]) if arg in hints else None
-            for arg in co.co_varnames[:co.co_argcount]
-        ]
-        +
-        # then kwonly, going by the order in the child
-        [
-            hint2type(hints[arg.arg_name]) if arg.arg_name in hints else None
-            for arg in child_args[co.co_argcount:]
-        ]
-    )
-
-
-def get_typeshed_arg_types(
-    parents_func: FunctionDescriptor|FunctionType,
-    child_args: tuple[ArgInfo, ...]
-) -> list[TypeInfo|None] | None:
-    """Returns typeshed type annotations for a parent's method's arguments."""
-
-    def find_def(tree: ast.AST, qualified_name: str) -> list[ast.FunctionDef|ast.AsyncFunctionDef]:
-        parts = qualified_name.split('.')
-        results = []
-
-        def visit(node, path):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                full_name = '.'.join(path + [node.name])
-                if full_name == qualified_name:
-                    results.append(node)
-            elif isinstance(node, ast.ClassDef):
-                new_path = path + [node.name]
-                for body_item in node.body:
-                    visit(body_item, new_path)
-            elif isinstance(node, ast.Module):
-                for body_item in node.body:
-                    visit(body_item, path)
-
-        visit(tree, [])
-        return results
-
-    if stub_ast := ts.get_stub_ast(parents_func.__module__):    # FIXME replace __main__?
-        if defs := find_def(stub_ast, parents_func.__qualname__):
-            #print(ast.dump(defs[0], indent=4))
-
-            # FIXME use eval() in the context of the module and hint2type so
-            # as not to have an unqualified string for a "type"
-
-            # first the positional, looking up by their names given in the parent
-            pos_args = [
-                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
-                for a in (defs[0].args.posonlyargs + defs[0].args.args)
-                if isinstance(a, ast.arg)
-            ]
-
-            # then kwonly, going by the order in the child
-            kw_args = [
-                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
-                for child_arg_name in child_args[len(pos_args):]
-                for a in defs[0].args.kwonlyargs
-                if isinstance(a, ast.arg)
-                if a.arg == child_arg_name
-            ]
-
-            return pos_args + kw_args
-
-    return None
-
-
-def resolve_mock(ti: TypeInfo, adjuster: AdjustTypeNamesT|None) -> TypeInfo|None:
-    """Attempts to map a test type, such as a mock, to a production one."""
-    import unittest.mock as mock
-
-    trace = [ti]
-    t = ti
-    while is_test_module(t.module):
-        if not t.type_obj:
-            return None
-
-        non_unittest_bases = [
-            b for b in t.type_obj.__bases__ if b not in (mock.Mock, mock.MagicMock)
-        ]
-
-        # To be conservative, we only recognize classes with a single base (besides any Mock).
-        # If the only base is 'object', we couldn't find a non-mock module base.
-        if len(non_unittest_bases) != 1 or (base := non_unittest_bases[0]) is object:
-            return None
-
-        t = get_type_name(base)
-        if adjuster:
-            t = adjuster.visit(t)
-        trace.append(t)
-        if len(trace) > 50:
-            return None # break loops
-
-    if t is ti:
-        # 'ti' didn't need resolution.  Indicate no need to replace the type.
-        return None
-
-    if logger.level == logging.DEBUG:
-        logger.debug(f"Resolved mock {' -> '.join([str(t) for t in trace])}")
-
-    return t
-
-
-@dataclass
-class Observations:
-    # Visited functions' and information about them
-    functions_visited: dict[CodeType, FuncInfo] = field(default_factory=dict)
-
-    # Started, but not (yet) completed traces
-    pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = field(default_factory=lambda: defaultdict(dict))
-
-    # Variables
-    # TODO ideally the variables should be included in the trace, so that they can be filtered
-    # and also included in any type patterns.
-    variables: dict[CodeType, dict[VariableName, set[TypeInfo]]] = field(
-                                                    default_factory=lambda: defaultdict(lambda: defaultdict(set)))
-
-    # Object attributes: class_key -> attr_name -> set[TypeInfo]
-    object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = field(
-                                                    default_factory=lambda: defaultdict(lambda: defaultdict(set)))
-
-    # Completed traces
-    traces: dict[CodeType, Counter[CallTrace]] = field(default_factory=dict)
-
-    # Mapping of sources to their module names
-    # TODO handle cases where modules are loaded more than once, e.g. through pytest
-    source_to_module_name: dict[str, str|None] = field(default_factory=dict)
-
-    # target __main__ module globals
-    main_globals: dict[str, Any]|None = None
-
-
-    def record_module(
-        self,
-        code: CodeType,
-        frame: FrameType
-    ) -> None:
-        if code.co_filename not in self.source_to_module_name:
-            if (modname := frame.f_globals.get('__name__', None)):
-                if modname == "__main__":
-                    modname = get_main_module_fqn()
-            else:
-                modname = source_to_module_fqn(Path(code.co_filename))
-
-            self.source_to_module_name[code.co_filename] = modname
-
-
-    def record_function(
-        self,
-        code: CodeType,
-        frame: FrameType,
-        args: inspect.ArgInfo,
-        overrides: FunctionType|FunctionDescriptor|None
-    ) -> None:
-        """Records that a function was visited, along with some details about it."""
-
-        if code not in self.functions_visited:
-            arg_names = (
-                *(a for a in args.args),
-                *((args.varargs,) if args.varargs else ()),
-                *((args.keywords,) if args.keywords else ())
-            )
-
-            defaults = get_defaults(code, frame)
-
-            self.functions_visited[code] = FuncInfo(
-                FuncId(
-                    Filename(code.co_filename),
-                    code.co_firstlineno,
-                    FunctionName(code.co_qualname),
-                ),
-                tuple(
-                    ArgInfo(ArgumentName(name), defaults.get(name))
-                    for name in arg_names
-                ),
-                ArgumentName(args.varargs) if args.varargs else None,
-                ArgumentName(args.keywords) if args.keywords else None,
-                overrides
-            )
-
-
-    @staticmethod
-    def _get_arg_types(arg_info: inspect.ArgInfo) -> tuple[TypeInfo, ...]:
-        """Computes the types of the given arguments."""
-        return (
-            *(get_value_type(arg_info.locals[arg_name]) for arg_name in arg_info.args),
-            *(
-                (TypeInfo.from_set({
-                    get_value_type(val) for val in arg_info.locals[arg_info.varargs]
-                }),)
-                if arg_info.varargs else ()
-            ),
-            *(
-                (TypeInfo.from_set({
-                    get_value_type(val) for val in arg_info.locals[arg_info.keywords].values()
-                }),)
-                if arg_info.keywords else ()
-            )
-        )
-
-
-    def record_start(
-        self,
-        code: CodeType,
-        frame: FrameType,
-        arg_info: inspect.ArgInfo
-    ) -> None:
-        """Records a function start."""
-
-        # print(f"record_start {code.co_qualname} {arg_types}")
-
-        self.record_module(code, frame)
-
-        if not (code.co_flags & CO_NEWLOCALS):
-            self.functions_visited[code] = FuncInfo(
-                FuncId(
-                    Filename(code.co_filename),
-                    code.co_firstlineno,
-                    FunctionName(code.co_qualname),
-                ),
-                args=(), varargs=None, kwargs=None, overrides=None
-            )
-        else:
-            self_type, self_replacement, overrides = get_self_type(code, arg_info)
-            self.record_function(code, frame, arg_info, overrides)
-
-            self.pending_traces[code][id(frame)] = PendingCallTrace(
-                arg_info=arg_info,
-                args=self._get_arg_types(arg_info),
-                is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
-                is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
-                self_type=self_type, self_replacement=self_replacement
-            )
-
-
-    def record_yield(self, code: CodeType, frame_id: FrameId, yield_value: Any) -> None:
-        """Records a yield."""
-
-        # print(f"record_yield {code.co_qualname}")
-        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
-            tr.yields.add(get_value_type(yield_value))
-
-
-    def record_send(self, code: CodeType, frame_id: FrameId, send_value: Any) -> None:
-        """Records a send."""
-
-        # print(f"record_send {code.co_qualname}")
-        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
-            tr.sends.add(get_value_type(send_value))
-
-
-    def _record_variables(self, code: CodeType, frame: FrameType) -> None:
-        """Records variables."""
-        # print(f"record_variables {code.co_qualname}")
-
-        if not options.variables or not (codevars := code2variables.get(code)):
-            return
-
-        scope_vars = self.variables[typing.cast(CodeType, codevars.scope_code)]
-        f_locals = frame.f_locals
-        value: Any
-        dst: str|None
-        for src, dst in codevars.variables.items():
-            if (value := f_locals.get(src, NO_OBJECT)) is not NO_OBJECT:
-                scope_vars[VariableName(dst)].add(get_value_type(value))
-
-        if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
-            obj_attrs = self.object_attributes[codevars.class_key]
-            for src, dst in codevars.attributes.items():
-                if (value := getattr(self_obj, src, NO_OBJECT)) is not NO_OBJECT:
-                    type_set = obj_attrs[VariableName(src)]
-                    type_set.add(get_value_type(value))
-                    if dst: scope_vars[VariableName(dst)] = type_set
-
-    def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:
-        """Records a pending call trace's return type, finishing the trace."""
-        assert tr is not None
-
-        tr.returns = (
-            ret_type if ret_type is not None
-            else (
-                # Generators may still be running, or exit with a GeneratorExit exception; we still
-                # want them marked as returning None, so they can be simplified to Iterator
-                NoneTypeInfo if tr.is_generator else TypeInfo.from_type(typing.NoReturn)
-            )
-        )
-
-        if code not in self.traces:
-            self.traces[code] = Counter()
-        self.traces[code].update((tr.process(),))
-
-        # Resample arguments in case they change during execution (e.g., containers)
-        tr.args = self._get_arg_types(tr.arg_info)
-        self.traces[code].update((tr.process(),))
-
-
-    def record_return(self, code: CodeType, frame: FrameType, return_value: Any) -> bool:
-        """Records a return."""
-
-        # print(f"record_return {code.co_qualname}")
-        frame_id = id(frame)
-        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
-            self._record_return_type(tr, code, get_value_type(return_value))
-            self._record_variables(code, frame)
-            del per_frame[frame_id]
-            return True # found it
-        elif code in self.functions_visited:
-            self._record_variables(code, frame)
-
-        return False
-
-
-    def record_no_return(self, code: CodeType, frame: FrameType) -> bool:
-        """Records the lack of a return (e.g., because an exception was raised)."""
-
-        # print(f"record_no_return {code.co_qualname}")
-        frame_id = id(frame)
-        if (per_frame := self.pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
-            self._record_return_type(tr, code, None)
-            self._record_variables(code, frame)
-            del per_frame[frame_id]
-            return True # found it
-        elif code in self.functions_visited:
-            self._record_variables(code, frame)
-
-        return False
-
-
-    def _transform_types(self, tr: TypeInfo.Transformer) -> None:
-        """Applies the 'tr' transformer to all TypeInfo objects in this class."""
-
-        for code, trace_counter in self.traces.items():
-            for trace, count in list(trace_counter.items()):
-                trace_prime = tuple(tr.visit(t) for t in trace)
-                # Use identity rather than ==, as only non-essential attributes may have changed
-                if any(old is not new for old, new in zip(trace, trace_prime)):
-                    if logger.level == logging.DEBUG:
-                        func_info = self.functions_visited.get(code, None)
-                        logger.debug(
-                            type(tr).__name__ + " " +
-                            (func_info.func_id.func_name if func_info else "?") +
-                            str(tuple(str(t) for t in trace)) +
-                            " -> " +
-                            str(tuple(str(t) for t in trace_prime))
-                        )
-                    del trace_counter[trace]
-                    trace_counter[trace_prime] = count
-
-        # TODO how can self.variables change size during iteration?
-        for code, var_dict in list(self.variables.items()):
-            for var_name, var_types in list(var_dict.items()):
-                var_dict[var_name] = set(tr.visit(t) for t in var_types)
-
-
-    def try_close_generators(self: Self) -> None:
-        """Attempts to close any generators that may still be running."""
-        pending_generators = set()
-        for code, per_frame in self.pending_traces.items():
-            if any(tr.is_generator for tr in per_frame.values()):
-                pending_generators.add(code)
-
-        for code in pending_generators:
-            import gc
-            for obj in gc.get_referrers(code):
-                # In Python 3.13+, close() doesn't generate a PY_UNWIND
-                # https://github.com/python/cpython/issues/140373
-                if isinstance(obj, GeneratorType):
-                    try:
-                        obj.throw(GeneratorExit)
-                    except:
-                        pass
-
-
-    def collect_annotations(self: Self) -> tuple[dict[FuncId, FuncAnnotation], dict[FuncId, ModuleVars]]:
-        """Collects function type annotations from the observed types."""
-
-        # Finish traces for any generators that may be still running
-        for code, per_frame in self.pending_traces.items():
-            for tr in per_frame.values():
-                if tr.is_generator:
-                    self._record_return_type(tr, code, None)
-
-
-        def most_common_traces(code: CodeType) -> list[CallTrace]:
-            """Returns the top X% most common call traces, turning type checking into anomaly detection."""
-            counter = self.traces[code]
-
-            threshold = sum(counter.values()) * options.use_top_pct / 100
-            cumulative = 0
-
-            traces = list()
-            for trace, count in self.traces[code].most_common():
-                if cumulative >= threshold:
-                    break
-                cumulative += count
-                traces.append(trace)
-
-            return traces
-
-
-        def mk_annotation(code: CodeType) -> FuncAnnotation|None:
-            func_info = self.functions_visited[code]
-            traces = most_common_traces(code)
-
-            parents_arg_types = None
-            if func_info.overrides:
-                parents_func = func_info.overrides
-
-                if (
-                    options.ignore_annotations
-                    or not (
-                        (parents_arg_types := get_inline_arg_types(parents_func, func_info.args))
-                        or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
-                    )
-                ):
-                    parent_code = parents_func.__code__ if hasattr(parents_func, "__code__") else None
-                    if (
-                        parent_code
-                        and parent_code in self.traces
-                        and (ann := mk_annotation(parent_code))
-                    ):
-                        parents_arg_types = [arg[1] for arg in ann.args]
-
-            if (signature := generalize(traces)) is None:
-                logger.info(f"Unable to generalize {func_info.func_id}: inconsistent traces.\n" +
-                            f"{[tuple(str(t) for t in s) for s in traces]}")
-                return None
-
-            ann = FuncAnnotation(
-                args=[
-                    (
-                        arg.arg_name,
-                        merged_types({
-                            signature[i],
-                            *((arg.default,) if arg.default is not None else ()),
-                            # by building sets with the parent's types, we prevent arg. type narrowing
-                            *((parents_arg_types[i],) if (
-                                  parents_arg_types
-                                  and len(parents_arg_types) == len(func_info.args)
-                                  and parents_arg_types[i] is not None
-                                ) else ()
-                             )
-                        })
-                    )
-                    for i, arg in enumerate(func_info.args)
-                ],
-                retval=signature[-1],
-                varargs=func_info.varargs,
-                kwargs=func_info.kwargs,
-                variables=[
-                    (var_name, merged_types(var_types))
-                    for var_name, var_types in self.variables[code].items()
-                ]
-            )
-
-            if logger.level == logging.DEBUG:
-                trace_counter = self.traces[code]
-                for trace, count in list(trace_counter.items()):
-                    logger.debug(
-                        "trace " + func_info.func_id.func_name +
-                        str(tuple(str(t) for t in trace)) +
-                        f" {count}x"
-                    )
-                logger.debug(
-                    "ann   " + func_info.func_id.func_name +
-                    str((*(str(arg[1]) for arg in ann.args), str(ann.retval)))
-                )
-                for var, var_type in list(self.variables[code].items()):
-                    logger.debug(
-                        "var {func_info.func_id.func_name} {var_type}"
-                    )
-
-            return ann
-
-        type_name_adjuster = None
-        if options.adjust_type_names:
-            type_name_adjuster = AdjustTypeNamesT(self.main_globals)
-            self._transform_types(type_name_adjuster)
-
-        class NonSelfCloningT(TypeInfo.Transformer):
-            """Clones the given TypeInfo tree, clearing all 'is_self' flags,
-               as the type information may not be equivalent to typing.Self in the new context.
-            """
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                return super().visit(node.replace(is_self=False))
-
-        class CallableT(TypeInfo.Transformer):
-            """Updates Callable/Generator/Coroutine type declarations based on observations."""
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                node = super().visit(node)
-
-                # if 'args' is there, the function is already annotated
-                if node.code and (options.ignore_annotations or not node.args) and node.code in self.traces:
-                    # TODO we only need the retval, can we avoid computing the entire annotation?
-                    if (ann := mk_annotation(node.code)):
-                        func_info = self.functions_visited[node.code]
-                        # Clone (rather than link to) types from Callable, Generator, etc.,
-                        # clearing is_self, as these types may be later replaced with typing.Self.
-                        if node.type_obj is abc.Callable:
-                            node = node.replace(args=(
-                                TypeInfo.list([
-                                    NonSelfCloningT().visit(a[1]) for a in ann.args[int(node.is_bound):]
-                                ])
-                                if not (func_info.varargs or func_info.kwargs) else
-                                ...,
-                                NonSelfCloningT().visit(ann.retval)
-                            ))
-                        elif node.type_obj in (abc.Generator, abc.AsyncGenerator):
-                            node = NonSelfCloningT().visit(ann.retval)
-                        elif node.type_obj is abc.Coroutine:
-                            node = node.replace(args=(
-                                NoneTypeInfo,
-                                NoneTypeInfo,
-                                NonSelfCloningT().visit(ann.retval)
-                            ))
-
-                return node
-
-        self._transform_types(CallableT())
-
-        class PostponedIteratorArgsT(TypeInfo.Transformer):
-            """Replaces a postponed iterator argument evaluation marker with
-               its evaluation (performed by CallableT).
-            """
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                node = super().visit(node)
-
-                if node.type_obj is PostponedIteratorArg:
-                    assert isinstance(node.args[0], TypeInfo)
-                    source = node.args[0]
-                    if source.args:
-                        if source.type_obj is abc.Callable:
-                            assert isinstance(source.args[1], TypeInfo)
-                            return source.args[1]   # Callable return value
-                        else:
-                            assert isinstance(source.args[0], TypeInfo)
-                            return source.args[0]   # Generator/Iterator yield value
-                    return UnknownTypeInfo
-
-                return node
-
-        self._transform_types(PostponedIteratorArgsT())
-
-        class SelfT(TypeInfo.Transformer):
-            """Renames types to typing.Self according to is_self."""
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                if node.is_self:
-                    return TypeInfo("typing", "Self")
-
-                return super().visit(node)
-
-        if options.use_typing_self:
-            self._transform_types(SelfT())
-
-        class NeverSayNeverT(TypeInfo.Transformer):
-            """Removes uses of typing.Never, replacing them with typing.Any"""
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                if node.type_obj is typing.Never:
-                    return AnyTypeInfo
-
-                return super().visit(node)
-
-        class NoReturnIsNowNeverT(TypeInfo.Transformer):
-            """Converts typing.NoReturn to typing.Never,
-               which is the more modern way to type a 'no return'"""
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                if node.type_obj is typing.NoReturn:
-                    return TypeInfo.from_type(typing.Never) 
-
-                return super().visit(node)
-
-        if not options.use_typing_never:
-            self._transform_types(NeverSayNeverT())
-        else:
-            self._transform_types(NoReturnIsNowNeverT())
-
-        class ResolveMocksT(TypeInfo.Transformer):
-            """Resolves apparent test mock types to non-test ones."""
-            # TODO make mock resolution context sensitive, leaving test-only
-            # objects unresolved within test code?
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                node = super().visit(node)
-                if (resolved := resolve_mock(node, type_name_adjuster)):
-                    return resolved
-                return node
-
-        if options.resolve_mocks:
-            self._transform_types(ResolveMocksT())
-
-        class ExcludeTestTypesT(TypeInfo.Transformer):
-            """Removes test types."""
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                if is_test_module(node.module):
-                    return AnyTypeInfo
-
-                return super().visit(node)
-
-        if options.exclude_test_types:
-            self._transform_types(ExcludeTestTypesT())
-
-        class TypingUnionT(TypeInfo.Transformer):
-            """Replaces types.UnionType with typing.Union and typing.Optional."""
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                node = super().visit(node)
-
-                # Typevar nodes may be UnionType; there's no need to replace them, and
-                # replacing them would prevent RightTyper from annotating as typevars.
-                if node.type_obj is UnionType and not node.is_typevar():
-                    has_none = node.args[-1] == NoneTypeInfo
-                    non_none_count = len(node.args) - int(has_none)
-                    if non_none_count > 1:
-                        non_none = TypeInfo("typing", "Union", args=node.args[:non_none_count])
-                    else:
-                        assert isinstance(node.args[0], TypeInfo)
-                        non_none = node.args[0]
-
-                    if has_none:
-                        return TypeInfo("typing", "Optional", args=(non_none,))
-
-                    return non_none
-
-                return node
-
-        class DepthLimitT(TypeInfo.Transformer):
-            """Limits the depth of types (types within generic types)."""
-            def __init__(vself, limit: int):
-                vself._limit = limit
-                vself._level = -1
-                vself._maxLevel = -1
-
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                # Don't count lists (such as the arguments in a Callable) as a level,
-                # as it's not really a new type.
-                if node.is_list():
-                    return super().visit(node)
-
-                try:
-                    vself._level += 1
-                    vself._maxLevel = max(vself._maxLevel, vself._level)
-
-                    t = super().visit(node)
-
-                    if vself._maxLevel > vself._limit:
-                        # for containers, we can simply delete arguments (they default to Any)
-                        if (
-                            (type(t.type_obj) is type and issubclass(t.type_obj, abc.Container))
-                            or t.type_obj is abc.Callable
-                        ):
-                            vself._maxLevel = vself._level
-                            return t.replace(args=())
-
-                    return t
-                finally:
-                    vself._level -= 1
-
-        class MakePickleableTransformer(TypeInfo.Transformer):
-            """Clears code and type_obj on all TypeInfo: annotations are pickled by 'multiprocessing',
-               but these objects may not be pickleable.
-            """
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                if node.type_obj is not None:
-                    node = node.replace(type_obj=None)
-                if node.code is not None:
-                    node = node.replace(code=None)
-                return super().visit(node)
-
-        finalizers: list[TypeInfo.Transformer] = []
-
-        if options.type_depth_limit is not None:
-            finalizers.append(DepthLimitT(options.type_depth_limit))
-
-        if options.use_typing_union:
-            finalizers.append(TypingUnionT())
-
-        finalizers.append(MakePickleableTransformer())
-
-        def finalize(t: TypeInfo) -> TypeInfo:
-            for f in finalizers:
-                t = f.visit(t)
-            return t
-
-        non_func_codes = self.variables.keys() - self.traces.keys()
-
-        annotations = {
-            self.functions_visited[code].func_id: FuncAnnotation(
-                args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
-                retval=finalize(annotation.retval),
-                varargs=annotation.varargs,
-                kwargs=annotation.kwargs,
-                variables=[(var[0], finalize(var[1])) for var in annotation.variables]
-            )
-            for code in self.traces
-            if (annotation := mk_annotation(code)) is not None
-        }
-
-        module_vars = {
-            self.functions_visited[code].func_id: ModuleVars([
-                (var_name, finalize(merged_types(var_types)))
-                for var_name, var_types in self.variables[code].items()
-            ])
-            for code in non_func_codes
-        }
-
-        return annotations, module_vars
-
-
-obs = Observations()
-
+rec = ObservationsRecorder()
 instrumentation_counter = AtomicCounter()
 
 
@@ -875,12 +69,8 @@ def is_instrumentation(f):
 
 
 @is_instrumentation
-def send_handler(code: CodeType, frame_id: FrameId, arg0: Any) -> None:
-    obs.record_send(
-        code,
-        frame_id, 
-        arg0
-    )
+def send_handler(code: CodeType, frame: FrameType, arg0: Any) -> None:
+    rec.record_send(code, frame, arg0)
 
 
 def wrap_send(obj: Any) -> Any:
@@ -892,7 +82,7 @@ def wrap_send(obj: Any) -> Any:
             @functools.wraps(obj)
             def wrapper(*args, **kwargs):
                 # generator.send takes exactly one argument
-                send_handler(self.gi_code, FrameId(id(self.gi_frame)), args[0])
+                send_handler(self.gi_code, self.gi_frame, args[0])
                 return obj(*args, **kwargs)
 
             return wrapper
@@ -900,7 +90,7 @@ def wrap_send(obj: Any) -> Any:
             @functools.wraps(obj)
             def wrapper(*args, **kwargs):
                 # generator.asend takes exactly one argument
-                send_handler(self.ag_code, FrameId(id(self.ag_frame)), args[0])
+                send_handler(self.ag_code, self.ag_frame, args[0])
                 return obj(*args, **kwargs)
 
             return wrapper
@@ -926,7 +116,7 @@ def start_handler(code: CodeType, offset: int) -> Any:
         frame = frame.f_back
 
     if frame:
-        obs.record_start(code, frame, inspect.getargvalues(frame))
+        rec.record_start(code, frame, inspect.getargvalues(frame))
         del frame
 
     return None
@@ -954,7 +144,7 @@ def yield_handler(
         frame = frame.f_back
 
     if frame:
-        obs.record_yield(code, id(frame), yield_value)
+        rec.record_yield(code, frame, yield_value)
         del frame
 
     return None
@@ -981,7 +171,7 @@ def return_handler(
     while frame and frame.f_code is not code:
         frame = frame.f_back
 
-    found = frame and obs.record_return(code, frame, return_value)
+    found = frame and rec.record_return(code, frame, return_value)
     del frame
 
     if (
@@ -993,7 +183,7 @@ def return_handler(
         )
     ):
         disabled_code.add(code)
-        obs.pending_traces[code].clear()
+        rec.clear_pending(code)
         return sys.monitoring.DISABLE
 
     return None
@@ -1013,7 +203,7 @@ def unwind_handler(
     while frame and frame.f_code is not code:
         frame = frame.f_back
 
-    found = frame and obs.record_no_return(code, frame)
+    found = frame and rec.record_no_return(code, frame)
     del frame
 
     if (
@@ -1025,84 +215,9 @@ def unwind_handler(
         )
     ):
         disabled_code.add(code)
-        obs.pending_traces[code].clear()
+        rec.clear_pending(code)
 
     return None # PY_UNWIND can't be disabled
-
-
-def get_self_type(code, args) -> tuple[TypeInfo|None, TypeInfo|None, FunctionType|FunctionDescriptor|None]:
-    if args.args:
-        first_arg = args.locals[args.args[0]]
-
-        name = code.co_name
-        if (
-            name.startswith("__")
-            and not name.endswith("__")
-            and len(parts := code.co_qualname.split(".")) > 1
-        ):
-            # parts[-2] may be "<locals>"... that's ok, as we then have
-            # a local function and there is no 'Self' to find.
-            name = f"_{parts[-2]}{name}"    # private attribute/method
-
-        # if type(first_arg) is type, we may have a @classmethod
-        first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
-
-        # @property?
-        is_property = isinstance(getattr(type(first_arg), name, None), property)
-
-        # find class that defines that name, in case it's inherited
-        defining_class, next_index = next(
-            (
-                (ancestor, i+1)
-                for i, ancestor in enumerate(first_arg_class.__mro__)
-                if (
-                    (is_property and name in ancestor.__dict__)
-                    or (
-                        (f := unwrap(ancestor.__dict__.get(name, None)))
-                        and getattr(f, "__code__", None) is code
-                    )
-                )
-            ),
-            (None, None)
-        )
-
-        if not defining_class:
-            return None, None, None
-
-        # The first argument is 'Self' and the type of 'Self', in the context of
-        # its definition, is "defining_class"; now let's see if this method
-        # overrides another
-        overrides = None
-        if not (
-            is_property
-            or name in ('__init__', '__new__')  # irrelevant for Liskov
-        ):
-            overrides = next(
-                (
-                    # wrapper_descriptor and possibly other native objects may lack __module__
-                    f if hasattr(f, "__module__")
-                    else FunctionDescriptor(ancestor.__module__, f.__qualname__)
-                    for ancestor in first_arg_class.__mro__[next_index:]
-                    if (f := unwrap(ancestor.__dict__.get(name, None)))
-                    if getattr(f, "__code__", None) is not code
-                ),
-                None
-            )
-
-        return get_type_name(first_arg_class), get_type_name(defining_class), overrides
-
-    return None, None, None
-
-
-def get_defaults(code, frame) -> dict[str, TypeInfo]:
-    if (function := find_function(frame, code)):
-        return {
-            param_name: get_value_type(param.default)
-            for param_name, param in inspect.signature(function).parameters.items()
-            if param.default != inspect._empty
-        }
-
-    return {}
 
 
 sample_count_instrumentation = 0
@@ -1152,6 +267,8 @@ def self_profile() -> None:
         sample_count_instrumentation = sample_count_total = 0
 
 
+main_globals: dict[str, Any]|None = None
+
 def execute_script_or_module(
     script: str,
     is_module: bool,
@@ -1159,24 +276,26 @@ def execute_script_or_module(
 ) -> None:
     """Executes the script or module, returning the __main__ module's globals."""
 
+    global main_globals
+
     try:
         sys.argv = [script, *args]
         if is_module:
             with loader.ImportManager(replace_dict=options.replace_dict):
-                obs.main_globals = runpy.run_module(
+                main_globals = runpy.run_module(
                     script,
                     run_name="__main__",
                     alter_sys=True,
                 )
         else:
             with loader.ImportManager(replace_dict=options.replace_dict):
-                obs.main_globals = runpy.run_path(script, run_name="__main__")
+                main_globals = runpy.run_path(script, run_name="__main__")
 
-    except Exception as e:
+    except BaseException as e:
         tb = e.__traceback__
         while tb is not None:
             if tb.tb_frame.f_globals.get("__name__", None) == "__main__":
-                obs.main_globals = dict(tb.tb_frame.f_globals)
+                main_globals = dict(tb.tb_frame.f_globals)
                 break
             tb = tb.tb_next
 
@@ -1225,12 +344,16 @@ def emit_json(collected: dict[str, Any], code_changes: list[CodeChanges]) -> dic
             'timestamp': datetime.datetime.now().isoformat(),
         },
         'files': {
-            funcid.file_name: {
-                'module': file2module.get(funcid.file_name),
+            filename: {
+                'module': file2module.get(filename),
                 'functions': {},
             }
-            for funcid in sorted(
-                collected.get('type_annotations', {}) | collected.get('module_vars', {})
+            for filename in sorted(
+                {
+                    funcid.file_name
+                    for funcid in collected.get('type_annotations', {})
+                }
+                | set(collected.get('module_vars', {}))
             )
         }
     }
@@ -1272,8 +395,8 @@ def emit_json(collected: dict[str, Any], code_changes: list[CodeChanges]) -> dic
             func_entry['new_sig'] = changes[1]
 
     # fill in module vars
-    for funcid, mv in collected.get('module_vars', dict()).items():
-        data['files'][funcid.file_name]['vars'] = {
+    for filename, mv in collected.get('module_vars', dict()).items():
+        data['files'][filename]['vars'] = {
             k: str(v).replace(".<locals>.", ".")
             for k, v in mv.variables
         }
@@ -1303,9 +426,9 @@ def process_file_wrapper(args) -> CodeChanges:
 
 
 def process_files(
-    files: list[list[str]],
-    type_annotations: dict[FuncId, FuncAnnotation],
-    module_vars: dict[FuncId, ModuleVars]
+    files: list[tuple[Filename, str]],
+    type_annotations: dict[CodeId, FuncAnnotation],
+    module_vars: dict[Filename, ModuleVars]
 ) -> list[CodeChanges]:
     if not files:
         return []
@@ -1315,7 +438,7 @@ def process_files(
             file[0],    # path
             file[1],    # module_name
             type_annotations,
-            module_vars.get(FuncId(Filename(file[0]), 1, FunctionName('<module>')), None),
+            module_vars.get(file[0]),
             options
         )
         for file in files
@@ -1399,7 +522,25 @@ def validate_regexes(ctx, param, value):
         raise click.BadParameter(str(e))
 
 
+class HelpfulGroup(click.Group):
+    def __init__(self, *args, extra_help_subcommands=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._extra_help_subcommands = tuple(extra_help_subcommands or ())
+
+    def get_help(self, ctx):
+        help_text = [super().get_help(ctx)]
+
+        for name in ('run',):
+            cmd = self.get_command(ctx, name)
+            if cmd is not None:
+                subctx = cmd.make_context(name, [], parent=ctx, resilient_parsing=True)
+                help_text.append(f"\n\n---- Help for '{name}': ----\n{cmd.get_help(subctx)}")
+
+        return "".join(help_text)
+
+
 @click.group(
+    cls=HelpfulGroup,
     context_settings={
         "show_default": True
     }
@@ -1763,23 +904,13 @@ def run(
 
     try:
         execute_script_or_module(script, is_module=bool(module), args=args)
-        obs.try_close_generators()
     finally:
+        rec.try_close_generators()
         reset_monitoring()
         alarm.stop()
 
-        if exclude_test_files:
-            # should_skip_function doesn't know to skip test files until they are detected,
-            # so we can't help but get events for test modules while they are being loaded.
-            for f in obs.source_to_module_name.keys() & detected_test_files:
-                del obs.source_to_module_name[f]
-
-        if logger.level == logging.DEBUG:
-            assert (keys := obs.source_to_module_name.keys()) == (oldset := set(
-                t.func_id.file_name
-                for t in obs.functions_visited.values()
-                if not skip_this_file(t.func_id.file_name)
-            )), f"{keys-oldset=}  {oldset-keys=}"
+        assert main_globals is not None
+        obs = rec.finish_recording(main_globals)
 
         files = list(obs.source_to_module_name.items())
         type_annotations, module_vars = obs.collect_annotations()

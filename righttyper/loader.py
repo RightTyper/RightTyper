@@ -3,7 +3,6 @@ from importlib.abc import MetaPathFinder, Loader, ExecutionLoader, PathEntryFind
 from importlib import machinery
 from importlib.resources.abc import TraversableResources
 import importlib.util
-import functools
 from pathlib import Path
 import sys
 import sysconfig

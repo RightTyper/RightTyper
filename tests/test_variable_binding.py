@@ -42,6 +42,7 @@ def get_first_defs(source: str) -> dict[str, str]:
     } | {
         '.'.join((*class_name(result.qualname), result.self_name, name)): cst.Module([]).code_for_node(node).strip()
         for node, result in mapping.items()
+        if result.self_name
         for name in result.defines_attrs
     }
 

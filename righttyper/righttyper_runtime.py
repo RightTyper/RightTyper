@@ -2,7 +2,6 @@ import inspect
 import random
 import re
 import sys
-import logging
 
 import collections
 import collections.abc as abc
@@ -25,23 +24,14 @@ from types import (
 from typing import Any, cast, get_type_hints, get_origin, get_args, Callable
 import typing
 from pathlib import Path
-from dataclasses import dataclass, field
 
 from righttyper.random_dict import RandomDict
-from righttyper.righttyper_types import (
-    CodeId,
-    Filename,
-    FunctionName,
-    FuncId,
-    T,
-    TypeInfo,
-    NoneTypeInfo,
-    AnyTypeInfo,
-    UnknownTypeInfo
-)
+from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
+from righttyper.righttyper_types import Filename, FunctionName, CodeId
 from righttyper.righttyper_utils import is_test_module, get_main_module_fqn
 from righttyper.options import options
 from righttyper.logger import logger
+
 
 @cache
 def get_jaxtyping():
@@ -94,7 +84,7 @@ def hint2type(hint) -> TypeInfo:
 
         return TypeInfo.from_type(
                     origin,
-                    module=origin.__module__ if origin.__module__ != 'builtins' else '',
+                    module=normalize_module_name(origin.__module__),
                     args=tuple(
                         hint2type_arg(a) for a in get_args(hint)
                     )
@@ -115,37 +105,42 @@ def hint2type(hint) -> TypeInfo:
         ))
 
     if not hasattr(hint, "__qualname__"): # e.g., typing.TypeVar
-        return TypeInfo(name=hint.__name__, module=hint.__module__)
+        return TypeInfo(name=hint.__name__, module=normalize_module_name(hint.__module__))
 
     return get_type_name(hint)  # requires __module__ and __qualname__
 
 
 def type_from_annotations(func: abc.Callable) -> TypeInfo:
-    try:
-        signature = inspect.signature(func)
-        hints = get_type_hints(func)
-    except (ValueError, NameError):
-        signature = None
-        hints = None
+    if (orig_func := unwrap(func)): # in case this is a wrapper
+        func = orig_func
 
-    args: tuple = tuple() # default to just "Callable"
+    args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()
+    if not options.ignore_annotations:
+        try:
+            signature = inspect.signature(func)
+            hints = get_type_hints(func)
+        except (ValueError, NameError):
+            signature = None
+            hints = None
 
-    # any type hints?
-    if signature and hints:
-        arg_types = TypeInfo.list([
-            hint2type(hints[arg_name]) if arg_name in hints else UnknownTypeInfo
-            for arg_name in signature.parameters
-        ])
+        # any type hints?
+        if signature and hints:
+            arg_types = TypeInfo.list([
+                hint2type(hints[arg_name]) if arg_name in hints else UnknownTypeInfo
+                for arg_name in signature.parameters
+            ])
 
-        return_type = (
-            hint2type(hints['return']) if 'return' in hints else UnknownTypeInfo
-        )
+            return_type = (
+                hint2type(hints['return']) if 'return' in hints else UnknownTypeInfo
+            )
 
-        args = (arg_types, return_type)
+            args = (arg_types, return_type)
+
+    code = cast(CodeType|None, getattr(func, "__code__", None)) # native callables may lack this
 
     return TypeInfo("typing", "Callable",
         args=args,
-        code=func.__code__,
+        code_id=CodeId.from_code(code) if code is not None else None,
         type_obj=cast(type, abc.Callable),
         is_bound=isinstance(func, MethodType)
     )
@@ -304,14 +299,15 @@ def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
     return None
 
 
-def unwrap(method: FunctionType|classmethod|None) -> FunctionType|None:
+def unwrap(method: abc.Callable|None) -> abc.Callable|None:
     """Follows a chain of `__wrapped__` attributes to find the original function."""
 
-    visited = set()         # there shouldn't be a loop, but just in case...
+    # Remember objects by id to work around unhashable items, but point to object so
+    # that the object can't go away (possibly reusing the id)
+    visited = {}
     while hasattr(method, "__wrapped__"):
-        if method in visited:
-            return None
-        visited.add(method)
+        if id(method) in visited: return None
+        visited[id(method)] = method
 
         method = getattr(method, "__wrapped__")
 
@@ -339,7 +335,7 @@ def find_function(
 
     parts = code.co_qualname.split('.')
 
-    def find_in(namespace: dict|MappingProxyType, index: int=0) -> FunctionType|None:
+    def find_in(namespace: dict|MappingProxyType, index: int=0) -> abc.Callable|None:
         if index < len(parts):
             name = parts[index]
             if (
@@ -383,25 +379,35 @@ def find_function(
     return None
 
 
-class PostponedIteratorArg:
-    """Type used to postpone evaluating generator-based iterators"""
-
-
 def _type_for_generator(
     obj: GeneratorType|AsyncGeneratorType|CoroutineType,
     type_obj: type,
     frame: FrameType,
     code: CodeType,
 ) -> TypeInfo:
-    if (f := find_function(frame, code)):
+
+    retval: TypeInfo|None = None
+    # FIXME: using find_function here prevents us from using annotations from <locals> functions
+    if not options.ignore_annotations and (f := find_function(frame, code)):
         try:
-            hints = get_type_hints(f)
-            if 'return' in hints:
-                return hint2type(hints['return']).replace(code=code)
+            if (retval_hint := get_type_hints(f).get('return')):
+                retval = hint2type(retval_hint)
         except:
             pass
 
-    return TypeInfo.from_type(type_obj, module="typing", code=code)
+    if type_obj is abc.Coroutine:
+        if not retval:
+            retval = UnknownTypeInfo.replace(code_id=CodeId.from_code(code))
+
+        return TypeInfo.from_type(
+            type_obj,
+            module="typing",
+            args=(
+                NoneTypeInfo, NoneTypeInfo, retval
+            )
+        )
+
+    return retval if retval else TypeInfo.from_type(type_obj, code_id=CodeId.from_code(code))
 
 
 def _random_item[T](container: abc.Collection[T]) -> T:
@@ -529,16 +535,6 @@ def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
         (obj := _first_referent(value)) is not None
         and (getitem := getattr(type(obj), "__getitem__", None)) is not None
     ):
-        # If 'getitem' is a Python (non-native) function, we can intercept it;
-        # add a postponed evaluation entry.
-        if type(getitem) in (FunctionType, MethodType):
-            src = get_value_type(getitem, depth+1)
-            assert src.type_obj is abc.Callable
-            return TypeInfo("typing", "Iterator", args=(
-                    TypeInfo.from_type(PostponedIteratorArg, args=(src,)),
-                )
-            )
-
         if (
             (obj_t := type(obj)).__module__ == 'numpy'
             and obj_t.__qualname__ == 'ndarray'
@@ -547,9 +543,28 @@ def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
             # Use __getitem__, as obj.dtype contains classes from numpy.dtypes;
             # check size, as using typing.Never for size=0 leads to mypy errors
             return TypeInfo("typing", "Iterator", args=(get_type_name(type(getitem(obj, 0)), depth+1),))
+        
+        if type(getitem) in (FunctionType, MethodType): # get full type from runtime observations
+            callable_type = type_from_annotations(getitem)
+            retval: TypeInfo|None = callable_type.args[-1] if callable_type.args else None
+
+            if not retval:
+                retval = UnknownTypeInfo.replace(code_id=CodeId.from_code(getitem.__code__))
+
+            return TypeInfo("typing", "Iterator", args=(retval,))
 
         return TypeInfo("typing", "Iterator")
     return None
+
+
+class PostponedArg0:
+    """Type used to postpone extracting the first (yield) argument of
+       generators and iterators.  Their types may not be fully known
+       until observed at runtime and merged using their code_id.
+       Their code's annotated return value is Iterator[Y] or Generator[Y, S, R];
+       we wrap these in a TypeInfo.from_type(PostponedArg0) to extract Y
+       after resolution.
+    """
 
 
 def _handle_zip(value: Any, depth: int) -> TypeInfo|None:
@@ -557,12 +572,16 @@ def _handle_zip(value: Any, depth: int) -> TypeInfo|None:
         type(t := _first_referent(value)) is tuple
         and all(isinstance(s, abc.Iterator) for s in t)  # note a generator also IS-A abc.Iterator
     ):
-        zip_sources = tuple(get_value_type(s, depth+1) for s in t)
+        zip_sources = tuple(
+            get_value_type(s, depth+1)
+            for s in t
+        )
+
         args = (
-            # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
             TypeInfo.from_type(tuple, module="", args=tuple(
-                (src.args[0] if src.args else UnknownTypeInfo) if src.fullname() == "typing.Iterator"
-                else TypeInfo.from_type(PostponedIteratorArg, args=(src,))
+                TypeInfo.from_type(PostponedArg0, args=(src,)) if any(t.code_id for t in src.walk()) else (
+                    src.args[0] if src.args else UnknownTypeInfo
+                )
                 for src in zip_sources
             )),
         )
@@ -576,15 +595,16 @@ def _handle_enumerate(value: Any, depth: int) -> TypeInfo|None:
         and isinstance(l, abc.Iterator)
     ):
         src = get_value_type(l, depth+1)
-        args = (
-            # TODO it's unclear how to generate a typing.Iterator with 0 args, but happened for Emery
-            ((src.args[0] if src.args else UnknownTypeInfo),) if src.fullname() == "typing.Iterator"
-            else (TypeInfo.from_type(PostponedIteratorArg, args=(src,)),)
+        return TypeInfo.from_type(enumerate, module="",
+            args=(TypeInfo.from_type(PostponedArg0, args=(src,)) if any(t.code_id for t in src.walk()) else (
+                    src.args[0] if src.args else UnknownTypeInfo
+                ),
+            )
         )
-
-        return TypeInfo.from_type(enumerate, module="", args=args)
     return None
 
+
+T = typing.TypeVar("T")
 
 _type2handler: dict[type, Callable[[Any, int], TypeInfo|None]] = {
     NoneType: lambda value, depth: NoneTypeInfo,
@@ -618,7 +638,7 @@ _type2handler: dict[type, Callable[[Any, int], TypeInfo|None]] = {
     GETITEM_ITER: _handle_getitem_iter,
     zip: _handle_zip,
     enumerate: _handle_enumerate,
-    type(typing.Generic[T]): lambda v, d: TypeInfo("", "type"),
+    type(typing.Generic[T]): lambda v, d: TypeInfo("", "type"), # type: ignore[index]
     type(typing.Union[int, str]): lambda v, d: TypeInfo("", "type"),
     type(typing.Callable[[], None]): lambda v, d: TypeInfo("", "type"),
     type(abc.Callable[[], None]): lambda v, d: TypeInfo("", "type"),
@@ -697,6 +717,12 @@ def get_value_type(
                 return get_value_type(l, depth+1)
 
             return UnknownTypeInfo
+    elif (
+        t.__module__ == "functools"
+        and isinstance(value, abc.Callable) # type: ignore[arg-type]
+        and unwrap(value) is not value
+    ):
+        return type_from_annotations(value) # a function wrapper such as @cache
 
     if options.infer_shapes and hasattr(value, "dtype") and hasattr(value, "shape"):
         if (dtype := jx_dtype(value)) is not None:

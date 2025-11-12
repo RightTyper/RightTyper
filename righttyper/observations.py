@@ -1,0 +1,819 @@
+import ast
+import typeshed_client as typeshed
+from types import CodeType, FrameType, FunctionType, GeneratorType
+import typing
+from typing import Final, Any, NewType, overload, cast
+import builtins
+import inspect
+from collections import defaultdict, Counter
+import collections.abc as abc
+from dataclasses import dataclass, field
+import logging
+from pathlib import Path
+
+from righttyper.options import options
+from righttyper.logger import logger
+from righttyper.generalize import merged_types, generalize
+from righttyper.variable_capture import code2variables
+from righttyper.typemap import AdjustTypeNamesT
+from righttyper.type_transformers import (
+    SelfT,
+    NeverSayNeverT,
+    NoReturnToNeverT,
+    ExcludeTestTypesT,
+    ResolveMocksT,
+    GeneratorToIteratorT,
+    TypesUnionT,
+    DepthLimitT,
+    MakePickleableT
+)
+from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo, CallTrace
+from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, cast_not_None
+from righttyper.annotation import FuncAnnotation, ModuleVars
+from righttyper.righttyper_utils import source_to_module_fqn, get_main_module_fqn, skip_this_file, detected_test_files
+from righttyper.righttyper_runtime import (
+    find_function,
+    unwrap,
+    get_value_type,
+    get_type_name,
+    hint2type,
+    PostponedArg0,
+)
+
+
+def find_co_newlocals():
+    # CO_NEWLOCALS, when set within a CodeType's co_flags, indicates that
+    # a new "locals" dictionary is created; it roughly indicates a function
+    # call, as the new dictionary is created for the new scope.
+    import dis
+    return next(
+        flag
+        for flag, name in dis.COMPILER_FLAG_NAMES.items()
+        if name == "NEWLOCALS"
+    )
+CO_NEWLOCALS: Final = find_co_newlocals()
+
+
+# Singleton used to differentiate from None
+NO_OBJECT: Final = object()
+
+
+FrameId = NewType("FrameId", int)   # obtained from id(frame) where code is-a FrameType
+
+
+# Overloads so we don't have to always write FrameId(id(code)), etc.
+@overload
+def id(obj: FrameType) -> FrameId: ...
+@overload
+def id(obj: object) -> int: ...
+def id(obj):
+    return builtins.id(obj)
+
+
+@dataclass
+class ArgInfo:
+    arg_name: ArgumentName
+    default: TypeInfo|None
+
+
+@dataclass
+class FunctionDescriptor:
+    """Describes a function by name; stands in for a FunctionType where the function
+       is a wrapper_descriptor (or possibly other objects), lacking __module__
+    """
+    __module__: str
+    __qualname__: str
+
+
+@dataclass(eq=True, frozen=True)
+class FuncInfo:
+    code_id: CodeId
+    args: tuple[ArgInfo, ...]
+    varargs: ArgumentName|None
+    kwargs: ArgumentName|None
+    overrides: FunctionType|FunctionDescriptor|None
+
+    traces: Counter[CallTrace] = field(default_factory=Counter)
+
+    # TODO ideally the variables should be included in the trace, so that they can be filtered
+    # and also included in any type patterns.
+    variables: dict[VariableName, set[TypeInfo]] = field(default_factory=lambda: defaultdict(set))
+
+
+    def most_common_traces(self) -> list[CallTrace]:
+        """Returns the top X% most common call traces, turning type checking into anomaly detection."""
+        threshold = sum(self.traces.values()) * options.use_top_pct / 100
+        cumulative = 0
+
+        traces = list()
+        for trace, count in self.traces.most_common():
+            if cumulative >= threshold:
+                break
+            cumulative += count
+            traces.append(trace)
+
+        return traces
+
+
+class Observations:
+    def __init__(self):
+        # Visited functions and information about them
+        self.func_info: dict[CodeId, FuncInfo] = dict()
+
+        # per-module variables
+        self.module_variables: dict[Filename, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
+
+        # Mapping of sources to their module names
+        self.source_to_module_name: dict[str, str|None] = {}
+
+
+    def transform_types(self, tr: TypeInfo.Transformer) -> None:
+        """Applies the 'tr' transformer to all TypeInfo objects in this class."""
+
+        for func_info in self.func_info.values():
+            for trace, count in list(func_info.traces.items()):
+                trace_prime = tuple(tr.visit(t) for t in trace)
+                # Use identity rather than ==, as only non-essential attributes may have changed
+                if any(old is not new for old, new in zip(trace, trace_prime)):
+                    if logger.level == logging.DEBUG:
+                        logger.debug(
+                            type(tr).__name__ + " " + func_info.code_id.func_name +
+                            str(tuple(str(t) for t in trace)) +
+                            " -> " +
+                            str(tuple(str(t) for t in trace_prime))
+                        )
+                    del func_info.traces[trace]
+                    func_info.traces[trace_prime] = count
+
+            for var_name, var_types in list(func_info.variables.items()):
+                func_info.variables[var_name] = set(tr.visit(t) for t in var_types)
+
+        for var_dict in list(self.module_variables.values()):
+            for var_name, var_types in list(var_dict.items()):
+                var_dict[var_name] = set(tr.visit(t) for t in var_types)
+
+
+    def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars]]:
+        """Collects function type annotations from the observed types."""
+
+        def mk_annotation(func_info: FuncInfo) -> FuncAnnotation|None:
+            traces = func_info.most_common_traces()
+            if not traces:
+                return None
+
+            parents_arg_types = None
+            if func_info.overrides:
+                parents_func = func_info.overrides
+
+                if (
+                    options.ignore_annotations
+                    or not (
+                        (parents_arg_types := get_inline_arg_types(parents_func, func_info.args))
+                        or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
+                    )
+                ):
+                    parent_code = CodeId.from_code(parents_func.__code__) if hasattr(parents_func, "__code__") else None
+                    if (
+                        parent_code
+                        and parent_code in self.func_info
+                        and (ann := mk_annotation(self.func_info[parent_code]))
+                    ):
+                        parents_arg_types = [arg[1] for arg in ann.args]
+
+            if (signature := generalize(traces)) is None:
+                logger.info(f"Unable to generalize {func_info.code_id}: inconsistent traces.\n" +
+                            f"{[tuple(str(t) for t in s) for s in traces]}")
+                return None
+
+            ann = FuncAnnotation(
+                args=[
+                    (
+                        arg.arg_name,
+                        merged_types({
+                            signature[i],
+                            *((arg.default,) if arg.default is not None else ()),
+                            # by building sets with the parent's types, we prevent arg. type narrowing
+                            *((parents_arg_types[i],) if (
+                                  parents_arg_types
+                                  and len(parents_arg_types) == len(func_info.args)
+                                  and parents_arg_types[i] is not None
+                                ) else ()
+                             )
+                        })
+                    )
+                    for i, arg in enumerate(func_info.args)
+                ],
+                retval=signature[-1],
+                varargs=func_info.varargs,
+                kwargs=func_info.kwargs,
+                variables=[
+                    (var_name, merged_types(var_types))
+                    for var_name, var_types in func_info.variables.items()
+                ]
+            )
+
+            if logger.level == logging.DEBUG:
+                for trace, count in list(func_info.traces.items()):
+                    logger.debug(
+                        "trace " + func_info.code_id.func_name +
+                        str(tuple(str(t) for t in trace)) +
+                        f" {count}x"
+                    )
+                logger.debug(
+                    "ann   " + func_info.code_id.func_name +
+                    str((*(str(arg[1]) for arg in ann.args), str(ann.retval)))
+                )
+                for var, var_type in list(func_info.variables.items()):
+                    logger.debug(
+                        "var {func_info.code_id.func_name} {var_type}"
+                    )
+
+            return ann
+
+        # In the code below, clone (rather than link to) types from Callable, Generator, etc.,
+        # clearing is_self, as these types may be later replaced with typing.Self.
+        def clone(node: TypeInfo) -> TypeInfo:
+            class T(TypeInfo.Transformer):
+                """Clones the given TypeInfo tree, clearing all 'is_self' flags,
+                   as the type information may not be equivalent to typing.Self in the new context.
+                """
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    return super().visit(node.replace(is_self=False))
+
+            return T().visit(node)
+
+        class ResolvingT(TypeInfo.Transformer):
+            """Resolves types that may not be fully known until observed at runtime."""
+            def visit(vself, node: TypeInfo) -> TypeInfo:
+                node = super().visit(node)
+
+                if node.code_id and (func_info := self.func_info.get(node.code_id)):
+                    if (ann := mk_annotation(func_info)):
+                        # for Callable, we also merge arguments from annotations with observed ones.
+                        if node.type_obj is abc.Callable:
+                            old_params = (
+                                node.args[0].args
+                                if node.args and isinstance(node.args[0], TypeInfo) and node.args[0].is_list()
+                                else ()
+                            )
+
+                            old_retval = node.args[-1] if node.args else UnknownTypeInfo
+
+                            def get_old_param(i: int) -> TypeInfo:
+                                return old_params[i] if i < len(old_params) else UnknownTypeInfo
+
+                            node = node.replace(args=(
+                                TypeInfo.list([
+                                    old if (old := get_old_param(i)) is not UnknownTypeInfo else clone(a[1])
+                                    for i, a in enumerate(ann.args[int(node.is_bound):])
+                                ])
+                                if not (func_info.varargs or func_info.kwargs) else
+                                ...,
+                                old_retval if old_retval is not UnknownTypeInfo else clone(ann.retval)
+                            ))
+                        else:
+                            node = clone(ann.retval)
+
+                if node.type_obj is PostponedArg0:
+                    # e.g. PostponedArg0[Iterator[X]] -> X
+                    node = node.args[0].args[0] if node.args and node.args[0].args else UnknownTypeInfo
+
+                return node
+
+        self.transform_types(ResolvingT())
+
+        if options.use_typing_self:
+            self.transform_types(SelfT())
+
+        if not options.use_typing_never:
+            self.transform_types(NeverSayNeverT())
+        else:
+            self.transform_types(NoReturnToNeverT())
+
+        if options.exclude_test_types:
+            self.transform_types(ExcludeTestTypesT())
+
+
+        finalizers: list[TypeInfo.Transformer] = []
+
+        def finalize(t: TypeInfo) -> TypeInfo:
+            for f in finalizers:
+                t = f.visit(t)
+            return t
+
+        if options.type_depth_limit is not None:
+            finalizers.append(DepthLimitT(options.type_depth_limit))
+
+        if options.use_typing_union:
+            finalizers.append(TypesUnionT())
+
+        finalizers.append(GeneratorToIteratorT())
+        finalizers.append(MakePickleableT())
+
+        annotations = {
+            func_info.code_id: FuncAnnotation(
+                args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
+                retval=finalize(annotation.retval),
+                varargs=annotation.varargs,
+                kwargs=annotation.kwargs,
+                variables=[(var[0], finalize(var[1])) for var in annotation.variables]
+            )
+            for func_info in self.func_info.values()
+            if (annotation := mk_annotation(func_info)) is not None
+        }
+
+        module_vars = {
+            filename: ModuleVars([
+                (var_name, finalize(merged_types(var_types)))
+                for var_name, var_types in var_dict.items()
+            ])
+            for filename, var_dict in self.module_variables.items()
+        }
+
+        return annotations, module_vars
+
+
+@dataclass
+class PendingCallTrace:
+    arg_info: inspect.ArgInfo
+    args: tuple[TypeInfo, ...]
+    yields: set[TypeInfo] = field(default_factory=set)
+    sends: set[TypeInfo] = field(default_factory=set)
+    returns: TypeInfo = NoneTypeInfo
+    is_async: bool = False
+    is_generator: bool = False
+    self_type: TypeInfo | None = None
+    self_replacement: TypeInfo | None = None
+
+
+    def process(self) -> CallTrace:
+        retval = self.returns
+
+        if self.is_generator:
+            y = TypeInfo.from_set(self.yields)
+            s = TypeInfo.from_set(self.sends)
+
+            if self.is_async:
+                retval = TypeInfo.from_type(abc.AsyncGenerator, module="typing", args=(y, s))
+            else:
+                retval = TypeInfo.from_type(abc.Generator, module="typing", args=(y, s, self.returns))
+            
+        type_data = (*self.args, retval)
+
+        if self.self_type and self.self_replacement:
+            self_type = cast(TypeInfo, self.self_type)
+            self_replacement = cast(TypeInfo, self.self_replacement)
+
+            class SelfTransformer(TypeInfo.Transformer):
+                """Replaces 'self' types with the type of the class that defines them,
+                   also setting is_self for possible later replacement with typing.Self."""
+
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    if (
+                        hasattr(node.type_obj, "__mro__")
+                        and self_type.type_obj in cast(type, node.type_obj).__mro__
+                    ):
+                        node = self_replacement.replace(is_self=True)
+
+                    return super().visit(node)
+
+
+            tr = SelfTransformer()
+            type_data = (*(tr.visit(arg) for arg in type_data),)
+
+        return type_data
+
+
+class ObservationsRecorder:
+    def __init__(self):
+        # Finds FuncInfo by their CodeType
+        self._code2func_info: dict[CodeType, FuncInfo] = {}
+
+        # Started, but not (yet) completed traces
+        self._pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = defaultdict(dict)
+
+        # Object attributes: class_key -> attr_name -> set[TypeInfo]
+        self._object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
+
+        self._obs = Observations()
+
+
+    def record_module(
+        self,
+        code: CodeType,
+        frame: FrameType
+    ) -> None:
+        # TODO handle cases where modules are loaded more than once, e.g. through pytest
+        if code.co_filename and code.co_filename not in self._obs.source_to_module_name:
+            if (modname := frame.f_globals.get('__name__', None)):
+                if modname == "__main__":
+                    modname = get_main_module_fqn()
+            else:
+                modname = source_to_module_fqn(Path(code.co_filename))
+
+            self._obs.source_to_module_name[code.co_filename] = modname
+
+
+    def record_function(
+        self,
+        code: CodeType,
+        frame: FrameType,
+        arg_info: inspect.ArgInfo,
+        overrides: FunctionType|FunctionDescriptor|None
+    ) -> None:
+        """Records that a function was visited."""
+
+        if code not in self._code2func_info:
+            arg_names = (
+                *(a for a in arg_info.args),
+                *((arg_info.varargs,) if arg_info.varargs else ()),
+                *((arg_info.keywords,) if arg_info.keywords else ())
+            )
+
+            defaults = get_defaults(code, frame)
+
+            self._code2func_info[code] = func_info = FuncInfo(
+                CodeId.from_code(code),
+                tuple(
+                    ArgInfo(ArgumentName(name), defaults.get(name))
+                    for name in arg_names
+                ),
+                ArgumentName(arg_info.varargs) if arg_info.varargs else None,
+                ArgumentName(arg_info.keywords) if arg_info.keywords else None,
+                overrides
+            )
+            self._obs.func_info[func_info.code_id] = func_info
+
+
+    @staticmethod
+    def _get_arg_types(arg_info: inspect.ArgInfo) -> tuple[TypeInfo, ...]:
+        """Computes the types of the given arguments."""
+        return (
+            *(get_value_type(arg_info.locals[arg_name]) for arg_name in arg_info.args),
+            *(
+                (TypeInfo.from_set({
+                    get_value_type(val) for val in arg_info.locals[arg_info.varargs]
+                }),)
+                if arg_info.varargs else ()
+            ),
+            *(
+                (TypeInfo.from_set({
+                    get_value_type(val) for val in arg_info.locals[arg_info.keywords].values()
+                }),)
+                if arg_info.keywords else ()
+            )
+        )
+
+
+    def record_start(
+        self,
+        code: CodeType,
+        frame: FrameType,
+        arg_info: inspect.ArgInfo
+    ) -> None:
+        """Records a function start."""
+
+        # print(f"record_start {code.co_qualname} {arg_types}")
+
+        self.record_module(code, frame)
+
+        if (code.co_flags & CO_NEWLOCALS):
+            self_type, self_replacement, overrides = get_self_type(code, arg_info)
+            self.record_function(code, frame, arg_info, overrides)
+
+            self._pending_traces[code][id(frame)] = PendingCallTrace(
+                arg_info=arg_info,
+                args=self._get_arg_types(arg_info),
+                is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
+                is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
+                self_type=self_type, self_replacement=self_replacement
+            )
+
+
+    def record_yield(self, code: CodeType, frame: FrameType, yield_value: Any) -> None:
+        """Records a yield."""
+
+        # print(f"record_yield {code.co_qualname}")
+        if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(id(frame))):
+            tr.yields.add(get_value_type(yield_value))
+
+
+    def record_send(self, code: CodeType, frame: FrameType, send_value: Any) -> None:
+        """Records a send."""
+
+        # print(f"record_send {code.co_qualname}")
+        if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(id(frame))):
+            tr.sends.add(get_value_type(send_value))
+
+
+    def _record_variables(self, code: CodeType, frame: FrameType) -> None:
+        """Records variables."""
+        # print(f"record_variables {code.co_qualname}")
+
+        if not options.variables or not (codevars := code2variables.get(code)):
+            return
+
+        # scope_code is guaranteed non-None in code2variables
+        if (func_info := self._code2func_info.get(cast_not_None(codevars.scope_code))):
+            scope_vars = func_info.variables
+        else:
+            scope_vars = self._obs.module_variables[Filename(code.co_filename)]
+
+        f_locals = frame.f_locals
+        value: Any
+        dst: str|None
+        for src, dst in codevars.variables.items():
+            if (value := f_locals.get(src, NO_OBJECT)) is not NO_OBJECT:
+                scope_vars[VariableName(dst)].add(get_value_type(value))
+
+        if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
+            obj_attrs = self._object_attributes[codevars.class_key]
+            for src, dst in codevars.attributes.items():
+                if (value := getattr(self_obj, src, NO_OBJECT)) is not NO_OBJECT:
+                    type_set = obj_attrs[VariableName(src)]
+                    type_set.add(get_value_type(value))
+                    if dst: scope_vars[VariableName(dst)] = type_set
+
+
+    def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:
+        """Records a pending call trace's return type, finishing the trace."""
+        assert tr is not None
+
+        tr.returns = (
+            ret_type if ret_type is not None
+            else (
+                # Generators may still be running, or exit with a GeneratorExit exception; we still
+                # want them marked as returning None, so they can be simplified to Iterator
+                NoneTypeInfo if tr.is_generator else TypeInfo.from_type(typing.NoReturn)
+            )
+        )
+
+        func_info = self._code2func_info[code]
+        func_info.traces.update((tr.process(),))
+
+        # Resample arguments in case they change during execution (e.g., containers)
+        tr.args = self._get_arg_types(tr.arg_info)
+        func_info.traces.update((tr.process(),))
+
+
+    def record_return(self, code: CodeType, frame: FrameType, return_value: Any) -> bool:
+        """Records a return."""
+
+        # print(f"record_return {code.co_qualname}")
+        frame_id = id(frame)
+        if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
+            self._record_return_type(tr, code, get_value_type(return_value))
+            self._record_variables(code, frame)
+            del per_frame[frame_id]
+            return True # found it
+        else:
+            self._record_variables(code, frame)
+
+        return False
+
+
+    def record_no_return(self, code: CodeType, frame: FrameType) -> bool:
+        """Records the lack of a return (e.g., because an exception was raised)."""
+
+        # print(f"record_no_return {code.co_qualname}")
+        frame_id = id(frame)
+        if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
+            self._record_return_type(tr, code, None)
+            self._record_variables(code, frame)
+            del per_frame[frame_id]
+            return True # found it
+        else:
+            self._record_variables(code, frame)
+
+        return False
+
+
+    def clear_pending(self, code: CodeType) -> None:
+        """Discards any pending traces for the given code."""
+        self._pending_traces[code].clear()
+
+
+    def try_close_generators(self) -> None:
+        """Attempts to close any generators that may still be running."""
+        pending_generators = set()
+        for code, per_frame in self._pending_traces.items():
+            if any(tr.is_generator for tr in per_frame.values()):
+                pending_generators.add(code)
+
+        for code in pending_generators:
+            import gc
+            for obj in gc.get_referrers(code):
+                # In Python 3.13+, close() doesn't generate a PY_UNWIND
+                # https://github.com/python/cpython/issues/140373
+                if isinstance(obj, GeneratorType):
+                    try:
+                        obj.throw(GeneratorExit)
+                    except:
+                        pass
+
+
+    def finish_recording(self, main_globals: dict[str, Any]) -> Observations:
+        # Any generators left?
+        for code, per_frame in self._pending_traces.items():
+            for tr in per_frame.values():
+                if tr.is_generator:
+                    self._record_return_type(tr, code, None)
+
+        obs, self._obs = self._obs, Observations()
+        self._code2func_info.clear()
+        self._pending_traces.clear()
+        self._object_attributes.clear()
+
+        # The type map depends on main_globals as well as the on the state
+        # of sys.modules, so we can't postpone them until collect_annotations,
+        # which operate on deserialized data (vs. data just collected).
+        type_name_adjuster = None
+        if options.adjust_type_names:
+            type_name_adjuster = AdjustTypeNamesT(main_globals)
+            obs.transform_types(type_name_adjuster)
+
+        if options.resolve_mocks:
+            obs.transform_types(ResolveMocksT(type_name_adjuster))
+
+        if options.exclude_test_files:
+            # should_skip_function doesn't know to skip test files until they are detected,
+            # so we can't help but get events for test modules while they are being loaded.
+            for f in obs.source_to_module_name.keys() & detected_test_files:
+                del obs.source_to_module_name[f]
+
+        if logger.level == logging.DEBUG:
+            assert (keys := obs.source_to_module_name.keys()) == (oldset := set(
+                t.code_id.file_name
+                for t in obs.func_info.values()
+                if not skip_this_file(t.code_id.file_name)
+            )), f"{keys-oldset=}  {oldset-keys=}"
+
+        return obs
+
+
+def get_inline_arg_types(
+    parents_func: FunctionType|FunctionDescriptor,
+    child_args: tuple[ArgInfo, ...]
+) -> list[TypeInfo|None] | None:
+    """Returns inline type annotations for a parent's method's arguments."""
+
+    if not (co := getattr(parents_func, "__code__", None)):
+        return None
+
+    try:
+        if not (hints := typing.get_type_hints(parents_func)):
+            return None
+    except (NameError, TypeError) as e:
+        logger.info(f"Error getting type hints for {parents_func} " + 
+                    f"({parents_func.__annotations__}): {e}.\n")
+        return None
+
+    return (
+        # First the positional, looking up by their names given in the parent.
+        # Note that for the override to be valid, their signatures must have
+        # the same number of positional arguments.
+        [
+            hint2type(hints[arg]) if arg in hints else None
+            for arg in co.co_varnames[:co.co_argcount]
+        ]
+        +
+        # Then kwonly, going by the order (and quantity) in the child
+        [
+            hint2type(hints[arg.arg_name]) if arg.arg_name in hints else None
+            for arg in child_args[co.co_argcount:]
+        ]
+    )
+
+
+def get_typeshed_arg_types(
+    parents_func: FunctionDescriptor|FunctionType,
+    child_args: tuple[ArgInfo, ...]
+) -> list[TypeInfo|None] | None:
+    """Returns typeshed type annotations for a parent's method's arguments."""
+
+    def find_def(tree: ast.AST, qualified_name: str) -> list[ast.FunctionDef|ast.AsyncFunctionDef]:
+        parts = qualified_name.split('.')
+        results = []
+
+        def visit(node, path):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                full_name = '.'.join(path + [node.name])
+                if full_name == qualified_name:
+                    results.append(node)
+            elif isinstance(node, ast.ClassDef):
+                new_path = path + [node.name]
+                for body_item in node.body:
+                    visit(body_item, new_path)
+            elif isinstance(node, ast.Module):
+                for body_item in node.body:
+                    visit(body_item, path)
+
+        visit(tree, [])
+        return results
+
+    if stub_ast := typeshed.get_stub_ast(parents_func.__module__):    # FIXME replace __main__?
+        if defs := find_def(stub_ast, parents_func.__qualname__):
+            #print(ast.dump(defs[0], indent=4))
+
+            # FIXME use eval() in the context of the module and hint2type so
+            # as not to have an unqualified string for a "type", and also so
+            # as not to lack a type_obj
+
+            # First the positional, looking up by their names given in the parent.
+            # Note that for the override to be valid, their signatures must have
+            # the same number of positional arguments.
+            pos_args = [
+                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
+                for a in (defs[0].args.posonlyargs + defs[0].args.args)
+                if isinstance(a, ast.arg)
+            ]
+
+            # Then kwonly, going by the order (and quantity) in the child
+            kw_args = [
+                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
+                for child_arg_name in child_args[len(pos_args):]
+                for a in defs[0].args.kwonlyargs
+                if isinstance(a, ast.arg)
+                if a.arg == child_arg_name
+            ]
+
+            return pos_args + kw_args
+
+    return None
+
+
+def get_self_type(code, args) -> tuple[TypeInfo|None, TypeInfo|None, FunctionType|FunctionDescriptor|None]:
+    if args.args:
+        first_arg = args.locals[args.args[0]]
+
+        name = code.co_name
+        if (
+            name.startswith("__")
+            and not name.endswith("__")
+            and len(parts := code.co_qualname.split(".")) > 1
+        ):
+            # parts[-2] may be "<locals>"... that's ok, as we then have
+            # a local function and there is no 'Self' to find.
+            name = f"_{parts[-2]}{name}"    # private attribute/method
+
+        # if type(first_arg) is type, we may have a @classmethod
+        first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
+
+        # @property?
+        is_property = isinstance(getattr(type(first_arg), name, None), property)
+
+        # find class that defines that name, in case it's inherited
+        defining_class, next_index = next(
+            (
+                (ancestor, i+1)
+                for i, ancestor in enumerate(first_arg_class.__mro__)
+                if (
+                    (is_property and name in ancestor.__dict__)
+                    or (
+                        (f := unwrap(ancestor.__dict__.get(name, None)))
+                        and getattr(f, "__code__", None) is code
+                    )
+                )
+            ),
+            (None, None)
+        )
+
+        if not defining_class:
+            return None, None, None
+
+        # The first argument is 'Self' and the type of 'Self', in the context of
+        # its definition, is "defining_class"; now let's see if this method
+        # overrides another
+        overrides = None
+        if not (
+            is_property
+            or name in ('__init__', '__new__')  # irrelevant for Liskov
+        ):
+            overrides = next(
+                (
+                    # wrapper_descriptor and possibly other native objects may lack __module__
+                    f if (isinstance(f, FunctionType) and hasattr(f, "__module__"))
+                    else FunctionDescriptor(ancestor.__module__, f.__qualname__)
+                    for ancestor in first_arg_class.__mro__[next_index:]
+                    if (f := unwrap(ancestor.__dict__.get(name, None)))
+                    if getattr(f, "__code__", None) is not code
+                ),
+                None
+            )
+
+        return get_type_name(first_arg_class), get_type_name(defining_class), overrides
+
+    return None, None, None
+
+
+def get_defaults(code, frame) -> dict[str, TypeInfo]:
+    if (function := find_function(frame, code)):
+        return {
+            param_name: get_value_type(param.default)
+            for param_name, param in inspect.signature(function).parameters.items()
+            if param.default != inspect._empty
+        }
+
+    return {}
+
+
