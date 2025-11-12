@@ -8,7 +8,7 @@ from libcst.metadata import MetadataWrapper, PositionProvider, QualifiedNameProv
 from righttyper.variable_binding import VariableBindingProvider
 import re
 
-from righttyper.typeinfo import TypeInfo, UnknownTypeInfo
+from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_types import Filename, CodeId, FunctionName
 from righttyper.annotation import FuncAnnotation, ModuleVars
 
@@ -725,9 +725,8 @@ class UnifiedTransformer(cst.CSTTransformer):
             def visit(me, node: TypeInfo) -> TypeInfo:
                 if (
                     node.typevar_name is None                       # we'll define these
-                    and (fullname := node.fullname()) != 'types.UnionType' # ignore: used to build sets
-                    and fullname != ''                                     # ignore: used to build lists
-                    and fullname.split('.')[0] not in self.known_names[-1]
+                    and not (node.is_union() or node.is_list())
+                    and node.fullname().split('.')[0] not in self.known_names[-1]
                     and node.module not in self.imported_modules
                 ):
                     me.types.add(node.fullname())
