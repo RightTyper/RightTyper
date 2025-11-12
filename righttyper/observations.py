@@ -264,12 +264,12 @@ class Observations:
 
                             node = node.replace(args=(
                                 TypeInfo.list([
-                                    old if (old := get_old_param(i)) is not UnknownTypeInfo else clone(a[1])
+                                    old if not (old := get_old_param(i)).is_unknown else clone(a[1])
                                     for i, a in enumerate(ann.args[int(node.is_bound):])
                                 ])
                                 if not (func_info.varargs or func_info.kwargs) else
                                 ...,
-                                old_retval if old_retval is not UnknownTypeInfo else clone(ann.retval)
+                                old_retval if not old_retval.is_unknown else clone(ann.retval)
                             ))
                         else:
                             node = clone(ann.retval)

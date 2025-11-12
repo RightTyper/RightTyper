@@ -19,6 +19,7 @@ class TypeInfo:
     code_id: CodeId | None = field(default=None, compare=False)  # if a callable, generator or coroutine, the CodeId
     is_bound: bool = field(default=False, compare=False)    # if a callable, whether bound
     type_obj: type|SpecialForms|None = field(default=None, compare=False)
+    is_unknown: bool = field(default=False, compare=False)  # for UnknownTypeInfo; indicates we don't know the type.
     typevar_index: int = field(default=0, compare=False)
     typevar_name: str|None = field(default=None, compare=False) # TODO delete me?
 
@@ -166,7 +167,7 @@ class TypeInfo:
 
 
 NoneTypeInfo: Final = TypeInfo("", "None", type_obj=types.NoneType)
-UnknownTypeInfo: Final = TypeInfo.from_type(typing.Any)
+UnknownTypeInfo: Final = TypeInfo.from_type(typing.Any, is_unknown=True)
 AnyTypeInfo: Final = TypeInfo.from_type(typing.Any)
 
 
