@@ -8,12 +8,14 @@ from righttyper.righttyper_types import CodeId
 # The typing module does not define a type for such "typing special forms".
 type SpecialForms = typing.Any|typing.Never
 
+# What is allowed in TypeInfo.args
+type TypeInfoArg = TypeInfo|str|types.EllipsisType
 
 @dataclass(eq=True, frozen=True)
 class TypeInfo:
     module: str
     name: str
-    args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()    # arguments within []
+    args: tuple[TypeInfoArg, ...] = tuple()    # arguments within []
 
     # These fields are included for convenience, but don't affect what type is meant
     code_id: CodeId | None = field(default=None, compare=False)  # if a callable, generator or coroutine, the CodeId
@@ -123,7 +125,7 @@ class TypeInfo:
 
     def to_set(self) -> set["TypeInfo"]:
         if self.is_union():
-            return set(t for t in self.args)
+            return set(t for t in self.args if isinstance(t, TypeInfo))
 
         return {self}
 

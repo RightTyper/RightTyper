@@ -27,7 +27,7 @@ from righttyper.type_transformers import (
     DepthLimitT,
     MakePickleableT
 )
-from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo, CallTrace
+from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownTypeInfo, CallTrace
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, cast_not_None
 from righttyper.annotation import FuncAnnotation, ModuleVars
 from righttyper.righttyper_utils import source_to_module_fqn, get_main_module_fqn, skip_this_file, detected_test_files
@@ -259,24 +259,34 @@ class Observations:
 
                             old_retval = node.args[-1] if node.args else UnknownTypeInfo
 
-                            def get_old_param(i: int) -> TypeInfo:
+                            def get_old_param(i: int) -> TypeInfoArg:
                                 return old_params[i] if i < len(old_params) else UnknownTypeInfo
+
+                            def is_unknown(t: TypeInfoArg) -> bool:
+                                return isinstance(t, TypeInfo) and t.is_unknown
 
                             node = node.replace(args=(
                                 TypeInfo.list([
-                                    old if not (old := get_old_param(i)).is_unknown else clone(a[1])
+                                    old if not is_unknown(old := get_old_param(i)) else clone(a[1])
                                     for i, a in enumerate(ann.args[int(node.is_bound):])
                                 ])
                                 if not (func_info.varargs or func_info.kwargs) else
                                 ...,
-                                old_retval if not old_retval.is_unknown else clone(ann.retval)
+                                old_retval if not is_unknown(old_retval) else clone(ann.retval)
                             ))
                         else:
                             node = clone(ann.retval)
 
                 if node.type_obj is PostponedArg0:
                     # e.g. PostponedArg0[Iterator[X]] -> X
-                    node = node.args[0].args[0] if node.args and node.args[0].args else UnknownTypeInfo
+                    node = (
+                        node.args[0].args[0]
+                        if node.args
+                            and isinstance(node.args[0], TypeInfo)
+                            and node.args[0].args
+                            and isinstance(node.args[0].args[0], TypeInfo)
+                        else UnknownTypeInfo
+                    )
 
                 return node
 
