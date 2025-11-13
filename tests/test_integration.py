@@ -53,8 +53,11 @@ def runmypy(tmp_cwd, request):
 
 
 def rt_run(*args, capture: bool = False):
-    # --no-use-multiprocessing speeds up tests
-    run_args = [sys.executable, '-m', 'righttyper', 'run', '--no-use-multiprocessing', *args]
+    if args and args[0] != 'process':
+        # --no-use-multiprocessing speeds up tests
+        args = ('run', '--no-use-multiprocessing', *args)
+
+    run_args = [sys.executable, '-m', 'righttyper', *args]
 
     if capture:
         p = subprocess.run(run_args, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -5163,5 +5166,47 @@ def test_variables_special_typing(prev, type_mod, coll_mod):
         a = {type_mod}Annotated[int, "meta"]
         X = {coll_mod}namedtuple("X", [])
         Y = {type_mod}NamedTuple("Y", [])
+        """
+    )
+
+
+def test_merge_executions():
+    # This replicates a bug while running tqdm tests
+    Path("t.py").write_text(textwrap.dedent("""\
+        import sys
+
+        X = 0
+
+        def foo(x):
+            y = x
+            global X
+            X = x
+
+        if sys.argv[1] == 'foo':
+            foo("bar!")
+        else:
+            foo(0)
+        """
+    ))
+
+    rt_run('--only-collect', '--ignore-annotations', 't.py', 'foo')
+    rt_run('--only-collect', '--ignore-annotations', 't.py', 'int')
+    rt_run('process')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        import sys
+
+        X: int|str = 0
+
+        def foo(x: int|str) -> None:
+            y: int|str = x
+            global X
+            X = x
+
+        if sys.argv[1] == 'foo':
+            foo("bar!")
+        else:
+            foo(0)
         """
     )

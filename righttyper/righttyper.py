@@ -8,7 +8,7 @@ import os
 import runpy
 import sys
 import platform
-import pickle
+import dill as pickle
 import datetime
 import json
 import subprocess
@@ -42,14 +42,14 @@ from righttyper.righttyper_utils import should_skip_function, detected_test_modu
 from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_types import CodeId, Filename, FunctionName
 from righttyper.annotation import FuncAnnotation, ModuleVars
-from righttyper.observations import ObservationsRecorder
+from righttyper.observations import Observations, ObservationsRecorder
 from righttyper.options import Options, options
 from righttyper.logger import logger
 from righttyper.atomic import AtomicCounter
 
 
-PKL_FILE_NAME = f"{TOOL_NAME}.rt"
-PKL_FILE_VERSION = 4
+PKL_FILE_NAME = TOOL_NAME+"-{N}.rt"
+PKL_FILE_VERSION = 5
 
 
 rec = ObservationsRecorder()
@@ -329,8 +329,14 @@ def output_changes(
             print("".join(diffs), file=file)
 
 
-def emit_json(collected: dict[str, Any], code_changes: list[CodeChanges]) -> dict[str, Any]:
-    file2module = {file: module for file, module in collected['files']}
+def emit_json(
+    files: list[tuple[Filename, str]],
+    type_annotations: dict[CodeId, FuncAnnotation],
+    module_vars: dict[Filename, ModuleVars],
+    code_changes: list[CodeChanges]
+) -> dict[str, Any]:
+
+    file2module = {file: module for file, module in files}
     file_func2sigs = {
         (file, funcname): (old_sig, new_sig)
         for file, changes in code_changes
@@ -351,15 +357,15 @@ def emit_json(collected: dict[str, Any], code_changes: list[CodeChanges]) -> dic
             for filename in sorted(
                 {
                     funcid.file_name
-                    for funcid in collected.get('type_annotations', {})
+                    for funcid in type_annotations
                 }
-                | set(collected.get('module_vars', {}))
+                | set(module_vars)
             )
         }
     }
 
     # fill in functions
-    for funcid, ann in collected['type_annotations'].items():
+    for funcid, ann in type_annotations.items():
         if funcid.func_name.endswith(">"):  # <genexpr> and such
             continue
 
@@ -395,7 +401,7 @@ def emit_json(collected: dict[str, Any], code_changes: list[CodeChanges]) -> dic
             func_entry['new_sig'] = changes[1]
 
     # fill in module vars
-    for filename, mv in collected.get('module_vars', dict()).items():
+    for filename, mv in module_vars.items():
         data['files'][filename]['vars'] = {
             k: str(v).replace(".<locals>.", ".")
             for k, v in mv.variables
@@ -404,15 +410,15 @@ def emit_json(collected: dict[str, Any], code_changes: list[CodeChanges]) -> dic
     return data
 
 
-def process_collected(collected: dict[str, Any]):
-    code_changes: list[CodeChanges] = process_files(
-        collected['files'],
-        collected['type_annotations'],
-        collected['module_vars']
-    )
+def process_obs(obs: Observations):
+    files = list(obs.source_to_module_name.items())
+    type_annotations, module_vars = obs.collect_annotations()
+    logger.debug(f"generated {len(type_annotations)} annotation(s)")
+
+    code_changes: list[CodeChanges] = process_files(files, type_annotations, module_vars)
 
     if options.json_output:
-        data = emit_json(collected, code_changes)
+        data = emit_json(files, type_annotations, module_vars, code_changes)
         with open(f"{TOOL_NAME}.json", "w") as f:
             json.dump(data, f, indent=2)
 
@@ -718,7 +724,7 @@ def cli(debug: bool):
     "--only-collect",
     default=False,
     is_flag=True,
-    help=f"Rather than immediately process collect data, save it to {PKL_FILE_NAME}." +\
+    help=f"Rather than immediately process collect data, save it to \"{PKL_FILE_NAME.format(N='N')}\"." +\
           " You can later process using RightTyper's \"process\" command."
 )
 @click.option(
@@ -912,31 +918,43 @@ def run(
         assert main_globals is not None
         obs = rec.finish_recording(main_globals)
 
-        files = list(obs.source_to_module_name.items())
-        type_annotations, module_vars = obs.collect_annotations()
+        logger.debug(f"observed {len(obs.source_to_module_name)} file(s)")
 
         if logger.level == logging.DEBUG:
             for m in detected_test_modules:
                 logger.debug(f"test module: {m}")
 
-        logger.debug(f"observed {len(files)} file(s)")
-        logger.debug(f"generated {len(type_annotations)} annotation(s)")
-
-        collected = {
-            'version': PKL_FILE_VERSION,
-            'files': files,
-            'type_annotations': type_annotations,
-            'module_vars': module_vars,
-            'options': options
-        }
-
         if only_collect:
-            with open(PKL_FILE_NAME, "wb") as pklf:
-                pickle.dump(collected, pklf)
+            from righttyper.type_transformers import MakePickleableT
+            obs.transform_types(MakePickleableT())
 
-            print(f"Collected types saved to {PKL_FILE_NAME}.")
+            collected = {
+                'file_version': PKL_FILE_VERSION,
+                'software': TOOL_NAME,
+                'version': importlib.metadata.version(TOOL_NAME),
+                'timestamp': datetime.datetime.now().isoformat(),
+                'options': options,
+                'script': Path(script).resolve(),
+                'observations': obs
+            }
+
+            index = 1
+            while True:
+                filename = Path(PKL_FILE_NAME.format(N=index))
+                try:
+                    with filename.open("xb") as pklf:
+                        pickle.dump(collected, pklf)
+                        break
+
+                except FileExistsError:
+                    index += 1
+
+            print(f"Collected types saved to {filename}.")
         else:
-            process_collected(collected)
+#            from righttyper.type_transformers import MakePickleableT, LoadTypeObjT
+#            obs.transform_types(MakePickleableT())
+#            obs.transform_types(LoadTypeObjT())
+            process_obs(obs)
 
         end_time = time.perf_counter()
         logger.info(f"Finished in {end_time-start_time:.0f}s")
@@ -969,15 +987,26 @@ def run(
 def process():
     """Processes type information collected with the 'run' command."""
 
-    try:
-        with open(PKL_FILE_NAME, "rb") as f:
+    obs_list = []
+    script = None
+    for filename in Path('.').glob(PKL_FILE_NAME.format(N='*')):
+        with filename.open("rb") as f:
             pkl = pickle.load(f)
-    except FileNotFoundError:
-        print(f"Error: No '{PKL_FILE_NAME}' found to process.")
-        sys.exit(1)
 
-    if pkl.get('version') != PKL_FILE_VERSION:
-        print(f"Error: Unsupported {PKL_FILE_NAME} version: {pkl.get('version')}, expected {PKL_FILE_VERSION}")
+            if pkl.get('file_version') != PKL_FILE_VERSION:
+                print(f"Error: Unsupported version in {filename}: " +\
+                      f"{pkl.get('file_version')}, expected {PKL_FILE_VERSION}")
+                sys.exit(1)
+
+            if script and pkl['script'] != script:
+                print(f"Error: {filename} was collected for {pkl['script']}, but previous file(s) were for {script}")
+                sys.exit(1)
+
+            # TODO check for compatible options?
+            obs_list.append(pkl['observations'])
+
+    if not obs_list:
+        print("Error: No files found")
         sys.exit(1)
 
     # Copy run options, but be careful not to replace instance, as there may be
@@ -986,7 +1015,13 @@ def process():
     for key, value in asdict(pkl['options']).items():
         setattr(options, key, value)
 
-    process_collected(pkl)
+    obs = obs_list[0]
+    for obs2 in obs_list[1:]:
+        obs.merge_observations(obs2)
+
+    from righttyper.type_transformers import LoadTypeObjT
+    obs.transform_types(LoadTypeObjT())
+    process_obs(obs)
 
 
 @cli.command()
