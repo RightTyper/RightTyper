@@ -8,17 +8,20 @@ from righttyper.righttyper_types import CodeId
 # The typing module does not define a type for such "typing special forms".
 type SpecialForms = typing.Any|typing.Never
 
+# What is allowed in TypeInfo.args
+type TypeInfoArg = TypeInfo|str|types.EllipsisType
 
 @dataclass(eq=True, frozen=True)
 class TypeInfo:
     module: str
     name: str
-    args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()    # arguments within []
+    args: tuple[TypeInfoArg, ...] = tuple()    # arguments within []
 
     # These fields are included for convenience, but don't affect what type is meant
     code_id: CodeId | None = field(default=None, compare=False)  # if a callable, generator or coroutine, the CodeId
     is_bound: bool = field(default=False, compare=False)    # if a callable, whether bound
     type_obj: type|SpecialForms|None = field(default=None, compare=False)
+    is_unknown: bool = field(default=False, compare=False)  # for UnknownTypeInfo; indicates we don't know the type.
     typevar_index: int = field(default=0, compare=False)
     typevar_name: str|None = field(default=None, compare=False) # TODO delete me?
 
@@ -122,7 +125,7 @@ class TypeInfo:
 
     def to_set(self) -> set["TypeInfo"]:
         if self.is_union():
-            return set(t for t in self.args)
+            return set(t for t in self.args if isinstance(t, TypeInfo))
 
         return {self}
 
@@ -166,7 +169,7 @@ class TypeInfo:
 
 
 NoneTypeInfo: Final = TypeInfo("", "None", type_obj=types.NoneType)
-UnknownTypeInfo: Final = TypeInfo.from_type(typing.Any)
+UnknownTypeInfo: Final = TypeInfo.from_type(typing.Any, is_unknown=True)
 AnyTypeInfo: Final = TypeInfo.from_type(typing.Any)
 
 

@@ -550,7 +550,7 @@ def test_transform_empty_body_but_from_future():
 
 def test_transform_deletes_type_hint_comments_in_header():
     code = cst.parse_module(textwrap.dedent("""\
-        def foo(x, y): # type: (int, int) -> Any
+        def foo(x, y): # foo boo # type: (int, int) -> Any
             return (x+y)/2
 
         def bar(x):   # type: (Any) -> None
@@ -578,7 +578,7 @@ def test_transform_deletes_type_hint_comments_in_header():
 
     code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: int, y: int) -> None:
+        def foo(x: int, y: int) -> None: # foo boo
             return (x+y)/2
     """)
 
@@ -593,7 +593,7 @@ def test_transform_deletes_type_hint_comments_in_header():
 def test_transform_deletes_type_hint_comments_in_parameters():
     code = cst.parse_module(textwrap.dedent("""\
         def foo(
-            x,  # type: int
+            x,  # typert...  # type: int
             y   # type: float
         ):
             # type: (...) -> Any
@@ -628,7 +628,7 @@ def test_transform_deletes_type_hint_comments_in_parameters():
     code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(
-            x: int,
+            x: int,  # typert...
             y: int
         ) -> None:
             return (x+y)/2
@@ -2855,4 +2855,18 @@ def test_type_keyword_is_known():
     assert function == textwrap.dedent("""\
         def foo(x: MyStr) -> None:
             pass
+        """)
+
+def test_transform_deletes_type_hint_for_variable():
+    code = cst.parse_module(textwrap.dedent("""\
+        g = 1.0  # typeepty something...  #  type: None
+        h = 0 # not modified, leave as-is # type: int
+    """))
+
+    t = mk_var_transformer('foo.py', code)
+
+    code = t.transform_code(code)
+    assert code.code == textwrap.dedent("""\
+        g: float = 1.0  # typeepty something...
+        h = 0 # not modified, leave as-is # type: int
         """)

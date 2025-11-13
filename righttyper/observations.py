@@ -27,7 +27,7 @@ from righttyper.type_transformers import (
     DepthLimitT,
     MakePickleableT
 )
-from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo, CallTrace
+from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownTypeInfo, CallTrace
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, cast_not_None
 from righttyper.annotation import FuncAnnotation, ModuleVars
 from righttyper.righttyper_utils import source_to_module_fqn, get_main_module_fqn, skip_this_file, detected_test_files
@@ -124,7 +124,7 @@ class Observations:
         self.module_variables: dict[Filename, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
 
         # Mapping of sources to their module names
-        self.source_to_module_name: dict[str, str|None] = {}
+        self.source_to_module_name: dict[Filename, str] = {}
 
 
     def transform_types(self, tr: TypeInfo.Transformer) -> None:
@@ -151,6 +151,35 @@ class Observations:
         for var_dict in list(self.module_variables.values()):
             for var_name, var_types in list(var_dict.items()):
                 var_dict[var_name] = set(tr.visit(t) for t in var_types)
+
+
+    def merge_observations(self, obs2: "Observations") -> None:
+        """Merges other observations into this one."""
+
+        for func_id, func_info2 in obs2.func_info.items():
+            if (func_info := self.func_info.get(func_id)):
+                for attr in ('args', 'varargs', 'kwargs', 'overrides'):
+                    if getattr(func_info, attr) != getattr(func_info2, attr):
+                        raise ValueError("Incompatible {attr} for {func_id.func_name}:\n" +\
+                                        f"    {getattr(func_info, attr)}\n" +\
+                                        f"    {getattr(func_info2, attr)}"
+                        )
+
+                func_info.traces.update(func_info2.traces)
+
+                for varname, typeset in func_info2.variables.items():
+                    func_info.variables[varname] |= typeset
+            else:
+                self.func_info[func_id] = func_info2
+
+        for filename, var_dict2 in obs2.module_variables.items():
+            if (var_dict := self.module_variables.get(filename)):
+                for varname, typeset in var_dict2.items():
+                    var_dict[varname] |= typeset
+            else:
+                self.module_variables[filename] = var_dict2
+
+        self.source_to_module_name |= obs2.source_to_module_name
 
 
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars]]:
@@ -250,7 +279,7 @@ class Observations:
                 if node.code_id and (func_info := self.func_info.get(node.code_id)):
                     if (ann := mk_annotation(func_info)):
                         # for Callable, we also merge arguments from annotations with observed ones.
-                        if node.type_obj is abc.Callable:
+                        if node.type_obj in (abc.Callable, typing.Callable):
                             old_params = (
                                 node.args[0].args
                                 if node.args and isinstance(node.args[0], TypeInfo) and node.args[0].is_list()
@@ -259,24 +288,34 @@ class Observations:
 
                             old_retval = node.args[-1] if node.args else UnknownTypeInfo
 
-                            def get_old_param(i: int) -> TypeInfo:
+                            def get_old_param(i: int) -> TypeInfoArg:
                                 return old_params[i] if i < len(old_params) else UnknownTypeInfo
+
+                            def is_unknown(t: TypeInfoArg) -> bool:
+                                return isinstance(t, TypeInfo) and t.is_unknown
 
                             node = node.replace(args=(
                                 TypeInfo.list([
-                                    old if (old := get_old_param(i)) is not UnknownTypeInfo else clone(a[1])
+                                    old if not is_unknown(old := get_old_param(i)) else clone(a[1])
                                     for i, a in enumerate(ann.args[int(node.is_bound):])
                                 ])
                                 if not (func_info.varargs or func_info.kwargs) else
                                 ...,
-                                old_retval if old_retval is not UnknownTypeInfo else clone(ann.retval)
+                                old_retval if not is_unknown(old_retval) else clone(ann.retval)
                             ))
                         else:
                             node = clone(ann.retval)
 
                 if node.type_obj is PostponedArg0:
                     # e.g. PostponedArg0[Iterator[X]] -> X
-                    node = node.args[0].args[0] if node.args and node.args[0].args else UnknownTypeInfo
+                    node = (
+                        node.args[0].args[0]
+                        if node.args
+                            and isinstance(node.args[0], TypeInfo)
+                            and node.args[0].args
+                            and isinstance(node.args[0].args[0], TypeInfo)
+                        else UnknownTypeInfo
+                    )
 
                 return node
 
@@ -411,7 +450,8 @@ class ObservationsRecorder:
             else:
                 modname = source_to_module_fqn(Path(code.co_filename))
 
-            self._obs.source_to_module_name[code.co_filename] = modname
+            assert modname
+            self._obs.source_to_module_name[Filename(code.co_filename)] = modname
 
 
     def record_function(

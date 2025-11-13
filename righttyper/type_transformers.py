@@ -94,7 +94,7 @@ class DepthLimitT(TypeInfo.Transformer):
                 # for containers, we can simply delete arguments (they default to Any)
                 if (
                     (type(t.type_obj) is type and issubclass(t.type_obj, abc.Container))
-                    or t.type_obj is abc.Callable
+                    or t.type_obj in (abc.Callable, typing.Callable)
                 ):
                     self._maxLevel = self._level
                     return t.replace(args=())
@@ -161,7 +161,7 @@ class GeneratorToIteratorT(TypeInfo.Transformer):
         node = super().visit(node)
 
         if (
-            node.type_obj is abc.Generator
+            node.type_obj in (abc.Generator, typing.Generator)
             and len(node.args) == 3
             and node.args[1] == NoneTypeInfo
             and node.args[2] == NoneTypeInfo
@@ -172,10 +172,46 @@ class GeneratorToIteratorT(TypeInfo.Transformer):
 
 
 class MakePickleableT(TypeInfo.Transformer):
-    """Clears type_obj on all TypeInfo: annotations are pickled by 'multiprocessing',
-       but these objects may not be pickleable.
+    """Clears type_obj on all TypeInfo, making them pickleable.
+       Pickling is needed for saving, but also done by the multiprocessing module.
     """
     def visit(self, node: TypeInfo) -> TypeInfo:
         if node.type_obj is not None:
             node = node.replace(type_obj=None)
         return super().visit(node)
+
+
+class LoadTypeObjT(TypeInfo.Transformer):
+    """Loads TypeInfo's type_obj (e.g., cleared by MakePickleableT) by its module and name."""
+
+    types_names: typing.ClassVar[set[str]] = set(types.__all__)
+
+    @classmethod
+    def load_object(cls, node: TypeInfo) -> object:
+        import importlib
+
+        if node.is_list() or '.<locals>.' in node.name:
+            return None
+
+        if node.fullname() == 'None':
+            return types.NoneType
+
+        parts = node.name.split('.')
+        modname = node.module if node.module else (
+            'types' if parts[0] in cls.types_names else 'builtins'
+        )
+
+        try:
+            obj = importlib.import_module(modname)
+        except:
+            return None
+
+        for part in parts:
+            obj = getattr(obj, part)
+        return obj
+    
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        node = super().visit(node)
+        if node.type_obj is None and (type_obj := self.load_object(node)):
+            node = node.replace(type_obj=type_obj)
+        return node

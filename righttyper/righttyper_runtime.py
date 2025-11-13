@@ -26,7 +26,7 @@ import typing
 from pathlib import Path
 
 from righttyper.random_dict import RandomDict
-from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
+from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
 from righttyper.righttyper_types import Filename, FunctionName, CodeId
 from righttyper.righttyper_utils import is_test_module, get_main_module_fqn
 from righttyper.options import options
@@ -546,7 +546,7 @@ def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
         
         if type(getitem) in (FunctionType, MethodType): # get full type from runtime observations
             callable_type = type_from_annotations(getitem)
-            retval: TypeInfo|None = callable_type.args[-1] if callable_type.args else None
+            retval: TypeInfoArg|None = callable_type.args[-1] if callable_type.args else None
 
             if not retval:
                 retval = UnknownTypeInfo.replace(code_id=CodeId.from_code(getitem.__code__))
