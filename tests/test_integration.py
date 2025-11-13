@@ -36,6 +36,8 @@ def runmypy(tmp_cwd, request):
     ):
         return
 
+    mypy_args = request.node.get_closest_marker('mypy_args')
+
     # if we are specifying a Python version in the test, have mypy check for that as well
     python_version = (
         ('--python-version', request.node.callspec.params.get('python_version'))
@@ -44,7 +46,7 @@ def runmypy(tmp_cwd, request):
         else ()
     )
     from mypy import api
-    result = api.run([*python_version, '.'])
+    result = api.run([*python_version, *(mypy_args.args if mypy_args else ()), '.'])
     if result[2]:
         print(result[0])
         filename = result[0].split(':')[0]
@@ -3003,6 +3005,7 @@ def test_class_properties():
     assert "def x(self: Self) -> None:" in output               # deleter
 
 
+@pytest.mark.mypy_args('--disable-error-code=attr-defined') # because we're reaching into _C__x
 def test_class_properties_private():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
@@ -3022,9 +3025,9 @@ def test_class_properties_private():
                 del self._x
 
         c = C()
-        c._C__x = 10  # type: ignore[assignment, attr-defined]
-        y = c._C__x   # type: ignore[attr-defined]
-        del c._C__x   # type: ignore[attr-defined]
+        c._C__x = 10
+        y = c._C__x
+        del c._C__x
         """
     ))
 

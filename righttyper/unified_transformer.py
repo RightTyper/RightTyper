@@ -74,17 +74,6 @@ _TYPING_TYPES : frozenset[str] = frozenset({
     t for t in typing.__all__
 })
 
-# Regex for a type hint comment
-_TYPE_HINT_COMMENT = re.compile(
-    r"#\stype:\s*[^\s]+"
-)
-
-
-# Regex for a function and retval type hint comment
-_TYPE_HINT_COMMENT_FUNC = re.compile(
-    r"#\stype:\s*\([^\)]*\)\s*->\s*[^\s]+"
-)
-
 
 def _dotted_name_to_nodes(name: str) -> cst.Attribute | cst.Name:
     """Creates Attribute/Name to build a module name, dotted or not."""
@@ -120,18 +109,6 @@ def _nodes_to_all_dotted_names(node: cst.Attribute|cst.Name|cst.BaseExpression) 
 
     assert isinstance(node, cst.Name), f"{node=}"
     return [node.value]
-
-def _get_str_attr(obj: object, path: str) -> str|None:
-    """Looks for a str-valued attribute along the given dot-separated attribute path."""
-    for elem in path.split('.'):
-        if obj and isinstance(obj, (list, tuple)):
-            obj = obj[0]
-
-        if (obj := getattr(obj, elem, None)) is None:
-            break
-
-    return obj if isinstance(obj, str) else None
-
 
 def _quote(s: str) -> str:
     s = s.replace('\\', '\\\\')
@@ -348,6 +325,9 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         # A map indicating whether classes seen in this module inherit from enum.Enum
         self.class_is_enum: dict[str, bool] = dict()
+
+        # The set of variable assignments we're modifying
+        self.modified_assignments: set[cst.CSTNode] = set()
         return True
 
 
@@ -467,6 +447,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             [cst.SimpleStatementLine([old])],
             [cst.SimpleStatementLine([new])]
         ))
+        self.modified_assignments.add(new)
 
 
     def _seems_type_like(self, expr: cst.BaseExpression | None) -> bool:
@@ -657,6 +638,18 @@ class UnifiedTransformer(cst.CSTTransformer):
         return True
 
 
+    def leave_SimpleStatementLine(
+        self,
+        node: cst.SimpleStatementLine,
+        updated_node: cst.SimpleStatementLine
+    ) -> cst.SimpleStatementLine:
+        return (
+            updated_node.visit(TypeHintDeleter())
+            if any(stmt in self.modified_assignments for stmt in updated_node.body)
+            else updated_node
+        )
+
+
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
         name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.append(node.name.value)
@@ -768,26 +761,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 annotation=cst.Annotation(annotation=annotation_expr)
             )
 
-        # remove per-parameter type hint comment for non-last parameter
-        if ((comment := _get_str_attr(new_par, "comma.whitespace_after.first_line.comment.value"))
-            and _TYPE_HINT_COMMENT.match(comment)):
-            new_par = new_par.with_changes(
-                comma=new_par.comma.with_changes(   # type: ignore[union-attr]
-                    whitespace_after=new_par.comma.whitespace_after.with_changes( # type: ignore[union-attr]
-                        first_line=cst.TrailingWhitespace()
-                    )
-                )
-            )
-
-        # remove per-parameter type hint comment for last parameter
-        if ((comment := _get_str_attr(new_par, "whitespace_after_param.first_line.comment.value"))
-            and _TYPE_HINT_COMMENT.match(comment)):
-            new_par = new_par.with_changes(
-                whitespace_after_param=new_par.whitespace_after_param.with_changes(
-                    first_line=cst.TrailingWhitespace()
-                )
-            )
-
+        new_par = new_par.visit(TypeHintDeleter())
         return new_par
 
     def leave_FunctionDef(
@@ -924,23 +898,24 @@ class UnifiedTransformer(cst.CSTTransformer):
                             returns=cst.Annotation(annotation=annotation_expr),
                         )
 
-                    # remove "(...) -> retval"-style type hint comment
-                    if ((comment := _get_str_attr(updated_node, "body.body.leading_lines.comment.value"))
-                        and _TYPE_HINT_COMMENT_FUNC.match(comment)):
+                    if updated_node.body.body:
+                        # delete any type hint in empty 1st body line
                         updated_node = updated_node.with_changes(
                             body=updated_node.body.with_changes(
-                                body=(updated_node.body.body[0].with_changes(leading_lines=[]),
-                                      *updated_node.body.body[1:])
+                                body=[
+                                    updated_node.body.body[0].visit(TypeHintDeleter()),
+                                    *updated_node.body.body[1:]
+                                ]
                             )
                         )
 
-                # remove single-line type hint comment in the same line as the 'def'
-                if ((comment := _get_str_attr(updated_node, "body.header.comment.value"))
-                    and _TYPE_HINT_COMMENT_FUNC.match(comment)):
+                if hasattr(updated_node.body, 'header'):
+                    # delete any type hint in the same line as the 'def'
                     updated_node = updated_node.with_changes(
                         body=updated_node.body.with_changes(
-                            header=cst.TrailingWhitespace()))
-
+                            header=updated_node.body.header.visit(TypeHintDeleter())
+                        )
+                    )
 
             original_overloads = overloads
             if self.override_annotations:
@@ -1221,3 +1196,38 @@ def list_rindex(lst: list, item: object) -> int:
         return -1 - lst[::-1].index(item)
     except ValueError:
         return 0
+
+
+class TypeHintDeleter(cst.CSTTransformer):
+    """Deletes type hint comments."""
+
+    _TYPE_HINT_COMMENT = re.compile(r"\s*#\s+type:\s.*")
+
+
+    def leave_EmptyLine(self, node: cst.EmptyLine, updated: cst.EmptyLine) -> cst.EmptyLine|cst.RemovalSentinel:
+        if not updated.comment or not self._TYPE_HINT_COMMENT.search(updated.comment.value):
+            return updated
+
+        comment = self._TYPE_HINT_COMMENT.sub("", updated.comment.value)
+        if not comment:
+            return cst.RemoveFromParent()
+
+        return updated.with_changes(
+            whitespace=updated.whitespace,
+            comment=cst.Comment(comment),
+        )
+
+
+    def leave_TrailingWhitespace(
+        self,
+        node: cst.TrailingWhitespace,
+        updated: cst.TrailingWhitespace
+    ) -> cst.TrailingWhitespace:
+        if not updated.comment or not self._TYPE_HINT_COMMENT.search(updated.comment.value):
+            return updated
+
+        comment = self._TYPE_HINT_COMMENT.sub("", updated.comment.value)
+        return updated.with_changes(
+            whitespace=updated.whitespace if comment else cst.SimpleWhitespace(''),
+            comment=cst.Comment(comment) if comment else None
+        )

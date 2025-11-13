@@ -84,7 +84,8 @@ righttyper = "righttyper.righttyper:main"
 
 [tool.pytest.ini_options]
 markers = [
-    'dont_run_mypy'
+    'dont_run_mypy',
+    'mypy_args'
 ]
 
 [project.urls]
