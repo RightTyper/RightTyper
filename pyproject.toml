@@ -53,7 +53,8 @@ dependencies = [
     "click >= 8.1.7",
     "rich >= 13.7.1",
     "wcmatch >= 10.0",
-    "typeshed_client"
+    "typeshed_client >= 2.7.0",
+    "dill >= 0.4.0"
 ]
 	 
 description = "A fast runtime type hint assistant for Python code."
