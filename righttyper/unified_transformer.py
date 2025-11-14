@@ -700,7 +700,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         updated_node: cst.SimpleStatementLine
     ) -> cst.SimpleStatementLine:
         return (
-            updated_node.visit(TypeHintDeleter())
+            typing.cast(cst.SimpleStatementLine, updated_node.visit(TypeHintDeleter()))
             if any(stmt in self.modified_assignments for stmt in updated_node.body)
             else updated_node
         )
@@ -817,7 +817,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 annotation=cst.Annotation(annotation=annotation_expr)
             )
 
-        new_par = new_par.visit(TypeHintDeleter())
+        new_par = typing.cast(cst.Param, new_par.visit(TypeHintDeleter()))
         return new_par
 
     def leave_FunctionDef(
