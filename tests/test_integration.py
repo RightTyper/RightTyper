@@ -160,8 +160,6 @@ def test_numpy_iterator():
 @pytest.mark.parametrize("ann", ["", " -> float"])
 def test_getitem_iterator(ann):
     t = textwrap.dedent(f"""\
-        from collections.abc import Iterator
-
         class X:
             def __getitem__(self, n){ann}:
                 if n < 10:
@@ -176,7 +174,7 @@ def test_getitem_iterator(ann):
 
     Path("t.py").write_text(t)
 
-    rt_run('--debug', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -194,7 +192,6 @@ def test_getitem_iterator(ann):
 @pytest.mark.parametrize("size", [0, 10])
 def test_getitem_iterator_numpy(size):
     t = textwrap.dedent(f"""\
-        from collections.abc import Iterator
         import numpy as np
 
         def f(it):
@@ -1596,7 +1593,6 @@ def test_generator(ann, ignore):
 def test_generator_annotation_errors():
     t = textwrap.dedent("""\
         from __future__ import annotations
-        from collections.abc import Generator
 
         def f() -> Generator[SomethingUnknown, None, None]:
             yield 1
@@ -2881,7 +2877,7 @@ def test_inline_generics_no_variables():
 ])
 def test_custom_collection_typing(superclass):
     Path("t.py").write_text(textwrap.dedent(f"""\
-        from collections.abc import *
+        from collections.abc import KeysView, ValuesView, ItemsView
 
         class MyContainer({superclass}):
             def __init__(self):
@@ -3841,7 +3837,7 @@ def test_typing_union(python_version):
         def f(x: Union[int, str]) -> Optional[str]: ...
     """)
     assert get_function(code, 'g') == textwrap.dedent("""\
-        def g(x: Union[list[Any], Callable[[Union[int, str]], Optional[str]]]) -> None: ...
+        def g(x: Union[Callable[[Union[int, str]], Optional[str]], list[Any]]) -> None: ...
     """)
 
 
