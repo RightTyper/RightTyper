@@ -146,19 +146,6 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
     )
 
 
-def find_caller_frame() -> FrameType|None:
-    """Attempts to find the stack frame which from which we were called. A bit brittle!"""
-    pkg_path = Path(find_caller_frame.__code__.co_filename).parent
-
-    frame: FrameType|None = sys._getframe(1)
-
-    while (frame is not None and frame.f_code is not None and
-           pkg_path in Path(frame.f_code.co_filename).parents):
-        frame = frame.f_back
-
-    return frame
-
-
 @cache
 def from_types_import(t: type) -> str | None:
     # TODO we could also simply reverse types.__dict__ ...
