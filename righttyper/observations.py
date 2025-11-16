@@ -763,6 +763,7 @@ def get_typeshed_arg_types(
             # Note that for the override to be valid, their signatures must have
             # the same number of positional arguments.
             pos_args = [
+                # FIXME module/name wrong!!
                 TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
                 for a in (defs[0].args.posonlyargs + defs[0].args.args)
                 if isinstance(a, ast.arg)
@@ -770,6 +771,7 @@ def get_typeshed_arg_types(
 
             # Then kwonly, going by the order (and quantity) in the child
             kw_args = [
+                # FIXME module/name wrong!!
                 TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
                 for child_arg_name in child_args[len(pos_args):]
                 for a in defs[0].args.kwonlyargs

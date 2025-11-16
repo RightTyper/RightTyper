@@ -91,13 +91,13 @@ def test_get_value_type():
 #    assert "tuple[()]" == get_value_type(tuple())  # FIXME
 #    assert "tuple[int, ...]" == get_value_type((1, 2, 3, 4))
 
-    assert "typing.KeysView[str]" == get_value_type({'a':0, 'b':1}.keys())
-    assert "typing.ValuesView[int]" == get_value_type({'a':0, 'b':1}.values())
-    assert "typing.ItemsView[str, int]" == get_value_type({'a':0, 'b':1}.items())
+    assert "collections.abc.KeysView[str]" == get_value_type({'a':0, 'b':1}.keys())
+    assert "collections.abc.ValuesView[int]" == get_value_type({'a':0, 'b':1}.values())
+    assert "collections.abc.ItemsView[str, int]" == get_value_type({'a':0, 'b':1}.items())
 
-    assert "typing.KeysView[typing.Never]" == get_value_type(dict().keys())
-    assert "typing.ValuesView[typing.Never]" == get_value_type(dict().values())
-    assert "typing.ItemsView[typing.Never, typing.Never]" == get_value_type(dict().items())
+    assert "collections.abc.KeysView[typing.Never]" == get_value_type(dict().keys())
+    assert "collections.abc.ValuesView[typing.Never]" == get_value_type(dict().values())
+    assert "collections.abc.ItemsView[typing.Never, typing.Never]" == get_value_type(dict().items())
 
     o : Any = range(10)
     assert "range" == get_value_type(o)
@@ -112,7 +112,7 @@ def test_get_value_type():
     assert 0 == next(o), "changed state"
 
     o = (i for i in range(10))
-    assert get_value_type(o) in ("typing.Generator", "collections.abc.Generator")
+    assert get_value_type(o) == "collections.abc.Generator"
     assert 0 == next(o), "changed state"
 
     assert f"{__name__}.IterableClass" == get_value_type(IterableClass())
@@ -127,31 +127,32 @@ def test_get_value_type():
         for i in range(start):
             yield i
 
-    assert get_value_type(async_range(10)) in ("typing.AsyncGenerator", "collections.abc.AsyncGenerator")
-    assert get_value_type(aiter(async_range(10))) in ("typing.AsyncGenerator", "collections.abc.AsyncGenerator")
+    assert get_value_type(async_range(10)) == "collections.abc.AsyncGenerator"
+    assert get_value_type(aiter(async_range(10))) == "collections.abc.AsyncGenerator"
 
     assert f"{__name__}.MyGeneric[int, str]" == get_value_type(MyGeneric[int, str]())
     assert f"{__name__}.MyOldGeneric[int]" == get_value_type(MyOldGeneric[int]())
 
 @pytest.mark.parametrize("init, name, nextv", [
-    ["iter(b'0')", "typing.Iterator[int]", b'0'[0]],
-    ["iter(bytearray(b'0'))", "typing.Iterator[int]", bytearray(b'0')[0]],
-    ["iter({'a': 0})", "typing.Iterator[str]", 'a'],
-    ["iter({'a': 0}.values())", "typing.Iterator[int]", 0],
-    ["iter({'a': 0}.items())", "typing.Iterator[tuple[str, int]]", ('a', 0)],
-    ["iter([0, 1])", "typing.Iterator[int]", 0],
-    ["iter(reversed([0, 1]))", "typing.Iterator[int]", 1],
-    ["iter(range(1))", "typing.Iterator[int]", 0],
-    ["iter(range(1 << 1000))", "typing.Iterator[int]", 0],
-    ["iter({'a'})", "typing.Iterator[str]", 'a'],
-    ["iter('ab')", "typing.Iterator[str]", 'a'],
-    ["iter(('a', 'b'))", "typing.Iterator[str]", 'a'],
-    ["iter(tuple(c for c in ('a', 'b')))", "typing.Iterator[str]", 'a'],
-    ["zip([0], ('a',))", "typing.Iterator[tuple[int, str]]", (0, 'a')],
-    ["iter(zip([0], ('a',)))", "typing.Iterator[tuple[int, str]]", (0, 'a')],
+    ["iter(b'0')", "collections.abc.Iterator[int]", b'0'[0]],
+    ["iter(bytearray(b'0'))", "collections.abc.Iterator[int]", bytearray(b'0')[0]],
+    ["iter({'a': 0})", "collections.abc.Iterator[str]", 'a'],
+    ["iter({'a': 0}.values())", "collections.abc.Iterator[int]", 0],
+    ["iter({'a': 0}.items())", "collections.abc.Iterator[tuple[str, int]]", ('a', 0)],
+    ["iter([0, 1])", "collections.abc.Iterator[int]", 0],
+    ["iter(reversed([0, 1]))", "collections.abc.Iterator[int]", 1],
+    ["iter(range(1))", "collections.abc.Iterator[int]", 0],
+    ["iter(range(1 << 1000))", "collections.abc.Iterator[int]", 0],
+    ["iter({'a'})", "collections.abc.Iterator[str]", 'a'],
+    ["iter('ab')", "collections.abc.Iterator[str]", 'a'],
+    ["iter(('a', 'b'))", "collections.abc.Iterator[str]", 'a'],
+    ["iter(tuple(c for c in ('a', 'b')))", "collections.abc.Iterator[str]", 'a'],
+    ["zip([0], ('a',))", "collections.abc.Iterator[tuple[int, str]]", (0, 'a')],
+    ["iter(zip([0], ('a',)))", "collections.abc.Iterator[tuple[int, str]]", (0, 'a')],
     ["enumerate(('a', 'b'))", "enumerate[str]", (0, 'a')],
     ["iter(enumerate(('a', 'b')))", "enumerate[str]", (0, 'a')],
-#    ["iter(zip([0], (c for c in ('a',))))", "typing.Iterator[tuple[int, str]]", (0, 'a')],
+    # The generator in these cases needs to be observed to fully type... see integration test.
+#    ["iter(zip([0], (c for c in ('a',))))", "collections.abc.Iterator[tuple[int, str]]", (0, 'a')],
 #    ["enumerate(c for c in ('a', 'b'))", "enumerate[str]", (0, 'a')],
 ])
 def test_value_type_iterator(init, name, nextv):
@@ -161,20 +162,20 @@ def test_value_type_iterator(init, name, nextv):
 
 
 @pytest.mark.parametrize("init, name", [
-    ["iter(b'0')", "typing.Iterator[int]"],
-    ["iter(bytearray(b'0'))", "typing.Iterator[int]"],
-    ["iter({'a': 0})", "typing.Iterator"],
-    ["iter({'a': 0}.values())", "typing.Iterator"],
-    ["iter({'a': 0}.items())", "typing.Iterator"],
-    ["iter([0, 1])", "typing.Iterator"],
-    ["iter(reversed([0, 1]))", "typing.Iterator"],
-    ["iter(range(1))", "typing.Iterator[int]"],
-    ["iter(range(1 << 1000))", "typing.Iterator[int]"],
-    ["iter({'a'})", "typing.Iterator"],
-    ["iter('ab')", "typing.Iterator[str]"],
-    ["iter(('a', 'b'))", "typing.Iterator"],
-    ["zip([0], ('a',))", "typing.Iterator"],
-    ["iter(zip([0], ('a',)))", "typing.Iterator"],
+    ["iter(b'0')", "collections.abc.Iterator[int]"],
+    ["iter(bytearray(b'0'))", "collections.abc.Iterator[int]"],
+    ["iter({'a': 0})", "collections.abc.Iterator"],
+    ["iter({'a': 0}.values())", "collections.abc.Iterator"],
+    ["iter({'a': 0}.items())", "collections.abc.Iterator"],
+    ["iter([0, 1])", "collections.abc.Iterator"],
+    ["iter(reversed([0, 1]))", "collections.abc.Iterator"],
+    ["iter(range(1))", "collections.abc.Iterator[int]"],
+    ["iter(range(1 << 1000))", "collections.abc.Iterator[int]"],
+    ["iter({'a'})", "collections.abc.Iterator"],
+    ["iter('ab')", "collections.abc.Iterator[str]"],
+    ["iter(('a', 'b'))", "collections.abc.Iterator"],
+    ["zip([0], ('a',))", "zip"],
+    ["iter(zip([0], ('a',)))", "zip"],
     ["enumerate(('a', 'b'))", "enumerate"],
     ["iter(enumerate(('a', 'b')))", "enumerate"],
 ])
@@ -218,7 +219,7 @@ def test_get_value_type_coro():
         import asyncio
         await asyncio.sleep(1)
 
-    assert "typing.Coroutine[None, None, typing.Any]" == get_value_type(coro())
+    assert "collections.abc.Coroutine[None, None, typing.Any]" == get_value_type(coro())
 
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
@@ -297,7 +298,7 @@ def test_type_from_annotations():
     def foo(x: int|float, y: list[tuple[bool, ...]], z: Callable[[], None]) -> complex|None:
         pass
 
-    assert "typing.Callable[[int|float, list[tuple[bool, ...]], collections.abc.Callable[[], None]], complex|None]" == \
+    assert "collections.abc.Callable[[int|float, list[tuple[bool, ...]], collections.abc.Callable[[], None]], complex|None]" == \
             type_from_annotations(foo)
 
 
@@ -352,7 +353,7 @@ def test_typeinfo_from_set():
 
     t = TypeInfo.from_set({TypeInfo.from_type(int)})
 
-    assert str(t) == 'builtins.int'
+    assert str(t) == 'int'
     assert t.name == 'int'
     assert not t.args
 
@@ -364,14 +365,14 @@ def test_typeinfo_from_set():
             NoneTypeInfo
         })
 
-    assert str(t) == 'builtins.int|None'
+    assert str(t) == 'int|None'
 
     t = TypeInfo.from_set({
             TypeInfo.from_type(int),
             TypeInfo.from_type(bool)
         })
 
-    assert str(t) == 'builtins.bool|builtins.int'
+    assert str(t) == 'bool|int'
 
     t = TypeInfo.from_set({
             TypeInfo.from_type(int),
@@ -383,7 +384,7 @@ def test_typeinfo_from_set():
             ))
         })
 
-    assert str(t) == 'X[builtins.bool|None]|builtins.int'
+    assert str(t) == 'X[bool|None]|int'
 
     t = TypeInfo.from_set({
             TypeInfo.from_type(int),
@@ -392,7 +393,7 @@ def test_typeinfo_from_set():
             TypeInfo(module='', name='z')
         })
 
-    assert str(t) == 'builtins.bool|builtins.int|z|None'
+    assert str(t) == 'bool|int|z|None'
     assert isinstance(t.args[-1], TypeInfo)
     assert t.args[-1].name == 'None'
 
@@ -423,19 +424,19 @@ def test_merged_types_generics():
         }
     ))
 
-    assert "builtins.list" == str(merged_types({
+    assert "list" == str(merged_types({
             TypeInfo.from_type(list, args=(TypeInfo("", "int"),)),
             TypeInfo.from_type(list),
         }
     ))
 
-    assert "builtins.tuple" == str(merged_types({
+    assert "tuple" == str(merged_types({
             TypeInfo.from_type(tuple, args=(TypeInfo("", "int"), ...)),
             TypeInfo.from_type(tuple),
         }
     ))
 
-    assert "builtins.tuple" == str(merged_types({
+    assert "tuple" == str(merged_types({
             TypeInfo.from_type(tuple, args=(TypeInfo("", "int"), ...)),
             TypeInfo.from_type(tuple),
         }

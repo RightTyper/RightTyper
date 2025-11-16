@@ -168,3 +168,14 @@ def get_main_module_fqn() -> str:
             return fqn
 
     return "__main__"
+
+
+def normalize_module_name(module_name: str) -> str:
+    if module_name == "__main__":
+        # "__main__" isn't generally usable for typing, and only unique in this execution
+        return get_main_module_fqn()
+
+    if module_name == "builtins":
+        return ""   # we consider these "well-known" and, for brevity, omit the module name
+
+    return module_name

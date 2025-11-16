@@ -599,7 +599,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 #                self._record_var_change(node, new_node)
 #                return new_node
 #
-#            var_type = TypeInfo('typing', 'TypeAlias')
+#            var_type = TypeInfo.from_type(typing.TypeAlias)
 
         # Don't throw away (presumably human-generated) "Final" and "ClassVar" annotations
         wrappers = []

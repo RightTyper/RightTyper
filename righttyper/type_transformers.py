@@ -14,7 +14,7 @@ class SelfT(TypeInfo.Transformer):
     """Renames types to typing.Self according to is_self."""
     def visit(vself, node: TypeInfo) -> TypeInfo:
         if node.is_self:
-            return TypeInfo("typing", "Self")
+            return TypeInfo.from_type(typing.Self)
 
         return super().visit(node)
 
@@ -58,13 +58,13 @@ class TypesUnionT(TypeInfo.Transformer):
             has_none = node.args[-1] == NoneTypeInfo
             non_none_count = len(node.args) - int(has_none)
             if non_none_count > 1:
-                non_none = TypeInfo("typing", "Union", args=node.args[:non_none_count])
+                non_none = TypeInfo.from_type(typing.Union, args=node.args[:non_none_count])
             else:
                 assert isinstance(node.args[0], TypeInfo)
                 non_none = node.args[0]
 
             if has_none:
-                return TypeInfo("typing", "Optional", args=(non_none,))
+                return TypeInfo.from_type(typing.Optional, args=(non_none,))
 
             return non_none
 
@@ -166,7 +166,7 @@ class GeneratorToIteratorT(TypeInfo.Transformer):
             and node.args[1] == NoneTypeInfo
             and node.args[2] == NoneTypeInfo
         ):
-            return TypeInfo("typing", "Iterator", (node.args[0],))
+            return TypeInfo.from_type(abc.Iterator, args=(node.args[0],))
 
         return node
 
