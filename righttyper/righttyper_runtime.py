@@ -10,7 +10,6 @@ import itertools
 from types import (
     CodeType,
     FrameType,
-    NoneType,
     FunctionType,
     MethodType,
     GeneratorType,
@@ -21,6 +20,8 @@ from types import (
     MappingProxyType,
     UnionType
 )
+import builtins
+import types
 from typing import Any, cast, get_type_hints, get_origin, get_args, Callable
 import typing
 from pathlib import Path
@@ -145,28 +146,6 @@ def type_from_annotations(func: abc.Callable) -> TypeInfo:
     )
 
 
-@cache
-def from_types_import(t: type) -> str | None:
-    # TODO we could also simply reverse types.__dict__ ...
-    import types
-
-    for k in types.__all__:
-        if (v := types.__dict__.get(k)) and t is v:
-            return k
-
-    return None
-
-
-@cache
-def in_builtins_import(t: type) -> bool:
-    import builtins
-
-    if bt := builtins.__dict__.get(t.__name__):
-        return t == bt
-
-    return False
-
-
 def _is_defined_in(t: type, target: type|ModuleType, name_parts: list[str], name_index: int=0) -> bool:
     """Checks whether a name, given split into name_parts, is defined in a class or module."""
     if name_index<len(name_parts) and (obj := target.__dict__.get(name_parts[name_index])):
@@ -205,6 +184,7 @@ def search_type(t: type) -> tuple[str, str] | None:
 # but does not name their types publicly.  We here give them names to keep the
 # introspection code more readable. Note that these types may not be exhaustive
 # and may overlap as across Python versions and implementations.
+# TODO add checks to verify that they appear unique
 BYTES_ITER: type = type(iter(b''))
 BYTEARRAY_ITER: type = type(iter(bytearray()))
 DICT_KEYITER: type = type(iter({}))
@@ -224,6 +204,47 @@ class _GetItemDummy:
 GETITEM_ITER: type = type(iter(_GetItemDummy()))
 
 
+T = typing.TypeVar("T")
+
+# Build map of well-known (mostly built-in) types to their names. Some builtin types
+# are available from the "builtins" module, some from the "types" module, but others
+# still, such as "list_iterator", aren't known by any particular name.
+#
+_BUILTINS: typing.Final[dict[type, TypeInfo]] = {
+    # first get what we can from 'builtins'...
+    t: TypeInfo('', n, type_obj=t)  # note we use '' as the module name
+    for n, t in builtins.__dict__.items()
+    if type(t) is type
+} | {
+    # then add types from 'types'...
+    t: TypeInfo('types', n, type_obj=t)
+    for n in types.__all__
+    if type(t := types.__dict__.get(n)) is type
+} | {
+    # then add some overrides.
+
+    # types.NoneType is annotated as 'None'
+    types.NoneType: NoneTypeInfo,
+
+    # These iterators are implemented natively, so we can't observe their execution
+    # to infer their type arguments.
+    RANGE_ITER:     TypeInfo.from_type(abc.Iterator, args=(TypeInfo.from_type(int),)),
+    LONGRANGE_ITER: TypeInfo.from_type(abc.Iterator, args=(TypeInfo.from_type(int),)),
+    BYTES_ITER:     TypeInfo.from_type(abc.Iterator, args=(TypeInfo.from_type(int),)),
+    BYTEARRAY_ITER: TypeInfo.from_type(abc.Iterator, args=(TypeInfo.from_type(int),)),
+    STR_ITER:       TypeInfo.from_type(abc.Iterator, args=(TypeInfo.from_type(str),)),
+
+    # Special type constructs are often private types. Map them to 'type' to make them
+    # easy to identify.
+    type(typing.Generic[T]):         TypeInfo.from_type(type), # type: ignore[index]
+    type(typing.Union[int, str]):    TypeInfo.from_type(type),
+    type(typing.Callable[[], None]): TypeInfo.from_type(type),
+    type(abc.Callable[[], None]):    TypeInfo.from_type(type),
+    GenericAlias:                    TypeInfo.from_type(type),
+    UnionType:                       TypeInfo.from_type(type),
+}
+
+
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
 
@@ -232,21 +253,12 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
         logger.error(f"RightTyper failed to compute the type of {obj}.")
         return UnknownTypeInfo
 
-    # Some builtin types are available from the "builtins" module,
-    # some from the "types" module, but others still, such as
-    # "list_iterator", aren't known by any particular name.
+    if (ti := _BUILTINS.get(obj)):
+        return ti
+
     if obj.__module__ == "builtins":
-        if obj is NoneType:
-            return NoneTypeInfo
-        elif in_builtins_import(obj):
-            return TypeInfo.from_type(obj)
-        elif (name := from_types_import(obj)):
-            return TypeInfo.from_type(obj, module="types")
-        elif obj in (RANGE_ITER, LONGRANGE_ITER, BYTES_ITER, BYTEARRAY_ITER):
-            return TypeInfo.from_type(abc.Iterator, args=(TypeInfo.from_type(int),))
-        elif obj is STR_ITER:
-            return TypeInfo.from_type(abc.Iterator, args=(TypeInfo.from_type(str),))
-        elif issubclass(obj, abc.Iterator):
+        # the type didn't have a name in "builtins" or "types" modules, so use protocol
+        if issubclass(obj, abc.Iterator):
             return TypeInfo.from_type(abc.Iterator)
         else:
             return UnknownTypeInfo
@@ -416,8 +428,9 @@ def _handle_dict(value: Any, depth: int) -> TypeInfo:
     else:
         args = (TypeInfo.from_type(typing.Never), TypeInfo.from_type(typing.Never))
 
-    if (name := from_types_import(t)):
-        return TypeInfo('types', name, args=args, type_obj=t)
+    if (ti := _BUILTINS.get(t)):
+        return ti.replace(args=args)
+
     return TypeInfo.from_type(t, args=args)
 
 
@@ -451,11 +464,8 @@ def _handle_set(value: Any, depth: int) -> TypeInfo:
         args = (get_value_type(el, depth+1),)
     else:
         args = (TypeInfo.from_type(typing.Never),)
+
     return TypeInfo.from_type(t, args=args)
-
-
-def _handle_int_iter(value: Any, depth: int) -> TypeInfo:
-    return TypeInfo.from_type(abc.Iterator, args=(TypeInfo.from_type(int),))
 
 
 def _handle_dict_keyiter(value: Any, depth: int) -> TypeInfo|None:
@@ -575,10 +585,10 @@ def _handle_enumerate(value: Any, depth: int) -> TypeInfo|None:
     return None
 
 
-T = typing.TypeVar("T")
-
+# Build a map of well-known types to handlers that knows how to sample them, emitting
+# a parametrized generic.
+#
 _type2handler: dict[type, Callable[[Any, int], TypeInfo|None]] = {
-    NoneType: lambda value, depth: NoneTypeInfo,
     tuple: _handle_tuple,
     list: _handle_list,
     RandomDict: _handle_randomdict,
@@ -594,27 +604,24 @@ _type2handler: dict[type, Callable[[Any, int], TypeInfo|None]] = {
     collections.deque: _handle_set,
     re.Pattern: lambda value, depth: TypeInfo.from_type(type(value), args=(get_value_type(value.pattern, depth+1),)),
     re.Match: lambda value, depth: TypeInfo.from_type(type(value), args=(get_value_type(value.group(), depth+1),)),
-    RANGE_ITER: _handle_int_iter,
-    LONGRANGE_ITER: _handle_int_iter,
-    BYTES_ITER: _handle_int_iter,
-    BYTEARRAY_ITER: _handle_int_iter,
     DICT_KEYITER: _handle_dict_keyiter,
     DICT_VALUEITER: _handle_dict_valueiter,
     DICT_ITEMITER: _handle_dict_itemiter,
     LIST_ITER: _handle_list_iter,
     LIST_REVERSED_ITER: _handle_list_iter,
     SET_ITER: _handle_set_iter,
-    STR_ITER: lambda value, depth: TypeInfo.from_type(abc.Iterator, args=(TypeInfo.from_type(str),)),
     TUPLE_ITER: _handle_tuple_iter,
     GETITEM_ITER: _handle_getitem_iter,
     zip: _handle_zip,
     enumerate: _handle_enumerate,
-    type(typing.Generic[T]): lambda v, d: TypeInfo.from_type(type), # type: ignore[index]
-    type(typing.Union[int, str]): lambda v, d: TypeInfo.from_type(type),
-    type(typing.Callable[[], None]): lambda v, d: TypeInfo.from_type(type),
-    type(abc.Callable[[], None]): lambda v, d: TypeInfo.from_type(type),
-    GenericAlias: lambda v, d: TypeInfo.from_type(type),
-    UnionType: lambda v, d: TypeInfo.from_type(type),
+
+    type: lambda v, d: _BUILTINS[type] if v is type else _BUILTINS[type].replace(args=(get_type_name(v, d+1),)),
+
+    FunctionType: lambda v, d: type_from_annotations(v),
+    MethodType: lambda v, d: type_from_annotations(v),
+    GeneratorType: lambda v, d: _type_for_generator(v, abc.Generator, v.gi_frame, v.gi_code),
+    AsyncGeneratorType: lambda v, d: _type_for_generator(v, abc.AsyncGenerator, v.ag_frame, v.ag_code),
+    CoroutineType: lambda v, d: _type_for_generator(v, abc.Coroutine, v.cr_frame, v.cr_code)
 }
 
 
@@ -640,6 +647,9 @@ def get_value_type(
         if (ti := h(value, depth)) is not None:
             return ti
 
+    if ti := _BUILTINS.get(t):
+        return ti
+
     # Is this a spec-based mock?
     if mock_spec := inspect.getattr_static(value, "_spec_class", None):
         if options.resolve_mocks and is_test_module(t.__module__):
@@ -652,23 +662,12 @@ def get_value_type(
         assert type(orig) in (GenericAlias, type(typing.Generic[T])), f"{orig=} {type(orig)=}" # type: ignore[index]
         return hint2type(orig)
 
-    if isinstance(value, (FunctionType, MethodType)):
-        return type_from_annotations(value)
-    elif isinstance(value, GeneratorType):
-        return _type_for_generator(value, abc.Generator, value.gi_frame, value.gi_code)
-    elif isinstance(value, AsyncGeneratorType):
-        return _type_for_generator(value, abc.AsyncGenerator, value.ag_frame, value.ag_code)
-    elif isinstance(value, CoroutineType):
-        return _type_for_generator(value, abc.Coroutine, value.cr_frame, value.cr_code)
-    elif isinstance(value, type) and value is not type:
+    if isinstance(value, type) and value is not type:
+        # isinstance() based search is needed, for example, for enum.EnumType
         return TypeInfo.from_type(type, args=(get_type_name(value, depth+1),))
     elif t.__module__ == "builtins":
-        if in_builtins_import(t):
-            return TypeInfo.from_type(t)
-        elif (name := from_types_import(t)):
-            return TypeInfo.from_type(t, module="types")
-        elif (view := _is_instance(value, (abc.KeysView, abc.ValuesView))):
-            # no name in "builtins" or "types" modules, so use abc protocol
+        # the type didn't have a name in "builtins" or "types" modules, so use protocol
+        if (view := _is_instance(value, (abc.KeysView, abc.ValuesView))):
             if value:
                 el = _random_item(value)
                 args = (get_value_type(el, depth+1),)
@@ -676,7 +675,6 @@ def get_value_type(
                 args = (TypeInfo.from_type(typing.Never),)
             return TypeInfo.from_type(view, args=args)
         elif isinstance(value, abc.ItemsView):
-            # no name in "builtins" or "types" modules, so use abc protocol
             if value:
                 el = _random_item(value)
                 args = (get_value_type(el[0], depth+1), get_value_type(el[1], depth+1))
