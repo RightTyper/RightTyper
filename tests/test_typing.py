@@ -31,10 +31,6 @@ def get_type_name(t) -> TypeInfo:
     return ti
  
 
-def type_from_annotations(*args, **kwargs) -> str:
-    return str(rt.type_from_annotations(*args, **kwargs))
-
-
 class IterableClass(abc.Iterable):
     def __iter__(self):
         return None
@@ -299,7 +295,7 @@ def test_type_from_annotations():
         pass
 
     assert "collections.abc.Callable[[int|float, list[tuple[bool, ...]], collections.abc.Callable[[], None]], complex|None]" == \
-            type_from_annotations(foo)
+            get_value_type(foo)
 
 
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or

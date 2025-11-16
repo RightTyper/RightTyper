@@ -111,7 +111,7 @@ def hint2type(hint) -> TypeInfo:
     return get_type_name(hint)  # requires __module__ and __qualname__
 
 
-def type_from_annotations(func: abc.Callable) -> TypeInfo:
+def _type_for_callable(func: abc.Callable) -> TypeInfo:
     if (orig_func := unwrap(func)): # in case this is a wrapper
         func = orig_func
 
@@ -526,7 +526,7 @@ def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
             return TypeInfo.from_type(abc.Iterator, args=(get_type_name(type(getitem(obj, 0)), depth+1),))
         
         if type(getitem) in (FunctionType, MethodType): # get full type from runtime observations
-            callable_type = type_from_annotations(getitem)
+            callable_type = _type_for_callable(getitem)
             retval: TypeInfoArg|None = callable_type.args[-1] if callable_type.args else None
 
             if not retval:
@@ -617,8 +617,8 @@ _type2handler: dict[type, Callable[[Any, int], TypeInfo|None]] = {
 
     type: lambda v, d: _BUILTINS[type] if v is type else _BUILTINS[type].replace(args=(get_type_name(v, d+1),)),
 
-    FunctionType: lambda v, d: type_from_annotations(v),
-    MethodType: lambda v, d: type_from_annotations(v),
+    FunctionType: lambda v, d: _type_for_callable(v),
+    MethodType: lambda v, d: _type_for_callable(v),
     GeneratorType: lambda v, d: _type_for_generator(v, abc.Generator, v.gi_frame, v.gi_code),
     AsyncGeneratorType: lambda v, d: _type_for_generator(v, abc.AsyncGenerator, v.ag_frame, v.ag_code),
     CoroutineType: lambda v, d: _type_for_generator(v, abc.Coroutine, v.cr_frame, v.cr_code)
@@ -691,7 +691,7 @@ def get_value_type(
         and isinstance(value, abc.Callable) # type: ignore[arg-type]
         and unwrap(value) is not value
     ):
-        return type_from_annotations(value) # a function wrapper such as @cache
+        return _type_for_callable(value) # a function wrapper such as @cache
 
     if options.infer_shapes and hasattr(value, "dtype") and hasattr(value, "shape"):
         if (dtype := jx_dtype(value)) is not None:
