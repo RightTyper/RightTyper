@@ -299,10 +299,12 @@ def test_builtins():
     assert "def func3(t: super) -> None" in output
 
 
+@pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
 @pytest.mark.parametrize("cache", ["", "@cache"])
 @pytest.mark.parametrize("ignore", [(), ('--ignore-annotations',)])
-def test_callable_from_annotations(cache, ignore):
+def test_callable_from_annotations(future, cache, ignore):
     t = textwrap.dedent(f"""\
+        {future}
         from functools import cache
         type MyFloat = float
 
@@ -344,8 +346,10 @@ def test_callable_from_annotations(cache, ignore):
         """)
 
 
-def test_callable_from_annotations_typing_special():
-    t = textwrap.dedent("""\
+@pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
+def test_callable_from_annotations_typing_special(future):
+    t = textwrap.dedent(f"""\
+        {future}
         import typing
 
         class C:
@@ -371,8 +375,10 @@ def test_callable_from_annotations_typing_special():
     """)
 
 
-def test_callable_from_annotation_generic_alias():
-    t = textwrap.dedent("""\
+@pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
+def test_callable_from_annotation_generic_alias(future):
+    t = textwrap.dedent(f"""\
+        {future}
         def f() -> list[int]:   # list[int] is a GenericAlias
             return [1,2,3]
 
