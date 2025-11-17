@@ -1666,9 +1666,15 @@ def test_async_generator():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> AsyncGenerator[int, None]:" in output
-    assert "def g(f: AsyncGenerator[int, None]) -> None" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        async def gen() -> AsyncGenerator[int, None]: ...
+    """)
+
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(f: AsyncGenerator[int, None]) -> None: ...
+    """)
 
 
 def test_generator_with_self():

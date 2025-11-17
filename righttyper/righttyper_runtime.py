@@ -5,6 +5,7 @@ import sys
 
 import collections
 import collections.abc as abc
+from abc import ABCMeta
 from functools import cache
 import itertools
 from types import (
@@ -245,6 +246,40 @@ _BUILTINS: typing.Final[dict[type, TypeInfo]] = {
 }
 
 
+class ABCFinder:
+    """Finds the collections.abc protocol implemented by 't' that matches the most callable attributes."""
+
+    # Reverse order in collections.abc to go from most specific to most general
+    _ABCs: list[type] = list(reversed([
+        obj
+        for obj in vars(abc).values()
+        if isinstance(obj, ABCMeta)
+    ]))
+
+
+    @cache
+    @staticmethod
+    def find_abc(t: type) -> TypeInfo | None:
+        matching = [
+            g
+            for g in ABCFinder._ABCs
+            if issubclass(t, g)
+        ]
+
+        if not matching:
+            return None
+
+        def methods(o: object) -> set[str]:
+            return {
+                name
+                for name in dir(o)
+                if callable(getattr(o, name, None))
+            }
+
+        t_methods = methods(t)
+        return max(matching, key=lambda it: len(methods(it) & t_methods))
+
+
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
 
@@ -258,10 +293,10 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
 
     if obj.__module__ == "builtins":
         # the type didn't have a name in "builtins" or "types" modules, so use protocol
-        if issubclass(obj, abc.Iterator):
-            return TypeInfo.from_type(abc.Iterator)
-        else:
-            return UnknownTypeInfo
+        if (g := ABCFinder.find_abc(obj)):
+            return TypeInfo.from_type(g)
+
+        return UnknownTypeInfo
 
     # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
     if obj.__module__ == 'numpy' and 'dtype[' in obj.__name__ and hasattr(obj, "type"):
@@ -272,15 +307,6 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
         return TypeInfo(*module_and_name, type_obj=obj)
 
     return UnknownTypeInfo
-
-
-def _is_instance(obj: object, types: tuple[type, ...]) -> type|None:
-    """Like isinstance(), but returns the type matched."""
-    for t in types:
-        if isinstance(obj, t):
-            return t
-
-    return None
 
 
 def unwrap(method: abc.Callable|None) -> abc.Callable|None:
@@ -666,26 +692,31 @@ def get_value_type(
         # isinstance() based search is needed, for example, for enum.EnumType
         return TypeInfo.from_type(type, args=(get_type_name(value, depth+1),))
     elif t.__module__ == "builtins":
-        # the type didn't have a name in "builtins" or "types" modules, so use protocol
-        if (view := _is_instance(value, (abc.KeysView, abc.ValuesView))):
-            if value:
-                el = _random_item(value)
-                args = (get_value_type(el, depth+1),)
-            else:
-                args = (TypeInfo.from_type(typing.Never),)
-            return TypeInfo.from_type(view, args=args)
-        elif isinstance(value, abc.ItemsView):
-            if value:
-                el = _random_item(value)
-                args = (get_value_type(el[0], depth+1), get_value_type(el[1], depth+1))
-            else:
-                args = (TypeInfo.from_type(typing.Never), TypeInfo.from_type(typing.Never))
-            return TypeInfo.from_type(abc.ItemsView, args=args)
-        elif t.__name__ == 'async_generator_wrapped_value':
+        if t.__name__ == 'async_generator_wrapped_value':
+            # workaround for https://github.com/python/cpython/issues/129013
             if (l := _first_referent(value)) is not None:
                 return get_value_type(l, depth+1)
 
-            return UnknownTypeInfo
+        # the type didn't have a name in "builtins" or "types" modules, so use protocol
+        if (g := ABCFinder.find_abc(t)):
+            if issubclass(g, (abc.Mapping, abc.ItemsView)):
+                if value:
+                    el = _random_item(value)
+                    args = (get_value_type(el[0], depth+1), get_value_type(el[1], depth+1))
+                else:
+                    args = (TypeInfo.from_type(typing.Never), TypeInfo.from_type(typing.Never))
+            elif issubclass(g, abc.Collection):
+                if value:
+                    el = _random_item(value)
+                    args = (get_value_type(el, depth+1),)
+                else:
+                    args = (TypeInfo.from_type(typing.Never),)
+            else:
+                args = ()
+
+            return TypeInfo.from_type(g, args=args)
+
+        return UnknownTypeInfo
     elif (
         t.__module__ == "functools"
         and isinstance(value, abc.Callable) # type: ignore[arg-type]
