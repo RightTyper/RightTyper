@@ -536,8 +536,32 @@ def test_internal_numpy_type():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
+    # numpy._ArrayFunctionDispatcher isn't a valid name, so we expect it renamed
     f = get_function(code, 'MyArray.__array_function__')
-    assert re.search(r'func: "numpy.[\w\.]*_ArrayFunctionDispatcher"', str(f))
+    assert re.search(r'func: "numpy.[\w\.]+_ArrayFunctionDispatcher"', f)
+
+
+@pytest.mark.dont_run_mypy # it lacks definitions for checking
+@pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
+def test_internal_numpy_type_default():
+    t = textwrap.dedent("""\
+        import numpy as np
+
+        def foo(op=np.where) -> None:
+            pass
+
+        foo()
+    """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--adjust-type-names', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # np.where IS-A numpy._ArrayFunctionDispatcher, which isn't a valid name, so we expect it renamed
+    foo = get_function(code, 'foo')
+    assert re.search(r'op: "numpy.[\w\.]+_ArrayFunctionDispatcher"', foo)
 
 
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
@@ -3884,6 +3908,45 @@ def test_typemap_name_from_all_preferred(all_type):
 
     assert get_function(code, 'f') == textwrap.dedent("""\
         def f(x: m.xyz) -> None: ...
+    """)
+
+
+def test_typemap_name_changes_default():
+    # C has 4 names:
+    #   - m.foo.C, where it's defined
+    #   - m.C, where it's imported into m
+    #   - m.xyz, declared in '__all__'
+    #   - __main__.m.foo.C
+    #
+    # we want to see it pick m.xyz
+
+    Path("m").mkdir()
+    (Path("m") / "__init__.py").write_text(textwrap.dedent(f"""\
+        from .foo import C
+        __all__ = ['xyz']
+        xyz = C
+        """
+    ))
+    (Path("m") / "foo.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+        """
+    ))
+    Path("t.py").write_text(textwrap.dedent("""\
+        import m.foo
+
+        def f(x = m.foo.C()): pass
+
+        f()
+        """
+    ))
+
+    rt_run('--adjust-type-names', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: m.xyz = m.foo.C()) -> None: ...
     """)
 
 

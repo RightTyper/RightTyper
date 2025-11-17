@@ -85,7 +85,7 @@ class FunctionDescriptor:
     __qualname__: str
 
 
-@dataclass(eq=True, frozen=True)
+@dataclass(eq=True)
 class FuncInfo:
     code_id: CodeId
     args: tuple[ArgInfo, ...]
@@ -131,6 +131,27 @@ class Observations:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
 
         for func_info in self.func_info.values():
+            args_prime = tuple(
+                ArgInfo(
+                    arg.arg_name,
+                    tr.visit(arg.default) if arg.default is not None else None
+                )
+                for arg in func_info.args
+            )
+
+            if any(
+                old_arg.default is not new_arg.default
+                for old_arg, new_arg in zip(func_info.args, args_prime)
+            ):
+                if logger.level == logging.DEBUG:
+                    logger.debug(
+                        type(tr).__name__ + " " + func_info.code_id.func_name +
+                        str(tuple(str(arg.default) for arg in func_info.args)) +
+                        " -> " +
+                        str(tuple(str(arg.default) for arg in args_prime))
+                    )
+                func_info.args = args_prime
+
             for trace, count in list(func_info.traces.items()):
                 trace_prime = tuple(tr.visit(t) for t in trace)
                 # Use identity rather than ==, as only non-essential attributes may have changed
@@ -708,6 +729,7 @@ def get_inline_arg_types(
                     f"({parents_func.__annotations__}): {e}.\n")
         return None
 
+    # FIXME make sure no invalid types are allowed here
     return (
         # First the positional, looking up by their names given in the parent.
         # Note that for the override to be valid, their signatures must have
@@ -779,6 +801,7 @@ def get_typeshed_arg_types(
                 if a.arg == child_arg_name
             ]
 
+            # FIXME make sure no invalid types are allowed here
             return pos_args + kw_args
 
     return None
