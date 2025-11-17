@@ -475,9 +475,12 @@ def test_numpy_ndarray_dtype_name():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     assert "import bfloat16\n" not in output
-    assert "def f(p: np.ndarray[Any, np.dtype[ml_dtypes.bfloat16]]) -> str" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(p: np.ndarray[Any, np.dtype[ml_dtypes.bfloat16]]) -> str: ...
+    """)
 
 
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or

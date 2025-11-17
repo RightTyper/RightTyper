@@ -45,7 +45,7 @@ def get_jaxtyping():
         return None
 
 
-def jx_dtype(value: Any) -> str|None:
+def jx_dtype(value: Any) -> type|None:
     if jx := get_jaxtyping():
         t = type(value)
         for dtype in (
@@ -58,9 +58,18 @@ def jx_dtype(value: Any) -> str|None:
             jx.Num, jx.Shaped, jx.Key
         ):
             if isinstance(value, dtype[t, "..."]):
-                return dtype.__qualname__
+                return dtype
 
     return None
+
+
+@cache
+def get_numpy() -> ModuleType|None:
+    try:
+        import numpy
+        return numpy
+    except ImportError:
+        return None
 
 
 def hint2type(hint) -> TypeInfo:
@@ -101,8 +110,9 @@ def hint2type(hint) -> TypeInfo:
     if (
         hint.__module__ == 'jaxtyping'
         and (array_type := getattr(hint, "array_type", None))
+        and (base_type := getattr(get_jaxtyping(), hint.__name__.split('[')[0], None))
     ):
-        return TypeInfo(hint.__module__, hint.__name__.split('[')[0], args=(
+        return TypeInfo.from_type(base_type, args=(
             get_type_name(array_type), hint.dim_str
         ))
 
@@ -299,9 +309,8 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
         return UnknownTypeInfo
 
     # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
-    if obj.__module__ == 'numpy' and 'dtype[' in obj.__name__ and hasattr(obj, "type"):
-        t_name = obj.__qualname__.split('[')[0]
-        return TypeInfo(obj.__module__, t_name, args=(get_type_name(obj.type, depth+1),))
+    if obj.__module__ == 'numpy' and (numpy := get_numpy()) and issubclass(obj, numpy.dtype):
+        return TypeInfo.from_type(numpy.dtype, args=(get_type_name(obj.type, depth+1),))
 
     if (module_and_name := search_type(obj)):
         return TypeInfo(*module_and_name, type_obj=obj)
@@ -727,13 +736,10 @@ def get_value_type(
     if options.infer_shapes and hasattr(value, "dtype") and hasattr(value, "shape"):
         if (dtype := jx_dtype(value)) is not None:
             shape = " ".join(str(d) for d in value.shape)
-            return TypeInfo("jaxtyping", dtype, args=(
-                get_type_name(t, depth+1),
-                f"{shape}"
-            ))
+            return TypeInfo.from_type(dtype, args=(get_type_name(t, depth+1), f"{shape}"))
 
-    if t.__module__ == 'numpy' and t.__qualname__ == 'ndarray':
-        return TypeInfo("numpy", "ndarray", args=(
+    if t.__module__ == 'numpy' and (numpy := get_numpy()) and t is numpy.ndarray:
+        return TypeInfo.from_type(numpy.ndarray, args=(
             AnyTypeInfo,
             get_type_name(type(value.dtype), depth+1)
         ))
