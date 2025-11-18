@@ -21,10 +21,7 @@ def tmp_cwd(tmp_path, monkeypatch):
     yield tmp_path
 
 
-def print_file(file: Path) -> None:
-    for lineno, line in enumerate(file.read_text().splitlines(), start=1):
-        print(f"{lineno:3}: {line}")
-
+MYPY_CACHE_DIR = Path.cwd() / '.mypy_tests_cache'
 
 @pytest.fixture(scope='function', autouse=True)
 def runmypy(tmp_cwd, request):
@@ -46,10 +43,20 @@ def runmypy(tmp_cwd, request):
         else ()
     )
     from mypy import api
-    result = api.run([*python_version, *(mypy_args.args if mypy_args else ()), '.'])
-    if result[2]:
-        print(result[0])
-        filename = result[0].split(':')[0]
+    stdout, stderr, exit_status = api.run([
+        '--cache-dir', str(MYPY_CACHE_DIR), # speeds up mypy
+        *python_version,
+        *(mypy_args.args if mypy_args else ()),
+        '.'
+    ])
+
+    def print_file(file: Path) -> None:
+        for lineno, line in enumerate(file.read_text().splitlines(), start=1):
+            print(f"{lineno:3}: {line}")
+
+    if exit_status:
+        print(stdout)
+        filename = stdout.split(':')[0]
         print_file(Path(filename))
         pytest.fail("see mypy errors")
 
