@@ -524,7 +524,8 @@ def test_annotation_with_numpy_dtype_name():
 @pytest.mark.dont_run_mypy # it lacks definitions for checking
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None,
                     reason='missing module numpy')
-def test_internal_numpy_type():
+@pytest.mark.parametrize("adjust", ["--no-adjust-type-names", "--adjust-type-names"])
+def test_internal_numpy_type(adjust):
     t = textwrap.dedent("""\
         import numpy as np
         from numpy.core.overrides import array_function_dispatch
@@ -548,18 +549,22 @@ def test_internal_numpy_type():
 
     Path("t.py").write_text(t)
 
-    rt_run('--adjust-type-names', 't.py')
+    rt_run(adjust, 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    # numpy._ArrayFunctionDispatcher isn't a valid name, so we expect it renamed
+    # numpy._ArrayFunctionDispatcher isn't a valid name, so we expect it renamed or gone
     f = get_function(code, 'MyArray.__array_function__')
-    assert re.search(r'func: "numpy.[\w\.]+_ArrayFunctionDispatcher"', f)
+    if adjust == '--adjust-type-names':
+        assert re.search(r'func: "numpy.[\w\.]+_ArrayFunctionDispatcher"', f)
+    else:
+        assert re.search(r', func,', f)
 
 
 @pytest.mark.dont_run_mypy # it lacks definitions for checking
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
-def test_internal_numpy_type_default():
+@pytest.mark.parametrize("adjust", ["--no-adjust-type-names", "--adjust-type-names"])
+def test_internal_numpy_type_default(adjust):
     t = textwrap.dedent("""\
         import numpy as np
 
@@ -571,13 +576,16 @@ def test_internal_numpy_type_default():
 
     Path("t.py").write_text(t)
 
-    rt_run('--adjust-type-names', 't.py')
+    rt_run(adjust, 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    # np.where IS-A numpy._ArrayFunctionDispatcher, which isn't a valid name, so we expect it renamed
+    # np.where IS-A numpy._ArrayFunctionDispatcher, which isn't a valid name, so we expect it renamed or gone
     foo = get_function(code, 'foo')
-    assert re.search(r'op: "numpy.[\w\.]+_ArrayFunctionDispatcher"', foo)
+    if adjust == '--adjust-type-names':
+        assert re.search(r'op: "numpy.[\w\.]+_ArrayFunctionDispatcher"', foo)
+    else:
+        assert foo == "def foo(op=np.where) -> None: ...\n"
 
 
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or

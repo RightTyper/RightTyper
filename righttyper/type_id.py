@@ -23,7 +23,7 @@ from types import (
 )
 import builtins
 import types
-from typing import Any, cast, get_type_hints, get_origin, get_args, Callable
+from typing import Any, cast, get_type_hints, get_origin, get_args
 import typing
 from pathlib import Path
 
@@ -131,11 +131,13 @@ def _type_for_callable(func: abc.Callable) -> TypeInfo:
         func = orig_func
 
     args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()
-    if not options.ignore_annotations:
+    if not options.ignore_annotations and hasattr(func, "__annotations__"):
         try:
             signature = inspect.signature(func)
             hints = get_type_hints(func)
-        except (ValueError, NameError):
+        except (ValueError, NameError) as e:
+            logger.info(f"Error getting type hints for {func} " +
+                        f"({func.__annotations__}): {e}.\n")
             signature = None
             hints = None
 
@@ -604,7 +606,7 @@ def _handle_enumerate(value: Any, depth: int) -> TypeInfo|None:
 # Build a map of well-known types to handlers that knows how to sample them, emitting
 # a parametrized generic.
 #
-_type2handler: dict[type, Callable[[Any, int], TypeInfo|None]] = {
+_type2handler: dict[type, abc.Callable[[Any, int], TypeInfo|None]] = {
     tuple: _handle_tuple,
     list: _handle_list,
     RandomDict: _handle_randomdict,

@@ -25,7 +25,8 @@ from righttyper.type_transformers import (
     GeneratorToIteratorT,
     TypesUnionT,
     DepthLimitT,
-    MakePickleableT
+    MakePickleableT,
+    LoadTypeObjT
 )
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownTypeInfo, CallTrace
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, cast_not_None
@@ -729,7 +730,6 @@ def get_inline_arg_types(
                     f"({parents_func.__annotations__}): {e}.\n")
         return None
 
-    # FIXME make sure no invalid types are allowed here
     return (
         # First the positional, looking up by their names given in the parent.
         # Note that for the override to be valid, their signatures must have
@@ -747,6 +747,17 @@ def get_inline_arg_types(
     )
 
 
+class LoadAndCheckTypesT(LoadTypeObjT):
+    """Looks up the type_obj of all types; if not found, transforms it into UnknownTypeInfo."""
+
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        node = super().visit(node)
+        if node.type_obj is None:
+            return UnknownTypeInfo
+
+        return node
+
+                
 def get_typeshed_arg_types(
     parents_func: FunctionDescriptor|FunctionType,
     child_args: tuple[ArgInfo, ...]
@@ -777,15 +788,11 @@ def get_typeshed_arg_types(
         if defs := find_def(stub_ast, parents_func.__qualname__):
             #print(ast.dump(defs[0], indent=4))
 
-            # FIXME use eval() in the context of the module and hint2type so
-            # as not to have an unqualified string for a "type", and also so
-            # as not to lack a type_obj
-
             # First the positional, looking up by their names given in the parent.
             # Note that for the override to be valid, their signatures must have
             # the same number of positional arguments.
             pos_args = [
-                # FIXME module/name wrong!!
+                # FIXME only handles simple, built-in types!
                 TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
                 for a in (defs[0].args.posonlyargs + defs[0].args.args)
                 if isinstance(a, ast.arg)
@@ -793,7 +800,7 @@ def get_typeshed_arg_types(
 
             # Then kwonly, going by the order (and quantity) in the child
             kw_args = [
-                # FIXME module/name wrong!!
+                # FIXME only handles simple, built-in types!
                 TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
                 for child_arg_name in child_args[len(pos_args):]
                 for a in defs[0].args.kwonlyargs
@@ -801,8 +808,11 @@ def get_typeshed_arg_types(
                 if a.arg == child_arg_name
             ]
 
-            # FIXME make sure no invalid types are allowed here
-            return pos_args + kw_args
+            t = LoadAndCheckTypesT()
+            return [
+                t.visit(arg) if arg is not None else None
+                for arg in pos_args + kw_args
+            ]
 
     return None
 
