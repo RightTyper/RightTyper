@@ -112,11 +112,15 @@ def hint2type(hint) -> TypeInfo:
         and (array_type := getattr(hint, "array_type", None))
         and (base_type := getattr(get_jaxtyping(), hint.__name__.split('[')[0], None))
     ):
+        # jaxtyping arrays are really dynamic types formed by indexing on their
+        # base type.  I am not quite sure whether type_obj should be base_type here:
+        # it may yield incorrect results in generalize.simplify()
         return TypeInfo.from_type(base_type, args=(
             get_type_name(array_type), hint.dim_str
         ))
 
     if not hasattr(hint, "__qualname__"): # e.g., typing.TypeVar
+        # The type object is likely (dynamic and) not a 'type'...
         return TypeInfo(normalize_module_name(hint.__module__), hint.__name__)
 
     return get_type_name(hint)  # requires __module__ and __qualname__
@@ -155,40 +159,6 @@ def _type_for_callable(func: abc.Callable) -> TypeInfo:
         code_id=CodeId.from_code(code) if code is not None else None,
         is_bound=isinstance(func, MethodType)
     )
-
-
-def _is_defined_in(t: type, target: type|ModuleType, name_parts: list[str], name_index: int=0) -> bool:
-    """Checks whether a name, given split into name_parts, is defined in a class or module."""
-    if name_index<len(name_parts) and (obj := target.__dict__.get(name_parts[name_index])):
-        if obj is t:
-            return True
-
-        if type(obj) in (type, ModuleType):
-            return _is_defined_in(t, obj, name_parts, name_index+1)
-
-    return False
-
-
-@cache
-def search_type(t: type) -> tuple[str, str] | None:
-    """Searches for a given type in its __module__ and any submodules,
-       returning the module and qualified name under which it exists, if any.
-    """
-    if not options.adjust_type_names:
-        # If we we can, (i.e., not '<locals>', not from '__main__',) check the type is there
-        # The problem with __main__ is that if runpy is done running the module/script,
-        # sys.modules['__main__'] points back to RightTyper's __main__.
-        if (
-            t.__module__ != '__main__'
-            and '<locals>' not in (name_parts := t.__qualname__.split('.'))
-            and (
-                not (m := sys.modules.get(t.__module__))
-                or not _is_defined_in(t, m, name_parts)
-            )
-        ):
-            return None
-
-    return normalize_module_name(t.__module__), t.__qualname__
 
 
 # CPython 3.12 returns specialized objects for each one of the following iterators,
@@ -290,6 +260,12 @@ class ABCFinder:
         return max(matching, key=lambda it: len(methods(it) & t_methods))
 
 
+def _follow_attr_path(o: object, attr_path: list[str]) -> object:
+    for a in attr_path:
+        o = getattr(o, a, None)
+    return o
+
+
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
 
@@ -308,14 +284,19 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
 
         return UnknownTypeInfo
 
-    # Certain dtype types' __qualname__ doesn't include a fully qualified name of their inner type
+    # numpy subtypes dtype for different inner types, but doesn't include its qualified name...
     if obj.__module__ == 'numpy' and (numpy := get_numpy()) and issubclass(obj, numpy.dtype):
         return TypeInfo.from_type(numpy.dtype, args=(get_type_name(obj.type, depth+1),))
 
-    if (module_and_name := search_type(obj)):
-        return TypeInfo(*module_and_name, type_obj=obj)
+    if not options.adjust_type_names:
+        # If we we can (i.e., not '<locals>'), check the type is valid
+        if (
+            '<locals>' not in (name_parts := obj.__qualname__.split('.'))
+            and _follow_attr_path(sys.modules.get(obj.__module__), name_parts) is not obj
+        ):
+            return UnknownTypeInfo
 
-    return UnknownTypeInfo
+    return TypeInfo.from_type(obj)
 
 
 def unwrap(method: abc.Callable|None) -> abc.Callable|None:
