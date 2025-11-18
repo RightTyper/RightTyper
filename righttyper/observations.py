@@ -31,7 +31,7 @@ from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownType
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, cast_not_None
 from righttyper.annotation import FuncAnnotation, ModuleVars
 from righttyper.righttyper_utils import source_to_module_fqn, get_main_module_fqn, skip_this_file, detected_test_files
-from righttyper.righttyper_runtime import (
+from righttyper.type_id import (
     find_function,
     unwrap,
     get_value_type,

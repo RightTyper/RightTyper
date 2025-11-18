@@ -1,6 +1,6 @@
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
 from righttyper.generalize import merged_types, generalize
-import righttyper.righttyper_runtime as rt
+import righttyper.type_id as t_id
 import collections.abc as abc
 from collections import namedtuple
 import typing
@@ -13,7 +13,7 @@ from enum import Enum
 import sys
 from righttyper.typemap import AdjustTypeNamesT
 
-rt_get_value_type = rt.get_value_type
+rt_get_value_type = t_id.get_value_type
 
 # This plugin is needed to avoid caching results that depend upon 'options'
 assert importlib.util.find_spec('pytest_antilru') is not None, "pytest-antilru missing"
@@ -25,7 +25,7 @@ def get_value_type(v, **kwargs) -> str:
 
 def get_type_name(t) -> TypeInfo:
     transformer = AdjustTypeNamesT(sys.modules['__main__'].__dict__)
-    ti = rt.get_type_name(cast(type, t))
+    ti = t_id.get_type_name(cast(type, t))
     if options.adjust_type_names:
         return transformer.visit(ti)
     return ti
@@ -313,9 +313,9 @@ def test_hint2type():
 
     hints = get_type_hints(foo)
 
-    assert f"int|{__name__}.MyGeneric[str, collections.abc.Callable[[], None]]" == str(rt.hint2type(hints['x']))
-    assert f"tuple[int, ...]" == str(rt.hint2type(hints['y']))
-    assert """jaxtyping.Float[jax.Array, "10 20"]""" == str(rt.hint2type(hints['z']))
+    assert f"int|{__name__}.MyGeneric[str, collections.abc.Callable[[], None]]" == str(t_id.hint2type(hints['x']))
+    assert f"tuple[int, ...]" == str(t_id.hint2type(hints['y']))
+    assert """jaxtyping.Float[jax.Array, "10 20"]""" == str(t_id.hint2type(hints['z']))
 
 
 def test_hint2type_pre_3_10():
@@ -326,8 +326,8 @@ def test_hint2type_pre_3_10():
 
     hints = get_type_hints(foo)
 
-    assert "int|str|None" == str(rt.hint2type(hints['x']))
-    assert "bool|None" == str(rt.hint2type(hints['y']))
+    assert "int|str|None" == str(t_id.hint2type(hints['x']))
+    assert "bool|None" == str(t_id.hint2type(hints['y']))
 
 
 def test_typeinfo():
@@ -439,9 +439,9 @@ def test_merged_types_generics():
     ))
 
     assert "collections.abc.Callable" == str(merged_types({
-            rt.hint2type(abc.Callable[[], None]),
-            rt.hint2type(abc.Callable[[int], None]),
-            rt.hint2type(abc.Callable),
+            t_id.hint2type(abc.Callable[[], None]),
+            t_id.hint2type(abc.Callable[[int], None]),
+            t_id.hint2type(abc.Callable),
         }
     ))
 
@@ -575,10 +575,10 @@ union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.Un
 
 
 def test_hint2type_typevar():
-    t = rt.hint2type(T)
+    t = t_id.hint2type(T)
     assert t == TypeInfo(module=T.__module__, name=T.__name__)
 
-    t = rt.hint2type(List[T])   # type: ignore[valid-type]
+    t = t_id.hint2type(List[T])   # type: ignore[valid-type]
     assert t == TypeInfo.from_type(list, module='', args=(
             TypeInfo(module=T.__module__, name=T.__name__),
         )
@@ -586,10 +586,10 @@ def test_hint2type_typevar():
 
 
 def test_hint2type_none():
-    t = rt.hint2type(None)
+    t = t_id.hint2type(None)
     assert t is NoneTypeInfo
 
-    t = rt.hint2type(abc.Generator[int|str, None, None])
+    t = t_id.hint2type(abc.Generator[int|str, None, None])
     assert t == TypeInfo.from_type(abc.Generator, args=(
         TypeInfo.from_set({
             TypeInfo.from_type(int, module=''),
@@ -601,7 +601,7 @@ def test_hint2type_none():
 
 
 def test_hint2type_ellipsis():
-    t = rt.hint2type(tuple[str, ...])
+    t = t_id.hint2type(tuple[str, ...])
     assert t == TypeInfo.from_type(tuple, module="", args=(
         TypeInfo.from_type(str, module=""),
         ...
@@ -609,7 +609,7 @@ def test_hint2type_ellipsis():
 
 
 def test_hint2type_list():
-    t = rt.hint2type(abc.Callable[[], None]) 
+    t = t_id.hint2type(abc.Callable[[], None]) 
     assert t == TypeInfo.from_type(cast(type, abc.Callable), args=(
         TypeInfo.list([]),
         NoneTypeInfo
@@ -623,19 +623,19 @@ def test_hint2type_literal():
     ): pass
 
     hints = get_type_hints(foo)
-    assert "int" == str(rt.hint2type(hints['x']))
-    assert "bool|str" == str(rt.hint2type(hints['y']))
+    assert "int" == str(t_id.hint2type(hints['x']))
+    assert "bool|str" == str(t_id.hint2type(hints['y']))
 
 
 def test_hint2type_unions():
-    t = rt.hint2type(Union[int, str])
+    t = t_id.hint2type(Union[int, str])
     assert t.fullname() == "types.UnionType"
     assert t.args == (
         TypeInfo.from_type(int, module=''),
         TypeInfo.from_type(str, module=''),
     )
 
-    t = rt.hint2type(Optional[str])
+    t = t_id.hint2type(Optional[str])
     assert t.fullname() == "types.UnionType"
     assert t.args == (
         TypeInfo.from_type(str, module=''),
@@ -650,7 +650,7 @@ def test_hint2type_jaxtyping():
     import jaxtyping
     import numpy
 
-    t = rt.hint2type(jaxtyping.Float64[numpy.ndarray, "0"])
+    t = t_id.hint2type(jaxtyping.Float64[numpy.ndarray, "0"])
     assert t == TypeInfo("jaxtyping", "Float64", args=(
         TypeInfo.from_type(numpy.ndarray),
         "0"

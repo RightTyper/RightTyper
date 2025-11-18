@@ -1,5 +1,5 @@
 from righttyper.typeinfo import TypeInfo
-from righttyper.righttyper_runtime import normalize_module_name
+from righttyper.type_id import normalize_module_name
 import righttyper.generalize
 from typing import Any, Never, Self
 import pytest

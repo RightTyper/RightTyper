@@ -4,7 +4,7 @@ import collections.abc as abc
 from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo
 from righttyper.righttyper_utils import is_test_module
 from righttyper.typemap import AdjustTypeNamesT
-from righttyper.righttyper_runtime import get_type_name
+from righttyper.type_id import get_type_name
 
 import logging
 from righttyper.logger import logger
