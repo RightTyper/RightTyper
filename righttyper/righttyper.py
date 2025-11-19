@@ -15,7 +15,6 @@ import subprocess
 import re
 import time
 
-from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 from types import CodeType, FrameType, GeneratorType, AsyncGeneratorType
@@ -43,7 +42,8 @@ from righttyper.righttyper_utils import should_skip_function, detected_test_modu
 from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_types import CodeId, Filename, FunctionName
 from righttyper.annotation import FuncAnnotation, ModuleVars
-from righttyper.observations import Observations, ObservationsRecorder
+from righttyper.observations import Observations
+from righttyper.recorder import ObservationsRecorder
 from righttyper.options import run_options, output_options
 from righttyper.logger import logger
 from righttyper.atomic import AtomicCounter

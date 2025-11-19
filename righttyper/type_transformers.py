@@ -2,9 +2,6 @@ import typing
 import types
 import collections.abc as abc
 from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo
-from righttyper.righttyper_utils import is_test_module
-from righttyper.typemap import AdjustTypeNamesT
-from righttyper.type_id import get_type_name
 from righttyper.generalize import merged_types
 
 import logging
@@ -107,57 +104,6 @@ class DepthLimitT(TypeInfo.Transformer):
             return t
         finally:
             self._level -= 1
-
-
-def _resolve_mock(ti: TypeInfo, adjuster: AdjustTypeNamesT|None) -> TypeInfo|None:
-    """Attempts to map a test type, such as a mock, to a production one."""
-    import unittest.mock as mock
-
-    trace = [ti]
-    t = ti
-    while is_test_module(t.module):
-        if not t.type_obj:
-            return None
-
-        non_unittest_bases = [
-            b for b in t.type_obj.__bases__ if b not in (mock.Mock, mock.MagicMock)
-        ]
-
-        # To be conservative, we only recognize classes with a single base (besides any Mock).
-        # If the only base is 'object', we couldn't find a non-mock module base.
-        if len(non_unittest_bases) != 1 or (base := non_unittest_bases[0]) is object:
-            return None
-
-        t = get_type_name(base) # FIXME type checking may not work for __main__ types
-        if adjuster:
-            t = adjuster.visit(t)
-        trace.append(t)
-        if len(trace) > 50:
-            return None # break loops
-
-    if t is ti:
-        # 'ti' didn't need resolution.  Indicate no need to replace the type.
-        return None
-
-    if logger.level == logging.DEBUG:
-        logger.debug(f"Resolved mock {' -> '.join([str(t) for t in trace])}")
-
-    return t
-
-
-class ResolveMocksT(TypeInfo.Transformer):
-    """Resolves apparent test mock types to non-test ones."""
-
-    def __init__(self, adjuster: AdjustTypeNamesT|None):
-        self._adjuster = adjuster
-
-    # TODO make mock resolution context sensitive, leaving test-only
-    # objects unresolved within test code?
-    def visit(self, node: TypeInfo) -> TypeInfo:
-        node = super().visit(node)
-        if (resolved := _resolve_mock(node, self._adjuster)):
-            return resolved
-        return node
 
 
 class GeneratorToIteratorT(TypeInfo.Transformer):

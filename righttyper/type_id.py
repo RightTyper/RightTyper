@@ -25,7 +25,6 @@ import builtins
 import types
 from typing import Any, cast, get_type_hints, get_origin, get_args
 import typing
-from pathlib import Path
 
 from righttyper.random_dict import RandomDict
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
