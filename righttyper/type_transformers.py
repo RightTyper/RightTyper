@@ -184,8 +184,6 @@ class MakePickleableT(TypeInfo.Transformer):
 class LoadTypeObjT(TypeInfo.Transformer):
     """Loads TypeInfo's type_obj (e.g., cleared by MakePickleableT) by its module and name."""
 
-    types_names: typing.ClassVar[set[str]] = set(types.__all__)
-
     @classmethod
     def load_object(cls, node: TypeInfo) -> object:
         import importlib
@@ -197,9 +195,7 @@ class LoadTypeObjT(TypeInfo.Transformer):
             return types.NoneType
 
         parts = node.name.split('.')
-        modname = node.module if node.module else (
-            'types' if parts[0] in cls.types_names else 'builtins'
-        )
+        modname = node.module if node.module else 'builtins'
 
         try:
             obj = importlib.import_module(modname)
@@ -207,9 +203,10 @@ class LoadTypeObjT(TypeInfo.Transformer):
             return None
 
         for part in parts:
-            obj = getattr(obj, part)
+            obj = getattr(obj, part, None)
         return obj
     
+
     def visit(self, node: TypeInfo) -> TypeInfo:
         node = super().visit(node)
         if node.type_obj is None and (type_obj := self.load_object(node)):
