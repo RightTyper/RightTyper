@@ -211,7 +211,7 @@ class LoadTypeObjT(TypeInfo.Transformer):
         modname = node.module if node.module else 'builtins'
 
         try:
-            obj = importlib.import_module(modname)
+            obj: object = importlib.import_module(modname)
         except:
             return None
 

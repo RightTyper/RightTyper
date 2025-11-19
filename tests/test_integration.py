@@ -556,9 +556,9 @@ def test_internal_numpy_type(adjust):
     # numpy._ArrayFunctionDispatcher isn't a valid name, so we expect it renamed or gone
     f = get_function(code, 'MyArray.__array_function__')
     if adjust == '--adjust-type-names':
-        assert re.search(r'func: "numpy.[\w\.]+_ArrayFunctionDispatcher"', f)
+        assert re.search(r'func: "numpy.[\w\.]+_ArrayFunctionDispatcher"', str(f))
     else:
-        assert re.search(r', func,', f)
+        assert re.search(r', func,', str(f))
 
 
 @pytest.mark.dont_run_mypy # it lacks definitions for checking
@@ -583,7 +583,7 @@ def test_internal_numpy_type_default(adjust):
     # np.where IS-A numpy._ArrayFunctionDispatcher, which isn't a valid name, so we expect it renamed or gone
     foo = get_function(code, 'foo')
     if adjust == '--adjust-type-names':
-        assert re.search(r'op: "numpy.[\w\.]+_ArrayFunctionDispatcher"', foo)
+        assert re.search(r'op: "numpy.[\w\.]+_ArrayFunctionDispatcher"', str(foo))
     else:
         assert foo == "def foo(op=np.where) -> None: ...\n"
 

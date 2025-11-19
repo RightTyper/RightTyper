@@ -241,7 +241,7 @@ class ABCFinder:
 
     @cache
     @staticmethod
-    def find_abc(t: type) -> TypeInfo | None:
+    def find_abc(t: type) -> type|None:
         matching = [
             g
             for g in ABCFinder._ABCs
@@ -287,7 +287,12 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
         return UnknownTypeInfo
 
     # numpy subtypes dtype for different inner types, but doesn't include its qualified name...
-    if obj.__module__ == 'numpy' and (numpy := get_numpy()) and issubclass(obj, numpy.dtype):
+    if (
+        obj.__module__ == 'numpy'
+        and (numpy := get_numpy())
+        and issubclass(obj, numpy.dtype)
+        and hasattr(obj, "type")
+    ):
         return TypeInfo.from_type(numpy.dtype, args=(get_type_name(obj.type, depth+1),))
 
     if not options.adjust_type_names:
