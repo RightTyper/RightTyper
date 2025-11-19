@@ -1593,11 +1593,12 @@ def test_default_method():
     assert "def h(self: Self, x: int=1) -> float" in output
 
 
+@pytest.mark.parametrize("ann", ["", " -> Generator[MyType, None, None]"])
 @pytest.mark.parametrize("ignore", [(), ('--ignore-annotations',)])
-@pytest.mark.parametrize("ann", ["", " -> Iterator[MyType]"])
-def test_generator(ann, ignore):
+@pytest.mark.parametrize("no_simplify", [(), ('--no-simplify-types',)])
+def test_generator(ann, ignore, no_simplify):
     t = textwrap.dedent(f"""\
-        from collections.abc import Iterator
+        from collections.abc import Generator
         type MyType = float
 
         def gen(){ann}:
@@ -1617,24 +1618,37 @@ def test_generator(ann, ignore):
 
     Path("t.py").write_text(t)
 
-    rt_run(*ignore, 't.py')
+    rt_run(*ignore, *no_simplify, 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
     if ann and not ignore:
         assert get_function(code, 'gen') == textwrap.dedent("""\
-            def gen() -> Iterator[MyType]: ...
+            def gen() -> Generator[MyType, None, None]: ...
         """)
-        assert get_function(code, 'g') == textwrap.dedent("""\
-            def g(f: Iterator[MyType]) -> None: ...
-        """)
+        if no_simplify:
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Generator[MyType, None, None]) -> None: ...
+            """)
+        else:
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Iterator[MyType]) -> None: ...
+            """)
     else:
-        assert get_function(code, 'gen') == textwrap.dedent("""\
-            def gen() -> Iterator[float|int]: ...
-        """)
-        assert get_function(code, 'g') == textwrap.dedent("""\
-            def g(f: Iterator[float|int]) -> None: ...
-        """)
+        if no_simplify:
+            assert get_function(code, 'gen') == textwrap.dedent("""\
+                def gen() -> Generator[float|int, None, None]: ...
+            """)
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Generator[float|int, None, None]) -> None: ...
+            """)
+        else:
+            assert get_function(code, 'gen') == textwrap.dedent("""\
+                def gen() -> Iterator[float]: ...
+            """)
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Iterator[float]) -> None: ...
+            """)
 
 
 @pytest.mark.dont_run_mypy # fails because of SomethingUnknown
@@ -1692,7 +1706,8 @@ def test_generator_with_return():
     assert "def g(f: Generator[int, None, str]) -> None" in output
 
 
-def test_async_generator():
+@pytest.mark.parametrize("no_simplify", [(), ('--no-simplify-types',)])
+def test_async_generator(no_simplify):
     t = textwrap.dedent("""\
         import asyncio
 
@@ -1712,17 +1727,26 @@ def test_async_generator():
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run('--debug', *no_simplify, 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'gen') == textwrap.dedent("""\
-        async def gen() -> AsyncGenerator[int, None]: ...
-    """)
+    if no_simplify:
+        assert get_function(code, 'gen') == textwrap.dedent("""\
+            async def gen() -> AsyncGenerator[int, None]: ...
+        """)
 
-    assert get_function(code, 'g') == textwrap.dedent("""\
-        def g(f: AsyncGenerator[int, None]) -> None: ...
-    """)
+        assert get_function(code, 'g') == textwrap.dedent("""\
+            def g(f: AsyncGenerator[int, None]) -> None: ...
+        """)
+    else:
+        assert get_function(code, 'gen') == textwrap.dedent("""\
+            async def gen() -> AsyncIterator[int]: ...
+        """)
+
+        assert get_function(code, 'g') == textwrap.dedent("""\
+            def g(f: AsyncIterator[int]) -> None: ...
+        """)
 
 
 def test_generator_with_self():

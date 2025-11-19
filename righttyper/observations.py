@@ -274,9 +274,9 @@ class Observations:
                     "ann   " + func_info.code_id.func_name +
                     str((*(str(arg[1]) for arg in ann.args), str(ann.retval)))
                 )
-                for var, var_type in list(func_info.variables.items()):
+                for var_name, var_type in ann.variables:
                     logger.debug(
-                        "var {func_info.code_id.func_name} {var_type}"
+                        f"var   {func_info.code_id.func_name} {var_name} {str(var_type)}"
                     )
 
             return ann
@@ -359,7 +359,12 @@ class Observations:
 
         def finalize(t: TypeInfo) -> TypeInfo:
             for f in finalizers:
-                t = f.visit(t)
+                t_prime = f.visit(t)
+                if t is not t_prime:
+                    # MakePickleableT just adds noise: omit it
+                    if logger.level == logging.DEBUG and type(f) is not MakePickleableT:
+                        logger.debug(type(f).__name__ + f" {str(t)} -> {str(t_prime)}")
+                    t = t_prime
             return t
 
         if options.type_depth_limit is not None:
@@ -368,7 +373,11 @@ class Observations:
         if options.use_typing_union:
             finalizers.append(TypesUnionT())
 
-        finalizers.append(GeneratorToIteratorT())
+        # Only rename to Iterator as a finalizer so that all [Async]Generator arguments
+        # are available for generalization
+        if options.simplify_types:
+            finalizers.append(GeneratorToIteratorT())
+
         finalizers.append(MakePickleableT())
 
         annotations = {

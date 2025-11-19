@@ -765,9 +765,9 @@ def cli(debug: bool):
     help="Whether to look for a canonical name for types, rather than use the module and name where they are defined.",
 )
 @click.option(
-    "--simplify-type-sets/--no-simplify-type-sets",
-    default=options.simplify_type_sets,
-    help="Whether to attempt to simplify type sets, such as int|bool|float -> float.",
+    "--simplify-types/--no-simplify-types",
+    default=options.simplify_types,
+    help="Whether to attempt to simplify types, such as int|bool|float -> float. or Generator[X, None, None] -> Iterator[X]",
 )
 @click.option(
     "--variables/--no-variables",
@@ -813,7 +813,7 @@ def run(
     test_modules: tuple[str, ...],
     use_typing_never: bool,
     adjust_type_names: bool,
-    simplify_type_sets: bool,
+    simplify_types: bool,
     variables: bool,
     debug: bool
 ) -> None:
@@ -888,7 +888,7 @@ def run(
     options.exclude_test_types = exclude_test_types
     options.test_modules = test_modules
     options.adjust_type_names = adjust_type_names
-    options.simplify_type_sets = simplify_type_sets
+    options.simplify_types = simplify_types
     options.variables = variables
     options.save_profiling = save_profiling
 

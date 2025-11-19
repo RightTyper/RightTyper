@@ -5,6 +5,7 @@ from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo
 from righttyper.righttyper_utils import is_test_module
 from righttyper.typemap import AdjustTypeNamesT
 from righttyper.type_id import get_type_name
+from righttyper.generalize import merged_types
 
 import logging
 from righttyper.logger import logger
@@ -163,10 +164,22 @@ class GeneratorToIteratorT(TypeInfo.Transformer):
         if (
             node.type_obj in (abc.Generator, typing.Generator)
             and len(node.args) == 3
+            and type(arg0 := node.args[0]) is TypeInfo
             and node.args[1] == NoneTypeInfo
             and node.args[2] == NoneTypeInfo
         ):
-            return TypeInfo.from_type(abc.Iterator, args=(node.args[0],))
+            return TypeInfo.from_type(abc.Iterator, args=(
+                arg0 if arg0.is_typevar() else merged_types(arg0.to_set()),
+            ))
+        elif (
+            node.type_obj in (abc.AsyncGenerator, typing.AsyncGenerator)
+            and len(node.args) == 2
+            and type(arg0 := node.args[0]) is TypeInfo
+            and node.args[1] == NoneTypeInfo
+        ):
+            return TypeInfo.from_type(abc.AsyncIterator, args=(
+                arg0 if arg0.is_typevar() else merged_types(arg0.to_set()),
+            ))
 
         return node
 

@@ -29,7 +29,7 @@ def generalize(samples):
 
 
 def test_no_simplify_types(monkeypatch):
-    monkeypatch.setattr(options, 'simplify_type_sets', False)
+    monkeypatch.setattr(options, 'simplify_types', False)
 
     # in Python, issubclass(bool, int)
     both = {TypeInfo.from_type(int), TypeInfo.from_type(bool)}
