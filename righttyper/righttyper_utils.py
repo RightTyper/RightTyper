@@ -6,7 +6,7 @@ from pathlib import Path
 from types import CodeType
 
 from righttyper.logger import logger
-from righttyper.options import options
+from righttyper.options import run_options
 
 
 _SAMPLING_INTERVAL = 0.01
@@ -82,7 +82,7 @@ def is_test_module(m: str) -> bool:
     return bool(
         m in detected_test_modules
         or (
-            (opt_test_modules := options.test_modules_re)
+            (opt_test_modules := run_options.test_modules_re)
             and opt_test_modules.match(m)
         )
     )
@@ -94,7 +94,7 @@ def should_skip_function(code: CodeType) -> bool:
         return True
 
     if (
-        (include_functions := options.include_functions_re)
+        (include_functions := run_options.include_functions_re)
         and not include_functions.search(code.co_name)
     ):
         logger.debug(f"skipping function {code.co_name}")
@@ -106,19 +106,19 @@ def should_skip_function(code: CodeType) -> bool:
 @cache
 def skip_this_file(filename: str) -> bool:
     #logger.debug(f"checking skip_this_file {filename=}")
-    if options.include_all:
+    if run_options.include_all:
         should_skip = False
     else:
         should_skip = (
             filename.startswith("<")
-            or (options.exclude_test_files and filename in detected_test_files)
+            or (run_options.exclude_test_files and filename in detected_test_files)
             # FIXME how about packages installed with 'pip install -e' (editable)?
             or any(filename.startswith(p) for p in PYTHON_LIBS)
             or filename.startswith(RIGHTTYPER_PATH)
-            or options.script_dir not in os.path.abspath(filename)
+            or run_options.script_dir not in os.path.abspath(filename)
         )
 
-    if not should_skip and (include_files := options.include_files_re):
+    if not should_skip and (include_files := run_options.include_files_re):
         should_skip = not include_files.search(filename)
         if should_skip:
             logger.debug(f"skipping file {filename}")

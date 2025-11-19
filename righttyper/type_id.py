@@ -31,7 +31,7 @@ from righttyper.random_dict import RandomDict
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
 from righttyper.righttyper_types import Filename, FunctionName, CodeId
 from righttyper.righttyper_utils import is_test_module, normalize_module_name
-from righttyper.options import options
+from righttyper.options import run_options, output_options
 from righttyper.logger import logger
 
 
@@ -131,7 +131,7 @@ def _type_for_callable(func: abc.Callable) -> TypeInfo:
         func = orig_func
 
     args: "tuple[TypeInfo|str|ellipsis, ...]" = tuple()
-    if not options.ignore_annotations and hasattr(func, "__annotations__"):
+    if not output_options.ignore_annotations and hasattr(func, "__annotations__"): # FIXME this should be a run option
         try:
             signature = inspect.signature(func)
             hints = get_type_hints(func)
@@ -295,7 +295,7 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     ):
         return TypeInfo.from_type(numpy.dtype, args=(get_type_name(obj.type, depth+1),))
 
-    if not options.adjust_type_names:
+    if not run_options.adjust_type_names:
         # If we we can (i.e., not '<locals>'), check the type is valid
         if (
             '<locals>' not in (name_parts := obj.__qualname__.split('.'))
@@ -395,7 +395,7 @@ def _type_for_generator(
 
     retval: TypeInfo|None = None
     # FIXME: using find_function here prevents us from using annotations from <locals> functions
-    if not options.ignore_annotations and (f := find_function(frame, code)):
+    if not output_options.ignore_annotations and (f := find_function(frame, code)): # FIXME should be a run option
         try:
             if (retval_hint := get_type_hints(f).get('return')):
                 retval = hint2type(retval_hint)
@@ -421,8 +421,8 @@ def _random_item[T](container: abc.Collection[T]) -> T:
     # Unbounded, islice's running time seems to be O(N);
     # options.container_sample_limit provides an optional bound
     limit = len(container)-1
-    if options.container_sample_limit is not None:
-        limit = min(limit, options.container_sample_limit)
+    if run_options.container_sample_limit is not None:
+        limit = min(limit, run_options.container_sample_limit)
     n = random.randint(0, limit)
     return next(itertools.islice(container, n, None))
 
@@ -675,7 +675,7 @@ def get_value_type(
 
     # Is this a spec-based mock?
     if mock_spec := inspect.getattr_static(value, "_spec_class", None):
-        if options.resolve_mocks and is_test_module(t.__module__):
+        if run_options.resolve_mocks and is_test_module(t.__module__):
             ti = get_type_name(mock_spec, depth+1)
             logger.debug(f"Resolved spec mock {t.__module__}.{t.__qualname__} -> {str(ti)}")
             return ti
@@ -721,7 +721,7 @@ def get_value_type(
     ):
         return _type_for_callable(value) # a function wrapper such as @cache
 
-    if options.infer_shapes and hasattr(value, "dtype") and hasattr(value, "shape"):
+    if run_options.infer_shapes and hasattr(value, "dtype") and hasattr(value, "shape"):
         if (dtype := jx_dtype(value)) is not None:
             shape = " ".join(str(d) for d in value.shape)
             return TypeInfo.from_type(dtype, args=(get_type_name(t, depth+1), f"{shape}"))

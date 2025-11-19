@@ -40,9 +40,13 @@ class NoReturnToNeverT(TypeInfo.Transformer):
 
 
 class ExcludeTestTypesT(TypeInfo.Transformer):
-    """Removes test types."""
-    def visit(vself, node: TypeInfo) -> TypeInfo:
-        if is_test_module(node.module):
+    """Removes types from test modules."""
+
+    def __init__(self, test_modules: set[str]) -> None:
+        self._test_modules = test_modules
+
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        if node.module in self._test_modules:
             return AnyTypeInfo
 
         return super().visit(node)
@@ -124,7 +128,7 @@ def _resolve_mock(ti: TypeInfo, adjuster: AdjustTypeNamesT|None) -> TypeInfo|Non
         if len(non_unittest_bases) != 1 or (base := non_unittest_bases[0]) is object:
             return None
 
-        t = get_type_name(base)
+        t = get_type_name(base) # FIXME type checking may not work for __main__ types
         if adjuster:
             t = adjuster.visit(t)
         trace.append(t)

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 
-from righttyper.options import options
+from righttyper.options import run_options, output_options
 from righttyper.logger import logger
 from righttyper.generalize import merged_types, generalize
 from righttyper.variable_capture import code2variables
@@ -31,7 +31,10 @@ from righttyper.type_transformers import (
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownTypeInfo, CallTrace
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, cast_not_None
 from righttyper.annotation import FuncAnnotation, ModuleVars
-from righttyper.righttyper_utils import source_to_module_fqn, get_main_module_fqn, skip_this_file, detected_test_files
+from righttyper.righttyper_utils import (
+    source_to_module_fqn, get_main_module_fqn, skip_this_file,
+    detected_test_files, detected_test_modules, is_test_module
+)
 from righttyper.type_id import (
     find_function,
     unwrap,
@@ -103,7 +106,7 @@ class FuncInfo:
 
     def most_common_traces(self) -> list[CallTrace]:
         """Returns the top X% most common call traces, turning type checking into anomaly detection."""
-        threshold = sum(self.traces.values()) * options.use_top_pct / 100
+        threshold = sum(self.traces.values()) * output_options.use_top_pct / 100
         cumulative = 0
 
         traces = list()
@@ -126,6 +129,9 @@ class Observations:
 
         # Mapping of sources to their module names
         self.source_to_module_name: dict[Filename, str] = {}
+
+        # Set of test modules
+        self.test_modules: set[str] = set()
 
 
     def transform_types(self, tr: TypeInfo.Transformer) -> None:
@@ -202,6 +208,7 @@ class Observations:
                 self.module_variables[filename] = var_dict2
 
         self.source_to_module_name |= obs2.source_to_module_name
+        self.test_modules |= obs2.test_modules
 
 
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars]]:
@@ -217,7 +224,7 @@ class Observations:
                 parents_func = func_info.overrides
 
                 if (
-                    options.ignore_annotations
+                    output_options.ignore_annotations
                     or not (
                         (parents_arg_types := get_inline_arg_types(parents_func, func_info.args))
                         or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
@@ -343,16 +350,16 @@ class Observations:
 
         self.transform_types(ResolvingT())
 
-        if options.use_typing_self:
+        if output_options.use_typing_self:
             self.transform_types(SelfT())
 
-        if not options.use_typing_never:
+        if not output_options.use_typing_never:
             self.transform_types(NeverSayNeverT())
         else:
             self.transform_types(NoReturnToNeverT())
 
-        if options.exclude_test_types:
-            self.transform_types(ExcludeTestTypesT())
+        if output_options.exclude_test_types:
+            self.transform_types(ExcludeTestTypesT(self.test_modules))
 
 
         finalizers: list[TypeInfo.Transformer] = []
@@ -367,15 +374,15 @@ class Observations:
                     t = t_prime
             return t
 
-        if options.type_depth_limit is not None:
-            finalizers.append(DepthLimitT(options.type_depth_limit))
+        if output_options.type_depth_limit is not None:
+            finalizers.append(DepthLimitT(output_options.type_depth_limit))
 
-        if options.use_typing_union:
+        if output_options.use_typing_union:
             finalizers.append(TypesUnionT())
 
         # Only rename to Iterator as a finalizer so that all [Async]Generator arguments
         # are available for generalization
-        if options.simplify_types:
+        if output_options.simplify_types:
             finalizers.append(GeneratorToIteratorT())
 
         finalizers.append(MakePickleableT())
@@ -581,7 +588,7 @@ class ObservationsRecorder:
         """Records variables."""
         # print(f"record_variables {code.co_qualname}")
 
-        if not options.variables or not (codevars := code2variables.get(code)):
+        if not run_options.variables or not (codevars := code2variables.get(code)):
             return
 
         # scope_code is guaranteed non-None in code2variables
@@ -699,14 +706,20 @@ class ObservationsRecorder:
         # of sys.modules, so we can't postpone them until collect_annotations,
         # which operate on deserialized data (vs. data just collected).
         type_name_adjuster = None
-        if options.adjust_type_names:
+        if run_options.adjust_type_names:
             type_name_adjuster = AdjustTypeNamesT(main_globals)
             obs.transform_types(type_name_adjuster)
 
-        if options.resolve_mocks:
+        if run_options.resolve_mocks:
             obs.transform_types(ResolveMocksT(type_name_adjuster))
 
-        if options.exclude_test_files:
+        obs.test_modules = set(run_options.test_modules) | set(detected_test_modules) | {
+            mod_name
+            for mod_name in obs.source_to_module_name.values()
+            if is_test_module(mod_name)
+        }
+
+        if run_options.exclude_test_files:
             # should_skip_function doesn't know to skip test files until they are detected,
             # so we can't help but get events for test modules while they are being loaded.
             for f in obs.source_to_module_name.keys() & detected_test_files:
@@ -727,6 +740,9 @@ def get_inline_arg_types(
     child_args: tuple[ArgInfo, ...]
 ) -> list[TypeInfo|None] | None:
     """Returns inline type annotations for a parent's method's arguments."""
+
+    # FIXME this should be called by ObservationsRecorder, not Observations, as it
+    # depends on run options
 
     if not (co := getattr(parents_func, "__code__", None)):
         return None

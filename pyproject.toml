@@ -51,6 +51,7 @@ authors = [
 dependencies = [
     "libcst >= 1.2.0",
     "click >= 8.1.7",
+    "click_option_group >= 0.5.9",
     "rich >= 13.7.1",
     "wcmatch >= 10.0",
     "typeshed_client >= 2.7.0",

@@ -5,13 +5,13 @@ from types import EllipsisType
 from righttyper.typeinfo import TypeInfo, CallTrace
 from righttyper.type_id import get_type_name
 from righttyper.righttyper_types import cast_not_None
-from righttyper.options import options
+from righttyper.options import output_options
 
 
 def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     """Attempts to merge types in a set before forming their union."""
 
-    if len(typeinfoset) > 1 and options.simplify_types:
+    if len(typeinfoset) > 1 and output_options.simplify_types:
         typeinfoset = simplify(typeinfoset)
 
     return TypeInfo.from_set(typeinfoset)

@@ -8,14 +8,14 @@ from typing import Any, Callable, get_type_hints, Union, Optional, List, Literal
 import pytest
 import importlib
 import types
-from righttyper.options import options
+from righttyper.options import run_options
 from enum import Enum
 import sys
 from righttyper.typemap import AdjustTypeNamesT
 
 rt_get_value_type = t_id.get_value_type
 
-# This plugin is needed to avoid caching results that depend upon 'options'
+# This plugin is needed to avoid caching results that depend upon 'run_options'
 assert importlib.util.find_spec('pytest_antilru') is not None, "pytest-antilru missing"
 
 
@@ -26,7 +26,7 @@ def get_value_type(v, **kwargs) -> str:
 def get_type_name(t) -> TypeInfo:
     transformer = AdjustTypeNamesT(sys.modules['__main__'].__dict__)
     ti = t_id.get_type_name(cast(type, t))
-    if options.adjust_type_names:
+    if run_options.adjust_type_names:
         return transformer.visit(ti)
     return ti
  
@@ -181,7 +181,7 @@ def test_type_name_iterator(init, name):
 
 @pytest.mark.parametrize("adjust_type_names", [False, True])
 def test_dynamic_type(monkeypatch, adjust_type_names):
-    monkeypatch.setattr(options, 'adjust_type_names', adjust_type_names)
+    monkeypatch.setattr(run_options, 'adjust_type_names', adjust_type_names)
 
     t = type('myType', (object,), dict())
     assert get_type_name(t) is UnknownTypeInfo
@@ -189,7 +189,7 @@ def test_dynamic_type(monkeypatch, adjust_type_names):
 
 @pytest.mark.parametrize("adjust_type_names", [False, True])
 def test_local_type_module_invalid(monkeypatch, adjust_type_names):
-    monkeypatch.setattr(options, 'adjust_type_names', adjust_type_names)
+    monkeypatch.setattr(run_options, 'adjust_type_names', adjust_type_names)
 
     class Invalid: pass
     Invalid.__module__ = 'does_not_exist'
@@ -240,7 +240,7 @@ class NamedTupleClass:
 
 @pytest.mark.parametrize("adjust_type_names", [False, True])
 def test_get_type_name_namedtuple_nonlocal(monkeypatch, adjust_type_names):
-    monkeypatch.setattr(options, 'adjust_type_names', adjust_type_names)
+    monkeypatch.setattr(run_options, 'adjust_type_names', adjust_type_names)
 
     if adjust_type_names:
         # namedtuple's __qualname__ also doesn't contain the enclosing class name...
@@ -269,7 +269,7 @@ def test_get_value_type_namedtuple_local():
                      importlib.util.find_spec('jaxtyping') is None),
                     reason='missing modules')
 def test_get_value_type_numpy_jaxtyping(monkeypatch):
-    monkeypatch.setattr(options, 'infer_shapes', True)
+    monkeypatch.setattr(run_options, 'infer_shapes', True)
     import numpy as np
 
     assert 'jaxtyping.Float64[numpy.ndarray, "0"]' == get_value_type(np.array([], np.float64))
@@ -281,7 +281,7 @@ def test_get_value_type_numpy_jaxtyping(monkeypatch):
                      importlib.util.find_spec('jaxtyping') is None),
                     reason='missing modules')
 def test_get_value_type_torch_jaxtyping(monkeypatch):
-    monkeypatch.setattr(options, 'infer_shapes', True)
+    monkeypatch.setattr(run_options, 'infer_shapes', True)
     import torch
 
     assert 'jaxtyping.Float64[torch.Tensor, "0"]' == \

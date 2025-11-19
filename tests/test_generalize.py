@@ -3,7 +3,7 @@ from righttyper.type_id import normalize_module_name
 import righttyper.generalize
 from typing import Any, Never, Self
 import pytest
-from righttyper.options import options
+from righttyper.options import output_options
 
 
 def ti(name: str, **kwargs) -> TypeInfo:
@@ -29,7 +29,7 @@ def generalize(samples):
 
 
 def test_no_simplify_types(monkeypatch):
-    monkeypatch.setattr(options, 'simplify_types', False)
+    monkeypatch.setattr(output_options, 'simplify_types', False)
 
     # in Python, issubclass(bool, int)
     both = {TypeInfo.from_type(int), TypeInfo.from_type(bool)}
