@@ -96,8 +96,18 @@ For example, with `--type-depth-limit=1`, a type inferred as `list[tuple[tuple[i
 Below is the full list of options for the run command:
 
 ```
-$ python3 -m righttyper run --help
+Usage: python -m righttyper [OPTIONS] COMMAND [ARGS]...
 
+Options:
+  --version  Show the version and exit.
+  --help     Show this message and exit.
+
+Commands:
+  coverage  Computes annotation coverage.
+  process   Processes type information collected with the 'run' command.
+  run       Runs a given script or module, collecting type information.
+
+---- Help for 'run': ----
 Usage: python -m righttyper run [OPTIONS] [SCRIPT] [ARGS]...
 
   Runs a given script or module, collecting type information.
@@ -122,27 +132,8 @@ Options:
                                   directory.  If omitted, the script's
                                   directory (or, for -m, the current
                                   directory) is used.
-  --overwrite / --no-overwrite    Overwrite ".py" files with type information.
-                                  If disabled, ".py.typed" files are written
-                                  instead. The original files are saved as
-                                  ".py.bak".  [default: overwrite]
-  --output-files / --no-output-files
-                                  Output annotated files (possibly
-                                  overwriting, if specified).  If disabled,
-                                  the annotations are only written to
-                                  righttyper.out.  [default: output-files]
-  --ignore-annotations            Ignore existing annotations and overwrite
-                                  with type information.
-  --only-update-annotations       Overwrite existing annotations but never add
-                                  new ones.
-  --generate-stubs                Generate stub files (.pyi).
-  --json-output                   Output inferences in JSON, instead of
-                                  writing righttyper.out.
   --target-overhead FLOAT         Target overhead, as a percentage (e.g., 5).
                                   [default: 5.0]
-  --use-multiprocessing / --no-use-multiprocessing
-                                  Whether to use multiprocessing.  [default:
-                                  use-multiprocessing]
   --sampling / --no-sampling      Whether to sample calls or to use every one.
                                   [default: sampling]
   --no-sampling-for REGEX         Rather than sample, record every invocation
@@ -156,47 +147,68 @@ Options:
                                   Maximum number of container elements
                                   considered when sampling; 'none' means
                                   unlimited.  [default: 1000]
-  --type-depth-limit [INTEGER|none]
-                                  Maximum depth (types within types) for
-                                  generic types; 'none' to disable.  [default:
-                                  none]
-  --python-version [3.9|3.10|3.11|3.12|3.13]
-                                  Python version for which to emit
-                                  annotations.  [default: 3.12]
-  --use-top-pct PCT               Only use the PCT% most common call traces.
-                                  [default: 80; 1<=x<=100]
-  --only-collect                  Rather than immediately process collect
-                                  data, save it to righttyper.rt. You can
-                                  later process using RightTyper's "process"
-                                  command.
   --resolve-mocks / --no-resolve-mocks
                                   Whether to attempt to resolve test types,
                                   such as mocks, to non-test types.  [default:
                                   no-resolve-mocks]
-  --exclude-test-types / --no-exclude-test-types
-                                  Whether to exclude or replace with
-                                  "typing.Any" types defined in test modules.
-                                  [default: exclude-test-types]
   --test-modules MODULE           Additional modules (besides those detected)
                                   whose types are subject to mock resolution
                                   or test type exclusion, if enabled. Matches
                                   submodules as well. Can be passed multiple
                                   times.  [default: pytest, _pytest, py.test,
                                   unittest]
-  --use-typing-never / --no-use-typing-never
-                                  Whether to emit "typing.Never".  [default:
-                                  use-typing-never]
   --adjust-type-names / --no-adjust-type-names
                                   Whether to look for a canonical name for
                                   types, rather than use the module and name
                                   where they are defined.  [default: adjust-
                                   type-names]
-  --simplify-type-sets / --no-simplify-type-sets
-                                  Whether to attempt to simplify type sets,
-                                  such as int|bool|float -> float.  [default:
-                                  simplify-type-sets]
   --variables / --no-variables    Whether to (observe and) annotate variables.
                                   [default: variables]
+  --only-collect                  Rather than immediately process collect
+                                  data, save it to "righttyper-N.rt". You can
+                                  later process using RightTyper's "process"
+                                  command.
   --debug                         Include diagnostic information in log file.
+  Output options: 
+    --overwrite / --no-overwrite  Overwrite ".py" files with type information.
+                                  If disabled, ".py.typed" files are written
+                                  instead. The original files are saved as
+                                  ".py.bak".  [default: overwrite]
+    --output-files / --no-output-files
+                                  Output annotated files (possibly
+                                  overwriting, if specified).  If disabled,
+                                  the annotations are only written to
+                                  righttyper.out.  [default: output-files]
+    --ignore-annotations          Ignore existing annotations and overwrite
+                                  with type information.
+    --only-update-annotations     Overwrite existing annotations but never add
+                                  new ones.
+    --generate-stubs              Generate stub files (.pyi).
+    --json-output                 Output inferences in JSON, instead of
+                                  writing righttyper.out.
+    --use-multiprocessing / --no-use-multiprocessing
+                                  Whether to use multiprocessing.  [default:
+                                  use-multiprocessing]
+    --type-depth-limit [INTEGER|none]
+                                  Maximum depth (types within types) for
+                                  generic types; 'none' to disable.  [default:
+                                  none]
+    --python-version [3.9|3.10|3.11|3.12|3.13]
+                                  Python version for which to emit
+                                  annotations.  [default: 3.12]
+    --use-top-pct PCT             Only use the PCT% most common call traces.
+                                  [default: 80; 1<=x<=100]
+    --use-typing-never / --no-use-typing-never
+                                  Whether to emit "typing.Never".  [default:
+                                  use-typing-never]
+    --simplify-types / --no-simplify-types
+                                  Whether to attempt to simplify types, such
+                                  as int|bool|float -> float. or Generator[X,
+                                  None, None] -> Iterator[X]  [default:
+                                  simplify-types]
+    --exclude-test-types / --no-exclude-test-types
+                                  Whether to exclude or replace with
+                                  "typing.Any" types defined in test modules.
+                                  [default: exclude-test-types]
   --help                          Show this message and exit.
 ```
