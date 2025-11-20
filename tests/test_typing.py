@@ -294,7 +294,7 @@ def test_type_from_annotations():
     def foo(x: int|float, y: list[tuple[bool, ...]], z: Callable[[], None]) -> complex|None:
         pass
 
-    assert "collections.abc.Callable[[int|float, list[tuple[bool, ...]], collections.abc.Callable[[], None]], complex|None]" == \
+    assert "collections.abc.Callable[[float|int, list[tuple[bool, ...]], collections.abc.Callable[[], None]], complex|None]" == \
             get_value_type(foo)
 
 
@@ -569,9 +569,8 @@ def test_merged_types_superclass_multiple_superclasses():
     ))
 
 
-str_ti = TypeInfo("", "str", type_obj=str)
-int_ti = TypeInfo("", "int", type_obj=int)
-union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.UnionType)
+str_ti = TypeInfo.from_type(str)
+int_ti = TypeInfo.from_type(int)
 
 
 def test_hint2type_typevar():
@@ -579,7 +578,7 @@ def test_hint2type_typevar():
     assert t == TypeInfo(module=T.__module__, name=T.__name__)
 
     t = t_id.hint2type(List[T])   # type: ignore[valid-type]
-    assert t == TypeInfo.from_type(list, module='', args=(
+    assert t == TypeInfo.from_type(list, args=(
             TypeInfo(module=T.__module__, name=T.__name__),
         )
     )
@@ -592,8 +591,8 @@ def test_hint2type_none():
     t = t_id.hint2type(abc.Generator[int|str, None, None])
     assert t == TypeInfo.from_type(abc.Generator, args=(
         TypeInfo.from_set({
-            TypeInfo.from_type(int, module=''),
-            TypeInfo.from_type(str, module=''),
+            TypeInfo.from_type(int),
+            TypeInfo.from_type(str),
         }),
         NoneTypeInfo,
         NoneTypeInfo
@@ -629,18 +628,28 @@ def test_hint2type_literal():
 
 def test_hint2type_unions():
     t = t_id.hint2type(Union[int, str])
-    assert t.fullname() == "types.UnionType"
+    assert t.is_union()
     assert t.args == (
-        TypeInfo.from_type(int, module=''),
-        TypeInfo.from_type(str, module=''),
+        TypeInfo.from_type(int),
+        TypeInfo.from_type(str),
     )
+    assert str(t) == "int|str"
 
     t = t_id.hint2type(Optional[str])
-    assert t.fullname() == "types.UnionType"
+    assert t.is_union()
     assert t.args == (
-        TypeInfo.from_type(str, module=''),
+        TypeInfo.from_type(str),
         NoneTypeInfo
     )
+    assert str(t) == "str|None"
+
+    t = t_id.hint2type(str|int)
+    assert t.is_union()
+    assert t.args == (
+        TypeInfo.from_type(int),
+        TypeInfo.from_type(str),
+    )
+    assert str(t) == "int|str"
 
 
 @pytest.mark.skipif((importlib.util.find_spec('numpy') is None or
@@ -662,43 +671,41 @@ def test_hint2type_jaxtyping():
 def test_from_set_with_unions():
     t = TypeInfo.from_set({
             TypeInfo.from_set({
-                TypeInfo.from_type(str, module=''),
-                TypeInfo.from_type(int, module='')
+                TypeInfo.from_type(str),
+                TypeInfo.from_type(int)
             })
         })
 
-    assert t.fullname() == "types.UnionType"
+    assert t.is_union()
     assert t.args == (
-        TypeInfo.from_type(int, module=''),
-        TypeInfo.from_type(str, module=''),
+        TypeInfo.from_type(int),
+        TypeInfo.from_type(str),
     )
+    assert str(t) == "int|str"
 
 
 def test_from_set_with_never():
     t = TypeInfo.from_set({
             TypeInfo.from_type(Never),
-            TypeInfo.from_type(int, module=''),
-            TypeInfo.from_type(str, module='')
+            TypeInfo.from_type(int),
+            TypeInfo.from_type(str)
         })
 
-    assert t.fullname() == "types.UnionType"
+    assert t.is_union()
     assert t.args == (
-        TypeInfo.from_type(int, module=''),
-        TypeInfo.from_type(str, module=''),
+        TypeInfo.from_type(int),
+        TypeInfo.from_type(str),
     )
+    assert str(t) == "int|str"
 
 
 def test_from_set_with_any():
     t = TypeInfo.from_set({
             TypeInfo.from_type(Any),
-            TypeInfo.from_type(int, module=''),
-            TypeInfo.from_type(str, module='')
+            TypeInfo.from_type(int),
+            TypeInfo.from_type(str)
         })
 
+    assert not t.is_union()
     assert t.fullname() == "typing.Any"
     assert t.args == ()
-
-
-def test_uniontype():
-    assert "int|str" == str(union_ti(int_ti, str_ti))
-    assert "types.UnionType" == str(union_ti())

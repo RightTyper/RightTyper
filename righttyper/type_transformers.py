@@ -56,7 +56,7 @@ class TypesUnionT(TypeInfo.Transformer):
 
         # Typevar nodes may be UnionType; there's no need to replace them, and
         # replacing them would prevent RightTyper from annotating as typevars.
-        if node.type_obj is types.UnionType and not node.is_typevar():
+        if node.is_union() and not node.is_typevar():
             has_none = node.args[-1] == NoneTypeInfo
             non_none_count = len(node.args) - int(has_none)
             if non_none_count > 1:

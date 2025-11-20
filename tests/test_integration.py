@@ -624,7 +624,7 @@ def test_default_arg():
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run('--debug', 't.py')
     output = Path("t.py").read_text()
 
     assert "def func(n: int|None=None) -> int" in output
@@ -2306,7 +2306,7 @@ def test_discovered_function_annotated(ignore_ann):
     if ignore_ann:
         assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
     else:
-        assert "def bar(f: Callable[[int|float], float], x: int) -> float:" in output
+        assert "def bar(f: Callable[[float|int], float], x: int) -> float:" in output
 
 
 def test_discovered_generator():

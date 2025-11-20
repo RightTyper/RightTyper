@@ -84,7 +84,7 @@ def hint2type(hint) -> TypeInfo:
         return hint2type(hint)
 
     if (origin := get_origin(hint)):
-        if origin is typing.Union:
+        if origin in (types.UnionType, typing.Union):
             return TypeInfo.from_set({hint2type(a) for a in get_args(hint)})
 
         # FIXME TypeInfo args can't hold non-str Literal values; for now,
@@ -94,7 +94,6 @@ def hint2type(hint) -> TypeInfo:
 
         return TypeInfo.from_type(
                     origin,
-                    module=normalize_module_name(origin.__module__),
                     args=tuple(
                         hint2type_arg(a) for a in get_args(hint)
                     )

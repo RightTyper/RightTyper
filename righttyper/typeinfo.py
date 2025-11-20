@@ -12,6 +12,11 @@ type SpecialForms = typing.Any|typing.Never
 # What is allowed in TypeInfo.args
 type TypeInfoArg = TypeInfo|str|types.EllipsisType
 
+# Used to indicate a union expressed with "|" between types
+class _UNION_TYPE: pass
+_UNION_TYPE_NAME = (_UNION_TYPE.__module__, _UNION_TYPE.__qualname__)
+
+
 @dataclass(eq=True, frozen=True)
 class TypeInfo:
     module: str
@@ -38,10 +43,10 @@ class TypeInfo:
 
         # We can't use type_obj here because we need to clear them before using 'multiprocessing',
         # since type objects aren't pickleable
-        if (self.module, self.name) == ('types', 'UnionType') and self.args: # FIXME subclass?
+        if self.is_union(): # FIXME subclass?
             return "|".join(str(a) for a in self.args)
         
-        if self.args or self.name == '':
+        if self.args or self.is_list():
             def arg2str(a: "TypeInfo|str|ellipsis") -> str:
                 if a is Ellipsis:
                     return '...'
@@ -89,7 +94,7 @@ class TypeInfo:
 
         def expand_unions(t: "TypeInfo") -> Iterator["TypeInfo"]:
             # Don't merge unions designated as typevars, or the typevar gets lost.
-            if t.type_obj is types.UnionType and not t.typevar_index:
+            if t.is_union() and not t.typevar_index:
                 for a in t.args:
                     if isinstance(a, TypeInfo):
                         yield from expand_unions(a)
@@ -111,7 +116,7 @@ class TypeInfo:
             return next(iter(s))
 
         return TypeInfo.from_type(
-            types.UnionType,
+            _UNION_TYPE,
             # 'None' at the end is seen as more readable
             args=tuple(sorted(s, key = lambda x: (x == NoneTypeInfo, str(x)))),
             **kwargs
@@ -119,7 +124,10 @@ class TypeInfo:
 
 
     def is_union(self) -> bool:
-        return (self.module, self.name) == ('types', 'UnionType')
+        return (
+            self.type_obj is _UNION_TYPE
+            or (self.type_obj is None and (self.module, self.name) == _UNION_TYPE_NAME)
+        )
 
 
     def to_set(self) -> set["TypeInfo"]:
