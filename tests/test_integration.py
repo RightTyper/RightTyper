@@ -886,6 +886,31 @@ def test_method_overriding_annotated_with_literal():
     """)
 
 
+def test_method_overriding_annotated_varargs_kwargs():
+    # note args, kwargs change name and x, y change order
+    t = textwrap.dedent("""\
+        class A:
+            def foo(self, *args: int, y:None=None, x:None=None, **kwargs: float) -> int:
+                return 0
+
+        class B(A):
+            def foo(self, *var_args, x=0, y=.1, **kw_args):
+                return 0
+
+        B().foo('foo', z='bar')
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--debug', 't.py')   # --debug just so we test running with debug
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+            def foo(self: Self, *var_args: int|str, x: int|None=0, y: float|None=.1, **kw_args: float|str) -> int: ...
+    """)
+
+
 def test_method_overriding_init_irrelevant():
     t = textwrap.dedent("""\
         class A:

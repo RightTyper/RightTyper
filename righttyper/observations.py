@@ -1,6 +1,5 @@
 import ast
 import typeshed_client as typeshed
-from types import FunctionType
 import typing
 import builtins
 from collections import defaultdict, Counter
@@ -25,7 +24,7 @@ from righttyper.type_transformers import (
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownTypeInfo, CallTrace
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId
 from righttyper.annotation import FuncAnnotation, ModuleVars
-from righttyper.type_id import hint2type, PostponedArg0
+from righttyper.type_id import PostponedArg0
 
 
 @dataclass
@@ -35,12 +34,12 @@ class ArgInfo:
 
 
 @dataclass
-class FunctionDescriptor:
-    """Describes a function by name; stands in for a FunctionType where the function
-       is a wrapper_descriptor (or possibly other objects), lacking __module__
-    """
-    __module__: str
-    __qualname__: str
+class OverriddenFunction:
+    """Describes an overridden function."""
+    module: str
+    qualname: str
+    code_id: CodeId|None
+    inline_arg_types: tuple[TypeInfo|None, ...]|None = None
 
 
 @dataclass(eq=True)
@@ -49,7 +48,7 @@ class FuncInfo:
     args: tuple[ArgInfo, ...]
     varargs: ArgumentName|None
     kwargs: ArgumentName|None
-    overrides: FunctionType|FunctionDescriptor|None
+    overrides: OverriddenFunction|None
 
     traces: Counter[CallTrace] = field(default_factory=Counter)
 
@@ -73,6 +72,67 @@ class FuncInfo:
         return traces
 
 
+    def transform_types(self, tr: TypeInfo.Transformer) -> None:
+        """Applies the 'tr' transformer to all TypeInfo objects in this object."""
+        args_prime = tuple(
+            ArgInfo(
+                arg.arg_name,
+                tr.visit(arg.default) if arg.default is not None else None
+            )
+            for arg in self.args
+        )
+
+        if any(
+            old_arg.default is not new_arg.default
+            for old_arg, new_arg in zip(self.args, args_prime)
+        ):
+            if logger.level == logging.DEBUG:
+                logger.debug(
+                    type(tr).__name__ + " " + self.code_id.func_name +
+                    str(tuple(str(arg.default) for arg in self.args)) +
+                    " -> " +
+                    str(tuple(str(arg.default) for arg in args_prime))
+                )
+            self.args = args_prime
+
+        if self.overrides and (inline_types := self.overrides.inline_arg_types):
+            inline_types_prime = tuple(
+                tr.visit(it) if it else None
+                for it in inline_types
+            )
+
+            if any(
+                old_it is not new_it
+                for old_it, new_it in zip(inline_types, inline_types_prime)
+            ):
+                if logger.level == logging.DEBUG:
+                    logger.debug(
+                        type(tr).__name__ + " " + self.code_id.func_name +
+                        str(tuple(str(it) for it in inline_types)) +
+                        " -> " +
+                        str(tuple(str(it) for it in inline_types_prime))
+                    )
+                self.overrides.inline_arg_types = inline_types_prime
+
+
+        for trace, count in list(self.traces.items()):
+            trace_prime = tuple(tr.visit(t) for t in trace)
+            # Use identity rather than ==, as only non-essential attributes may have changed
+            if any(old is not new for old, new in zip(trace, trace_prime)):
+                if logger.level == logging.DEBUG:
+                    logger.debug(
+                        type(tr).__name__ + " " + self.code_id.func_name +
+                        str(tuple(str(t) for t in trace)) +
+                        " -> " +
+                        str(tuple(str(t) for t in trace_prime))
+                    )
+                del self.traces[trace]
+                self.traces[trace_prime] = count
+
+        for var_name, var_types in list(self.variables.items()):
+            self.variables[var_name] = set(tr.visit(t) for t in var_types)
+
+
 class Observations:
     def __init__(self):
         # Visited functions and information about them
@@ -92,43 +152,7 @@ class Observations:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
 
         for func_info in self.func_info.values():
-            args_prime = tuple(
-                ArgInfo(
-                    arg.arg_name,
-                    tr.visit(arg.default) if arg.default is not None else None
-                )
-                for arg in func_info.args
-            )
-
-            if any(
-                old_arg.default is not new_arg.default
-                for old_arg, new_arg in zip(func_info.args, args_prime)
-            ):
-                if logger.level == logging.DEBUG:
-                    logger.debug(
-                        type(tr).__name__ + " " + func_info.code_id.func_name +
-                        str(tuple(str(arg.default) for arg in func_info.args)) +
-                        " -> " +
-                        str(tuple(str(arg.default) for arg in args_prime))
-                    )
-                func_info.args = args_prime
-
-            for trace, count in list(func_info.traces.items()):
-                trace_prime = tuple(tr.visit(t) for t in trace)
-                # Use identity rather than ==, as only non-essential attributes may have changed
-                if any(old is not new for old, new in zip(trace, trace_prime)):
-                    if logger.level == logging.DEBUG:
-                        logger.debug(
-                            type(tr).__name__ + " " + func_info.code_id.func_name +
-                            str(tuple(str(t) for t in trace)) +
-                            " -> " +
-                            str(tuple(str(t) for t in trace_prime))
-                        )
-                    del func_info.traces[trace]
-                    func_info.traces[trace_prime] = count
-
-            for var_name, var_types in list(func_info.variables.items()):
-                func_info.variables[var_name] = set(tr.visit(t) for t in var_types)
+            func_info.transform_types(tr)
 
         for var_dict in list(self.module_variables.values()):
             for var_name, var_types in list(var_dict.items()):
@@ -180,17 +204,16 @@ class Observations:
                 if (
                     output_options.ignore_annotations
                     or not (
-                        (parents_arg_types := get_inline_arg_types(parents_func, func_info.args))
+                        (parents_arg_types := parents_func.inline_arg_types)
                         or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
                     )
                 ):
-                    parent_code = CodeId.from_code(parents_func.__code__) if hasattr(parents_func, "__code__") else None
                     if (
-                        parent_code
+                        (parent_code := parents_func.code_id)
                         and parent_code in self.func_info
                         and (ann := mk_annotation(self.func_info[parent_code]))
                     ):
-                        parents_arg_types = [arg[1] for arg in ann.args]
+                        parents_arg_types = tuple(arg[1] for arg in ann.args)
 
             if (signature := generalize(traces)) is None:
                 logger.info(f"Unable to generalize {func_info.code_id}: inconsistent traces.\n" +
@@ -364,43 +387,6 @@ class Observations:
         return annotations, module_vars
 
 
-def get_inline_arg_types(
-    parents_func: FunctionType|FunctionDescriptor,
-    child_args: tuple[ArgInfo, ...]
-) -> list[TypeInfo|None] | None:
-    """Returns inline type annotations for a parent's method's arguments."""
-
-    # FIXME this should be called by ObservationsRecorder, not Observations, as it
-    # depends on run options through hint2type
-
-    if not (co := getattr(parents_func, "__code__", None)):
-        return None
-
-    try:
-        if not (hints := typing.get_type_hints(parents_func)):
-            return None
-    except (NameError, TypeError) as e:
-        logger.info(f"Error getting type hints for {parents_func} " + 
-                    f"({parents_func.__annotations__}): {e}.\n")
-        return None
-
-    return (
-        # First the positional, looking up by their names given in the parent.
-        # Note that for the override to be valid, their signatures must have
-        # the same number of positional arguments.
-        [
-            hint2type(hints[arg]) if arg in hints else None
-            for arg in co.co_varnames[:co.co_argcount]
-        ]
-        +
-        # Then kwonly, going by the order (and quantity) in the child
-        [
-            hint2type(hints[arg.arg_name]) if arg.arg_name in hints else None
-            for arg in child_args[co.co_argcount:]
-        ]
-    )
-
-
 class LoadAndCheckTypesT(LoadTypeObjT):
     """Looks up the type_obj of all types; if not found, transforms it into UnknownTypeInfo."""
 
@@ -413,9 +399,9 @@ class LoadAndCheckTypesT(LoadTypeObjT):
 
                 
 def get_typeshed_arg_types(
-    parents_func: FunctionDescriptor|FunctionType,
+    parents_func: OverriddenFunction,
     child_args: tuple[ArgInfo, ...]
-) -> list[TypeInfo|None] | None:
+) -> tuple[TypeInfo|None, ...] | None:
     """Returns typeshed type annotations for a parent's method's arguments."""
 
     def find_def(tree: ast.AST, qualified_name: str) -> list[ast.FunctionDef|ast.AsyncFunctionDef]:
@@ -438,15 +424,16 @@ def get_typeshed_arg_types(
         visit(tree, [])
         return results
 
-    if stub_ast := typeshed.get_stub_ast(parents_func.__module__):    # FIXME replace __main__?
-        if defs := find_def(stub_ast, parents_func.__qualname__):
+    module = parents_func.module if parents_func.module else 'builtins'
+    if stub_ast := typeshed.get_stub_ast(module):
+        if defs := find_def(stub_ast, parents_func.qualname):
             #print(ast.dump(defs[0], indent=4))
 
             # First the positional, looking up by their names given in the parent.
             # Note that for the override to be valid, their signatures must have
             # the same number of positional arguments.
             pos_args = [
-                # FIXME only handles simple, built-in types!
+                # FIXME only handles simple 'builtins' types!
                 TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
                 for a in (defs[0].args.posonlyargs + defs[0].args.args)
                 if isinstance(a, ast.arg)
@@ -454,7 +441,7 @@ def get_typeshed_arg_types(
 
             # Then kwonly, going by the order (and quantity) in the child
             kw_args = [
-                # FIXME only handles simple, built-in types!
+                # FIXME only handles simple 'builtins' types!
                 TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
                 for child_arg_name in child_args[len(pos_args):]
                 for a in defs[0].args.kwonlyargs
@@ -462,10 +449,12 @@ def get_typeshed_arg_types(
                 if a.arg == child_arg_name
             ]
 
+            # FIXME varargs and kwargs are missing here
+
             t = LoadAndCheckTypesT()
-            return [
+            return tuple(
                 t.visit(arg) if arg is not None else None
                 for arg in pos_args + kw_args
-            ]
+            )
 
     return None

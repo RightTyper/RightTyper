@@ -11,28 +11,16 @@ from righttyper.righttyper_types import ArgumentName, VariableName, Filename, Co
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, CallTrace
 from typing import Final, Any, NewType, overload, cast
 import typing
-from righttyper.observations import Observations, FuncInfo, FunctionDescriptor, ArgInfo
+from righttyper.observations import Observations, FuncInfo, OverriddenFunction, ArgInfo
 from righttyper.variable_capture import code2variables
 from righttyper.options import run_options
 from righttyper.righttyper_utils import (
     source_to_module_fqn, get_main_module_fqn, skip_this_file,
-    detected_test_files, detected_test_modules, is_test_module
+    detected_test_files, detected_test_modules, is_test_module,
+    normalize_module_name
 )
-from righttyper.type_id import find_function, unwrap, get_value_type, get_type_name, PostponedArg0
+from righttyper.type_id import find_function, unwrap, get_value_type, get_type_name, hint2type, PostponedArg0
 from righttyper.typemap import AdjustTypeNamesT
-
-
-def find_co_newlocals():
-    # CO_NEWLOCALS, when set within a CodeType's co_flags, indicates that
-    # a new "locals" dictionary is created; it roughly indicates a function
-    # call, as the new dictionary is created for the new scope.
-    import dis
-    return next(
-        flag
-        for flag, name in dis.COMPILER_FLAG_NAMES.items()
-        if name == "NEWLOCALS"
-    )
-CO_NEWLOCALS: Final = find_co_newlocals()
 
 
 # Singleton used to differentiate from None
@@ -138,7 +126,7 @@ class ObservationsRecorder:
         code: CodeType,
         frame: FrameType,
         arg_info: inspect.ArgInfo,
-        overrides: FunctionType|FunctionDescriptor|None
+        overrides: OverriddenFunction|None
     ) -> None:
         """Records that a function was visited."""
 
@@ -196,7 +184,10 @@ class ObservationsRecorder:
 
         self.record_module(code, frame)
 
-        if (code.co_flags & CO_NEWLOCALS):
+        # CO_NEWLOCALS, when set within a CodeType's co_flags, indicates that
+        # a new "locals" dictionary is created; it roughly indicates a function
+        # call, as the new dictionary is created for the new scope.
+        if (code.co_flags & inspect.CO_NEWLOCALS):
             self_type, self_replacement, overrides = get_self_type(code, arg_info)
             self.record_function(code, frame, arg_info, overrides)
 
@@ -376,9 +367,12 @@ class ObservationsRecorder:
         return obs
 
 
-def get_self_type(code, args) -> tuple[TypeInfo|None, TypeInfo|None, FunctionType|FunctionDescriptor|None]:
-    if args.args:
-        first_arg = args.locals[args.args[0]]
+def get_self_type(
+    code,
+    arg_info: inspect.ArgInfo
+) -> tuple[TypeInfo|None, TypeInfo|None, OverriddenFunction|None]:
+    if arg_info.args:
+        first_arg = arg_info.locals[arg_info.args[0]]
 
         name = code.co_name
         if (
@@ -425,9 +419,13 @@ def get_self_type(code, args) -> tuple[TypeInfo|None, TypeInfo|None, FunctionTyp
         ):
             overrides = next(
                 (
-                    # wrapper_descriptor and possibly other native objects may lack __module__
-                    f if (isinstance(f, FunctionType) and hasattr(f, "__module__"))
-                    else FunctionDescriptor(ancestor.__module__, f.__qualname__)
+                    OverriddenFunction(
+                        # wrapper_descriptor and possibly other native objects may lack __module__
+                        normalize_module_name(getattr(f, "__module__", ancestor.__module__)),
+                        f.__qualname__,
+                        CodeId.from_code(f.__code__) if hasattr(f, "__code__") else None,
+                        get_parent_arg_types(f, arg_info)
+                    )
                     for ancestor in first_arg_class.__mro__[next_index:]
                     if (f := unwrap(ancestor.__dict__.get(name, None)))
                     if getattr(f, "__code__", None) is not code
@@ -451,6 +449,52 @@ def get_defaults(code, frame) -> dict[str, TypeInfo]:
     return {}
 
 
+def get_parent_arg_types(
+    parents_func: object,
+    child_arg_info: inspect.ArgInfo
+) -> tuple[TypeInfo|None, ...] | None:
+    """Returns inline type annotations for a parent's method's arguments."""
+
+    if not (
+        isinstance(parents_func, FunctionType) 
+        and (co := getattr(parents_func, "__code__", None))
+    ):
+        return None
+
+    try:
+        parent_args = inspect.getargs(co)
+        if not (hints := typing.get_type_hints(parents_func)):
+            return None
+    except (NameError, TypeError) as e:
+        logger.info(f"Error getting type hints for {parents_func} " + 
+                    f"({parents_func.__annotations__}): {e}.\n")
+        return None
+
+    return tuple(
+        # First the positional, looking up by their names given in the parent.
+        # Note that for the override to be valid, their signatures must have
+        # the same number of positional arguments.
+        [
+            hint2type(hints[arg]) if arg in hints else None
+            for arg in co.co_varnames[:co.co_argcount]
+        ]
+        +
+        # Then kwonly, going by the order (and quantity) in the child
+        [
+            hint2type(hints[arg]) if arg in hints else None
+            for arg in child_arg_info.args[co.co_argcount:]
+        ]
+        +
+        # Then varargs and varkw, if they exist.  Note that for the override to
+        # be valid, both must agree to include or not those arguments (but their
+        # names may change)
+        [
+            *((hint2type(hints[parent_args.varargs]),) if parent_args.varargs else ()),
+            *((hint2type(hints[parent_args.varkw]),) if parent_args.varkw else ())
+        ]
+    )
+
+
 def _resolve_mock(ti: TypeInfo, adjuster: AdjustTypeNamesT|None) -> TypeInfo|None:
     """Attempts to map a test type, such as a mock, to a production one."""
     import unittest.mock as mock
@@ -470,7 +514,9 @@ def _resolve_mock(ti: TypeInfo, adjuster: AdjustTypeNamesT|None) -> TypeInfo|Non
         if len(non_unittest_bases) != 1 or (base := non_unittest_bases[0]) is object:
             return None
 
-        t = get_type_name(base) # FIXME type checking may not work for __main__ types
+        # FIXME non-TypeMap type checking will not work for __main__ types once the target
+        # program finishes executing.
+        t = get_type_name(base)
         if adjuster:
             t = adjuster.visit(t)
         trace.append(t)
