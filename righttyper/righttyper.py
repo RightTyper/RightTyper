@@ -15,13 +15,13 @@ import subprocess
 import re
 import time
 
-from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 from types import CodeType, FrameType, GeneratorType, AsyncGeneratorType
 from typing import Any, TextIO
 
 import click
+from click_option_group import optgroup
 
 from righttyper.righttyper_process import (
     process_file,
@@ -42,14 +42,15 @@ from righttyper.righttyper_utils import should_skip_function, detected_test_modu
 from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_types import CodeId, Filename, FunctionName
 from righttyper.annotation import FuncAnnotation, ModuleVars
-from righttyper.observations import Observations, ObservationsRecorder
-from righttyper.options import Options, options
+from righttyper.observations import Observations
+from righttyper.recorder import ObservationsRecorder
+from righttyper.options import run_options, output_options
 from righttyper.logger import logger
 from righttyper.atomic import AtomicCounter
 
 
 PKL_FILE_NAME = TOOL_NAME+"-{N}.rt"
-PKL_FILE_VERSION = 5
+PKL_FILE_VERSION = 6
 
 
 rec = ObservationsRecorder()
@@ -176,9 +177,9 @@ def return_handler(
 
     if (
         found
-        and options.sampling
+        and run_options.sampling
         and not (
-            (no_sampling_for := options.no_sampling_for_re)
+            (no_sampling_for := run_options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
         )
     ):
@@ -208,9 +209,9 @@ def unwind_handler(
 
     if (
         found
-        and options.sampling
+        and run_options.sampling
         and not (
-            (no_sampling_for := options.no_sampling_for_re)
+            (no_sampling_for := run_options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
         )
     ):
@@ -253,12 +254,12 @@ def self_profile() -> None:
         interval = float(sample_count_instrumentation) / sample_count_total
         overhead = exp_smooth(interval, overhead)
 
-        if (restart := (overhead <= options.target_overhead / 100.0)):
+        if (restart := (overhead <= run_options.target_overhead / 100.0)):
             # Instrumentation overhead is low enough: restart instrumentation.
             disabled_code.clear()
             sys.monitoring.restart_events()
 
-        if options.save_profiling is not None:
+        if run_options.save_profiling is not None:
             samples_instrumentation.append(sample_count_instrumentation)
             samples_total.append(sample_count_total)
             instrumentation_overhead.append(overhead)
@@ -281,14 +282,14 @@ def execute_script_or_module(
     try:
         sys.argv = [script, *args]
         if is_module:
-            with loader.ImportManager(replace_dict=options.replace_dict):
+            with loader.ImportManager(replace_dict=run_options.replace_dict):
                 main_globals = runpy.run_module(
                     script,
                     run_name="__main__",
                     alter_sys=True,
                 )
         else:
-            with loader.ImportManager(replace_dict=options.replace_dict):
+            with loader.ImportManager(replace_dict=run_options.replace_dict):
                 main_globals = runpy.run_path(script, run_name="__main__")
 
     except BaseException as e:
@@ -417,7 +418,7 @@ def process_obs(obs: Observations):
 
     code_changes: list[CodeChanges] = process_files(files, type_annotations, module_vars)
 
-    if options.json_output:
+    if output_options.json_output:
         data = emit_json(files, type_annotations, module_vars, code_changes)
         with open(f"{TOOL_NAME}.json", "w") as f:
             json.dump(data, f, indent=2)
@@ -445,12 +446,12 @@ def process_files(
             file[1],    # module_name
             type_annotations,
             module_vars.get(file[0]),
-            options
+            output_options
         )
         for file in files
     )
 
-    if options.use_multiprocessing:
+    if output_options.use_multiprocessing:
         def mp_map(fn, args_gen):
             with concurrent.futures.ProcessPoolExecutor() as executor:
                 for fut in concurrent.futures.as_completed([
@@ -566,6 +567,99 @@ def cli(debug: bool):
         logger.setLevel(logging.DEBUG)
 
 
+def add_output_options(group=None):
+    """Decorates a click command, adding our common output options."""
+
+    def dec(func):
+        base = optgroup if group else click
+
+        for opt in reversed([
+            *(
+                (optgroup.group(group),) if group else ()
+            ),
+            base.option(
+                "--overwrite/--no-overwrite",
+                help="""Overwrite ".py" files with type information. If disabled, ".py.typed" files are written instead. The original files are saved as ".py.bak".""",
+                default=output_options.overwrite,
+            ),
+            base.option(
+                "--output-files/--no-output-files",
+                help=f"Output annotated files (possibly overwriting, if specified).  If disabled, the annotations are only written to {TOOL_NAME}.out.",
+                default=output_options.output_files,
+            ),
+            base.option(
+                "--ignore-annotations",
+                is_flag=True,
+                help="Ignore existing annotations and overwrite with type information.",
+                default=False,
+            ),
+            base.option(
+                "--only-update-annotations",
+                is_flag=True,
+                default=False,
+                help="Overwrite existing annotations but never add new ones.",
+            ),
+            base.option(
+                "--generate-stubs",
+                is_flag=True,
+                help="Generate stub files (.pyi).",
+                default=False,
+            ),
+            base.option(
+                "--json-output",
+                default=output_options.json_output,
+                is_flag=True,
+                help=f"Output inferences in JSON, instead of writing {TOOL_NAME}.out."
+            ),
+            base.option(
+                "--use-multiprocessing/--no-use-multiprocessing",
+                default=True,
+                help="Whether to use multiprocessing.",
+            ),
+            base.option(
+                "--type-depth-limit",
+                default="none",
+                callback=lambda ctx, param, value: parse_none_or_ge_zero(value),
+                show_default=True,
+                metavar="[INTEGER|none]",
+                help="Maximum depth (types within types) for generic types; 'none' to disable.",
+            ),
+            base.option(
+                "--python-version",
+                type=click.Choice(["3.9", "3.10", "3.11", "3.12", "3.13"]),
+                default="3.12",
+                callback=lambda ctx, param, value: tuple(int(n) for n in value.split('.')),
+                help="Python version for which to emit annotations.",
+            ),
+            base.option(
+                "--use-top-pct",
+                type=click.IntRange(1, 100),
+                default=output_options.use_top_pct,
+                metavar="PCT",
+                help="Only use the PCT% most common call traces.",
+            ),
+            base.option(
+                "--use-typing-never/--no-use-typing-never",
+                default=True,
+                help="""Whether to emit "typing.Never".""",
+            ),
+            base.option(
+                "--simplify-types/--no-simplify-types",
+                default=output_options.simplify_types,
+                help="Whether to attempt to simplify types, such as int|bool|float -> float. or Generator[X, None, None] -> Iterator[X]",
+            ),
+            base.option(
+                "--exclude-test-types/--no-exclude-test-types",
+                is_flag=True,
+                default=output_options.exclude_test_types,
+                help="""Whether to exclude or replace with "typing.Any" types defined in test modules."""
+            ),
+        ]):
+            func = opt(func)
+        return func
+    return dec
+
+
 @cli.command(
     context_settings={
         "allow_extra_args": True,
@@ -597,7 +691,7 @@ def cli(debug: bool):
 )
 @click.option(
     "--exclude-test-files/--no-exclude-test-files",
-    default=options.exclude_test_files,
+    default=run_options.exclude_test_files,
     help="Automatically exclude test modules from typing.",
 )
 @click.option(
@@ -621,53 +715,14 @@ def cli(debug: bool):
     help="Process only files under the given directory.  If omitted, the script's directory (or, for -m, the current directory) is used.",
 )
 @click.option(
-    "--overwrite/--no-overwrite",
-    help="""Overwrite ".py" files with type information. If disabled, ".py.typed" files are written instead. The original files are saved as ".py.bak".""",
-    default=options.overwrite,
-)
-@click.option(
-    "--output-files/--no-output-files",
-    help=f"Output annotated files (possibly overwriting, if specified).  If disabled, the annotations are only written to {TOOL_NAME}.out.",
-    default=options.output_files,
-)
-@click.option(
-    "--ignore-annotations",
-    is_flag=True,
-    help="Ignore existing annotations and overwrite with type information.",
-    default=False,
-)
-@click.option(
-    "--only-update-annotations",
-    is_flag=True,
-    default=False,
-    help="Overwrite existing annotations but never add new ones.",
-)
-@click.option(
-    "--generate-stubs",
-    is_flag=True,
-    help="Generate stub files (.pyi).",
-    default=False,
-)
-@click.option(
-    "--json-output",
-    default=options.json_output,
-    is_flag=True,
-    help=f"Output inferences in JSON, instead of writing {TOOL_NAME}.out."
-)
-@click.option(
     "--target-overhead",
     type=float,
-    default=options.target_overhead,
+    default=run_options.target_overhead,
     help="Target overhead, as a percentage (e.g., 5).",
 )
 @click.option(
-    "--use-multiprocessing/--no-use-multiprocessing",
-    default=True,
-    help="Whether to use multiprocessing.",
-)
-@click.option(
     "--sampling/--no-sampling",
-    default=options.sampling,
+    default=run_options.sampling,
     help=f"Whether to sample calls or to use every one.",
 )
 @click.option(
@@ -676,7 +731,7 @@ def cli(debug: bool):
     type=str,
     multiple=True,
     callback=validate_regexes,
-    default=options.no_sampling_for,
+    default=run_options.no_sampling_for,
     help=f"Rather than sample, record every invocation of any functions matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
@@ -699,35 +754,6 @@ def cli(debug: bool):
     help="Maximum number of container elements considered when sampling; 'none' means unlimited.",
 )
 @click.option(
-    "--type-depth-limit",
-    default="none",
-    callback=lambda ctx, param, value: parse_none_or_ge_zero(value),
-    show_default=True,
-    metavar="[INTEGER|none]",
-    help="Maximum depth (types within types) for generic types; 'none' to disable.",
-)
-@click.option(
-    "--python-version",
-    type=click.Choice(["3.9", "3.10", "3.11", "3.12", "3.13"]),
-    default="3.12",
-    callback=lambda ctx, param, value: tuple(int(n) for n in value.split('.')),
-    help="Python version for which to emit annotations.",
-)
-@click.option(
-    "--use-top-pct",
-    type=click.IntRange(1, 100),
-    default=options.use_top_pct,
-    metavar="PCT",
-    help="Only use the PCT% most common call traces.",
-)
-@click.option(
-    "--only-collect",
-    default=False,
-    is_flag=True,
-    help=f"Rather than immediately process collect data, save it to \"{PKL_FILE_NAME.format(N='N')}\"." +\
-          " You can later process using RightTyper's \"process\" command."
-)
-@click.option(
     "--save-profiling",
     type=str,
     metavar="NAME",
@@ -737,85 +763,50 @@ def cli(debug: bool):
 @click.option(
     "--resolve-mocks/--no-resolve-mocks",
     is_flag=True,
-    default=options.resolve_mocks,
+    default=run_options.resolve_mocks,
     help="Whether to attempt to resolve test types, such as mocks, to non-test types."
-)
-@click.option(
-    "--exclude-test-types/--no-exclude-test-types",
-    is_flag=True,
-    default=options.exclude_test_types,
-    help="""Whether to exclude or replace with "typing.Any" types defined in test modules."""
 )
 @click.option(
     "--test-modules",
     multiple=True,
-    default=options.test_modules,
+    default=run_options.test_modules,
     callback=validate_module_names,
     metavar="MODULE",
     help="""Additional modules (besides those detected) whose types are subject to mock resolution or test type exclusion, if enabled. Matches submodules as well. Can be passed multiple times."""
 )
 @click.option(
-    "--use-typing-never/--no-use-typing-never",
-    default=True,
-    help="""Whether to emit "typing.Never".""",
-)
-@click.option(
     "--adjust-type-names/--no-adjust-type-names",
-    default=options.adjust_type_names,
+    default=run_options.adjust_type_names,
     help="Whether to look for a canonical name for types, rather than use the module and name where they are defined.",
 )
 @click.option(
-    "--simplify-type-sets/--no-simplify-type-sets",
-    default=options.simplify_type_sets,
-    help="Whether to attempt to simplify type sets, such as int|bool|float -> float.",
+    "--variables/--no-variables",
+    default=run_options.variables,
+    help="Whether to (observe and) annotate variables.",
 )
 @click.option(
-    "--variables/--no-variables",
-    default=options.variables,
-    help="Whether to (observe and) annotate variables.",
+    "--only-collect",
+    default=False,
+    is_flag=True,
+    help=f"Rather than immediately process collect data, save it to \"{PKL_FILE_NAME.format(N='N')}\"." +\
+          " You can later process using RightTyper's \"process\" command."
 )
 @click.option(
     "--debug",
     is_flag=True,
     help="Include diagnostic information in log file.",
 )
+@add_output_options(group="Output options")
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
     script: str,
     module: str,
-    args: list[str],
-    all_files: bool,
-    include_files: tuple[str, ...],
-    exclude_test_files: bool,
-    include_functions: tuple[str, ...],
-    overwrite: bool,
-    output_files: bool,
-    ignore_annotations: bool,
-    only_update_annotations: bool,
-    generate_stubs: bool,
-    json_output: bool,
-    infer_shapes: bool,
     root: str,
-    target_overhead: float,
-    use_multiprocessing: bool,
-    sampling: bool,
-    no_sampling_for: tuple[str, ...],
+    args: list[str],
     signal_wakeup: bool,
-    replace_dict: bool,
-    container_sample_limit: int,
-    python_version: tuple[int, ...],
-    use_top_pct: int,
     only_collect: bool,
-    save_profiling: str,
-    type_depth_limit: int|None,
-    resolve_mocks: bool,
-    exclude_test_types: bool,
-    test_modules: tuple[str, ...],
-    use_typing_never: bool,
-    adjust_type_names: bool,
-    simplify_type_sets: bool,
-    variables: bool,
-    debug: bool
+    debug: bool,
+    **kwargs,
 ) -> None:
     """Runs a given script or module, collecting type information."""
 
@@ -834,63 +825,29 @@ def run(
     else:
         raise click.UsageError("Either -m/--module must be provided, or a script be passed.")
 
-    if ignore_annotations and only_update_annotations:
-        raise click.UsageError("Options --ignore-annotations and --only-update-annotations are mutually exclusive.")
-
-    if infer_shapes:
-        # Check for required packages for shape inference
-        found_package = defaultdict(bool)
-        packages = ["jaxtyping"]
-        all_packages_found = True
-        for package in packages:
-            found_package[package] = (
-                importlib.util.find_spec(package) is not None
-            )
-            all_packages_found &= found_package[package]
-        if not all_packages_found:
-            print("The following package(s) need to be installed:")
-            for package in packages:
-                if not found_package[package]:
-                    print(f" * {package}")
-            sys.exit(1)
-
     if root:
-        options.script_dir = os.path.realpath(root)
+        run_options.script_dir = os.path.realpath(root)
     elif module:
-        options.script_dir = os.getcwd()
+        run_options.script_dir = os.getcwd()
     else:
-        options.script_dir = os.path.dirname(os.path.realpath(script))
+        run_options.script_dir = os.path.dirname(os.path.realpath(script))
 
-    options.include_files = include_files
-    options.include_all = all_files
-    options.exclude_test_files = exclude_test_files
-    options.include_functions = include_functions
-    options.target_overhead = target_overhead
-    options.infer_shapes = infer_shapes
-    options.ignore_annotations = ignore_annotations
-    options.only_update_annotations = only_update_annotations
-    options.overwrite = overwrite
-    options.output_files = output_files
-    options.generate_stubs = generate_stubs
-    options.json_output = json_output
-    options.use_multiprocessing = use_multiprocessing
-    options.sampling = sampling
-    options.no_sampling_for = no_sampling_for
-    options.replace_dict = replace_dict
-    options.container_sample_limit = container_sample_limit
-    options.use_typing_union = python_version < (3, 10)
-    options.use_typing_self = python_version >= (3, 11)
-    options.use_typing_never = python_version >= (3, 11) and use_typing_never
-    options.inline_generics = python_version >= (3, 12)
-    options.use_top_pct = use_top_pct
-    options.type_depth_limit = type_depth_limit
-    options.resolve_mocks = resolve_mocks
-    options.exclude_test_types = exclude_test_types
-    options.test_modules = test_modules
-    options.adjust_type_names = adjust_type_names
-    options.simplify_type_sets = simplify_type_sets
-    options.variables = variables
-    options.save_profiling = save_profiling
+    run_options.process_args(kwargs)
+    output_options.process_args(kwargs)
+
+    if run_options.infer_shapes:
+        packages_needed = {"jaxtyping"}
+        packages_found = {
+            pkg_name
+            for pkg_name in packages_needed
+            if importlib.util.find_spec(pkg_name) is not None
+        }
+
+        if (missing := packages_needed - packages_found):
+            print("The following package(s) need to be installed for '--infer-shapes':")
+            for package in missing:
+                print(f" * {package}")
+            sys.exit(1)
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
     alarm = alarm_cls(self_profile, 0.01)
@@ -933,7 +890,7 @@ def run(
                 'software': TOOL_NAME,
                 'version': importlib.metadata.version(TOOL_NAME),
                 'timestamp': datetime.datetime.now().isoformat(),
-                'options': options,
+                'run_options': run_options,
                 'script': Path(script).resolve(),
                 'observations': obs
             }
@@ -959,7 +916,7 @@ def run(
         end_time = time.perf_counter()
         logger.info(f"Finished in {end_time-start_time:.0f}s")
 
-        if save_profiling:
+        if run_options.save_profiling:
             try:
                 with open(f"{TOOL_NAME}-profiling.json", "r") as pf:
                     data = json.load(pf)
@@ -967,7 +924,7 @@ def run(
                 data = []
 
             data.append({
-                    'name': save_profiling,
+                    'name': run_options.save_profiling,
                     'command': subprocess.list2cmdline(sys.orig_argv),
                     'start_time': start_time,
                     'end_time': end_time,
@@ -984,8 +941,10 @@ def run(
 
 
 @cli.command()
-def process():
+@add_output_options()
+def process(**kwargs):
     """Processes type information collected with the 'run' command."""
+    output_options.process_args(kwargs)
 
     obs_list = []
     script = None
@@ -1011,9 +970,10 @@ def process():
 
     # Copy run options, but be careful not to replace instance, as there may be
     # multiple references to it (e.g., through "from .options import ...")
+    # TODO check, but this shouldn't be necessary, as we only use run options
     global options
-    for key, value in asdict(pkl['options']).items():
-        setattr(options, key, value)
+    for key, value in asdict(pkl['run_options']).items():
+        setattr(run_options, key, value)
 
     obs = obs_list[0]
     for obs2 in obs_list[1:]:

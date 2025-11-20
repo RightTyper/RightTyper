@@ -2,9 +2,7 @@ import typing
 import types
 import collections.abc as abc
 from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo
-from righttyper.righttyper_utils import is_test_module
-from righttyper.typemap import AdjustTypeNamesT
-from righttyper.righttyper_runtime import get_type_name
+from righttyper.generalize import merged_types
 
 import logging
 from righttyper.logger import logger
@@ -14,7 +12,7 @@ class SelfT(TypeInfo.Transformer):
     """Renames types to typing.Self according to is_self."""
     def visit(vself, node: TypeInfo) -> TypeInfo:
         if node.is_self:
-            return TypeInfo("typing", "Self")
+            return TypeInfo.from_type(typing.Self)
 
         return super().visit(node)
 
@@ -39,9 +37,13 @@ class NoReturnToNeverT(TypeInfo.Transformer):
 
 
 class ExcludeTestTypesT(TypeInfo.Transformer):
-    """Removes test types."""
-    def visit(vself, node: TypeInfo) -> TypeInfo:
-        if is_test_module(node.module):
+    """Removes types from test modules."""
+
+    def __init__(self, test_modules: set[str]) -> None:
+        self._test_modules = test_modules
+
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        if node.module in self._test_modules:
             return AnyTypeInfo
 
         return super().visit(node)
@@ -58,13 +60,13 @@ class TypesUnionT(TypeInfo.Transformer):
             has_none = node.args[-1] == NoneTypeInfo
             non_none_count = len(node.args) - int(has_none)
             if non_none_count > 1:
-                non_none = TypeInfo("typing", "Union", args=node.args[:non_none_count])
+                non_none = TypeInfo.from_type(typing.Union, args=node.args[:non_none_count])
             else:
                 assert isinstance(node.args[0], TypeInfo)
                 non_none = node.args[0]
 
             if has_none:
-                return TypeInfo("typing", "Optional", args=(non_none,))
+                return TypeInfo.from_type(typing.Optional, args=(non_none,))
 
             return non_none
 
@@ -104,57 +106,6 @@ class DepthLimitT(TypeInfo.Transformer):
             self._level -= 1
 
 
-def _resolve_mock(ti: TypeInfo, adjuster: AdjustTypeNamesT|None) -> TypeInfo|None:
-    """Attempts to map a test type, such as a mock, to a production one."""
-    import unittest.mock as mock
-
-    trace = [ti]
-    t = ti
-    while is_test_module(t.module):
-        if not t.type_obj:
-            return None
-
-        non_unittest_bases = [
-            b for b in t.type_obj.__bases__ if b not in (mock.Mock, mock.MagicMock)
-        ]
-
-        # To be conservative, we only recognize classes with a single base (besides any Mock).
-        # If the only base is 'object', we couldn't find a non-mock module base.
-        if len(non_unittest_bases) != 1 or (base := non_unittest_bases[0]) is object:
-            return None
-
-        t = get_type_name(base)
-        if adjuster:
-            t = adjuster.visit(t)
-        trace.append(t)
-        if len(trace) > 50:
-            return None # break loops
-
-    if t is ti:
-        # 'ti' didn't need resolution.  Indicate no need to replace the type.
-        return None
-
-    if logger.level == logging.DEBUG:
-        logger.debug(f"Resolved mock {' -> '.join([str(t) for t in trace])}")
-
-    return t
-
-
-class ResolveMocksT(TypeInfo.Transformer):
-    """Resolves apparent test mock types to non-test ones."""
-
-    def __init__(self, adjuster: AdjustTypeNamesT|None):
-        self._adjuster = adjuster
-
-    # TODO make mock resolution context sensitive, leaving test-only
-    # objects unresolved within test code?
-    def visit(self, node: TypeInfo) -> TypeInfo:
-        node = super().visit(node)
-        if (resolved := _resolve_mock(node, self._adjuster)):
-            return resolved
-        return node
-
-
 class GeneratorToIteratorT(TypeInfo.Transformer):
     """Converts Generator[X, None, None] -> Iterator[X]"""
     def visit(self, node: TypeInfo) -> TypeInfo:
@@ -163,10 +114,22 @@ class GeneratorToIteratorT(TypeInfo.Transformer):
         if (
             node.type_obj in (abc.Generator, typing.Generator)
             and len(node.args) == 3
+            and type(arg0 := node.args[0]) is TypeInfo
             and node.args[1] == NoneTypeInfo
             and node.args[2] == NoneTypeInfo
         ):
-            return TypeInfo("typing", "Iterator", (node.args[0],))
+            return TypeInfo.from_type(abc.Iterator, args=(
+                arg0 if arg0.is_typevar() else merged_types(arg0.to_set()),
+            ))
+        elif (
+            node.type_obj in (abc.AsyncGenerator, typing.AsyncGenerator)
+            and len(node.args) == 2
+            and type(arg0 := node.args[0]) is TypeInfo
+            and node.args[1] == NoneTypeInfo
+        ):
+            return TypeInfo.from_type(abc.AsyncIterator, args=(
+                arg0 if arg0.is_typevar() else merged_types(arg0.to_set()),
+            ))
 
         return node
 
@@ -184,8 +147,6 @@ class MakePickleableT(TypeInfo.Transformer):
 class LoadTypeObjT(TypeInfo.Transformer):
     """Loads TypeInfo's type_obj (e.g., cleared by MakePickleableT) by its module and name."""
 
-    types_names: typing.ClassVar[set[str]] = set(types.__all__)
-
     @classmethod
     def load_object(cls, node: TypeInfo) -> object:
         import importlib
@@ -197,19 +158,18 @@ class LoadTypeObjT(TypeInfo.Transformer):
             return types.NoneType
 
         parts = node.name.split('.')
-        modname = node.module if node.module else (
-            'types' if parts[0] in cls.types_names else 'builtins'
-        )
+        modname = node.module if node.module else 'builtins'
 
         try:
-            obj = importlib.import_module(modname)
+            obj: object = importlib.import_module(modname)
         except:
             return None
 
         for part in parts:
-            obj = getattr(obj, part)
+            obj = getattr(obj, part, None)
         return obj
     
+
     def visit(self, node: TypeInfo) -> TypeInfo:
         node = super().visit(node)
         if node.type_obj is None and (type_obj := self.load_object(node)):

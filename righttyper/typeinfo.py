@@ -3,6 +3,7 @@ from typing import Iterator, Final
 import types
 from dataclasses import dataclass, replace, field
 from righttyper.righttyper_types import CodeId
+from righttyper.righttyper_utils import normalize_module_name
 
 
 # The typing module does not define a type for such "typing special forms".
@@ -75,7 +76,7 @@ class TypeInfo:
 
         return TypeInfo(
             name=getattr(t, "__qualname__"), # sidesteps mypy errors for special forms
-            module=(getattr(t, "__module__") if module is None else module),
+            module=normalize_module_name(getattr(t, "__module__") if module is None else module),
             type_obj=t,
             **kwargs
         )
@@ -109,10 +110,8 @@ class TypeInfo:
         if len(s) == 1:
             return next(iter(s))
 
-        return TypeInfo(
-            module='types',
-            name='UnionType',
-            type_obj=types.UnionType,
+        return TypeInfo.from_type(
+            types.UnionType,
             # 'None' at the end is seen as more readable
             args=tuple(sorted(s, key = lambda x: (x == NoneTypeInfo, str(x)))),
             **kwargs

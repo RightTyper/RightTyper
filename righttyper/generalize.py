@@ -3,15 +3,15 @@ import collections.abc as abc
 from collections import defaultdict, Counter
 from types import EllipsisType
 from righttyper.typeinfo import TypeInfo, CallTrace
-from righttyper.righttyper_runtime import get_type_name
+from righttyper.type_id import get_type_name
 from righttyper.righttyper_types import cast_not_None
-from righttyper.options import options
+from righttyper.options import output_options
 
 
 def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     """Attempts to merge types in a set before forming their union."""
 
-    if len(typeinfoset) > 1 and options.simplify_type_sets:
+    if len(typeinfoset) > 1 and output_options.simplify_types:
         typeinfoset = simplify(typeinfoset)
 
     return TypeInfo.from_set(typeinfoset)

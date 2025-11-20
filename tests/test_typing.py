@@ -1,6 +1,6 @@
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
 from righttyper.generalize import merged_types, generalize
-import righttyper.righttyper_runtime as rt
+import righttyper.type_id as t_id
 import collections.abc as abc
 from collections import namedtuple
 import typing
@@ -8,14 +8,14 @@ from typing import Any, Callable, get_type_hints, Union, Optional, List, Literal
 import pytest
 import importlib
 import types
-from righttyper.options import options
+from righttyper.options import run_options
 from enum import Enum
 import sys
 from righttyper.typemap import AdjustTypeNamesT
 
-rt_get_value_type = rt.get_value_type
+rt_get_value_type = t_id.get_value_type
 
-# This plugin is needed to avoid caching results that depend upon 'options'
+# This plugin is needed to avoid caching results that depend upon 'run_options'
 assert importlib.util.find_spec('pytest_antilru') is not None, "pytest-antilru missing"
 
 
@@ -25,15 +25,11 @@ def get_value_type(v, **kwargs) -> str:
 
 def get_type_name(t) -> TypeInfo:
     transformer = AdjustTypeNamesT(sys.modules['__main__'].__dict__)
-    ti = rt.get_type_name(cast(type, t))
-    if options.adjust_type_names:
+    ti = t_id.get_type_name(cast(type, t))
+    if run_options.adjust_type_names:
         return transformer.visit(ti)
     return ti
  
-
-def type_from_annotations(*args, **kwargs) -> str:
-    return str(rt.type_from_annotations(*args, **kwargs))
-
 
 class IterableClass(abc.Iterable):
     def __iter__(self):
@@ -91,13 +87,13 @@ def test_get_value_type():
 #    assert "tuple[()]" == get_value_type(tuple())  # FIXME
 #    assert "tuple[int, ...]" == get_value_type((1, 2, 3, 4))
 
-    assert "typing.KeysView[str]" == get_value_type({'a':0, 'b':1}.keys())
-    assert "typing.ValuesView[int]" == get_value_type({'a':0, 'b':1}.values())
-    assert "typing.ItemsView[str, int]" == get_value_type({'a':0, 'b':1}.items())
+    assert "collections.abc.KeysView[str]" == get_value_type({'a':0, 'b':1}.keys())
+    assert "collections.abc.ValuesView[int]" == get_value_type({'a':0, 'b':1}.values())
+    assert "collections.abc.ItemsView[str, int]" == get_value_type({'a':0, 'b':1}.items())
 
-    assert "typing.KeysView[typing.Never]" == get_value_type(dict().keys())
-    assert "typing.ValuesView[typing.Never]" == get_value_type(dict().values())
-    assert "typing.ItemsView[typing.Never, typing.Never]" == get_value_type(dict().items())
+    assert "collections.abc.KeysView[typing.Never]" == get_value_type(dict().keys())
+    assert "collections.abc.ValuesView[typing.Never]" == get_value_type(dict().values())
+    assert "collections.abc.ItemsView[typing.Never, typing.Never]" == get_value_type(dict().items())
 
     o : Any = range(10)
     assert "range" == get_value_type(o)
@@ -112,7 +108,7 @@ def test_get_value_type():
     assert 0 == next(o), "changed state"
 
     o = (i for i in range(10))
-    assert get_value_type(o) in ("typing.Generator", "collections.abc.Generator")
+    assert get_value_type(o) == "collections.abc.Generator"
     assert 0 == next(o), "changed state"
 
     assert f"{__name__}.IterableClass" == get_value_type(IterableClass())
@@ -127,31 +123,32 @@ def test_get_value_type():
         for i in range(start):
             yield i
 
-    assert get_value_type(async_range(10)) in ("typing.AsyncGenerator", "collections.abc.AsyncGenerator")
-    assert get_value_type(aiter(async_range(10))) in ("typing.AsyncGenerator", "collections.abc.AsyncGenerator")
+    assert get_value_type(async_range(10)) == "collections.abc.AsyncGenerator"
+    assert get_value_type(aiter(async_range(10))) == "collections.abc.AsyncGenerator"
 
     assert f"{__name__}.MyGeneric[int, str]" == get_value_type(MyGeneric[int, str]())
     assert f"{__name__}.MyOldGeneric[int]" == get_value_type(MyOldGeneric[int]())
 
 @pytest.mark.parametrize("init, name, nextv", [
-    ["iter(b'0')", "typing.Iterator[int]", b'0'[0]],
-    ["iter(bytearray(b'0'))", "typing.Iterator[int]", bytearray(b'0')[0]],
-    ["iter({'a': 0})", "typing.Iterator[str]", 'a'],
-    ["iter({'a': 0}.values())", "typing.Iterator[int]", 0],
-    ["iter({'a': 0}.items())", "typing.Iterator[tuple[str, int]]", ('a', 0)],
-    ["iter([0, 1])", "typing.Iterator[int]", 0],
-    ["iter(reversed([0, 1]))", "typing.Iterator[int]", 1],
-    ["iter(range(1))", "typing.Iterator[int]", 0],
-    ["iter(range(1 << 1000))", "typing.Iterator[int]", 0],
-    ["iter({'a'})", "typing.Iterator[str]", 'a'],
-    ["iter('ab')", "typing.Iterator[str]", 'a'],
-    ["iter(('a', 'b'))", "typing.Iterator[str]", 'a'],
-    ["iter(tuple(c for c in ('a', 'b')))", "typing.Iterator[str]", 'a'],
-    ["zip([0], ('a',))", "typing.Iterator[tuple[int, str]]", (0, 'a')],
-    ["iter(zip([0], ('a',)))", "typing.Iterator[tuple[int, str]]", (0, 'a')],
+    ["iter(b'0')", "collections.abc.Iterator[int]", b'0'[0]],
+    ["iter(bytearray(b'0'))", "collections.abc.Iterator[int]", bytearray(b'0')[0]],
+    ["iter({'a': 0})", "collections.abc.Iterator[str]", 'a'],
+    ["iter({'a': 0}.values())", "collections.abc.Iterator[int]", 0],
+    ["iter({'a': 0}.items())", "collections.abc.Iterator[tuple[str, int]]", ('a', 0)],
+    ["iter([0, 1])", "collections.abc.Iterator[int]", 0],
+    ["iter(reversed([0, 1]))", "collections.abc.Iterator[int]", 1],
+    ["iter(range(1))", "collections.abc.Iterator[int]", 0],
+    ["iter(range(1 << 1000))", "collections.abc.Iterator[int]", 0],
+    ["iter({'a'})", "collections.abc.Iterator[str]", 'a'],
+    ["iter('ab')", "collections.abc.Iterator[str]", 'a'],
+    ["iter(('a', 'b'))", "collections.abc.Iterator[str]", 'a'],
+    ["iter(tuple(c for c in ('a', 'b')))", "collections.abc.Iterator[str]", 'a'],
+    ["zip([0], ('a',))", "collections.abc.Iterator[tuple[int, str]]", (0, 'a')],
+    ["iter(zip([0], ('a',)))", "collections.abc.Iterator[tuple[int, str]]", (0, 'a')],
     ["enumerate(('a', 'b'))", "enumerate[str]", (0, 'a')],
     ["iter(enumerate(('a', 'b')))", "enumerate[str]", (0, 'a')],
-#    ["iter(zip([0], (c for c in ('a',))))", "typing.Iterator[tuple[int, str]]", (0, 'a')],
+    # The generator in these cases needs to be observed to fully type... see integration test.
+#    ["iter(zip([0], (c for c in ('a',))))", "collections.abc.Iterator[tuple[int, str]]", (0, 'a')],
 #    ["enumerate(c for c in ('a', 'b'))", "enumerate[str]", (0, 'a')],
 ])
 def test_value_type_iterator(init, name, nextv):
@@ -161,20 +158,20 @@ def test_value_type_iterator(init, name, nextv):
 
 
 @pytest.mark.parametrize("init, name", [
-    ["iter(b'0')", "typing.Iterator[int]"],
-    ["iter(bytearray(b'0'))", "typing.Iterator[int]"],
-    ["iter({'a': 0})", "typing.Iterator"],
-    ["iter({'a': 0}.values())", "typing.Iterator"],
-    ["iter({'a': 0}.items())", "typing.Iterator"],
-    ["iter([0, 1])", "typing.Iterator"],
-    ["iter(reversed([0, 1]))", "typing.Iterator"],
-    ["iter(range(1))", "typing.Iterator[int]"],
-    ["iter(range(1 << 1000))", "typing.Iterator[int]"],
-    ["iter({'a'})", "typing.Iterator"],
-    ["iter('ab')", "typing.Iterator[str]"],
-    ["iter(('a', 'b'))", "typing.Iterator"],
-    ["zip([0], ('a',))", "typing.Iterator"],
-    ["iter(zip([0], ('a',)))", "typing.Iterator"],
+    ["iter(b'0')", "collections.abc.Iterator[int]"],
+    ["iter(bytearray(b'0'))", "collections.abc.Iterator[int]"],
+    ["iter({'a': 0})", "collections.abc.Iterator"],
+    ["iter({'a': 0}.values())", "collections.abc.Iterator"],
+    ["iter({'a': 0}.items())", "collections.abc.Iterator"],
+    ["iter([0, 1])", "collections.abc.Iterator"],
+    ["iter(reversed([0, 1]))", "collections.abc.Iterator"],
+    ["iter(range(1))", "collections.abc.Iterator[int]"],
+    ["iter(range(1 << 1000))", "collections.abc.Iterator[int]"],
+    ["iter({'a'})", "collections.abc.Iterator"],
+    ["iter('ab')", "collections.abc.Iterator[str]"],
+    ["iter(('a', 'b'))", "collections.abc.Iterator"],
+    ["zip([0], ('a',))", "zip"],
+    ["iter(zip([0], ('a',)))", "zip"],
     ["enumerate(('a', 'b'))", "enumerate"],
     ["iter(enumerate(('a', 'b')))", "enumerate"],
 ])
@@ -184,7 +181,7 @@ def test_type_name_iterator(init, name):
 
 @pytest.mark.parametrize("adjust_type_names", [False, True])
 def test_dynamic_type(monkeypatch, adjust_type_names):
-    monkeypatch.setattr(options, 'adjust_type_names', adjust_type_names)
+    monkeypatch.setattr(run_options, 'adjust_type_names', adjust_type_names)
 
     t = type('myType', (object,), dict())
     assert get_type_name(t) is UnknownTypeInfo
@@ -192,7 +189,7 @@ def test_dynamic_type(monkeypatch, adjust_type_names):
 
 @pytest.mark.parametrize("adjust_type_names", [False, True])
 def test_local_type_module_invalid(monkeypatch, adjust_type_names):
-    monkeypatch.setattr(options, 'adjust_type_names', adjust_type_names)
+    monkeypatch.setattr(run_options, 'adjust_type_names', adjust_type_names)
 
     class Invalid: pass
     Invalid.__module__ = 'does_not_exist'
@@ -218,7 +215,7 @@ def test_get_value_type_coro():
         import asyncio
         await asyncio.sleep(1)
 
-    assert "typing.Coroutine[None, None, typing.Any]" == get_value_type(coro())
+    assert "collections.abc.Coroutine[None, None, typing.Any]" == get_value_type(coro())
 
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
@@ -243,7 +240,7 @@ class NamedTupleClass:
 
 @pytest.mark.parametrize("adjust_type_names", [False, True])
 def test_get_type_name_namedtuple_nonlocal(monkeypatch, adjust_type_names):
-    monkeypatch.setattr(options, 'adjust_type_names', adjust_type_names)
+    monkeypatch.setattr(run_options, 'adjust_type_names', adjust_type_names)
 
     if adjust_type_names:
         # namedtuple's __qualname__ also doesn't contain the enclosing class name...
@@ -272,7 +269,7 @@ def test_get_value_type_namedtuple_local():
                      importlib.util.find_spec('jaxtyping') is None),
                     reason='missing modules')
 def test_get_value_type_numpy_jaxtyping(monkeypatch):
-    monkeypatch.setattr(options, 'infer_shapes', True)
+    monkeypatch.setattr(run_options, 'infer_shapes', True)
     import numpy as np
 
     assert 'jaxtyping.Float64[numpy.ndarray, "0"]' == get_value_type(np.array([], np.float64))
@@ -284,7 +281,7 @@ def test_get_value_type_numpy_jaxtyping(monkeypatch):
                      importlib.util.find_spec('jaxtyping') is None),
                     reason='missing modules')
 def test_get_value_type_torch_jaxtyping(monkeypatch):
-    monkeypatch.setattr(options, 'infer_shapes', True)
+    monkeypatch.setattr(run_options, 'infer_shapes', True)
     import torch
 
     assert 'jaxtyping.Float64[torch.Tensor, "0"]' == \
@@ -297,8 +294,8 @@ def test_type_from_annotations():
     def foo(x: int|float, y: list[tuple[bool, ...]], z: Callable[[], None]) -> complex|None:
         pass
 
-    assert "typing.Callable[[int|float, list[tuple[bool, ...]], collections.abc.Callable[[], None]], complex|None]" == \
-            type_from_annotations(foo)
+    assert "collections.abc.Callable[[int|float, list[tuple[bool, ...]], collections.abc.Callable[[], None]], complex|None]" == \
+            get_value_type(foo)
 
 
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
@@ -316,9 +313,9 @@ def test_hint2type():
 
     hints = get_type_hints(foo)
 
-    assert f"int|{__name__}.MyGeneric[str, collections.abc.Callable[[], None]]" == str(rt.hint2type(hints['x']))
-    assert f"tuple[int, ...]" == str(rt.hint2type(hints['y']))
-    assert """jaxtyping.Float[jax.Array, "10 20"]""" == str(rt.hint2type(hints['z']))
+    assert f"int|{__name__}.MyGeneric[str, collections.abc.Callable[[], None]]" == str(t_id.hint2type(hints['x']))
+    assert f"tuple[int, ...]" == str(t_id.hint2type(hints['y']))
+    assert """jaxtyping.Float[jax.Array, "10 20"]""" == str(t_id.hint2type(hints['z']))
 
 
 def test_hint2type_pre_3_10():
@@ -329,8 +326,8 @@ def test_hint2type_pre_3_10():
 
     hints = get_type_hints(foo)
 
-    assert "int|str|None" == str(rt.hint2type(hints['x']))
-    assert "bool|None" == str(rt.hint2type(hints['y']))
+    assert "int|str|None" == str(t_id.hint2type(hints['x']))
+    assert "bool|None" == str(t_id.hint2type(hints['y']))
 
 
 def test_typeinfo():
@@ -352,7 +349,7 @@ def test_typeinfo_from_set():
 
     t = TypeInfo.from_set({TypeInfo.from_type(int)})
 
-    assert str(t) == 'builtins.int'
+    assert str(t) == 'int'
     assert t.name == 'int'
     assert not t.args
 
@@ -364,14 +361,14 @@ def test_typeinfo_from_set():
             NoneTypeInfo
         })
 
-    assert str(t) == 'builtins.int|None'
+    assert str(t) == 'int|None'
 
     t = TypeInfo.from_set({
             TypeInfo.from_type(int),
             TypeInfo.from_type(bool)
         })
 
-    assert str(t) == 'builtins.bool|builtins.int'
+    assert str(t) == 'bool|int'
 
     t = TypeInfo.from_set({
             TypeInfo.from_type(int),
@@ -383,7 +380,7 @@ def test_typeinfo_from_set():
             ))
         })
 
-    assert str(t) == 'X[builtins.bool|None]|builtins.int'
+    assert str(t) == 'X[bool|None]|int'
 
     t = TypeInfo.from_set({
             TypeInfo.from_type(int),
@@ -392,7 +389,7 @@ def test_typeinfo_from_set():
             TypeInfo(module='', name='z')
         })
 
-    assert str(t) == 'builtins.bool|builtins.int|z|None'
+    assert str(t) == 'bool|int|z|None'
     assert isinstance(t.args[-1], TypeInfo)
     assert t.args[-1].name == 'None'
 
@@ -423,28 +420,28 @@ def test_merged_types_generics():
         }
     ))
 
-    assert "builtins.list" == str(merged_types({
+    assert "list" == str(merged_types({
             TypeInfo.from_type(list, args=(TypeInfo("", "int"),)),
             TypeInfo.from_type(list),
         }
     ))
 
-    assert "builtins.tuple" == str(merged_types({
+    assert "tuple" == str(merged_types({
             TypeInfo.from_type(tuple, args=(TypeInfo("", "int"), ...)),
             TypeInfo.from_type(tuple),
         }
     ))
 
-    assert "builtins.tuple" == str(merged_types({
+    assert "tuple" == str(merged_types({
             TypeInfo.from_type(tuple, args=(TypeInfo("", "int"), ...)),
             TypeInfo.from_type(tuple),
         }
     ))
 
     assert "collections.abc.Callable" == str(merged_types({
-            rt.hint2type(abc.Callable[[], None]),
-            rt.hint2type(abc.Callable[[int], None]),
-            rt.hint2type(abc.Callable),
+            t_id.hint2type(abc.Callable[[], None]),
+            t_id.hint2type(abc.Callable[[int], None]),
+            t_id.hint2type(abc.Callable),
         }
     ))
 
@@ -578,10 +575,10 @@ union_ti = lambda *a: TypeInfo("types", "UnionType", tuple(a), type_obj=types.Un
 
 
 def test_hint2type_typevar():
-    t = rt.hint2type(T)
+    t = t_id.hint2type(T)
     assert t == TypeInfo(module=T.__module__, name=T.__name__)
 
-    t = rt.hint2type(List[T])   # type: ignore[valid-type]
+    t = t_id.hint2type(List[T])   # type: ignore[valid-type]
     assert t == TypeInfo.from_type(list, module='', args=(
             TypeInfo(module=T.__module__, name=T.__name__),
         )
@@ -589,10 +586,10 @@ def test_hint2type_typevar():
 
 
 def test_hint2type_none():
-    t = rt.hint2type(None)
+    t = t_id.hint2type(None)
     assert t is NoneTypeInfo
 
-    t = rt.hint2type(abc.Generator[int|str, None, None])
+    t = t_id.hint2type(abc.Generator[int|str, None, None])
     assert t == TypeInfo.from_type(abc.Generator, args=(
         TypeInfo.from_set({
             TypeInfo.from_type(int, module=''),
@@ -604,7 +601,7 @@ def test_hint2type_none():
 
 
 def test_hint2type_ellipsis():
-    t = rt.hint2type(tuple[str, ...])
+    t = t_id.hint2type(tuple[str, ...])
     assert t == TypeInfo.from_type(tuple, module="", args=(
         TypeInfo.from_type(str, module=""),
         ...
@@ -612,7 +609,7 @@ def test_hint2type_ellipsis():
 
 
 def test_hint2type_list():
-    t = rt.hint2type(abc.Callable[[], None]) 
+    t = t_id.hint2type(abc.Callable[[], None]) 
     assert t == TypeInfo.from_type(cast(type, abc.Callable), args=(
         TypeInfo.list([]),
         NoneTypeInfo
@@ -626,19 +623,19 @@ def test_hint2type_literal():
     ): pass
 
     hints = get_type_hints(foo)
-    assert "int" == str(rt.hint2type(hints['x']))
-    assert "bool|str" == str(rt.hint2type(hints['y']))
+    assert "int" == str(t_id.hint2type(hints['x']))
+    assert "bool|str" == str(t_id.hint2type(hints['y']))
 
 
 def test_hint2type_unions():
-    t = rt.hint2type(Union[int, str])
+    t = t_id.hint2type(Union[int, str])
     assert t.fullname() == "types.UnionType"
     assert t.args == (
         TypeInfo.from_type(int, module=''),
         TypeInfo.from_type(str, module=''),
     )
 
-    t = rt.hint2type(Optional[str])
+    t = t_id.hint2type(Optional[str])
     assert t.fullname() == "types.UnionType"
     assert t.args == (
         TypeInfo.from_type(str, module=''),
@@ -653,7 +650,7 @@ def test_hint2type_jaxtyping():
     import jaxtyping
     import numpy
 
-    t = rt.hint2type(jaxtyping.Float64[numpy.ndarray, "0"])
+    t = t_id.hint2type(jaxtyping.Float64[numpy.ndarray, "0"])
     assert t == TypeInfo("jaxtyping", "Float64", args=(
         TypeInfo.from_type(numpy.ndarray),
         "0"

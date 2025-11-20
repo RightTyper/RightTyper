@@ -37,7 +37,6 @@ class TypeMap:
 
     def build_map(self, main_globals: dict[str, typing.Any]|None) -> dict[type, tuple[str, str]]:
         work_map: dict[type, list[TypeMap.TypeName]] = defaultdict(list)
-        known_modules: set[str] = set()
 
         for m in list(sys.modules): # list() in case it changes while we're working
             if m != '__main__':     # this would be RightTyper's main
@@ -92,6 +91,9 @@ class TypeMap:
             if mod_and_name[0] == 'builtins':
                 mod_and_name = ('', mod_and_name[1])
             search_map[t] = mod_and_name
+
+            # override: types.NoneType gets annotated as 'None'
+            search_map[types.NoneType] = ('', 'None')
 
             if logger.level == logging.DEBUG:
                 for tn in sorted(work_map[t], key=lambda tn: typename_key(t, tn)):
@@ -180,14 +182,7 @@ class AdjustTypeNamesT(TypeInfo.Transformer):
         vself.type_map = TypeMap(main_globals)
 
     def visit(vself, node: TypeInfo) -> TypeInfo:
-        if (
-            node.type_obj
-            and node.type_obj not in (
-                types.NoneType,
-                # FIXME temporary: righttyper_runtime generates these as "typing.X"
-                abc.Callable, abc.Generator, abc.AsyncGenerator, abc.Coroutine
-            )
-        ):
+        if node.type_obj:
             if (mod_and_name := vself.type_map.find(node.type_obj)):
                 if mod_and_name != (node.module, node.name):
                     node = node.replace(module=mod_and_name[0], name=mod_and_name[1])

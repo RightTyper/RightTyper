@@ -75,6 +75,56 @@ _TYPING_TYPES : frozenset[str] = frozenset({
 })
 
 
+# generated from https://docs.python.org/3/library/typing.html#deprecated-aliases
+_DEPRECATED_TYPING_TYPES: typing.Final[tuple[tuple[str, str], ...]] = (
+    ("typing.List",         "list"),
+    ("typing.Dict",         "dict"),
+    ("typing.Set",          "set"),
+    ("typing.FrozenSet",    "frozenset"),
+    ("typing.Tuple",        "tuple"),
+    ("typing.Type",         "type"),
+    ("typing.Text",         "str"),
+
+    ("typing.DefaultDict",  "collections.defaultdict"),
+    ("typing.OrderedDict",  "collections.OrderedDict"),
+    ("typing.ChainMap",     "collections.ChainMap"),
+    ("typing.Counter",      "collections.Counter"),
+    ("typing.Deque",        "collections.deque"),
+
+    ("typing.Pattern",      "re.Pattern"),
+    ("typing.Match",        "re.Match"),
+
+    ("typing.IO",           "io.IOBase"),
+    ("typing.TextIO",       "io.TextIOBase"),
+    ("typing.BinaryIO",     "io.BufferedIOBase"),
+
+    ("typing.AbstractSet",   "collections.abc.Set"),
+    ("typing.ByteString",    "collections.abc.ByteString"),
+    ("typing.Collection",    "collections.abc.Collection"),
+    ("typing.Container",     "collections.abc.Container"),
+    ("typing.ItemsView",     "collections.abc.ItemsView"),
+    ("typing.KeysView",      "collections.abc.KeysView"),
+    ("typing.Mapping",       "collections.abc.Mapping"),
+    ("typing.MappingView",   "collections.abc.MappingView"),
+    ("typing.MutableMapping","collections.abc.MutableMapping"),
+    ("typing.MutableSequence","collections.abc.MutableSequence"),
+    ("typing.MutableSet",    "collections.abc.MutableSet"),
+    ("typing.Sequence",      "collections.abc.Sequence"),
+    ("typing.ValuesView",    "collections.abc.ValuesView"),
+    ("typing.Coroutine",     "collections.abc.Coroutine"),
+    ("typing.AsyncGenerator","collections.abc.AsyncGenerator"),
+    ("typing.AsyncIterable", "collections.abc.AsyncIterable"),
+    ("typing.AsyncIterator", "collections.abc.AsyncIterator"),
+    ("typing.Awaitable",     "collections.abc.Awaitable"),
+    ("typing.Iterable",      "collections.abc.Iterable"),
+    ("typing.Iterator",      "collections.abc.Iterator"),
+    ("typing.Callable",      "collections.abc.Callable"),
+    ("typing.Generator",     "collections.abc.Generator"),
+    ("typing.Hashable",      "collections.abc.Hashable"),
+    ("typing.Reversible",    "collections.abc.Reversible"),
+    ("typing.Sized",         "collections.abc.Sized"),
+)
+
 def _dotted_name_to_nodes(name: str) -> cst.Attribute | cst.Name:
     """Creates Attribute/Name to build a module name, dotted or not."""
     parts = name.split(".")
@@ -280,6 +330,12 @@ class UnifiedTransformer(cst.CSTTransformer):
             f"typing.{t}": t
             for t in _TYPING_TYPES
         }
+
+        # We automatically import 'typing' types, so for now it is convenient
+        # to continue using 'typing', by default (unless imported)
+        for old, new in _DEPRECATED_TYPING_TYPES:
+            if old.startswith('typing.') and new.startswith('collections.abc'):
+                self.aliases[new] = old[7:]
 
         # "import ... as ..." within "if TYPE_CHECKING:".
         # TODO read those in as well so as not to duplicate imports
@@ -543,7 +599,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 #                self._record_var_change(node, new_node)
 #                return new_node
 #
-#            var_type = TypeInfo('typing', 'TypeAlias')
+#            var_type = TypeInfo.from_type(typing.TypeAlias)
 
         # Don't throw away (presumably human-generated) "Final" and "ClassVar" annotations
         wrappers = []
@@ -644,7 +700,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         updated_node: cst.SimpleStatementLine
     ) -> cst.SimpleStatementLine:
         return (
-            updated_node.visit(TypeHintDeleter())
+            typing.cast(cst.SimpleStatementLine, updated_node.visit(TypeHintDeleter()))
             if any(stmt in self.modified_assignments for stmt in updated_node.body)
             else updated_node
         )
@@ -761,7 +817,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 annotation=cst.Annotation(annotation=annotation_expr)
             )
 
-        new_par = new_par.visit(TypeHintDeleter())
+        new_par = typing.cast(cst.Param, new_par.visit(TypeHintDeleter()))
         return new_par
 
     def leave_FunctionDef(

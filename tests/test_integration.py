@@ -21,10 +21,7 @@ def tmp_cwd(tmp_path, monkeypatch):
     yield tmp_path
 
 
-def print_file(file: Path) -> None:
-    for lineno, line in enumerate(file.read_text().splitlines(), start=1):
-        print(f"{lineno:3}: {line}")
-
+MYPY_CACHE_DIR = Path.cwd() / '.mypy_tests_cache'
 
 @pytest.fixture(scope='function', autouse=True)
 def runmypy(tmp_cwd, request):
@@ -46,10 +43,20 @@ def runmypy(tmp_cwd, request):
         else ()
     )
     from mypy import api
-    result = api.run([*python_version, *(mypy_args.args if mypy_args else ()), '.'])
-    if result[2]:
-        print(result[0])
-        filename = result[0].split(':')[0]
+    stdout, stderr, exit_status = api.run([
+        '--cache-dir', str(MYPY_CACHE_DIR), # speeds up mypy
+        *python_version,
+        *(mypy_args.args if mypy_args else ()),
+        '.'
+    ])
+
+    def print_file(file: Path) -> None:
+        for lineno, line in enumerate(file.read_text().splitlines(), start=1):
+            print(f"{lineno:3}: {line}")
+
+    if exit_status:
+        print(stdout)
+        filename = stdout.split(':')[0]
         print_file(Path(filename))
         pytest.fail("see mypy errors")
 
@@ -160,8 +167,6 @@ def test_numpy_iterator():
 @pytest.mark.parametrize("ann", ["", " -> float"])
 def test_getitem_iterator(ann):
     t = textwrap.dedent(f"""\
-        from collections.abc import Iterator
-
         class X:
             def __getitem__(self, n){ann}:
                 if n < 10:
@@ -176,7 +181,7 @@ def test_getitem_iterator(ann):
 
     Path("t.py").write_text(t)
 
-    rt_run('--debug', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -194,7 +199,6 @@ def test_getitem_iterator(ann):
 @pytest.mark.parametrize("size", [0, 10])
 def test_getitem_iterator_numpy(size):
     t = textwrap.dedent(f"""\
-        from collections.abc import Iterator
         import numpy as np
 
         def f(it):
@@ -302,10 +306,12 @@ def test_builtins():
     assert "def func3(t: super) -> None" in output
 
 
+@pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
 @pytest.mark.parametrize("cache", ["", "@cache"])
 @pytest.mark.parametrize("ignore", [(), ('--ignore-annotations',)])
-def test_callable_from_annotations(cache, ignore):
+def test_callable_from_annotations(future, cache, ignore):
     t = textwrap.dedent(f"""\
+        {future}
         from functools import cache
         type MyFloat = float
 
@@ -347,8 +353,10 @@ def test_callable_from_annotations(cache, ignore):
         """)
 
 
-def test_callable_from_annotations_typing_special():
-    t = textwrap.dedent("""\
+@pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
+def test_callable_from_annotations_typing_special(future):
+    t = textwrap.dedent(f"""\
+        {future}
         import typing
 
         class C:
@@ -374,8 +382,10 @@ def test_callable_from_annotations_typing_special():
     """)
 
 
-def test_callable_from_annotation_generic_alias():
-    t = textwrap.dedent("""\
+@pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
+def test_callable_from_annotation_generic_alias(future):
+    t = textwrap.dedent(f"""\
+        {future}
         def f() -> list[int]:   # list[int] is a GenericAlias
             return [1,2,3]
 
@@ -478,9 +488,12 @@ def test_numpy_ndarray_dtype_name():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     assert "import bfloat16\n" not in output
-    assert "def f(p: np.ndarray[Any, np.dtype[ml_dtypes.bfloat16]]) -> str" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(p: np.ndarray[Any, np.dtype[ml_dtypes.bfloat16]]) -> str: ...
+    """)
 
 
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
@@ -511,7 +524,8 @@ def test_annotation_with_numpy_dtype_name():
 @pytest.mark.dont_run_mypy # it lacks definitions for checking
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None,
                     reason='missing module numpy')
-def test_internal_numpy_type():
+@pytest.mark.parametrize("adjust", ["--no-adjust-type-names", "--adjust-type-names"])
+def test_internal_numpy_type(adjust):
     t = textwrap.dedent("""\
         import numpy as np
         from numpy.core.overrides import array_function_dispatch
@@ -535,12 +549,43 @@ def test_internal_numpy_type():
 
     Path("t.py").write_text(t)
 
-    rt_run('--adjust-type-names', 't.py')
+    rt_run(adjust, 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
+    # numpy._ArrayFunctionDispatcher isn't a valid name, so we expect it renamed or gone
     f = get_function(code, 'MyArray.__array_function__')
-    assert re.search(r'func: "numpy.[\w\.]*_ArrayFunctionDispatcher"', str(f))
+    if adjust == '--adjust-type-names':
+        assert re.search(r'func: "numpy.[\w\.]+_ArrayFunctionDispatcher"', str(f))
+    else:
+        assert re.search(r', func,', str(f))
+
+
+@pytest.mark.dont_run_mypy # it lacks definitions for checking
+@pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module numpy')
+@pytest.mark.parametrize("adjust", ["--no-adjust-type-names", "--adjust-type-names"])
+def test_internal_numpy_type_default(adjust):
+    t = textwrap.dedent("""\
+        import numpy as np
+
+        def foo(op=np.where) -> None:
+            pass
+
+        foo()
+    """)
+
+    Path("t.py").write_text(t)
+
+    rt_run(adjust, 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # np.where IS-A numpy._ArrayFunctionDispatcher, which isn't a valid name, so we expect it renamed or gone
+    foo = get_function(code, 'foo')
+    if adjust == '--adjust-type-names':
+        assert re.search(r'op: "numpy.[\w\.]+_ArrayFunctionDispatcher"', str(foo))
+    else:
+        assert foo == "def foo(op=np.where) -> None: ...\n"
 
 
 @pytest.mark.skipif((importlib.util.find_spec('jaxtyping') is None or
@@ -838,6 +883,31 @@ def test_method_overriding_annotated_with_literal():
 
     assert get_function(code, 'B.foo') == textwrap.dedent("""\
         def foo(self: Self, x: int|str) -> int: ...
+    """)
+
+
+def test_method_overriding_annotated_varargs_kwargs():
+    # note args, kwargs change name and x, y change order
+    t = textwrap.dedent("""\
+        class A:
+            def foo(self, *args: int, y:None=None, x:None=None, **kwargs: float) -> int:
+                return 0
+
+        class B(A):
+            def foo(self, *var_args, x=0, y=.1, **kw_args):
+                return 0
+
+        B().foo('foo', z='bar')
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--debug', 't.py')   # --debug just so we test running with debug
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+            def foo(self: Self, *var_args: int|str, x: int|None=0, y: float|None=.1, **kw_args: float|str) -> int: ...
     """)
 
 
@@ -1548,11 +1618,12 @@ def test_default_method():
     assert "def h(self: Self, x: int=1) -> float" in output
 
 
+@pytest.mark.parametrize("ann", ["", " -> Generator[MyType, None, None]"])
 @pytest.mark.parametrize("ignore", [(), ('--ignore-annotations',)])
-@pytest.mark.parametrize("ann", ["", " -> Iterator[MyType]"])
-def test_generator(ann, ignore):
+@pytest.mark.parametrize("no_simplify", [(), ('--no-simplify-types',)])
+def test_generator(ann, ignore, no_simplify):
     t = textwrap.dedent(f"""\
-        from collections.abc import Iterator
+        from collections.abc import Generator
         type MyType = float
 
         def gen(){ann}:
@@ -1572,31 +1643,43 @@ def test_generator(ann, ignore):
 
     Path("t.py").write_text(t)
 
-    rt_run(*ignore, 't.py')
+    rt_run(*ignore, *no_simplify, 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
     if ann and not ignore:
         assert get_function(code, 'gen') == textwrap.dedent("""\
-            def gen() -> Iterator[MyType]: ...
+            def gen() -> Generator[MyType, None, None]: ...
         """)
-        assert get_function(code, 'g') == textwrap.dedent("""\
-            def g(f: Iterator[MyType]) -> None: ...
-        """)
+        if no_simplify:
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Generator[MyType, None, None]) -> None: ...
+            """)
+        else:
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Iterator[MyType]) -> None: ...
+            """)
     else:
-        assert get_function(code, 'gen') == textwrap.dedent("""\
-            def gen() -> Iterator[float|int]: ...
-        """)
-        assert get_function(code, 'g') == textwrap.dedent("""\
-            def g(f: Iterator[float|int]) -> None: ...
-        """)
+        if no_simplify:
+            assert get_function(code, 'gen') == textwrap.dedent("""\
+                def gen() -> Generator[float|int, None, None]: ...
+            """)
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Generator[float|int, None, None]) -> None: ...
+            """)
+        else:
+            assert get_function(code, 'gen') == textwrap.dedent("""\
+                def gen() -> Iterator[float]: ...
+            """)
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Iterator[float]) -> None: ...
+            """)
 
 
 @pytest.mark.dont_run_mypy # fails because of SomethingUnknown
 def test_generator_annotation_errors():
     t = textwrap.dedent("""\
         from __future__ import annotations
-        from collections.abc import Generator
 
         def f() -> Generator[SomethingUnknown, None, None]:
             yield 1
@@ -1648,7 +1731,8 @@ def test_generator_with_return():
     assert "def g(f: Generator[int, None, str]) -> None" in output
 
 
-def test_async_generator():
+@pytest.mark.parametrize("no_simplify", [(), ('--no-simplify-types',)])
+def test_async_generator(no_simplify):
     t = textwrap.dedent("""\
         import asyncio
 
@@ -1668,11 +1752,26 @@ def test_async_generator():
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run('--debug', *no_simplify, 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> AsyncGenerator[int, None]:" in output
-    assert "def g(f: AsyncGenerator[int, None]) -> None" in output
+    if no_simplify:
+        assert get_function(code, 'gen') == textwrap.dedent("""\
+            async def gen() -> AsyncGenerator[int, None]: ...
+        """)
+
+        assert get_function(code, 'g') == textwrap.dedent("""\
+            def g(f: AsyncGenerator[int, None]) -> None: ...
+        """)
+    else:
+        assert get_function(code, 'gen') == textwrap.dedent("""\
+            async def gen() -> AsyncIterator[int]: ...
+        """)
+
+        assert get_function(code, 'g') == textwrap.dedent("""\
+            def g(f: AsyncIterator[int]) -> None: ...
+        """)
 
 
 def test_generator_with_self():
@@ -2881,7 +2980,7 @@ def test_inline_generics_no_variables():
 ])
 def test_custom_collection_typing(superclass):
     Path("t.py").write_text(textwrap.dedent(f"""\
-        from collections.abc import *
+        from collections.abc import KeysView, ValuesView, ItemsView
 
         class MyContainer({superclass}):
             def __init__(self):
@@ -3841,7 +3940,7 @@ def test_typing_union(python_version):
         def f(x: Union[int, str]) -> Optional[str]: ...
     """)
     assert get_function(code, 'g') == textwrap.dedent("""\
-        def g(x: Union[list[Any], Callable[[Union[int, str]], Optional[str]]]) -> None: ...
+        def g(x: Union[Callable[[Union[int, str]], Optional[str]], list[Any]]) -> None: ...
     """)
 
 
@@ -3882,6 +3981,45 @@ def test_typemap_name_from_all_preferred(all_type):
 
     assert get_function(code, 'f') == textwrap.dedent("""\
         def f(x: m.xyz) -> None: ...
+    """)
+
+
+def test_typemap_name_changes_default():
+    # C has 4 names:
+    #   - m.foo.C, where it's defined
+    #   - m.C, where it's imported into m
+    #   - m.xyz, declared in '__all__'
+    #   - __main__.m.foo.C
+    #
+    # we want to see it pick m.xyz
+
+    Path("m").mkdir()
+    (Path("m") / "__init__.py").write_text(textwrap.dedent(f"""\
+        from .foo import C
+        __all__ = ['xyz']
+        xyz = C
+        """
+    ))
+    (Path("m") / "foo.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+        """
+    ))
+    Path("t.py").write_text(textwrap.dedent("""\
+        import m.foo
+
+        def f(x = m.foo.C()): pass
+
+        f()
+        """
+    ))
+
+    rt_run('--adjust-type-names', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: m.xyz = m.foo.C()) -> None: ...
     """)
 
 

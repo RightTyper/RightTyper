@@ -11,7 +11,7 @@ from righttyper.righttyper_utils import (
 )
 from righttyper.unified_transformer import UnifiedTransformer
 from righttyper.logger import logger
-from righttyper.options import Options
+from righttyper.options import OutputOptions
 
 CodeChanges: TypeAlias = tuple[Filename, list[tuple[str, str, str]]]
 
@@ -76,7 +76,7 @@ def process_file(
     module_name: str,
     type_annotations: dict[CodeId, FuncAnnotation],
     module_vars: ModuleVars,
-    options: Options
+    options: OutputOptions
 ) -> CodeChanges:
     logger.debug(f"process_file: {filename}")
     try:
