@@ -260,12 +260,6 @@ class ABCFinder:
         return max(matching, key=lambda it: len(methods(it) & t_methods))
 
 
-def _follow_attr_path(o: object, attr_path: list[str]) -> object:
-    for a in attr_path:
-        o = getattr(o, a, None)
-    return o
-
-
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
 
@@ -292,14 +286,6 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
         and hasattr(obj, "type")
     ):
         return TypeInfo.from_type(numpy.dtype, args=(get_type_name(obj.type, depth+1),))
-
-    if not run_options.adjust_type_names:
-        # If we we can (i.e., not '<locals>'), check the type is valid
-        if (
-            '<locals>' not in (name_parts := obj.__qualname__.split('.'))
-            and _follow_attr_path(sys.modules.get(obj.__module__), name_parts) is not obj
-        ):
-            return UnknownTypeInfo
 
     return TypeInfo.from_type(obj)
 

@@ -162,6 +162,8 @@ def source_to_module_fqn(file: Path) -> str|None:
 
 @cache
 def get_main_module_fqn() -> str:
+    # Note that through caching, we may get this wrong if the __main__ module
+    # changes (e.g., trough runpy)
     main = sys.modules['__main__']
     if hasattr(main, "__file__") and main.__file__:
         if fqn := source_to_module_fqn(Path(main.__file__)):

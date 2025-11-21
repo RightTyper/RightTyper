@@ -11,7 +11,7 @@ import types
 from righttyper.options import run_options
 from enum import Enum
 import sys
-from righttyper.typemap import AdjustTypeNamesT
+from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
 
 rt_get_value_type = t_id.get_value_type
 
@@ -24,10 +24,12 @@ def get_value_type(v, **kwargs) -> str:
 
 
 def get_type_name(t) -> TypeInfo:
-    transformer = AdjustTypeNamesT(sys.modules['__main__'].__dict__)
     ti = t_id.get_type_name(cast(type, t))
+    typemap = TypeMap(sys.modules['__main__'].__dict__)
     if run_options.adjust_type_names:
-        return transformer.visit(ti)
+        return AdjustTypeNamesT(typemap).visit(ti)
+    else:
+        return CheckTypeNamesT(typemap).visit(ti)
     return ti
  
 

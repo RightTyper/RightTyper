@@ -2051,27 +2051,39 @@ def test_generate_stubs():
         """)
 
 
-def test_type_from_main():
+@pytest.mark.parametrize("adjust", ["--no-adjust-type-names", "--adjust-type-names"])
+@pytest.mark.parametrize("bad", ["", "bad"])
+def test_type_from_main(adjust, bad):
     Path("m.py").write_text(textwrap.dedent("""\
         def f(x):
             return str(x)
         """
     ))
 
-    Path("t.py").write_text(textwrap.dedent("""\
+    Path("t.py").write_text(textwrap.dedent(f"""\
         import m
 
         class C:
             def __str__(self):
                 return "hi!"
 
+        {"C.__qualname__ = 'invalid'" if bad else ""}
+
         m.f(C())
         """
     ))
 
-    rt_run('t.py')
+    rt_run(adjust, 't.py')
     output = Path("m.py").read_text()
-    assert "def f(x: \"t.C\") -> str:" in output
+    code = cst.parse_module(output)
+    if adjust == '--no-adjust-type-names' and bad:
+        assert get_function(code, 'f') == textwrap.dedent(f"""\
+            def f(x) -> str: ...
+        """)
+    else:
+        assert get_function(code, 'f') == textwrap.dedent(f"""\
+            def f(x: \"t.C\") -> str: ...
+        """)
 
 
 def test_module_type():

@@ -22,20 +22,23 @@ class TypeMap:
         name_parts: list[str] = field(default_factory=list)
         is_private: bool = False
 
-        def to_strings(self) -> tuple[str, str]:
-            return ".".join(self.module_parts), ".".join(self.name_parts)
+        def module(self) -> str:
+            return ".".join(self.module_parts)
+
+        def qualname(self) -> str:
+            return ".".join(self.name_parts)
 
 
     def __init__(self, main_globals: dict[str, typing.Any]|None):
-        self._map: dict[type, tuple[str, str]] = self.build_map(main_globals)
+        self._map: dict[type, list[tuple[str, str]]] = self._build_map(main_globals)
 
 
-    def find(self, t: type) -> tuple[str, str]|None:
-        """Given a type object, return its module and qualified name as strings."""
-        return self._map.get(t, None)
+    def find(self, t: type) -> list[tuple[str, str]]:
+        """Given a type object, return all its module and qualified name as strings."""
+        return self._map.get(t, [])
 
 
-    def build_map(self, main_globals: dict[str, typing.Any]|None) -> dict[type, tuple[str, str]]:
+    def _build_map(self, main_globals: dict[str, typing.Any]|None) -> dict[type, list[tuple[str, str]]]:
         work_map: dict[type, list[TypeMap.TypeName]] = defaultdict(list)
 
         for m in list(sys.modules): # list() in case it changes while we're working
@@ -68,7 +71,7 @@ class TypeMap:
 
         def typename_key(t: type, tn: TypeMap.TypeName) -> tuple[int|bool, ...]:
             """Generates a key for sorting / picking among the names found for a type."""
-            module, name = tn.to_strings()
+            module, name = tn.module(), tn.qualname()
             # str() because __module__ might be a getset_attribute (hello, cython)
             t_package = str(t.__module__).split('.')[0]
             return (
@@ -84,21 +87,20 @@ class TypeMap:
                 module != t.__module__ or name != get_name(t),
             )
 
-        search_map: dict[type, tuple[str, str]] = dict()
+        search_map: dict[type, list[tuple[str, str]]] = dict()
 
         for t in work_map:
-            mod_and_name = min(work_map[t], key=lambda tn: typename_key(t, tn)).to_strings()
-            if mod_and_name[0] == 'builtins':
-                mod_and_name = ('', mod_and_name[1])
-            search_map[t] = mod_and_name
-
-            # override: types.NoneType gets annotated as 'None'
-            search_map[types.NoneType] = ('', 'None')
+            search_map[t] = [
+                (modname if (modname := tn.module()) != 'builtins' else '', tn.qualname())
+                for tn in sorted(work_map[t], key=lambda tn: typename_key(t, tn))
+            ]
 
             if logger.level == logging.DEBUG:
-                for tn in sorted(work_map[t], key=lambda tn: typename_key(t, tn)):
-                    logger.debug(f"TypeMap {t.__module__}.{get_name(t)} {'.'.join(tn.to_strings())}")
+                for module_and_qualname in search_map[t]:
+                    logger.debug(f"TypeMap {t.__module__}.{get_name(t)} {'.'.join(module_and_qualname)}")
 
+        # override: types.NoneType gets annotated as 'None'
+        search_map[types.NoneType] = [('', 'None')]
         return search_map
 
 
@@ -178,14 +180,14 @@ class TypeMap:
 
 class AdjustTypeNamesT(TypeInfo.Transformer):
     """Adjust types' module and name by looking their type_obj on TypeMap."""
-    def __init__(vself, main_globals: dict[str, typing.Any] | None):
-        vself.type_map = TypeMap(main_globals)
+    def __init__(self, type_map: TypeMap) -> None:
+        self.type_map = type_map
 
-    def visit(vself, node: TypeInfo) -> TypeInfo:
+    def visit(self, node: TypeInfo) -> TypeInfo:
         if node.type_obj:
-            if (mod_and_name := vself.type_map.find(node.type_obj)):
-                if mod_and_name != (node.module, node.name):
-                    node = node.replace(module=mod_and_name[0], name=mod_and_name[1])
+            if (names_list := self.type_map.find(node.type_obj)):
+                if names_list[0] != (node.module, node.name):
+                    node = node.replace(module=names_list[0][0], name=names_list[0][1])
             else:
                 # TODO how to check local names?
                 if '.<locals>.' not in node.name:
@@ -193,3 +195,19 @@ class AdjustTypeNamesT(TypeInfo.Transformer):
 
         return super().visit(node)
 
+
+class CheckTypeNamesT(TypeInfo.Transformer):
+    """Checks TypeInfo names, changing them to UnknownTypeInfo if invalid."""
+    def __init__(self, type_map: TypeMap):
+        self.type_map = type_map
+
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        # If we we can (i.e., not '<locals>'), check the type is valid
+        if (
+            node.type_obj
+            and '.<locals>.' not in node.name
+            and (node.module, node.name) not in self.type_map.find(node.type_obj)
+        ):
+                return UnknownTypeInfo
+
+        return super().visit(node)
