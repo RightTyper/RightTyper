@@ -1,5 +1,5 @@
 import typing
-from typing import Iterator, Final
+from typing import Iterator, Final, Callable
 import types
 from dataclasses import dataclass, replace, field
 from righttyper.righttyper_types import CodeId
@@ -12,13 +12,11 @@ type SpecialForms = typing.Any|typing.Never
 # What is allowed in TypeInfo.args
 type TypeInfoArg = TypeInfo|str|types.EllipsisType
 
-# Used to indicate a union expressed with "|" between types
-class _UNION_TYPE: pass
-_UNION_TYPE_NAME = (_UNION_TYPE.__module__, _UNION_TYPE.__qualname__)
-
 
 @dataclass(eq=True, frozen=True)
 class TypeInfo:
+    """Holds information about a type."""
+
     module: str
     name: str
     args: tuple[TypeInfoArg, ...] = tuple()    # arguments within []
@@ -28,8 +26,10 @@ class TypeInfo:
     is_bound: bool = field(default=False, compare=False)    # if a callable, whether bound
     type_obj: type|SpecialForms|None = field(default=None, compare=False)
     is_unknown: bool = field(default=False, compare=False)  # for UnknownTypeInfo; indicates we don't know the type.
-    typevar_index: int = field(default=0, compare=False)
-    typevar_name: str|None = field(default=None, compare=False) # TODO delete me?
+
+    # Type pattern index (>0), when a pattern is detected.  Only UnionTypeInfo should have these.
+    # Multiple can occur in a function call, in different order, so include in comparisons.
+    typevar_index: int = field(default=0, compare=True)
 
     # Indicates equivalence to typing.Self. Note that is_self may be true for one
     # type (class) in one trace, but false for the exact same type in another,
@@ -37,49 +37,52 @@ class TypeInfo:
     is_self: bool = field(default=False, compare=True)
 
 
-    def __str__(self) -> str:
-        if self.typevar_name: # FIXME subclass?
-            return self.typevar_name
+    @staticmethod
+    def _arg2str(a: "TypeInfo|str|ellipsis", modifier: Callable[["TypeInfo"], str|None]|None) -> str:
+        if a is Ellipsis:
+            return '...'
+        if isinstance(a, str):
+            return f'"{a}"'
+        return a.format(modifier)
 
-        # We can't use type_obj here because we need to clear them before using 'multiprocessing',
-        # since type objects aren't pickleable
-        if self.is_union(): # FIXME subclass?
-            return "|".join(str(a) for a in self.args)
-        
-        if self.args or self.is_list():
-            def arg2str(a: "TypeInfo|str|ellipsis") -> str:
-                if a is Ellipsis:
-                    return '...'
-                if isinstance(a, str):
-                    return f'"{a}"'
-                return str(a)
-            
+
+    def format(self, modifier: Callable[["TypeInfo"], str|None]|None=None) -> str:
+        """Formats this TypeInfo as a string.
+           The optional 'modifier' is called for all TypeInfo, allowing it to render differently."""
+
+        if modifier and (alternative := modifier(self)):
+            return alternative
+
+        if self.args:
             return (
                 f"{self.fullname()}[" +
-                    ", ".join(arg2str(a) for a in self.args) +
+                    ", ".join(self._arg2str(a, modifier) for a in self.args) +
                 "]"
             )
 
         return self.fullname()
 
 
+    def __str__(self) -> str:
+        return self.format()
+
+
     @staticmethod
     def list(args: "list[TypeInfo|str|ellipsis]") -> "TypeInfo":
-        """Builds a list argument, such as the first argument of a Callable"""
-        return TypeInfo('', '', args=tuple(args))   # FIXME subclass?
+        """Builds a list, such as the first argument of a Callable"""
+        return ListTypeInfo.from_type(ListTypeInfo, args=tuple(args))
 
 
     def is_list(self) -> bool:
-        """Returns whether this TypeInfo is really a list of types, created by our 'list' factory method above."""
-        return self.name == '' and self.module == ''
+        return False
 
 
-    @staticmethod
-    def from_type(t: type|SpecialForms, module: str|None = None, **kwargs) -> "TypeInfo":
+    @classmethod
+    def from_type(cls, t: type|SpecialForms, module: str|None = None, **kwargs) -> "TypeInfo":
         if t is types.NoneType:
             return NoneTypeInfo
 
-        return TypeInfo(
+        return cls(
             name=getattr(t, "__qualname__"), # sidesteps mypy errors for special forms
             module=normalize_module_name(getattr(t, "__module__") if module is None else module),
             type_obj=t,
@@ -115,8 +118,8 @@ class TypeInfo:
         if len(s) == 1:
             return next(iter(s))
 
-        return TypeInfo.from_type(
-            _UNION_TYPE,
+        return UnionTypeInfo.from_type(
+            UnionTypeInfo,
             # 'None' at the end is seen as more readable
             args=tuple(sorted(s, key = lambda x: (x == NoneTypeInfo, str(x)))),
             **kwargs
@@ -124,16 +127,10 @@ class TypeInfo:
 
 
     def is_union(self) -> bool:
-        return (
-            self.type_obj is _UNION_TYPE
-            or (self.type_obj is None and (self.module, self.name) == _UNION_TYPE_NAME)
-        )
+        return False
 
 
     def to_set(self) -> set["TypeInfo"]:
-        if self.is_union():
-            return set(t for t in self.args if isinstance(t, TypeInfo))
-
         return {self}
 
 
@@ -173,6 +170,41 @@ class TypeInfo:
             if isinstance(arg, TypeInfo):
                 yield from arg.walk()
         yield self
+
+
+class UnionTypeInfo(TypeInfo):
+    """Union (set[TypeInfo]) type, with its members as arguments."""
+
+
+    def is_union(self) -> bool:
+        return True
+
+
+    def to_set(self) -> set["TypeInfo"]:
+        return set(t for t in self.args if isinstance(t, TypeInfo))
+
+
+    def format(self, modifier: Callable[["TypeInfo"], str|None]|None=None) -> str:
+        if modifier and (alternative := modifier(self)):
+            return alternative
+
+        return "|".join(self._arg2str(a, modifier) for a in self.args)
+
+
+class ListTypeInfo(TypeInfo):
+    """Unnamed list type, typically used for Callable arguments."""
+
+
+    def is_list(self) -> bool:
+        return True
+
+
+    def to_set(self) -> set["TypeInfo"]:
+        return set(t for t in self.args if isinstance(t, TypeInfo))
+
+
+    def format(self, modifier: Callable[["TypeInfo"], str|None]|None=None) -> str:
+        return "[" + ", ".join(self._arg2str(a, modifier) for a in self.args) + "]"
 
 
 NoneTypeInfo: Final = TypeInfo("", "None", type_obj=types.NoneType)

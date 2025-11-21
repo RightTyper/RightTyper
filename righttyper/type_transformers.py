@@ -114,7 +114,7 @@ class GeneratorToIteratorT(TypeInfo.Transformer):
         if (
             node.type_obj in (abc.Generator, typing.Generator)
             and len(node.args) == 3
-            and type(arg0 := node.args[0]) is TypeInfo
+            and isinstance(arg0 := node.args[0], TypeInfo)
             and node.args[1] == NoneTypeInfo
             and node.args[2] == NoneTypeInfo
         ):
@@ -124,7 +124,7 @@ class GeneratorToIteratorT(TypeInfo.Transformer):
         elif (
             node.type_obj in (abc.AsyncGenerator, typing.AsyncGenerator)
             and len(node.args) == 2
-            and type(arg0 := node.args[0]) is TypeInfo
+            and isinstance(arg0 := node.args[0], TypeInfo)
             and node.args[1] == NoneTypeInfo
         ):
             return TypeInfo.from_type(abc.AsyncIterator, args=(
