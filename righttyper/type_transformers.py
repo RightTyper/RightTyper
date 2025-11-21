@@ -3,6 +3,7 @@ import types
 import collections.abc as abc
 from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo
 from righttyper.generalize import merged_types
+from functools import cache
 
 import logging
 from righttyper.logger import logger
@@ -147,31 +148,33 @@ class MakePickleableT(TypeInfo.Transformer):
 class LoadTypeObjT(TypeInfo.Transformer):
     """Loads TypeInfo's type_obj (e.g., cleared by MakePickleableT) by its module and name."""
 
-    @classmethod
-    def load_object(cls, node: TypeInfo) -> object:
+    @cache
+    @staticmethod
+    def load_object(modname: str, qualname: str) -> object:
         import importlib
 
-        if node.is_list() or '.<locals>.' in node.name:
+        if '.<locals>.' in qualname:
             return None
 
-        if node.fullname() == 'None':
+        if (modname, qualname) == ('', 'None'):
             return types.NoneType
 
-        parts = node.name.split('.')
-        modname = node.module if node.module else 'builtins'
-
         try:
-            obj: object = importlib.import_module(modname)
+            obj: object = importlib.import_module(modname if modname else 'builtins')
         except:
             return None
 
-        for part in parts:
+        for part in qualname.split('.'):
             obj = getattr(obj, part, None)
         return obj
     
 
     def visit(self, node: TypeInfo) -> TypeInfo:
         node = super().visit(node)
-        if node.type_obj is None and (type_obj := self.load_object(node)):
+        if (
+            node.type_obj is None
+            and not node.is_list()
+            and (type_obj := LoadTypeObjT.load_object(node.module, node.name))
+        ):
             node = node.replace(type_obj=type_obj)
         return node

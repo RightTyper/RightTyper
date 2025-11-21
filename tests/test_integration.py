@@ -5323,31 +5323,37 @@ def test_merge_executions():
             global X
             X = x
 
-        if sys.argv[1] == 'foo':
-            foo("bar!")
-        else:
+        if sys.argv[1] == 'int':
             foo(0)
+        elif sys.argv[1] == 'float':
+            foo(0.1)
+        else:
+            foo("bar!")
         """
     ))
 
-    rt_run('--only-collect', '--ignore-annotations', 't.py', 'foo')
+    # running for int and float also tests set simplification (int|float == float)
     rt_run('--only-collect', '--ignore-annotations', 't.py', 'int')
+    rt_run('--only-collect', '--ignore-annotations', 't.py', 'float')
+    rt_run('--only-collect', '--ignore-annotations', 't.py', 'foo')
     rt_run('process')
     output = Path("t.py").read_text()
 
     assert output == textwrap.dedent("""\
         import sys
 
-        X: int|str = 0
+        X: float|str = 0
 
-        def foo(x: int|str) -> None:
-            y: int|str = x
+        def foo(x: float|str) -> None:
+            y: float|str = x
             global X
             X = x
 
-        if sys.argv[1] == 'foo':
-            foo("bar!")
-        else:
+        if sys.argv[1] == 'int':
             foo(0)
+        elif sys.argv[1] == 'float':
+            foo(0.1)
+        else:
+            foo("bar!")
         """
     )
