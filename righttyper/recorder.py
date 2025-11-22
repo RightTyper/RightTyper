@@ -20,7 +20,7 @@ from righttyper.righttyper_utils import (
     normalize_module_name
 )
 from righttyper.type_id import find_function, unwrap, get_value_type, get_type_name, hint2type, PostponedArg0
-from righttyper.typemap import AdjustTypeNamesT
+from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
 
 
 # Singleton used to differentiate from None
@@ -337,10 +337,14 @@ class ObservationsRecorder:
         # The type map depends on main_globals as well as the on the state
         # of sys.modules, so we can't postpone them until collect_annotations,
         # which operate on deserialized data (vs. data just collected).
-        type_name_adjuster = None
+        type_map = TypeMap(main_globals)
+
         if run_options.adjust_type_names:
-            type_name_adjuster = AdjustTypeNamesT(main_globals)
+            type_name_adjuster = AdjustTypeNamesT(type_map)
             obs.transform_types(type_name_adjuster)
+        else:
+            type_name_adjuster = None
+            obs.transform_types(CheckTypeNamesT(type_map))
 
         if run_options.resolve_mocks:
             obs.transform_types(ResolveMocksT(type_name_adjuster))
@@ -514,8 +518,6 @@ def _resolve_mock(ti: TypeInfo, adjuster: AdjustTypeNamesT|None) -> TypeInfo|Non
         if len(non_unittest_bases) != 1 or (base := non_unittest_bases[0]) is object:
             return None
 
-        # FIXME non-TypeMap type checking will not work for __main__ types once the target
-        # program finishes executing.
         t = get_type_name(base)
         if adjuster:
             t = adjuster.visit(t)

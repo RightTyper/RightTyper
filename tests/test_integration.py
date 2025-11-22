@@ -624,7 +624,7 @@ def test_default_arg():
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run('--debug', 't.py')
     output = Path("t.py").read_text()
 
     assert "def func(n: int|None=None) -> int" in output
@@ -2051,27 +2051,39 @@ def test_generate_stubs():
         """)
 
 
-def test_type_from_main():
+@pytest.mark.parametrize("adjust", ["--no-adjust-type-names", "--adjust-type-names"])
+@pytest.mark.parametrize("bad", ["", "bad"])
+def test_type_from_main(adjust, bad):
     Path("m.py").write_text(textwrap.dedent("""\
         def f(x):
             return str(x)
         """
     ))
 
-    Path("t.py").write_text(textwrap.dedent("""\
+    Path("t.py").write_text(textwrap.dedent(f"""\
         import m
 
         class C:
             def __str__(self):
                 return "hi!"
 
+        {"C.__qualname__ = 'invalid'" if bad else ""}
+
         m.f(C())
         """
     ))
 
-    rt_run('t.py')
+    rt_run(adjust, 't.py')
     output = Path("m.py").read_text()
-    assert "def f(x: \"t.C\") -> str:" in output
+    code = cst.parse_module(output)
+    if adjust == '--no-adjust-type-names' and bad:
+        assert get_function(code, 'f') == textwrap.dedent(f"""\
+            def f(x) -> str: ...
+        """)
+    else:
+        assert get_function(code, 'f') == textwrap.dedent(f"""\
+            def f(x: \"t.C\") -> str: ...
+        """)
 
 
 def test_module_type():
@@ -2306,7 +2318,7 @@ def test_discovered_function_annotated(ignore_ann):
     if ignore_ann:
         assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
     else:
-        assert "def bar(f: Callable[[int|float], float], x: int) -> float:" in output
+        assert "def bar(f: Callable[[float|int], float], x: int) -> float:" in output
 
 
 def test_discovered_generator():
@@ -5323,31 +5335,37 @@ def test_merge_executions():
             global X
             X = x
 
-        if sys.argv[1] == 'foo':
-            foo("bar!")
-        else:
+        if sys.argv[1] == 'int':
             foo(0)
+        elif sys.argv[1] == 'float':
+            foo(0.1)
+        else:
+            foo("bar!")
         """
     ))
 
-    rt_run('--only-collect', '--ignore-annotations', 't.py', 'foo')
+    # running for int and float also tests set simplification (int|float == float)
     rt_run('--only-collect', '--ignore-annotations', 't.py', 'int')
+    rt_run('--only-collect', '--ignore-annotations', 't.py', 'float')
+    rt_run('--only-collect', '--ignore-annotations', 't.py', 'foo')
     rt_run('process')
     output = Path("t.py").read_text()
 
     assert output == textwrap.dedent("""\
         import sys
 
-        X: int|str = 0
+        X: float|str = 0
 
-        def foo(x: int|str) -> None:
-            y: int|str = x
+        def foo(x: float|str) -> None:
+            y: float|str = x
             global X
             X = x
 
-        if sys.argv[1] == 'foo':
-            foo("bar!")
-        else:
+        if sys.argv[1] == 'int':
             foo(0)
+        elif sys.argv[1] == 'float':
+            foo(0.1)
+        else:
+            foo("bar!")
         """
     )
