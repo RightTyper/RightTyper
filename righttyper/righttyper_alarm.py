@@ -27,7 +27,7 @@ class SignalAlarm(Alarm):
 
 
     def start(self: Self) -> None:
-        def wrapped(sig: int, frame: FrameType|None):
+        def wrapped(sig: int, frame: FrameType|None) -> None:
             self.func()
             signal.setitimer(signal.ITIMER_REAL, self.time)
 
@@ -49,7 +49,7 @@ class ThreadAlarm(Alarm):
 
     
     def start(self: Self) -> None:
-        def thread(stop_event: threading.Event):
+        def thread(stop_event: threading.Event) -> None:
             while not stop_event.is_set():
                 self.func()
                 sleep(self.time)

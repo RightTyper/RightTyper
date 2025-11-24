@@ -1,5 +1,5 @@
 import typing
-from typing import Iterator, Final, Callable
+from typing import Iterator, Final, Callable, Any
 import types
 from dataclasses import dataclass, replace, field
 from righttyper.righttyper_types import CodeId
@@ -78,7 +78,7 @@ class TypeInfo:
 
 
     @classmethod
-    def from_type(cls, t: type|SpecialForms, module: str|None = None, **kwargs) -> "TypeInfo":
+    def from_type(cls, t: type|SpecialForms, module: str|None = None, **kwargs: Any) -> "TypeInfo":
         if t is types.NoneType:
             return NoneTypeInfo
 
@@ -91,7 +91,7 @@ class TypeInfo:
 
 
     @staticmethod
-    def from_set(s: "set[TypeInfo]", **kwargs) -> "TypeInfo":
+    def from_set(s: "set[TypeInfo]", **kwargs: Any) -> "TypeInfo":
         if not s:
             return NoneTypeInfo
 
@@ -134,7 +134,7 @@ class TypeInfo:
         return {self}
 
 
-    def replace(self, **kwargs) -> "TypeInfo":
+    def replace(self, **kwargs: Any) -> "TypeInfo":
         return replace(self, **kwargs)
 
 

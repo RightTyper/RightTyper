@@ -12,37 +12,6 @@ from righttyper.options import run_options
 _SAMPLING_INTERVAL = 0.01
 
 
-def glob_translate_to_regex(r):
-    if sys.version_info < (3, 13):
-        # glob.translate not available until 3.13; use wcmatch's implementation
-        from wcmatch import glob
-        return glob.translate(r)[0][0]
-    else:
-        import glob
-        return glob.translate(r)
-
-
-def reset_sampling_interval() -> None:
-    global _SAMPLING_INTERVAL
-    _SAMPLING_INTERVAL = 1.0
-
-
-def get_sampling_interval() -> float:
-    return _SAMPLING_INTERVAL
-
-
-def update_sampling_interval(
-    instrumentation_overhead, target_overhead
-) -> None:
-    global _SAMPLING_INTERVAL
-    if instrumentation_overhead < target_overhead:
-        _SAMPLING_INTERVAL *= 0.9
-    else:
-        _SAMPLING_INTERVAL *= 1.2
-    print(f"{_SAMPLING_INTERVAL=}")
-    ## FIXME _SAMPLING_INTERVAL *= 1.5
-
-
 def _get_righttyper_path() -> str:
     import importlib.util
     spec = importlib.util.find_spec(__package__)

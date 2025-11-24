@@ -87,12 +87,12 @@ def process_file(
 
     try:
         cst_tree = cst.parse_module(source)
-    except cst._exceptions.ParserSyntaxError:  # type: ignore
+    except cst._exceptions.ParserSyntaxError:
         try:
             # Initial parse failed; fix any indentation issues and try again
             source = correct_indentation_issues(source)
             cst_tree = cst.parse_module(source)
-        except cst._exceptions.ParserSyntaxError:  # type: ignore
+        except cst._exceptions.ParserSyntaxError:
             print(f"Failed to parse source for {filename}.")
             raise
 

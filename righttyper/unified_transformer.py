@@ -195,7 +195,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.change_list: list[Change] = []
 
         # TODO Ideally we'd use TypeInfo.module and avoid this as well as _module_for
-        def iter_types(t: TypeInfo):
+        def iter_types(t: TypeInfo) -> abc.Iterator[TypeInfo]:
             yield t
             for arg in t.args:
                 if isinstance(arg, TypeInfo):
@@ -286,7 +286,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         used_inline_names = set(used_inline_names)
 
         class GenericsNameAssigningTransformer(TypeInfo.Transformer):
-            def __init__(vself):
+            def __init__(vself) -> None:
                 vself.generics: dict[TypeInfo, str] = {}
             
             def visit(vself, node: TypeInfo) -> TypeInfo:
@@ -315,7 +315,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         
         return (updated_ann, tr.generics)
                     
-    def _qualified_name_in(self, decorator: cst.CSTNode, names: set[str]):
+    def _qualified_name_in(self, decorator: cst.CSTNode, names: set[str]) -> bool:
         try:
             return bool(names & {
                 qn.name
@@ -778,8 +778,8 @@ class UnifiedTransformer(cst.CSTTransformer):
             return None # result would be invalid; most likely it contains "<locals>"
 
         class UnknownTypeExtractor(TypeInfo.Transformer):
-            def __init__(me):
-                me.types = set()
+            def __init__(me) -> None:
+                me.types: set[str] = set()
 
             def visit(me, node: TypeInfo) -> TypeInfo:
                 if (
@@ -837,7 +837,9 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def leave_FunctionDef(
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
-    ) -> cst.FunctionDef | cst.FlattenSentinel | cst.RemovalSentinel:
+    ) -> cst.FunctionDef \
+        | cst.FlattenSentinel[cst.FunctionDef|cst.SimpleStatementLine|cst.BaseCompoundStatement] \
+        | cst.RemovalSentinel:
         func_name = ".".join(self.name_stack[:-1])
         self.annotate_vars_stack.pop()
         self.name_stack.pop()
@@ -1198,7 +1200,7 @@ def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
     names: set[str] = set()
 
     class Extractor(cst.CSTVisitor):
-        def __init__(self):
+        def __init__(self) -> None:
             self.in_scope = False
 
         def visit_Module(self, node: cst.Module) -> bool:
@@ -1261,7 +1263,7 @@ def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
     return names
 
 
-def list_rindex(lst: list, item: object) -> int:
+def list_rindex(lst: list[typing.Any], item: object) -> int:
     """Returns either a negative index for the last occurrence of 'item' on the list,
        or 0 if not found."""
     try:

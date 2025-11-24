@@ -35,7 +35,7 @@ from righttyper.logger import logger
 
 
 @cache
-def get_jaxtyping():
+def get_jaxtyping() -> ModuleType|None:
     try:
         # we lazy load jaxtyping to avoid "PytestAssertRewriteWarning"s
         import jaxtyping
