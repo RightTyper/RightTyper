@@ -886,11 +886,15 @@ def test_method_overriding_annotated_with_literal():
     """)
 
 
-def test_method_overriding_annotated_varargs_kwargs():
+@pytest.mark.parametrize("va_ann, kw_ann", [
+    (": int", ": float"),
+    ("", ""),
+])
+def test_method_overriding_annotated_varargs_kwargs(va_ann, kw_ann):
     # note args, kwargs change name and x, y change order
-    t = textwrap.dedent("""\
+    t = textwrap.dedent(f"""\
         class A:
-            def foo(self, *args: int, y:None=None, x:None=None, **kwargs: float) -> int:
+            def foo(self, *args{va_ann}, y:None=None, x:None=None, **kwargs{kw_ann}) -> int:
                 return 0
 
         class B(A):
@@ -906,9 +910,14 @@ def test_method_overriding_annotated_varargs_kwargs():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+    if va_ann and kw_ann:
+        assert get_function(code, 'B.foo') == textwrap.dedent("""\
             def foo(self: Self, *var_args: int|str, x: int|None=0, y: float|None=.1, **kw_args: float|str) -> int: ...
-    """)
+        """)
+    else:
+        assert get_function(code, 'B.foo') == textwrap.dedent("""\
+            def foo(self: Self, *var_args: str, x: int|None=0, y: float|None=.1, **kw_args: str) -> int: ...
+        """)
 
 
 def test_method_overriding_init_irrelevant():

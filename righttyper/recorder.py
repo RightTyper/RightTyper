@@ -474,29 +474,32 @@ def get_parent_arg_types(
                     f"({parents_func.__annotations__}): {e}.\n")
         return None
 
-    return tuple(
+    result = [
         # First the positional, looking up by their names given in the parent.
         # Note that for the override to be valid, their signatures must have
         # the same number of positional arguments.
-        [
-            hint2type(hints[arg]) if arg in hints else None
-            for arg in co.co_varnames[:co.co_argcount]
-        ]
-        +
+        hint2type(hints[arg]) if arg in hints else None
+        for arg in co.co_varnames[:co.co_argcount]
+    ] + [
         # Then kwonly, going by the order (and quantity) in the child
-        [
-            hint2type(hints[arg]) if arg in hints else None
-            for arg in child_arg_info.args[co.co_argcount:]
+        hint2type(hints[arg]) if arg in hints else None
+        for arg in child_arg_info.args[co.co_argcount:]
+    ]
+
+    # Then varargs and varkw, if they exist.  Note that for the override to
+    # be valid, both must agree to include or not those arguments (but their
+    # names may change)
+    if parent_args.varargs:
+        result += [
+            hint2type(hint) if (hint := hints.get(parent_args.varargs)) else None
         ]
-        +
-        # Then varargs and varkw, if they exist.  Note that for the override to
-        # be valid, both must agree to include or not those arguments (but their
-        # names may change)
-        [
-            *((hint2type(hints[parent_args.varargs]),) if parent_args.varargs else ()),
-            *((hint2type(hints[parent_args.varkw]),) if parent_args.varkw else ())
+
+    if parent_args.varkw:
+        result += [
+            hint2type(hint) if (hint := hints.get(parent_args.varkw)) else None
         ]
-    )
+
+    return tuple(result)
 
 
 def _resolve_mock(ti: TypeInfo, adjuster: AdjustTypeNamesT|None) -> TypeInfo|None:
