@@ -43,7 +43,7 @@ class OutputOptions:
         self.inline_generics = python_version >= (3, 12)
 
 
-def _merge_regexes(patterns: Sequence[str]) -> re.Pattern|None:
+def _merge_regexes(patterns: Sequence[str]) -> re.Pattern[str]|None:
     """Merges multiple regular expressions, returning a compiled pattern or,
        if the tuple is empty, returns None.
     """
@@ -79,23 +79,23 @@ class RunOptions:
 
 
     @functools.cached_property
-    def include_files_re(self) -> re.Pattern|None:
+    def include_files_re(self) -> re.Pattern[str]|None:
         """Returns a regular expression pattern for no_sampling_for."""
         return _merge_regexes(self.include_files)
 
     @functools.cached_property
-    def include_functions_re(self) -> re.Pattern|None:
+    def include_functions_re(self) -> re.Pattern[str]|None:
         """Returns a regular expression pattern for no_sampling_for."""
         return _merge_regexes(self.include_functions)
 
     @functools.cached_property
-    def test_modules_re(self) -> re.Pattern|None:
+    def test_modules_re(self) -> re.Pattern[str]|None:
         """Returns a regular expression pattern to match test modules with."""
         # Escape dots and enforce module path boundaries
         return _merge_regexes([f"{m.replace('.', r'\.')}(?:\\.|$)" for m in self.test_modules])
 
     @functools.cached_property
-    def no_sampling_for_re(self) -> re.Pattern|None:
+    def no_sampling_for_re(self) -> re.Pattern[str]|None:
         """Returns a regular expression pattern for no_sampling_for."""
         return _merge_regexes(self.no_sampling_for)
 

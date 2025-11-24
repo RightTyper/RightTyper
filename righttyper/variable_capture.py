@@ -108,7 +108,7 @@ class VariableFinder(ast.NodeVisitor):
 
         # Holds the set of names that aren't local variables;
         # currently only includes arguments
-        self._not_locals_stack: list[set] = [set()]
+        self._not_locals_stack: list[set[str]] = [set()]
 
         # Resulting map of executing code object to their CodeVars
         self.code_vars: dict[str, CodeVars] = dict()

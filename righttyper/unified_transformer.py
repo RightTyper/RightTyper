@@ -195,7 +195,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.change_list: list[Change] = []
 
         # TODO Ideally we'd use TypeInfo.module and avoid this as well as _module_for
-        def iter_types(t: TypeInfo):
+        def iter_types(t: TypeInfo) -> abc.Iterator[TypeInfo]:
             yield t
             for arg in t.args:
                 if isinstance(arg, TypeInfo):
@@ -286,7 +286,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         used_inline_names = set(used_inline_names)
 
         class GenericsNameAssigningTransformer(TypeInfo.Transformer):
-            def __init__(vself):
+            def __init__(vself) -> None:
                 vself.generics: dict[TypeInfo, str] = {}
             
             def visit(vself, node: TypeInfo) -> TypeInfo:
@@ -315,7 +315,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         
         return (updated_ann, tr.generics)
                     
-    def _qualified_name_in(self, decorator: cst.CSTNode, names: set[str]):
+    def _qualified_name_in(self, decorator: cst.CSTNode, names: set[str]) -> bool:
         try:
             return bool(names & {
                 qn.name
@@ -778,7 +778,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             return None # result would be invalid; most likely it contains "<locals>"
 
         class UnknownTypeExtractor(TypeInfo.Transformer):
-            def __init__(me):
+            def __init__(me) -> None:
                 me.types = set()
 
             def visit(me, node: TypeInfo) -> TypeInfo:

@@ -67,7 +67,7 @@ class TypeMap:
             )
 
         def get_name(t: type) -> str|None:
-            return getattr(t, "__qualname__", getattr(t, "__name__"))
+            return typing.cast(str|None, getattr(t, "__qualname__", getattr(t, "__name__")))
 
         def typename_key(t: type, tn: TypeMap.TypeName) -> tuple[int|bool, ...]:
             """Generates a key for sorting / picking among the names found for a type."""

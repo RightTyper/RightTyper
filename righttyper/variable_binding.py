@@ -64,7 +64,7 @@ class VariableBindingProvider(BatchableMetadataProvider[VarBindings]):
         return self._node2result[node]
 
 
-    def _decorator_in(self, decorator: cst.Decorator, names: set[str]):
+    def _decorator_in(self, decorator: cst.Decorator, names: set[str]) -> bool:
         try:
             return bool(names & {
                 qn.name
