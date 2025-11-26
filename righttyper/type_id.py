@@ -57,6 +57,7 @@ def jx_dtype(value: Any) -> type|None:
             jx.Num, jx.Shaped, jx.Key
         ):
             if isinstance(value, dtype[t, "..."]):
+                assert isinstance(dtype, type)
                 return dtype
 
     return None
@@ -71,10 +72,10 @@ def get_numpy() -> ModuleType|None:
         return None
 
 
-def hint2type(hint) -> TypeInfo:
+def hint2type(hint: object) -> TypeInfo:
     import typing
 
-    def hint2type_arg(hint):
+    def hint2type_arg(hint: object) -> TypeInfo|Ellipsis|str:
         if isinstance(hint, list):
             return TypeInfo.list([hint2type_arg(el) for el in hint])
 
