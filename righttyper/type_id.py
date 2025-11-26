@@ -75,7 +75,7 @@ def get_numpy() -> ModuleType|None:
 def hint2type(hint: object) -> TypeInfo:
     import typing
 
-    def hint2type_arg(hint: object) -> TypeInfo|Ellipsis|str:
+    def hint2type_arg(hint: object) -> TypeInfoArg:
         if isinstance(hint, list):
             return TypeInfo.list([hint2type_arg(el) for el in hint])
 
@@ -109,7 +109,9 @@ def hint2type(hint: object) -> TypeInfo:
     if (
         hint.__module__ == 'jaxtyping'
         and (array_type := getattr(hint, "array_type", None))
-        and (base_type := getattr(get_jaxtyping(), hint.__name__.split('[')[0], None))
+        and isinstance(name := getattr(hint, '__name__'), str)
+        and (base_type := getattr(get_jaxtyping(), name.split('[')[0], None))
+        and hasattr(hint, "dim_str")
     ):
         # jaxtyping arrays are really dynamic types formed by indexing on their
         # base type.  I am not quite sure whether type_obj should be base_type here:
@@ -120,9 +122,9 @@ def hint2type(hint: object) -> TypeInfo:
 
     if not hasattr(hint, "__qualname__"): # e.g., typing.TypeVar
         # The type object is likely (dynamic and) not a 'type'...
-        return TypeInfo(normalize_module_name(hint.__module__), hint.__name__)
+        return TypeInfo(normalize_module_name(hint.__module__), getattr(hint, "__name__"))
 
-    return get_type_name(hint)  # requires __module__ and __qualname__
+    return get_type_name(cast(type, hint))  # requires __module__ and __qualname__
 
 
 def _type_for_callable(func: abc.Callable) -> TypeInfo:
@@ -264,6 +266,10 @@ class ABCFinder:
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
 
+    if obj is None:
+        import traceback
+        logger.debug(f"get_type_name(None) called:\n" + traceback.format_stack() + "\n")
+
     if depth > 255:
         # We have likely fallen into an infinite recursion; fail gracefully
         logger.error(f"RightTyper failed to compute the type of {obj}.")
@@ -284,9 +290,9 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
         obj.__module__ == 'numpy'
         and (numpy := get_numpy())
         and issubclass(obj, numpy.dtype)
-        and hasattr(obj, "type")
+        and (data_type := getattr(obj, "type", None))
     ):
-        return TypeInfo.from_type(numpy.dtype, args=(get_type_name(obj.type, depth+1),))
+        return TypeInfo.from_type(numpy.dtype, args=(get_type_name(data_type, depth+1),))
 
     return TypeInfo.from_type(obj)
 
