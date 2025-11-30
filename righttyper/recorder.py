@@ -35,7 +35,7 @@ FrameId = NewType("FrameId", int)   # obtained from id(frame) where code is-a Fr
 def id(obj: FrameType) -> FrameId: ...
 @overload
 def id(obj: object) -> int: ...
-def id(obj):
+def id(obj: FrameType|object) -> FrameId|int:
     return builtins.id(obj)
 
 
@@ -67,8 +67,8 @@ class PendingCallTrace:
         type_data = (*self.args, retval)
 
         if self.self_type and self.self_replacement:
-            self_type = cast(TypeInfo, self.self_type)
-            self_replacement = cast(TypeInfo, self.self_replacement)
+            self_type = self.self_type
+            self_replacement = self.self_replacement
 
             class SelfTransformer(TypeInfo.Transformer):
                 """Replaces 'self' types with the type of the class that defines them,
@@ -91,7 +91,7 @@ class PendingCallTrace:
 
 
 class ObservationsRecorder:
-    def __init__(self):
+    def __init__(self) -> None:
         # Finds FuncInfo by their CodeType
         self._code2func_info: dict[CodeType, FuncInfo] = {}
 

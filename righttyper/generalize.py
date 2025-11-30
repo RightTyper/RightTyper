@@ -42,7 +42,7 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
             # TODO many more could be added here -- maybe every ABC?
             t.type_obj in (abc.Callable, abc.Iterator, abc.AsyncIterator, abc.Iterable,
                            abc.Generator, abc.AsyncGenerator, abc.Coroutine)
-            or (type(t.type_obj) is type and issubclass(cast(type, t.type_obj), abc.Container))
+            or (type(t.type_obj) is type and issubclass(t.type_obj, abc.Container))
         )
     )
 
@@ -186,7 +186,7 @@ def generalize_jaxtyping(samples: Sequence[CallTrace]) -> Sequence[CallTrace]:
     occurrences = Counter(dims for argdims in dimensions.values() for dims in argdims)
 
     # Assign names to common dimensions
-    names: dict[tuple, tuple[str, ...]] = {}
+    names: dict[tuple[int, ...], tuple[str, ...]] = {}
     for argdims in dimensions.values():
         for i, dims in enumerate(argdims):
             if dims in names:

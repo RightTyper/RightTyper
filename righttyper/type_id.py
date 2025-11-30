@@ -184,7 +184,7 @@ STR_ITER: type = type(iter(""))
 TUPLE_ITER: type = type(iter(()))
 
 class _GetItemDummy:
-    def __getitem__(self, n):
+    def __getitem__(self, n: Any) -> Any:
         return n
 GETITEM_ITER: type = type(iter(_GetItemDummy()))
 
@@ -334,7 +334,7 @@ def find_function(
 
     parts = code.co_qualname.split('.')
 
-    def find_in(namespace: dict|MappingProxyType, index: int=0) -> abc.Callable|None:
+    def find_in(namespace: dict[str, Any]|MappingProxyType[str, Any], index: int=0) -> abc.Callable|None:
         if index < len(parts):
             name = parts[index]
             if (
