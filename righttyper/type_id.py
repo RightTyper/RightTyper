@@ -127,6 +127,7 @@ def hint2type(hint: object) -> TypeInfo:
     return get_type_name(cast(type, hint))  # requires __module__ and __qualname__
 
 
+@cache
 def _type_for_callable(func: abc.Callable) -> TypeInfo:
     if (orig_func := unwrap(func)): # in case this is a wrapper
         func = orig_func

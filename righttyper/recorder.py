@@ -463,7 +463,7 @@ def get_parent_arg_types(
         if not (hints := typing.get_type_hints(parents_func)):
             return None
     except (NameError, TypeError) as e:
-        logger.info(f"Error getting type hints for {parents_func} " + 
+        logger.info(f"Error getting args or type hints for {parents_func} " +
                     f"({parents_func.__annotations__}): {e}.\n")
         return None
 
