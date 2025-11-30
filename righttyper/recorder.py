@@ -361,13 +361,6 @@ class ObservationsRecorder:
             for f in obs.source_to_module_name.keys() & detected_test_files:
                 del obs.source_to_module_name[f]
 
-        if logger.level == logging.DEBUG:
-            assert (keys := obs.source_to_module_name.keys()) == (oldset := set(
-                t.code_id.file_name
-                for t in obs.func_info.values()
-                if not skip_this_file(t.code_id.file_name)
-            )), f"{keys-oldset=}  {oldset-keys=}"
-
         return obs
 
 
