@@ -63,6 +63,8 @@ def is_instrumentation(f):
         try:
             instrumentation_counter.inc()
             return f(*args, **kwargs)
+        except:
+            logger.error("exception in instrumentation", exc_info=True)
         finally:
             instrumentation_counter.dec()
 
@@ -872,46 +874,49 @@ def run(
         reset_monitoring()
         alarm.stop()
 
-        assert main_globals is not None
-        obs = rec.finish_recording(main_globals)
+        try:
+            assert main_globals is not None
+            obs = rec.finish_recording(main_globals)
 
-        logger.debug(f"observed {len(obs.source_to_module_name)} file(s)")
+            logger.debug(f"observed {len(obs.source_to_module_name)} file(s)")
 
-        if logger.level == logging.DEBUG:
-            for m in detected_test_modules:
-                logger.debug(f"test module: {m}")
+            if logger.level == logging.DEBUG:
+                for m in detected_test_modules:
+                    logger.debug(f"test module: {m}")
 
-        if only_collect:
-            from righttyper.type_transformers import MakePickleableT
-            obs.transform_types(MakePickleableT())
+            if only_collect:
+                from righttyper.type_transformers import MakePickleableT
+                obs.transform_types(MakePickleableT())
 
-            collected = {
-                'file_version': PKL_FILE_VERSION,
-                'software': TOOL_NAME,
-                'version': importlib.metadata.version(TOOL_NAME),
-                'timestamp': datetime.datetime.now().isoformat(),
-                'run_options': run_options,
-                'script': Path(script).resolve(),
-                'observations': obs
-            }
+                collected = {
+                    'file_version': PKL_FILE_VERSION,
+                    'software': TOOL_NAME,
+                    'version': importlib.metadata.version(TOOL_NAME),
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'run_options': run_options,
+                    'script': Path(script).resolve(),
+                    'observations': obs
+                }
 
-            index = 1
-            while True:
-                filename = Path(PKL_FILE_NAME.format(N=index))
-                try:
-                    with filename.open("xb") as pklf:
-                        pickle.dump(collected, pklf)
-                        break
+                index = 1
+                while True:
+                    filename = Path(PKL_FILE_NAME.format(N=index))
+                    try:
+                        with filename.open("xb") as pklf:
+                            pickle.dump(collected, pklf)
+                            break
 
-                except FileExistsError:
-                    index += 1
+                    except FileExistsError:
+                        index += 1
 
-            print(f"Collected types saved to {filename}.")
-        else:
-#            from righttyper.type_transformers import MakePickleableT, LoadTypeObjT
-#            obs.transform_types(MakePickleableT())
-#            obs.transform_types(LoadTypeObjT())
-            process_obs(obs)
+                print(f"Collected types saved to {filename}.")
+            else:
+#                from righttyper.type_transformers import MakePickleableT, LoadTypeObjT
+#                obs.transform_types(MakePickleableT())
+#                obs.transform_types(LoadTypeObjT())
+                process_obs(obs)
+        except:
+            logger.error("exception after target execution", exc_info=True)
 
         end_time = time.perf_counter()
         logger.info(f"Finished in {end_time-start_time:.0f}s")
