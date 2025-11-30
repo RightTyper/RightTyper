@@ -134,7 +134,7 @@ class FuncInfo:
 
 
 class Observations:
-    def __init__(self):
+    def __init__(self) -> None:
         # Visited functions and information about them
         self.func_info: dict[CodeId, FuncInfo] = dict()
 
@@ -408,7 +408,7 @@ def get_typeshed_arg_types(
         parts = qualified_name.split('.')
         results = []
 
-        def visit(node, path):
+        def visit(node: ast.AST, path: list[str]) -> None:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 full_name = '.'.join(path + [node.name])
                 if full_name == qualified_name:
@@ -443,10 +443,10 @@ def get_typeshed_arg_types(
             kw_args = [
                 # FIXME only handles simple 'builtins' types!
                 TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
-                for child_arg_name in child_args[len(pos_args):]
+                for child_arg in child_args[len(pos_args):]
                 for a in defs[0].args.kwonlyargs
                 if isinstance(a, ast.arg)
-                if a.arg == child_arg_name
+                if a.arg == child_arg.arg_name
             ]
 
             # FIXME varargs and kwargs are missing here
