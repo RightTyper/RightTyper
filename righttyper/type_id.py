@@ -264,38 +264,25 @@ class ABCFinder:
         return max(matching, key=lambda it: len(methods(it) & t_methods))
 
 
-def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
+def get_type_name(t: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
 
     if depth > 255:
         # We have likely fallen into an infinite recursion; fail gracefully
-        logger.error(f"RightTyper failed to compute the type of {obj}.")
+        logger.error(f"RightTyper failed to compute the type of {t}.")
         return UnknownTypeInfo
 
-    if (ti := _BUILTINS.get(obj)):
+    if (ti := _BUILTINS.get(t)):
         return ti
 
-    if obj.__module__ == "builtins":
+    if t.__module__ == "builtins":
         # the type didn't have a name in "builtins" or "types" modules, so use protocol
-        if (g := ABCFinder.find_abc(obj)):
+        if (g := ABCFinder.find_abc(t)):
             return TypeInfo.from_type(g)
 
         return UnknownTypeInfo
 
-    # numpy subtypes dtype for different inner types, but doesn't include its qualified name...
-    if (
-        obj.__module__ == 'numpy'
-        and (numpy := get_numpy())
-        and issubclass(obj, numpy.dtype)
-    ):
-        if not (data_type := getattr(obj, "type", None)):
-            logger.debug(f"No data type for numpy dtype '{obj}'")
-
-        return TypeInfo.from_type(numpy.dtype, args=(
-            get_type_name(data_type, depth+1) if data_type else UnknownTypeInfo,
-        ))
-
-    return TypeInfo.from_type(obj)
+    return TypeInfo.from_type(t)
 
 
 def unwrap(method: abc.Callable|None) -> abc.Callable|None:
@@ -379,7 +366,6 @@ def find_function(
 
 
 def _type_for_generator(
-    obj: GeneratorType|AsyncGeneratorType|CoroutineType,
     type_obj: type,
     frame: FrameType,
     code: CodeType,
@@ -538,7 +524,7 @@ def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
         ):
             # Use __getitem__, as obj.dtype contains classes from numpy.dtypes;
             # check size, as using typing.Never for size=0 leads to mypy errors
-            return TypeInfo.from_type(abc.Iterator, args=(get_type_name(type(getitem(obj, 0)), depth+1),))
+            return TypeInfo.from_type(abc.Iterator, args=(get_value_type(getitem(obj, 0), depth+1),))
         
         if type(getitem) in (FunctionType, MethodType): # get full type from runtime observations
             callable_type = _type_for_callable(getitem)
@@ -634,9 +620,9 @@ _type2handler: dict[type, abc.Callable[[Any, int], TypeInfo|None]] = {
 
     FunctionType: lambda v, d: _type_for_callable(v),
     MethodType: lambda v, d: _type_for_callable(v),
-    GeneratorType: lambda v, d: _type_for_generator(v, abc.Generator, v.gi_frame, v.gi_code),
-    AsyncGeneratorType: lambda v, d: _type_for_generator(v, abc.AsyncGenerator, v.ag_frame, v.ag_code),
-    CoroutineType: lambda v, d: _type_for_generator(v, abc.Coroutine, v.cr_frame, v.cr_code)
+    GeneratorType: lambda v, d: _type_for_generator(abc.Generator, v.gi_frame, v.gi_code),
+    AsyncGeneratorType: lambda v, d: _type_for_generator(abc.AsyncGenerator, v.ag_frame, v.ag_code),
+    CoroutineType: lambda v, d: _type_for_generator(abc.Coroutine, v.cr_frame, v.cr_code)
 }
 
 
@@ -740,10 +726,15 @@ def get_value_type(
             shape = " ".join(str(d) for d in value.shape)
             return TypeInfo.from_type(dtype, args=(get_type_name(t, depth+1), f"{shape}"))
 
-    if t.__module__ == 'numpy' and (numpy := get_numpy()) and t is numpy.ndarray:
-        return TypeInfo.from_type(numpy.ndarray, args=(
-            AnyTypeInfo,
-            get_type_name(type(value.dtype), depth+1)
-        ))
+    if t.__module__.startswith('numpy') and (numpy := get_numpy()):
+        if t is numpy.ndarray:
+            return TypeInfo.from_type(numpy.ndarray, args=(
+                AnyTypeInfo,
+                get_value_type(value.dtype, depth+1),
+            ))
+        elif issubclass(t, numpy.dtype):
+            return TypeInfo.from_type(numpy.dtype, args=(
+                get_type_name(value.type, depth+1) if value.type else UnknownTypeInfo,
+            ))
 
     return get_type_name(t, depth+1)

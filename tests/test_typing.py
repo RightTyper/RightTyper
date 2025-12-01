@@ -224,7 +224,7 @@ def test_get_value_type_coro():
 def test_get_value_type_dtype():
     import numpy as np
 
-    assert "numpy.ndarray[typing.Any, numpy.dtypes.Float64DType]" == get_value_type(np.array([], np.float64))
+    assert "numpy.ndarray[typing.Any, numpy.dtype[numpy.float64]]" == get_value_type(np.array([], np.float64))
 
 
 class NonArrayWithDtype:
