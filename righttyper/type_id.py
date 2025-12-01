@@ -640,6 +640,26 @@ _type2handler: dict[type, abc.Callable[[Any, int], TypeInfo|None]] = {
 }
 
 
+def _safe_getattr(obj: object, attr: str) -> Any|None:
+    """Retrieves the given attribute statically, if possible.
+       Using getattr or hasattr can lead to problems when __getattr__ is overridden;
+       but even inspect.getattr_static may raise TypeError for objects that lack __mro__
+       such as scipy.linalg.lapack.dpotrs (a fortran object)
+    """
+
+    try:
+        return inspect.getattr_static(obj, attr, None)
+    except:
+        try:
+            obj_name = str(obj)
+        except:
+            obj_name = "(object lacking __str__)"   # really?... just in case.
+
+        logger.error(f"getattr_static({obj_name}, \'{attr}\', None) raised exception", exc_info=True)
+
+    return None
+
+
 def get_value_type(
     value: Any,
     depth: int = 0
@@ -666,14 +686,16 @@ def get_value_type(
         return ti
 
     # Is this a spec-based mock?
-    if mock_spec := inspect.getattr_static(value, "_spec_class", None):
-        if run_options.resolve_mocks and is_test_module(t.__module__):
-            ti = get_type_name(mock_spec, depth+1)
-            logger.debug(f"Resolved spec mock {t.__module__}.{t.__qualname__} -> {str(ti)}")
-            return ti
+    if (
+        run_options.resolve_mocks
+        and is_test_module(t.__module__)
+        and (mock_spec := _safe_getattr(value, "_spec_class"))
+    ):
+        ti = get_type_name(mock_spec, depth+1)
+        logger.debug(f"Resolved spec mock {t.__module__}.{t.__qualname__} -> {str(ti)}")
+        return ti
 
-    # using getattr or hasattr here can lead to problems when __getattr__ is overridden
-    if (orig := inspect.getattr_static(value, "__orig_class__", None)):
+    if (orig := _safe_getattr(value, "__orig_class__")):
         assert type(orig) in (GenericAlias, type(typing.Generic[T])), f"{orig=} {type(orig)=}" # type: ignore[index]
         return hint2type(orig)
 
