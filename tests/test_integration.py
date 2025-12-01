@@ -5208,6 +5208,41 @@ def test_variables_dataclass():
 #    )
 
 
+def test_variables_dunder():
+    Path("t.py").write_text(textwrap.dedent("""\
+        __all__ = ('C')
+
+        class C:
+            __slots__ = ('x', '__foo__')
+
+            def __init__(self, x):
+                self.x = x
+                self.__foo__ = 0
+
+        c = C('tada')
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    # Annotating dunder variables tends to create problems... we skip them for now.
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        __all__ = ('C')
+
+        class C:
+            __slots__ = ('x', '__foo__')
+
+            def __init__(self: Self, x: str) -> None:
+                self.x: str = x
+                self.__foo__ = 0
+
+        c: C = C('tada')
+        """
+    )
+
+
 def test_variables_slots():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
@@ -5227,7 +5262,7 @@ def test_variables_slots():
     assert output == textwrap.dedent("""\
         from typing import Never, Self
         class C:
-            __slots__: tuple[str, str, str] = ('x', 'y', 'z')
+            __slots__ = ('x', 'y', 'z')
 
             def __init__(self: Self, x: str) -> None:
                 self.x: str = x
