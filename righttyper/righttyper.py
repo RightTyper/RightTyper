@@ -65,6 +65,7 @@ def is_instrumentation(f):
             return f(*args, **kwargs)
         except:
             logger.error("exception in instrumentation", exc_info=True)
+            if run_options.allow_runtime_exceptions: raise
         finally:
             instrumentation_counter.dec()
 
@@ -794,6 +795,12 @@ def add_output_options(group=None):
           " You can later process using RightTyper's \"process\" command."
 )
 @click.option(
+    "--allow-runtime-exceptions/--no-allow-runtime-exceptions",
+    is_flag=True,
+    default=run_options.allow_runtime_exceptions,
+    hidden=True,
+)
+@click.option(
     "--debug",
     is_flag=True,
     help="Include diagnostic information in log file.",
@@ -917,6 +924,7 @@ def run(
                 process_obs(obs)
         except:
             logger.error("exception after target execution", exc_info=True)
+            if run_options.allow_runtime_exceptions: raise
 
         end_time = time.perf_counter()
         logger.info(f"Finished in {end_time-start_time:.0f}s")

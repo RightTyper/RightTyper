@@ -64,7 +64,8 @@ def runmypy(tmp_cwd, request):
 def rt_run(*args, capture: bool = False):
     if args and args[0] != 'process':
         # --no-use-multiprocessing speeds up tests
-        args = ('run', '--no-use-multiprocessing', *args)
+        # --allow-runtime-exceptions so they can fail a test
+        args = ('run', '--no-use-multiprocessing', '--allow-runtime-exceptions', *args)
 
     run_args = [sys.executable, '-m', 'righttyper', *args]
 
