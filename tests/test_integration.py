@@ -652,6 +652,28 @@ def test_default_in_private_method():
     assert "def __f(self: Self, x: int|None=None) -> int" in output
 
 
+@pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module')
+def test_default_is_numpy_array_more_than_one_element():
+    t = textwrap.dedent("""\
+        import numpy as np
+
+        def f(a=np.array([1,2])):
+            return None
+
+        f()
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(a: "np.ndarray[Any, numpy.dtypes.Int64DType]"=np.array([1,2])) -> None: ...
+    """)
+
+
 def test_inner_function():
     t = textwrap.dedent("""\
         def f(x):

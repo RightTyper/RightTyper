@@ -336,7 +336,7 @@ class ObservationsRecorder:
 
         # The type map depends on main_globals as well as the on the state
         # of sys.modules, so we can't postpone them until collect_annotations,
-        # which operate on deserialized data (vs. data just collected).
+        # which operates on deserialized data (vs. data just collected).
         type_map = TypeMap(main_globals)
 
         if run_options.adjust_type_names:
@@ -440,7 +440,7 @@ def get_defaults(code, frame) -> dict[str, TypeInfo]:
         return {
             param_name: get_value_type(param.default)
             for param_name, param in inspect.signature(function).parameters.items()
-            if param.default != inspect._empty
+            if param.default is not param.empty
         }
 
     return {}
