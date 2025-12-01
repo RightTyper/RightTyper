@@ -267,10 +267,6 @@ class ABCFinder:
 def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
 
-    if obj is None:
-        import traceback
-        logger.debug(f"get_type_name(None) called:\n" + traceback.format_stack() + "\n")
-
     if depth > 255:
         # We have likely fallen into an infinite recursion; fail gracefully
         logger.error(f"RightTyper failed to compute the type of {obj}.")
@@ -291,9 +287,13 @@ def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
         obj.__module__ == 'numpy'
         and (numpy := get_numpy())
         and issubclass(obj, numpy.dtype)
-        and (data_type := getattr(obj, "type", None))
     ):
-        return TypeInfo.from_type(numpy.dtype, args=(get_type_name(data_type, depth+1),))
+        if not (data_type := getattr(obj, "type", None)):
+            logger.debug(f"No data type for numpy dtype '{obj}'")
+
+        return TypeInfo.from_type(numpy.dtype, args=(
+            get_type_name(data_type, depth+1) if data_type else UnknownTypeInfo,
+        ))
 
     return TypeInfo.from_type(obj)
 
