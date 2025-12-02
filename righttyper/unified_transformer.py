@@ -165,6 +165,11 @@ def _quote(s: str) -> str:
     return '"' + s.replace('"', '\\"') + '"'
 
 
+def _is_dunder(node: cst.Attribute|cst.Name) -> bool:
+    s = node.value if isinstance(node, cst.Name) else node.attr.value
+    return s.startswith("__") and s.endswith("__") and len(s) > 4
+
+
 class UnifiedTransformer(cst.CSTTransformer):
     METADATA_DEPENDENCIES = (PositionProvider, QualifiedNameProvider, VariableBindingProvider)
 
@@ -566,6 +571,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         if (
             not self.annotate_vars_stack[-1]
             or not (target := self._node_defines(node, node_target))
+            or _is_dunder(target)
             or not (var_type := self._get_var(target))
         ):
             return None

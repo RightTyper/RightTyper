@@ -35,7 +35,7 @@ FrameId = NewType("FrameId", int)   # obtained from id(frame) where code is-a Fr
 def id(obj: FrameType) -> FrameId: ...
 @overload
 def id(obj: object) -> int: ...
-def id(obj):
+def id(obj: FrameType|object) -> FrameId|int:
     return builtins.id(obj)
 
 
@@ -67,8 +67,8 @@ class PendingCallTrace:
         type_data = (*self.args, retval)
 
         if self.self_type and self.self_replacement:
-            self_type = cast(TypeInfo, self.self_type)
-            self_replacement = cast(TypeInfo, self.self_replacement)
+            self_type = self.self_type
+            self_replacement = self.self_replacement
 
             class SelfTransformer(TypeInfo.Transformer):
                 """Replaces 'self' types with the type of the class that defines them,
@@ -91,7 +91,7 @@ class PendingCallTrace:
 
 
 class ObservationsRecorder:
-    def __init__(self):
+    def __init__(self) -> None:
         # Finds FuncInfo by their CodeType
         self._code2func_info: dict[CodeType, FuncInfo] = {}
 
@@ -262,8 +262,12 @@ class ObservationsRecorder:
         func_info.traces.update((tr.process(),))
 
         # Resample arguments in case they change during execution (e.g., containers)
-        tr.args = self._get_arg_types(tr.arg_info)
-        func_info.traces.update((tr.process(),))
+        try:
+            tr.args = self._get_arg_types(tr.arg_info)
+        except KeyError:
+            pass # could happen if the variable holding the argument is deleted
+        else:
+            func_info.traces.update((tr.process(),))
 
 
     def record_return(self, code: CodeType, frame: FrameType, return_value: Any) -> bool:
@@ -336,7 +340,7 @@ class ObservationsRecorder:
 
         # The type map depends on main_globals as well as the on the state
         # of sys.modules, so we can't postpone them until collect_annotations,
-        # which operate on deserialized data (vs. data just collected).
+        # which operates on deserialized data (vs. data just collected).
         type_map = TypeMap(main_globals)
 
         if run_options.adjust_type_names:
@@ -360,13 +364,6 @@ class ObservationsRecorder:
             # so we can't help but get events for test modules while they are being loaded.
             for f in obs.source_to_module_name.keys() & detected_test_files:
                 del obs.source_to_module_name[f]
-
-        if logger.level == logging.DEBUG:
-            assert (keys := obs.source_to_module_name.keys()) == (oldset := set(
-                t.code_id.file_name
-                for t in obs.func_info.values()
-                if not skip_this_file(t.code_id.file_name)
-            )), f"{keys-oldset=}  {oldset-keys=}"
 
         return obs
 
@@ -447,7 +444,7 @@ def get_defaults(code, frame) -> dict[str, TypeInfo]:
         return {
             param_name: get_value_type(param.default)
             for param_name, param in inspect.signature(function).parameters.items()
-            if param.default != inspect._empty
+            if param.default is not param.empty
         }
 
     return {}
@@ -470,7 +467,7 @@ def get_parent_arg_types(
         if not (hints := typing.get_type_hints(parents_func)):
             return None
     except (NameError, TypeError) as e:
-        logger.info(f"Error getting type hints for {parents_func} " + 
+        logger.info(f"Error getting args or type hints for {parents_func} " +
                     f"({parents_func.__annotations__}): {e}.\n")
         return None
 

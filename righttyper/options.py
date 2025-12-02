@@ -70,6 +70,7 @@ class RunOptions:
     adjust_type_names: bool = True
     variables: bool = True
     save_profiling: str|None = None
+    allow_runtime_exceptions: bool = False
 
 
     def process_args(self, kwargs: dict[str, Any]) -> None:

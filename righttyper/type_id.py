@@ -23,7 +23,7 @@ from types import (
 )
 import builtins
 import types
-from typing import Any, cast, get_type_hints, get_origin, get_args
+from typing import Any, cast, get_type_hints, get_origin, get_args, TypeGuard
 import typing
 
 from righttyper.random_dict import RandomDict
@@ -57,6 +57,7 @@ def jx_dtype(value: Any) -> type|None:
             jx.Num, jx.Shaped, jx.Key
         ):
             if isinstance(value, dtype[t, "..."]):
+                assert isinstance(dtype, type)
                 return dtype
 
     return None
@@ -71,10 +72,10 @@ def get_numpy() -> ModuleType|None:
         return None
 
 
-def hint2type(hint) -> TypeInfo:
+def hint2type(hint: object) -> TypeInfo:
     import typing
 
-    def hint2type_arg(hint):
+    def hint2type_arg(hint: object) -> TypeInfoArg:
         if isinstance(hint, list):
             return TypeInfo.list([hint2type_arg(el) for el in hint])
 
@@ -108,7 +109,9 @@ def hint2type(hint) -> TypeInfo:
     if (
         hint.__module__ == 'jaxtyping'
         and (array_type := getattr(hint, "array_type", None))
-        and (base_type := getattr(get_jaxtyping(), hint.__name__.split('[')[0], None))
+        and isinstance(name := getattr(hint, '__name__'), str)
+        and (base_type := getattr(get_jaxtyping(), name.split('[')[0], None))
+        and hasattr(hint, "dim_str")
     ):
         # jaxtyping arrays are really dynamic types formed by indexing on their
         # base type.  I am not quite sure whether type_obj should be base_type here:
@@ -119,11 +122,12 @@ def hint2type(hint) -> TypeInfo:
 
     if not hasattr(hint, "__qualname__"): # e.g., typing.TypeVar
         # The type object is likely (dynamic and) not a 'type'...
-        return TypeInfo(normalize_module_name(hint.__module__), hint.__name__)
+        return TypeInfo(normalize_module_name(hint.__module__), getattr(hint, "__name__"))
 
-    return get_type_name(hint)  # requires __module__ and __qualname__
+    return get_type_name(cast(type, hint))  # requires __module__ and __qualname__
 
 
+@cache
 def _type_for_callable(func: abc.Callable) -> TypeInfo:
     if (orig_func := unwrap(func)): # in case this is a wrapper
         func = orig_func
@@ -161,6 +165,29 @@ def _type_for_callable(func: abc.Callable) -> TypeInfo:
     )
 
 
+def _is_function(f: object) -> TypeGuard[FunctionType|MethodType]:
+    return type(f) in (FunctionType, MethodType)
+
+
+def _retval_of(f: object) -> TypeInfo|None:
+    """Returns a TypeInfo for the return value of the given object, if a function or method.
+       If unknown (unannotated or ignoring annotations), the TypeInfo is linked to the object's
+       code, so that it may be obtained from what it is observed to return.
+    """
+
+    if _is_function(f):
+        if not output_options.ignore_annotations: # FIXME should be a run option
+            try:
+                if (retval_hint := get_type_hints(f).get('return')):
+                    return hint2type(retval_hint)
+            except:
+                pass
+
+        return UnknownTypeInfo.replace(code_id=CodeId.from_code(f.__code__))
+
+    return None
+
+
 # CPython 3.12 returns specialized objects for each one of the following iterators,
 # but does not name their types publicly.  We here give them names to keep the
 # introspection code more readable. Note that these types may not be exhaustive
@@ -180,7 +207,7 @@ STR_ITER: type = type(iter(""))
 TUPLE_ITER: type = type(iter(()))
 
 class _GetItemDummy:
-    def __getitem__(self, n):
+    def __getitem__(self, n: Any) -> Any:
         return n
 GETITEM_ITER: type = type(iter(_GetItemDummy()))
 
@@ -260,34 +287,25 @@ class ABCFinder:
         return max(matching, key=lambda it: len(methods(it) & t_methods))
 
 
-def get_type_name(obj: type, depth: int = 0) -> TypeInfo:
+def get_type_name(t: type, depth: int = 0) -> TypeInfo:
     """Returns a type's name as a TypeInfo."""
 
     if depth > 255:
         # We have likely fallen into an infinite recursion; fail gracefully
-        logger.error(f"RightTyper failed to compute the type of {obj}.")
+        logger.error(f"RightTyper failed to compute the type of {t}.")
         return UnknownTypeInfo
 
-    if (ti := _BUILTINS.get(obj)):
+    if (ti := _BUILTINS.get(t)):
         return ti
 
-    if obj.__module__ == "builtins":
+    if t.__module__ == "builtins":
         # the type didn't have a name in "builtins" or "types" modules, so use protocol
-        if (g := ABCFinder.find_abc(obj)):
+        if (g := ABCFinder.find_abc(t)):
             return TypeInfo.from_type(g)
 
         return UnknownTypeInfo
 
-    # numpy subtypes dtype for different inner types, but doesn't include its qualified name...
-    if (
-        obj.__module__ == 'numpy'
-        and (numpy := get_numpy())
-        and issubclass(obj, numpy.dtype)
-        and hasattr(obj, "type")
-    ):
-        return TypeInfo.from_type(numpy.dtype, args=(get_type_name(obj.type, depth+1),))
-
-    return TypeInfo.from_type(obj)
+    return TypeInfo.from_type(t)
 
 
 def unwrap(method: abc.Callable|None) -> abc.Callable|None:
@@ -326,7 +344,7 @@ def find_function(
 
     parts = code.co_qualname.split('.')
 
-    def find_in(namespace: dict|MappingProxyType, index: int=0) -> abc.Callable|None:
+    def find_in(namespace: dict[str, Any]|MappingProxyType[str, Any], index: int=0) -> abc.Callable|None:
         if index < len(parts):
             name = parts[index]
             if (
@@ -371,7 +389,6 @@ def find_function(
 
 
 def _type_for_generator(
-    obj: GeneratorType|AsyncGeneratorType|CoroutineType,
     type_obj: type,
     frame: FrameType,
     code: CodeType,
@@ -530,15 +547,9 @@ def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
         ):
             # Use __getitem__, as obj.dtype contains classes from numpy.dtypes;
             # check size, as using typing.Never for size=0 leads to mypy errors
-            return TypeInfo.from_type(abc.Iterator, args=(get_type_name(type(getitem(obj, 0)), depth+1),))
+            return TypeInfo.from_type(abc.Iterator, args=(get_value_type(getitem(obj, 0), depth+1),))
         
-        if type(getitem) in (FunctionType, MethodType): # get full type from runtime observations
-            callable_type = _type_for_callable(getitem)
-            retval: TypeInfoArg|None = callable_type.args[-1] if callable_type.args else None
-
-            if not retval:
-                retval = UnknownTypeInfo.replace(code_id=CodeId.from_code(getitem.__code__))
-
+        if (retval := _retval_of(getitem)):
             return TypeInfo.from_type(abc.Iterator, args=(retval,))
 
         return TypeInfo.from_type(abc.Iterator)
@@ -626,10 +637,30 @@ _type2handler: dict[type, abc.Callable[[Any, int], TypeInfo|None]] = {
 
     FunctionType: lambda v, d: _type_for_callable(v),
     MethodType: lambda v, d: _type_for_callable(v),
-    GeneratorType: lambda v, d: _type_for_generator(v, abc.Generator, v.gi_frame, v.gi_code),
-    AsyncGeneratorType: lambda v, d: _type_for_generator(v, abc.AsyncGenerator, v.ag_frame, v.ag_code),
-    CoroutineType: lambda v, d: _type_for_generator(v, abc.Coroutine, v.cr_frame, v.cr_code)
+    GeneratorType: lambda v, d: _type_for_generator(abc.Generator, v.gi_frame, v.gi_code),
+    AsyncGeneratorType: lambda v, d: _type_for_generator(abc.AsyncGenerator, v.ag_frame, v.ag_code),
+    CoroutineType: lambda v, d: _type_for_generator(abc.Coroutine, v.cr_frame, v.cr_code)
 }
+
+
+def _safe_getattr(obj: object, attr: str) -> Any|None:
+    """Retrieves the given attribute statically, if possible.
+       Using getattr or hasattr can lead to problems when __getattr__ is overridden;
+       but even inspect.getattr_static may raise TypeError for objects that lack __mro__
+       such as scipy.linalg.lapack.dpotrs (a fortran object)
+    """
+
+    try:
+        return inspect.getattr_static(obj, attr, None)
+    except:
+        try:
+            obj_name = str(obj)
+        except:
+            obj_name = "(object lacking __str__)"   # really?... just in case.
+
+        logger.error(f"getattr_static({obj_name}, \'{attr}\', None) raised exception", exc_info=True)
+
+    return None
 
 
 def get_value_type(
@@ -658,14 +689,16 @@ def get_value_type(
         return ti
 
     # Is this a spec-based mock?
-    if mock_spec := inspect.getattr_static(value, "_spec_class", None):
-        if run_options.resolve_mocks and is_test_module(t.__module__):
-            ti = get_type_name(mock_spec, depth+1)
-            logger.debug(f"Resolved spec mock {t.__module__}.{t.__qualname__} -> {str(ti)}")
-            return ti
+    if (
+        run_options.resolve_mocks
+        and is_test_module(t.__module__)
+        and (mock_spec := _safe_getattr(value, "_spec_class"))
+    ):
+        ti = get_type_name(mock_spec, depth+1)
+        logger.debug(f"Resolved spec mock {t.__module__}.{t.__qualname__} -> {str(ti)}")
+        return ti
 
-    # using getattr or hasattr here can lead to problems when __getattr__ is overridden
-    if (orig := inspect.getattr_static(value, "__orig_class__", None)):
+    if (orig := _safe_getattr(value, "__orig_class__")):
         assert type(orig) in (GenericAlias, type(typing.Generic[T])), f"{orig=} {type(orig)=}" # type: ignore[index]
         return hint2type(orig)
 
@@ -692,6 +725,10 @@ def get_value_type(
                     args = (get_value_type(el, depth+1),)
                 else:
                     args = (TypeInfo.from_type(typing.Never),)
+# not usable for 'builtins': all objects are implemented in C, so lack __code__
+#           elif issubclass(g, abc.Iterator):
+#                if (retval := _retval_of(getattr(t, "__next__", None))):
+#                    args = (retval,)
             else:
                 args = ()
 
@@ -710,10 +747,15 @@ def get_value_type(
             shape = " ".join(str(d) for d in value.shape)
             return TypeInfo.from_type(dtype, args=(get_type_name(t, depth+1), f"{shape}"))
 
-    if t.__module__ == 'numpy' and (numpy := get_numpy()) and t is numpy.ndarray:
-        return TypeInfo.from_type(numpy.ndarray, args=(
-            AnyTypeInfo,
-            get_type_name(type(value.dtype), depth+1)
-        ))
+    if t.__module__.startswith('numpy') and (numpy := get_numpy()):
+        if t is numpy.ndarray:
+            return TypeInfo.from_type(numpy.ndarray, args=(
+                AnyTypeInfo,
+                get_value_type(value.dtype, depth+1),
+            ))
+        elif issubclass(t, numpy.dtype):
+            return TypeInfo.from_type(numpy.dtype, args=(
+                get_type_name(value.type, depth+1) if value.type else UnknownTypeInfo,
+            ))
 
     return get_type_name(t, depth+1)

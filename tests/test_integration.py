@@ -64,7 +64,8 @@ def runmypy(tmp_cwd, request):
 def rt_run(*args, capture: bool = False):
     if args and args[0] != 'process':
         # --no-use-multiprocessing speeds up tests
-        args = ('run', '--no-use-multiprocessing', *args)
+        # --allow-runtime-exceptions so they can fail a test
+        args = ('run', '--no-use-multiprocessing', '--allow-runtime-exceptions', *args)
 
     run_args = [sys.executable, '-m', 'righttyper', *args]
 
@@ -650,6 +651,28 @@ def test_default_in_private_method():
     output = Path("t.py").read_text()
 
     assert "def __f(self: Self, x: int|None=None) -> int" in output
+
+
+@pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module')
+def test_default_is_numpy_array_more_than_one_element():
+    t = textwrap.dedent("""\
+        import numpy as np
+
+        def f(a=np.array([1,2], np.int64)):
+            return None
+
+        f()
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(a: np.ndarray[Any, np.dtype[np.int64]]=np.array([1,2], np.int64)) -> None: ...
+    """)
 
 
 def test_inner_function():
@@ -1579,6 +1602,77 @@ def test_return_private_class():
 
     assert get_function(code, 'g') == textwrap.dedent("""\
         def g(x) -> None: ...
+    """)
+
+
+@pytest.mark.skip(reason="Doesn't work yet")
+def test_return_private_class_inherits():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+
+        def f():
+            class fC(C):
+                pass
+
+            def g(x):
+                y = x
+                return x
+
+            return g(fC())
+
+        f()
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    code = cst.parse_module(output)
+    assert get_function(code, 'f.<locals>.g', body=True) == textwrap.dedent("""\
+        def g(x: fC) -> fC:
+            y: fC = x
+            return x
+    """)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f() -> C: ...
+    """)
+
+
+@pytest.mark.skip(reason="Doesn't work yet")
+def test_return_private_class_is_abc():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f():
+            class LocalIter:
+                def __init__(self, start, stop):
+                    self.current = start
+                    self.stop = stop
+
+                def __iter__(self):
+                    return self
+
+                def __next__(self):
+                    if self.current >= self.stop:
+                        raise StopIteration
+                    val = self.current
+                    self.current += 1
+                    return val
+
+            return LocalIter(3, 7)
+
+        for it in f():
+            pass
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    print(output)
+
+    code = cst.parse_module(output)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f() -> Iterator[int]: ...
     """)
 
 
@@ -3935,6 +4029,24 @@ def test_container_is_modified():
     assert "def f(x: list[int]) -> None" in output
 
 
+def test_argument_variable_deleted():
+    t = textwrap.dedent("""\
+        def f(x):
+            del x
+
+        f(1)
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--no-sampling', '--debug', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: int) -> None: ...
+    """)
+
+
 @pytest.mark.parametrize("python_version", ["3.9"])
 def test_typing_union(python_version):
     t = textwrap.dedent("""\
@@ -5186,6 +5298,41 @@ def test_variables_dataclass():
 #    )
 
 
+def test_variables_dunder():
+    Path("t.py").write_text(textwrap.dedent("""\
+        __all__ = ('C')
+
+        class C:
+            __slots__ = ('x', '__foo__')
+
+            def __init__(self, x):
+                self.x = x
+                self.__foo__ = 0
+
+        c = C('tada')
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    # Annotating dunder variables tends to create problems... we skip them for now.
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        __all__ = ('C')
+
+        class C:
+            __slots__ = ('x', '__foo__')
+
+            def __init__(self: Self, x: str) -> None:
+                self.x: str = x
+                self.__foo__ = 0
+
+        c: C = C('tada')
+        """
+    )
+
+
 def test_variables_slots():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
@@ -5205,7 +5352,7 @@ def test_variables_slots():
     assert output == textwrap.dedent("""\
         from typing import Never, Self
         class C:
-            __slots__: tuple[str, str, str] = ('x', 'y', 'z')
+            __slots__ = ('x', 'y', 'z')
 
             def __init__(self: Self, x: str) -> None:
                 self.x: str = x
