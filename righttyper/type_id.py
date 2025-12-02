@@ -23,7 +23,7 @@ from types import (
 )
 import builtins
 import types
-from typing import Any, cast, get_type_hints, get_origin, get_args
+from typing import Any, cast, get_type_hints, get_origin, get_args, TypeGuard
 import typing
 
 from righttyper.random_dict import RandomDict
@@ -165,13 +165,17 @@ def _type_for_callable(func: abc.Callable) -> TypeInfo:
     )
 
 
+def _is_function(f: object) -> TypeGuard[FunctionType|MethodType]:
+    return type(f) in (FunctionType, MethodType)
+
+
 def _retval_of(f: object) -> TypeInfo|None:
     """Returns a TypeInfo for the return value of the given object, if a function or method.
        If unknown (unannotated or ignoring annotations), the TypeInfo is linked to the object's
        code, so that it may be obtained from what it is observed to return.
     """
 
-    if type(f) in (FunctionType, MethodType):
+    if _is_function(f):
         if not output_options.ignore_annotations: # FIXME should be a run option
             try:
                 if (retval_hint := get_type_hints(f).get('return')):
