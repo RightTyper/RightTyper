@@ -165,6 +165,25 @@ def _type_for_callable(func: abc.Callable) -> TypeInfo:
     )
 
 
+def _retval_of(f: object) -> TypeInfo|None:
+    """Returns a TypeInfo for the return value of the given object, if a function or method.
+       If unknown (unannotated or ignoring annotations), the TypeInfo is linked to the object's
+       code, so that it may be obtained from what it is observed to return.
+    """
+
+    if type(f) in (FunctionType, MethodType):
+        if not output_options.ignore_annotations: # FIXME should be a run option
+            try:
+                if (retval_hint := get_type_hints(f).get('return')):
+                    return hint2type(retval_hint)
+            except:
+                pass
+
+        return UnknownTypeInfo.replace(code_id=CodeId.from_code(f.__code__))
+
+    return None
+
+
 # CPython 3.12 returns specialized objects for each one of the following iterators,
 # but does not name their types publicly.  We here give them names to keep the
 # introspection code more readable. Note that these types may not be exhaustive
@@ -526,13 +545,7 @@ def _handle_getitem_iter(value: Any, depth: int) -> TypeInfo|None:
             # check size, as using typing.Never for size=0 leads to mypy errors
             return TypeInfo.from_type(abc.Iterator, args=(get_value_type(getitem(obj, 0), depth+1),))
         
-        if type(getitem) in (FunctionType, MethodType): # get full type from runtime observations
-            callable_type = _type_for_callable(getitem)
-            retval: TypeInfoArg|None = callable_type.args[-1] if callable_type.args else None
-
-            if not retval:
-                retval = UnknownTypeInfo.replace(code_id=CodeId.from_code(getitem.__code__))
-
+        if (retval := _retval_of(getitem)):
             return TypeInfo.from_type(abc.Iterator, args=(retval,))
 
         return TypeInfo.from_type(abc.Iterator)
@@ -708,6 +721,10 @@ def get_value_type(
                     args = (get_value_type(el, depth+1),)
                 else:
                     args = (TypeInfo.from_type(typing.Never),)
+# not usable for 'builtins': all objects are implemented in C, so lack __code__
+#           elif issubclass(g, abc.Iterator):
+#                if (retval := _retval_of(getattr(t, "__next__", None))):
+#                    args = (retval,)
             else:
                 args = ()
 
