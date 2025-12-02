@@ -262,8 +262,12 @@ class ObservationsRecorder:
         func_info.traces.update((tr.process(),))
 
         # Resample arguments in case they change during execution (e.g., containers)
-        tr.args = self._get_arg_types(tr.arg_info)
-        func_info.traces.update((tr.process(),))
+        try:
+            tr.args = self._get_arg_types(tr.arg_info)
+        except KeyError:
+            pass # could happen if the variable holding the argument is deleted
+        else:
+            func_info.traces.update((tr.process(),))
 
 
     def record_return(self, code: CodeType, frame: FrameType, return_value: Any) -> bool:

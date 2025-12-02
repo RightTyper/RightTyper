@@ -3958,6 +3958,24 @@ def test_container_is_modified():
     assert "def f(x: list[int]) -> None" in output
 
 
+def test_argument_variable_deleted():
+    t = textwrap.dedent("""\
+        def f(x):
+            del x
+
+        f(1)
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--no-sampling', '--debug', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: int) -> None: ...
+    """)
+
+
 @pytest.mark.parametrize("python_version", ["3.9"])
 def test_typing_union(python_version):
     t = textwrap.dedent("""\
