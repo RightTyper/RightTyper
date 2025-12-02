@@ -1605,6 +1605,77 @@ def test_return_private_class():
     """)
 
 
+@pytest.mark.skip(reason="Doesn't work yet")
+def test_return_private_class_inherits():
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            pass
+
+        def f():
+            class fC(C):
+                pass
+
+            def g(x):
+                y = x
+                return x
+
+            return g(fC())
+
+        f()
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    code = cst.parse_module(output)
+    assert get_function(code, 'f.<locals>.g', body=True) == textwrap.dedent("""\
+        def g(x: fC) -> fC:
+            y: fC = x
+            return x
+    """)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f() -> C: ...
+    """)
+
+
+@pytest.mark.skip(reason="Doesn't work yet")
+def test_return_private_class_is_abc():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f():
+            class LocalIter:
+                def __init__(self, start, stop):
+                    self.current = start
+                    self.stop = stop
+
+                def __iter__(self):
+                    return self
+
+                def __next__(self):
+                    if self.current >= self.stop:
+                        raise StopIteration
+                    val = self.current
+                    self.current += 1
+                    return val
+
+            return LocalIter(3, 7)
+
+        for it in f():
+            pass
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    print(output)
+
+    code = cst.parse_module(output)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f() -> Iterator[int]: ...
+    """)
+
+
 def test_default_inner_function():
     t = textwrap.dedent("""\
         def f(x):
