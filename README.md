@@ -114,12 +114,8 @@ Usage: python -m righttyper run [OPTIONS] [SCRIPT] [ARGS]...
 
 Options:
   -m, --module TEXT               Run the given module instead of a script.
-  --all-files                     Process any files encountered, including
-                                  libraries (except for those specified in
-                                  --include-files)
-  --include-files REGEX           Process only files matching the given
-                                  regular expression. Can be passed multiple
-                                  times.
+  --exclude-files GLOB            Exclude the given files (using fnmatch). Can
+                                  be passed multiple times.
   --exclude-test-files / --no-exclude-test-files
                                   Automatically exclude test modules from
                                   typing.  [default: exclude-test-files]

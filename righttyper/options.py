@@ -55,8 +55,7 @@ class RunOptions:
     """Options for the run command; see the click options in righttyper.py"""
 
     script_dir: str = ""
-    include_files: tuple[str, ...] = ()
-    include_all: bool = False
+    exclude_files: tuple[str, ...] = ()
     exclude_test_files: bool = True
     include_functions: tuple[str, ...] = ()
     target_overhead: float = 5.0
@@ -78,11 +77,6 @@ class RunOptions:
             if hasattr(self, name):
                 setattr(self, name, value)
 
-
-    @functools.cached_property
-    def include_files_re(self) -> re.Pattern[str]|None:
-        """Returns a regular expression pattern for no_sampling_for."""
-        return _merge_regexes(self.include_files)
 
     @functools.cached_property
     def include_functions_re(self) -> re.Pattern[str]|None:

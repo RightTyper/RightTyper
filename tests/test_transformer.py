@@ -2860,3 +2860,21 @@ def test_transform_deletes_type_hint_for_variable():
         g: float = 1.0  # typeepty something...
         h = 0 # not modified, leave as-is # type: int
         """)
+
+def test_get_changes_variables_unchanged():
+    code = cst.parse_module(textwrap.dedent("""\
+        g: float = 1.0
+
+        class C:
+            x: str = 'foo'
+            x = x + x
+
+            def __init__(self, x) -> None:
+                self.y: int = x
+    """))
+
+    t = mk_var_transformer('foo.py', code)
+
+    code = t.transform_code(code)
+    changes = t.get_changes()
+    assert not changes

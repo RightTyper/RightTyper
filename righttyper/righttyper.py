@@ -531,6 +531,23 @@ def validate_regexes(ctx, param, value):
     except re.error as e:
         raise click.BadParameter(str(e))
 
+UNMATCHED_BRACKET = re.compile(r"\[[^]]*$")
+
+def validate_fnmatch(ctx, param, value):
+    if value:
+        for v in value:
+            if not v.strip():
+                raise click.BadParameter("Pattern may not be empty.")
+            if UNMATCHED_BRACKET.search(v):
+                raise click.BadParameter(f"Unmatched '[' in pattern: {value!r}")
+
+        # make patterns absolute, as co_filename strings are also absolute
+        return tuple(
+            str(Path(v).absolute())
+            for v in value
+        )
+    return value
+
 
 class HelpfulGroup(click.Group):
     def __init__(self, *args, extra_help_subcommands=None, **kwargs):
@@ -680,17 +697,12 @@ def add_output_options(group=None):
     callback=validate_module
 )
 @click.option(
-    "--all-files",
-    is_flag=True,
-    help="Process any files encountered, including libraries (except for those specified in --include-files)",
-)
-@click.option(
-    "--include-files",
-    metavar="REGEX",
+    "--exclude-files",
+    metavar="GLOB",
     type=str,
     multiple=True,
-    callback=validate_regexes,
-    help="Process only files matching the given regular expression. Can be passed multiple times.",
+    callback=validate_fnmatch,
+    help="Exclude the given files (using fnmatch). Can be passed multiple times.",
 )
 @click.option(
     "--exclude-test-files/--no-exclude-test-files",

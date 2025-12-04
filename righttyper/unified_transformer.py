@@ -1238,8 +1238,12 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def get_changes(self: typing.Self) -> list[tuple[str, str, str]]:
         return [
-            change.format()
-            for change in self.change_list
+            (scope, before, after)
+            for scope, before, after in (
+                change.format()
+                for change in self.change_list
+            )
+            if before != after
         ]
 
 
