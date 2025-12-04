@@ -1,5 +1,6 @@
 import os
 import sys
+import fnmatch
 
 from functools import cache
 from pathlib import Path
@@ -75,22 +76,19 @@ def should_skip_function(code: CodeType) -> bool:
 @cache
 def skip_this_file(filename: str) -> bool:
     #logger.debug(f"checking skip_this_file {filename=}")
-    if run_options.include_all:
-        should_skip = False
-    else:
-        should_skip = (
-            filename.startswith("<")
-            or (run_options.exclude_test_files and filename in detected_test_files)
-            # FIXME how about packages installed with 'pip install -e' (editable)?
-            or any(filename.startswith(p) for p in PYTHON_LIBS)
-            or filename.startswith(RIGHTTYPER_PATH)
-            or run_options.script_dir not in os.path.abspath(filename)
-        )
+    should_skip = (
+        filename.startswith("<")
+        or (run_options.exclude_test_files and filename in detected_test_files)
+        # FIXME how about packages installed with 'pip install -e' (editable)?
+        or any(filename.startswith(p) for p in PYTHON_LIBS)
+        or filename.startswith(RIGHTTYPER_PATH)
+        or run_options.script_dir not in os.path.abspath(filename)
+    )
 
-    if not should_skip and (include_files := run_options.include_files_re):
-        should_skip = not include_files.search(filename)
-        if should_skip:
+    if not should_skip:
+        if any(fnmatch.fnmatch(filename, exclude) for exclude in run_options.exclude_files):
             logger.debug(f"skipping file {filename}")
+            return True
 
     return should_skip
 
