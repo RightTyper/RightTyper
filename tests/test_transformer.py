@@ -2,7 +2,7 @@ import libcst as cst
 import libcst.matchers as cstm
 from libcst.metadata import MetadataWrapper, PositionProvider
 import textwrap
-from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation, used_names
+from righttyper.unified_transformer import UnifiedTransformer, types_in_annotation
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, AnyTypeInfo
 from righttyper.righttyper_types import CodeId, Filename, FunctionName, ArgumentName, VariableName
 from righttyper.annotation import FuncAnnotation, ModuleVars
@@ -802,13 +802,13 @@ def test_uses_imported_aliases():
 
     code = t.transform_code(code)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: zed, y: T, z: A.c.T) -> "r.t.T": ...
+        def foo(x: zed, y: T, z: A.c.T) -> "_rt_r.t.T": ...
     """)
 
 
     assert get_if_type_checking(code) == textwrap.dedent("""\
         if TYPE_CHECKING:
-            import r
+            import r as _rt_r
     """)
 
 
@@ -821,8 +821,6 @@ def test_uses_imported_domains():
             import a
 
         def foo(x, y): ...
-
-        import r    # imported after 'def foo', so can't be used in annotation
     """))
 
     foo = get_code_id('foo.py', code, 'foo')
@@ -1505,6 +1503,42 @@ def test_builtin_name_conflicts():
     """)
 
 
+def test_arg_name_conflicts():
+    code = cst.parse_module(textwrap.dedent("""\
+    import numpy
+    from numpy import dtype, int64
+
+    class C:
+        def dtype(self):
+            return None
+
+        def f(self, x):
+            pass
+    """))
+
+    f = get_code_id('foo.py', code, 'C.f')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: _mkAnnotation(
+                    [
+                        (ArgumentName('x'), TypeInfo('numpy', 'dtype', args=(TypeInfo('numpy', 'int64'),)))
+                    ],
+                    NoneTypeInfo
+                ),
+            },
+            module_variables = ModuleVars([]),
+            module_name = 'foo',
+        )
+
+    code = t.transform_code(code)
+
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self, x: numpy.dtype[int64]) -> None:
+            pass
+    """)
+
+
 def test_class_names_dont_affect_body_of_methods():
     code = cst.parse_module(textwrap.dedent("""\
     tuple = 0
@@ -1664,50 +1698,6 @@ def test_builtin_name_conflicts_even_module_name():
         if TYPE_CHECKING:
             import builtins as {mod}
     """)
-
-
-def test_used_names():
-    code = cst.parse_module(textwrap.dedent("""\
-    a, b = 0, 0
-    c: int = (d := 0)
-
-    class C:
-        e = 0
-
-        class D:
-            def f(self):
-                pass
-
-        def g(self):
-            h = 0
-            def i(self): pass
-
-    def j():
-        pass
-
-    with handler as (k,):
-        pass
-
-    with handler as [l]:
-        pass
-    """))
-
-    assert {'a', 'b', 'c', 'd', 'C', 'j', 'k', 'l'} == used_names(code)
-
-    C = typing.cast(cst.ClassDef, cstm.findall(code, cstm.ClassDef(name=cstm.Name('C')))[0])
-    assert {'D', 'e', 'g'} == used_names(C)
-
-    D = typing.cast(cst.ClassDef, cstm.findall(code, cstm.ClassDef(name=cstm.Name('D')))[0])
-    assert {'f'} == used_names(D)
-
-    f = typing.cast(cst.FunctionDef, cstm.findall(code, cstm.FunctionDef(name=cstm.Name('f')))[0])
-    assert set() == used_names(f)
-
-    g = typing.cast(cst.FunctionDef, cstm.findall(code, cstm.FunctionDef(name=cstm.Name('g')))[0])
-    assert {'h', 'i'} == used_names(g)
-
-    i = typing.cast(cst.FunctionDef, cstm.findall(code, cstm.FunctionDef(name=cstm.Name('i')))[0])
-    assert set() == used_names(i)
 
 
 def test_types_in_annotation():

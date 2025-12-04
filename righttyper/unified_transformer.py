@@ -4,7 +4,7 @@ import collections.abc as abc
 from dataclasses import dataclass
 import libcst as cst
 import libcst.matchers as cstm
-from libcst.metadata import MetadataWrapper, PositionProvider, QualifiedNameProvider
+from libcst.metadata import MetadataWrapper, PositionProvider, ScopeProvider, QualifiedNameProvider
 from righttyper.variable_binding import VariableBindingProvider
 import re
 
@@ -171,7 +171,7 @@ def _is_dunder(node: cst.Attribute|cst.Name) -> bool:
 
 
 class UnifiedTransformer(cst.CSTTransformer):
-    METADATA_DEPENDENCIES = (PositionProvider, QualifiedNameProvider, VariableBindingProvider)
+    METADATA_DEPENDENCIES = (PositionProvider, QualifiedNameProvider, ScopeProvider, VariableBindingProvider)
 
     def __init__(
         self,
@@ -216,6 +216,9 @@ class UnifiedTransformer(cst.CSTTransformer):
             for t in self.module_variables.values()
         }
 
+        # Current scope node (module, class or function)
+        self.stack: list[cst.CSTNode] = []
+
     def _module_for(self, name: str) -> tuple[str, str]:
         """Splits a dot name in its module and qualified name parts."""
         if name.startswith("builtins."):
@@ -225,6 +228,34 @@ class UnifiedTransformer(cst.CSTTransformer):
             return m, name[len(m)+1:]
 
         return '', name
+
+    def _name_is(self, name: str, qual_name: str) -> bool:
+        """Returns whether the name is equivalent to some fully-qualified one"""
+
+        def abs_name(n: str) -> str:
+            """Makes a name absolute"""
+            if n.startswith('.'):
+                name_parts = self.module_name.split('.')
+                for part in n.split('.'):
+                    if not part:    # a leading dot
+                        name_parts.pop()
+                    else:
+                        name_parts.append(part)
+
+                return '.'.join(name_parts)
+
+            return n
+
+        if not (scope := self.get_metadata(ScopeProvider, self.stack[-1])):
+            return False
+
+        qualnames = scope.get_qualified_names_for(name)
+        return any(abs_name(n.name) == qual_name for n in qualnames)
+
+    def _is_defined(self, local_name: str) -> bool:
+        """Whether a name is defined."""
+        scope = self.get_metadata(ScopeProvider, self.stack[-1])
+        return scope is not None and local_name in scope
 
     def _rename_types(self, annotation: TypeInfo, generics: dict[TypeInfo, str]) -> TypeInfo:
         """Renames types in an annotation based on the module name and on any aliases."""
@@ -239,17 +270,21 @@ class UnifiedTransformer(cst.CSTTransformer):
                 if node in tt.dont_modify:
                     return node
 
-                if node.module in ('', 'builtins') and node.name in _BUILTIN_TYPES:
-                    if node.name not in self.used_names[-1]:
+                if node.module in ('', 'builtins'):# and node.name in _BUILTIN_TYPES:
+                    if not self._is_defined(node.name) or self._name_is(node.name, f'builtins.{node.name}'):
                         return node.replace(module='')  # don't need the module
 
                     # somebody overrode a builtin name(!), qualify it
                     node = node.replace(module='builtins') 
 
                 # use local names where possible (shorter)
-                if a := self.aliases.get(node.fullname()):
+                if (
+                    (a := self.aliases.get(node.fullname()))
+                    and (not self._is_defined(a) or self._name_is(a, node.fullname()))
+                ):
                     return node.replace(module='', name=a)
 
+                assert node.module
                 if node.module:
                     if node.module == self.module_name:
                         # Use local name if possible; when <locals> are
@@ -261,13 +296,22 @@ class UnifiedTransformer(cst.CSTTransformer):
                         return node.replace(module='')  # it's us, refer by (global) name
 
                     # use local names for the module where possible (shorter)
-                    if a := self.aliases.get(node.module):
+                    if (
+                        (a := self.aliases.get(node.module))
+                        or (a := self.if_checking_aliases.get(node.module))
+                    ):
                         return node.replace(module=a)
 
                     # does the module's first part conflict with other definitions?
-                    if node.module.split('.')[0] in self.used_names[-1]:
+                    mod_first_part = node.module.split('.')[0]
+                    if (
+                        mod_first_part not in self.imported_modules
+                        and mod_first_part not in self.if_checking_imported_modules
+                        and self._is_defined(mod_first_part)
+                    ):
                         alias = "_rt_" + "_".join(node.module.split("."))
                         self.if_checking_aliases[node.module] = alias
+                        self.new_if_checking_aliases.append((node.module, alias))
                         return node.replace(module=alias)
 
                 return node
@@ -302,7 +346,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                             i += 1
                         used_inline_names.add(name)
                     else:
-                        while (name := f"rt_T{self.module_generic_index}") in self.used_names[-1]:
+                        while self._is_defined(name := f"rt_T{self.module_generic_index}"):
                             self.module_generic_index += 1
                         self.module_generic_index += 1
 
@@ -332,9 +376,6 @@ class UnifiedTransformer(cst.CSTTransformer):
     def visit_Module(self, node: cst.Module) -> bool:
         # Initialize mutable members here, just in case transformer gets reused
 
-        # names used somewhere in a module or class scope
-        self.used_names: list[set[str]] = [used_names(node)]
-
         # stack of known names
         self.known_names: list[set[str]] = [set(_BUILTIN_TYPES)]
 
@@ -353,11 +394,12 @@ class UnifiedTransformer(cst.CSTTransformer):
                 self.aliases[new] = old[7:]
 
         # "import ... as ..." within "if TYPE_CHECKING:".
-        # TODO read those in as well so as not to duplicate imports
         self.if_checking_aliases: dict[str, str] = dict()
+        self.new_if_checking_aliases: list[tuple[str, str]] = []
 
         # modules imported under their own names
         self.imported_modules: set[str] = set()
+        self.if_checking_imported_modules: set[str] = set()
 
         self.unknown_types : set[str] = set()
         self.name_stack : list[str] = []
@@ -399,14 +441,34 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         # The set of variable assignments we're modifying
         self.modified_assignments: set[cst.CSTNode] = set()
+
+        self.in_if_type_checking: list[bool] = [False]
         return True
+
+
+    def on_visit(self, node: cst.CSTNode) -> bool:
+        if type(node) in (cst.Module, cst.ClassDef, cst.FunctionDef):
+            self.stack.append(node)
+        return super().on_visit(node)
+
+
+    def on_leave[T: cst.CSTNode](self, node: T, updated_node: T) -> T | cst.RemovalSentinel | cst.FlattenSentinel[T]:
+        retval = super().on_leave(node, updated_node)
+        if type(node) in (cst.Module, cst.ClassDef, cst.FunctionDef):
+            self.stack.pop()
+        return retval
 
 
     def visit_If(self, node: cst.If) -> bool:
         if cstm.matches(node, cstm.If(test=cstm.Name("TYPE_CHECKING"))):
-            return False    # to ignore imports within TYPE_CHECKING
+            self.in_if_type_checking.append(True)
 
         return True
+
+    def leave_If(self, node: cst.If, updated_node: cst.If) -> cst.If:
+        if cstm.matches(node, cstm.If(test=cstm.Name("TYPE_CHECKING"))):
+            self.in_if_type_checking.pop()
+        return updated_node
 
 
     def visit_Import(self, node: cst.Import) -> bool:
@@ -415,10 +477,16 @@ class UnifiedTransformer(cst.CSTTransformer):
             if isinstance(node.names, abc.Sequence):
                 for alias in node.names:
                     if alias.asname is not None:
-                        self.known_names[-1].add(_nodes_to_top_level_name(alias.asname.name))
-                        self.aliases[_nodes_to_dotted_name(alias.name)] = _nodes_to_dotted_name(alias.asname.name)
+                        if not self.in_if_type_checking[-1]:
+                            self.known_names[-1].add(_nodes_to_top_level_name(alias.asname.name))
+                            self.aliases[_nodes_to_dotted_name(alias.name)] = _nodes_to_dotted_name(alias.asname.name)
+                        else:
+                            self.if_checking_aliases[_nodes_to_dotted_name(alias.name)] = _nodes_to_dotted_name(alias.asname.name)
                     else:
-                        self.imported_modules |= set(_nodes_to_all_dotted_names(alias.name))
+                        if not self.in_if_type_checking[-1]:
+                            self.imported_modules |= set(_nodes_to_all_dotted_names(alias.name))
+                        else:
+                            self.if_checking_imported_modules |= set(_nodes_to_all_dotted_names(alias.name))
         return False
 
     def visit_ImportFrom(self, node: cst.ImportFrom) -> bool:
@@ -426,11 +494,12 @@ class UnifiedTransformer(cst.CSTTransformer):
             # node.names could also be cst.ImportStar
             if isinstance(node.names, abc.Sequence):
                 for alias in node.names:
-                    self.known_names[-1].add(
-                        _nodes_to_top_level_name(
-                            alias.asname.name if alias.asname is not None else alias.name
+                    if not self.in_if_type_checking[-1]:
+                        self.known_names[-1].add(
+                            _nodes_to_top_level_name(
+                                alias.asname.name if alias.asname is not None else alias.name
+                            )
                         )
-                    )
 
                     source: list[str] = []
 
@@ -446,10 +515,16 @@ class UnifiedTransformer(cst.CSTTransformer):
 
                     source += _nodes_to_dotted_name(node.module).split('.') if node.module else []
 
-                    self.aliases[f"{'.'.join(source)}.{_nodes_to_dotted_name(alias.name)}"] = \
-                        _nodes_to_dotted_name(
-                            alias.asname.name if alias.asname is not None else alias.name
-                        )
+                    if not self.in_if_type_checking[-1]:
+                        self.aliases[f"{'.'.join(source)}.{_nodes_to_dotted_name(alias.name)}"] = \
+                            _nodes_to_dotted_name(
+                                alias.asname.name if alias.asname is not None else alias.name
+                            )
+                    else:
+                        self.if_checking_aliases[f"{'.'.join(source)}.{_nodes_to_dotted_name(alias.name)}"] = \
+                            _nodes_to_dotted_name(
+                                alias.asname.name if alias.asname is not None else alias.name
+                            )
 
         return False
 
@@ -725,7 +800,6 @@ class UnifiedTransformer(cst.CSTTransformer):
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
         name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.append(node.name.value)
-        self.used_names.append(self.used_names[name_source] | used_names(node))
         self.overload_stack.append([])
         self.overload_name_stack.append("")
         self.known_names.append(set(self.known_names[0]))   # current globals ([0]) are also known
@@ -752,7 +826,6 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.known_names.pop()
         self.known_names[-1].add(self.name_stack[-1])
         self.name_stack.pop()
-        self.used_names.pop()
         self.overload_stack.pop()
         self.overload_name_stack.pop()
         return updated_node
@@ -760,7 +833,6 @@ class UnifiedTransformer(cst.CSTTransformer):
     def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
         name_source = list_rindex(self.name_stack, '<locals>') # neg. index of last function, or 0 (for globals)
         self.name_stack.extend([node.name.value, "<locals>"])
-        self.used_names.append(self.used_names[name_source] | used_names(node))
         self.overload_stack.append([])
         self.overload_name_stack.append("")
         self.known_names.append(set(self.known_names[0]))   # current globals ([0]) are also known
@@ -850,7 +922,6 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.annotate_vars_stack.pop()
         self.name_stack.pop()
         self.name_stack.pop()
-        self.used_names.pop()
         self.overload_stack.pop()
         self.overload_name_stack.pop()
         self.known_names.pop()
@@ -1088,7 +1159,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         )
 
         # Add additional type checking imports if needed
-        if missing_modules or self.if_checking_aliases:
+        if missing_modules or self.new_if_checking_aliases:
             existing_body = [*(typing.cast(cst.If, new_body[if_type_checking_position]).body.body
                                if if_type_checking_position is not None
                                else ())]
@@ -1110,7 +1181,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                                 asname=cst.AsName(cst.Name(a))
                             )])
                         ])
-                        for m, a in sorted(self.if_checking_aliases.items())
+                        for m, a in sorted(self.new_if_checking_aliases)
                     ]
                 )
             )
@@ -1196,77 +1267,6 @@ def types_in_annotation(annotation: cst.BaseExpression) -> set[str]:
     extractor = TypeNameExtractor()
     annotation.visit(extractor)
     return extractor.names
-
-
-def used_names(node: cst.Module|cst.ClassDef|cst.FunctionDef) -> set[str]:
-    """Extracts the names in a module or class."""
-
-    # FIXME handle 'global' and 'nonlocal'
-
-    names: set[str] = set()
-
-    class Extractor(cst.CSTVisitor):
-        def __init__(self) -> None:
-            self.in_scope = False
-
-        def visit_Module(self, node: cst.Module) -> bool:
-            self.in_scope = True
-            return True
-
-        def visit_ClassDef(self, node: cst.ClassDef) -> bool:
-            if self.in_scope:
-                names.add(node.name.value)
-                return False
-
-            self.in_scope = True
-            return True
-
-        def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
-            if self.in_scope:
-                names.add(node.name.value)
-                return False
-
-            self.in_scope = True
-            return True
-
-        def visit_Assign(self, node: cst.Assign) -> bool:
-            for t in node.targets:
-                if isinstance(t.target, cst.Name):
-                    names.add(t.target.value)
-                elif isinstance(t.target, cst.Tuple):
-                    for el in t.target.elements:
-                        if isinstance(el.value, cst.Name):
-                            names.add(el.value.value)
-            return True
-
-        def visit_AnnAssign(self, node: cst.AnnAssign) -> bool:
-            if isinstance(node.target, cst.Name):
-                names.add(node.target.value)
-            return True
-
-        def visit_ImportFrom(self, node: cst.ImportFrom) -> bool:
-            # node.names could also be cst.ImportStar
-            if isinstance(node.names, abc.Sequence):
-                for alias in node.names:
-                    if not alias.asname:
-                        names.add(_nodes_to_top_level_name(alias.name))
-            return True
-
-        def visit_NamedExpr(self, node: cst.NamedExpr) -> bool:
-            names.add(_nodes_to_top_level_name(node.target))
-            return True
-
-        def visit_AsName(self, node: cst.AsName) -> bool:
-            if isinstance(node.name, (cst.Tuple, cst.List)):
-                for el in node.name.elements:
-                    names.add(_nodes_to_top_level_name(el.value))
-            else:
-                names.add(_nodes_to_top_level_name(node.name))
-
-            return True
-
-    node.visit(Extractor())
-    return names
 
 
 def list_rindex(lst: list[typing.Any], item: object) -> int:
