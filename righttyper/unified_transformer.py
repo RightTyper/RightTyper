@@ -877,8 +877,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.unknown_types |= unknown.types 
 
         if (
-            self.always_quote_annotations or
-            (not self.has_future_annotations and (unknown.types - _TYPING_TYPES))
+            self.always_quote_annotations
+            or (not self.has_future_annotations and (unknown.types - _TYPING_TYPES))
         ):
             annotation_expr = cst.SimpleString(_quote(str(annotation)))
 
