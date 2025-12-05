@@ -674,6 +674,12 @@ def add_output_options(group=None):
                 default=output_options.exclude_test_types,
                 help="""Whether to exclude or replace with "typing.Any" types defined in test modules."""
             ),
+            base.option(
+                "--always-quote-annotations/--no-always-quote-annotations",
+                is_flag=True,
+                default=output_options.always_quote_annotations,
+                help="""Place all annotations in quotes. This is normally not necessary, but can help avoid undefined symbol errors."""
+            ),
         ]):
             func = opt(func)
         return func

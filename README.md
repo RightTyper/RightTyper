@@ -206,5 +206,10 @@ Options:
                                   Whether to exclude or replace with
                                   "typing.Any" types defined in test modules.
                                   [default: exclude-test-types]
+    --always-quote-annotations / --no-always-quote-annotations
+                                  Place all annotations in quotes. This is
+                                  normally not necessary, but can help avoid
+                                  undefined symbol errors.  [default: no-
+                                  always-quote-annotations]
   --help                          Show this message and exit.
 ```

@@ -24,6 +24,7 @@ class OutputOptions:
     use_top_pct: int = 80
     simplify_types: bool = True
     exclude_test_types: bool = True
+    always_quote_annotations: bool = False
 
 
     def process_args(self, kwargs: dict[str, Any]) -> None:

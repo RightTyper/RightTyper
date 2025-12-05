@@ -183,6 +183,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         override_annotations: bool = True,
         only_update_annotations: bool = False,
         inline_generics: bool = True,
+        always_quote_annotations: bool = False,
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
@@ -196,6 +197,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.override_annotations = override_annotations
         self.only_update_annotations = only_update_annotations
         self.inline_generics = inline_generics
+        self.always_quote_annotations = always_quote_annotations
         self.has_future_annotations = False
         self.change_list: list[Change] = []
 
@@ -874,7 +876,10 @@ class UnifiedTransformer(cst.CSTTransformer):
         unknown.visit(annotation)
         self.unknown_types |= unknown.types 
 
-        if not self.has_future_annotations and (unknown.types - _TYPING_TYPES):
+        if (
+            self.always_quote_annotations
+            or (not self.has_future_annotations and (unknown.types - _TYPING_TYPES))
+        ):
             annotation_expr = cst.SimpleString(_quote(str(annotation)))
 
         return annotation_expr

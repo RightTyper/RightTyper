@@ -100,7 +100,8 @@ def process_file(
         filename, type_annotations, module_vars, module_name,
         override_annotations=options.ignore_annotations,
         only_update_annotations=options.only_update_annotations,
-        inline_generics=options.inline_generics
+        inline_generics=options.inline_generics,
+        always_quote_annotations=options.always_quote_annotations
     )
 
     try:
