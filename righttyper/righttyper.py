@@ -549,6 +549,17 @@ def validate_fnmatch(ctx, param, value):
     return value
 
 
+def beta_param(ctx, param, value):
+    """Validate and return (alpha, beta)."""
+    if value is None:
+        return None
+
+    alpha, beta = value
+    if alpha <= 0 or beta <= 0:
+        raise click.BadParameter("alpha and beta must be positive integers.")
+    return (alpha, beta)
+
+
 class HelpfulGroup(click.Group):
     def __init__(self, *args, extra_help_subcommands=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -817,6 +828,26 @@ def add_output_options(group=None):
     is_flag=True,
     default=run_options.allow_runtime_exceptions,
     hidden=True,
+)
+@click.option(
+    "--container-scan-threshold",
+    type=click.IntRange(0, None),
+    default=run_options.container_scan_threshold,
+    help="Fully scan, rather than sample, containers of up to this size."
+)
+@click.option(
+    "--container-new-type-threshold",
+    type=click.FloatRange(0.00, 99.9),
+    default=run_options.container_new_type_threshold,
+    help="Stop sampling a container when the estimated likelihood encountering a new type falls below this threshold."
+)
+@click.option(
+    "--container-beta-prior",
+    type=(int, int),
+    callback=beta_param,
+    metavar="α β",
+    default=run_options.container_beta_prior,
+    help="Beta prior used to smooth the estimate for the likelihood of encountering a new type."
 )
 @click.option(
     "--debug",

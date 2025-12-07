@@ -56,8 +56,8 @@ class PendingCallTrace:
         retval = self.returns
 
         if self.is_generator:
-            y = TypeInfo.from_set(self.yields)
-            s = TypeInfo.from_set(self.sends)
+            y = TypeInfo.from_set(self.yields, empty_is_none=True)
+            s = TypeInfo.from_set(self.sends, empty_is_none=True)
 
             if self.is_async:
                 retval = TypeInfo.from_type(abc.AsyncGenerator, module="typing", args=(y, s))
@@ -160,13 +160,13 @@ class ObservationsRecorder:
             *(
                 (TypeInfo.from_set({
                     get_value_type(val) for val in arg_info.locals[arg_info.varargs]
-                }),)
+                }, empty_is_none=True),)
                 if arg_info.varargs else ()
             ),
             *(
                 (TypeInfo.from_set({
                     get_value_type(val) for val in arg_info.locals[arg_info.keywords].values()
-                }),)
+                }, empty_is_none=True),)
                 if arg_info.keywords else ()
             )
         )

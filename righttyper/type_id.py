@@ -4,6 +4,7 @@ import re
 import sys
 
 import collections
+from collections import Counter
 import collections.abc as abc
 from abc import ABCMeta
 from functools import cache
@@ -435,6 +436,52 @@ def _first_referent(value: Any) -> object|None:
     return ref[0] if len(ref) else None
 
 
+def _beta_bernoulli(c: Counter) -> float:
+    """Bernoulli estimate for the likelihood of encountering a new type,
+       smoothed with a Beta prior."""
+    if c.total() < 10: return 1.0 # minimum number of samples
+
+    alpha, beta = run_options.container_beta_prior
+    return (len(c) + alpha) / (c.total() + alpha + beta)
+
+
+type CONTAINER_CACHE_ENTRY = tuple[object, *tuple[Counter[TypeInfo], ...]]
+container_cache: dict[int, CONTAINER_CACHE_ENTRY] = dict()
+THRESHOLD=run_options.container_scan_threshold
+
+
+def _get_container_args(
+    container: Any,
+    n_sets: typing.Literal[1,2],
+    sampler: abc.Callable[[], tuple[TypeInfo, ...]],
+    depth: int
+) -> tuple[TypeInfo, ...]:
+
+    if (cached := container_cache.get(id(container))) and cached[0] is container:
+        counters = cached[1:]
+    else:
+        counters = tuple(Counter() for _ in range(n_sets))
+        if len(container) >= run_options.container_scan_threshold: # limit cache use
+            container_cache[id(container)] = (container, *counters)  # id(): dict, list, etc. aren't hashable
+
+    if container:
+        if len(container) <= run_options.container_scan_threshold:
+            if n_sets == 1:
+                for it in container:
+                    counters[0].update((get_value_type(it, depth+1),))
+            else:
+                for samples in container.items():
+                    for c, s in zip(counters, samples):
+                        c.update((get_value_type(s, depth+1),))
+        else:
+            while any(_beta_bernoulli(c) > run_options.gt_container_threshold for c in counters):
+                samples = sampler()
+                for c, s in zip(counters, samples):
+                    c.update((get_value_type(s, depth+1),))
+
+    return tuple(TypeInfo.from_set(set(c)) for c in counters)
+
+
 def _handle_tuple(value: Any, depth: int) -> TypeInfo:
     if value:
         args = tuple(get_value_type(fld, depth+1) for fld in value)
@@ -444,14 +491,10 @@ def _handle_tuple(value: Any, depth: int) -> TypeInfo:
 
 
 def _handle_dict(value: Any, depth: int) -> TypeInfo:
-    t: type = type(value)
-    if value:
-        # it's more efficient to sample a key and then use it than to build .items()
-        el = _random_item(value)
-        args = (get_value_type(el, depth+1), get_value_type(value[el], depth+1))
-    else:
-        args = (TypeInfo.from_type(typing.Never), TypeInfo.from_type(typing.Never))
+    sampler = lambda: ((el := _random_item(value)), value[el])
+    args = _get_container_args(value, 2, sampler, depth)
 
+    t: type = type(value)
     if (ti := _BUILTINS.get(t)):
         return ti.replace(args=args)
 
@@ -459,37 +502,24 @@ def _handle_dict(value: Any, depth: int) -> TypeInfo:
 
 
 def _handle_randomdict(value: Any, depth: int) -> TypeInfo:
-    args: tuple[TypeInfo, ...] = ()
+    sampler = lambda: ((el := value.random_item())[0], el[1])
+
     try:
-        if value:
-            el = value.random_item()
-            args = tuple(get_value_type(fld, depth+1) for fld in el)
-        else:
-            args = (TypeInfo.from_type(typing.Never), TypeInfo.from_type(typing.Never))
-    except Exception:
-        pass
-    return TypeInfo.from_type(dict, args=args)
+        args = _get_container_args(value, 2, sampler, depth)
+    except Exception as e:
+        return TypeInfo.from_type(dict)
+    else:
+        return TypeInfo.from_type(dict, args=args)
 
 
 def _handle_list(value: Any, depth: int) -> TypeInfo:
-    if value:
-        el = value[random.randint(0, len(value)-1)] # this is O(1), much faster than islice()
-        args = (get_value_type(el, depth+1),)
-    else:
-        args = (TypeInfo.from_type(typing.Never),)
-    return TypeInfo.from_type(list, args=args)
+    sampler = lambda: (value[random.randint(0, len(value)-1)],) # this is O(1), much faster than islice()
+    return TypeInfo.from_type(list, args=_get_container_args(value, 1, sampler, depth))
 
 
 def _handle_set(value: Any, depth: int) -> TypeInfo:
-    t = type(value)
-    # note that deque is-a Sequence, but its integer indexing is O(N)
-    if value:
-        el = _random_item(value)
-        args = (get_value_type(el, depth+1),)
-    else:
-        args = (TypeInfo.from_type(typing.Never),)
-
-    return TypeInfo.from_type(t, args=args)
+    sampler = lambda: (_random_item(value),)
+    return TypeInfo.from_type(type(value), args=_get_container_args(value, 1, sampler, depth))
 
 
 def _handle_dict_keyiter(value: Any, depth: int) -> TypeInfo|None:
@@ -526,12 +556,8 @@ def _handle_set_iter(value: Any, depth: int) -> TypeInfo|None:
 
 def _handle_tuple_iter(value: Any, depth: int) -> TypeInfo|None:
     if type(t := _first_referent(value)) is tuple:
-        if t:
-            el = t[random.randint(0, len(t)-1)] # this is O(1), much faster than islice()
-            args = (get_value_type(el, depth+1),)
-        else:
-            args = (TypeInfo.from_type(typing.Never),)
-        return TypeInfo.from_type(abc.Iterator, args=args)
+        sampler = lambda: (value[random.randint(0, len(value)-1)],) # this is O(1), much faster than islice()
+        return TypeInfo.from_type(abc.Iterator, args=_get_container_args(t, 1, sampler, depth))
     return None
 
 

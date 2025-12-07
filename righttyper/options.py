@@ -71,6 +71,9 @@ class RunOptions:
     variables: bool = True
     save_profiling: str|None = None
     allow_runtime_exceptions: bool = False
+    container_scan_threshold: int = 20
+    container_new_type_threshold: float = 0.01
+    container_beta_prior: tuple[int, int] = (1, 19) # 1/(1+19) = 0.05 prior
 
 
     def process_args(self, kwargs: dict[str, Any]) -> None:
