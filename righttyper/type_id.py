@@ -79,26 +79,28 @@ def hint2type(hint: object) -> TypeInfo:
         if isinstance(hint, list):
             return TypeInfo.list([hint2type_arg(el) for el in hint])
 
-        if hint is Ellipsis or type(hint) is str:
+        if hint is Ellipsis or type(hint) is str or (isinstance(hint, tuple) and hint == ()):
             return hint
 
         return hint2type(hint)
 
     if (origin := get_origin(hint)):
+        args = get_args(hint)
+
         if origin in (types.UnionType, typing.Union):
-            return TypeInfo.from_set({hint2type(a) for a in get_args(hint)})
+            return TypeInfo.from_set({hint2type(a) for a in args})
 
         # FIXME TypeInfo args can't hold non-str Literal values; for now,
         # convert to a union of their types
         if origin is typing.Literal:
-            return TypeInfo.from_set({get_value_type(a) for a in get_args(hint)})
+            return TypeInfo.from_set({get_value_type(a) for a in args})
 
-        return TypeInfo.from_type(
-                    origin,
-                    args=tuple(
-                        hint2type_arg(a) for a in get_args(hint)
-                    )
-                )
+        # Somehow get_args(tuple[()]) yields no arguments, rather than the expected [()]
+        if origin is tuple and not args:
+            return TypeInfo.from_type(tuple, args=((),))
+
+        return TypeInfo.from_type(origin, args=tuple(hint2type_arg(a) for a in args))
+
 
     if hint is None:
         return NoneTypeInfo
@@ -436,10 +438,12 @@ def _first_referent(value: Any) -> object|None:
 
 
 def _handle_tuple(value: Any, depth: int) -> TypeInfo:
+    args: tuple[TypeInfoArg, ...]
+
     if value:
         args = tuple(get_value_type(fld, depth+1) for fld in value)
     else:
-        args = tuple()  # FIXME this should yield "tuple[()]"
+        args = ((),)
     return TypeInfo.from_type(tuple, args=args)
 
 

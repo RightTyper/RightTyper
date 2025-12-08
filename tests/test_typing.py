@@ -84,7 +84,7 @@ def test_get_value_type():
     assert "types.MappingProxyType[str, int]" == get_value_type(types.MappingProxyType({'a': 1}))
     assert "types.MappingProxyType[typing.Never, typing.Never]" == get_value_type(types.MappingProxyType(dict()))
 
-    assert "tuple" == get_value_type(tuple())
+    assert "tuple[()]" == get_value_type(tuple())
     assert "tuple[int, str]" == get_value_type((1, "foo"))
 #    assert "tuple[()]" == get_value_type(tuple())  # FIXME
 #    assert "tuple[int, ...]" == get_value_type((1, 2, 3, 4))
@@ -310,13 +310,17 @@ def test_hint2type():
     def foo(
         x: int | MyGeneric[str, Callable[[], None]],
         y: tuple[int, ...],
-        z: jaxtyping.Float[jax.Array, "10 20"]
+        z: jaxtyping.Float[jax.Array, "10 20"],
+        t: tuple[()],
+        u: tuple,
     ): pass
 
     hints = get_type_hints(foo)
 
     assert f"int|{__name__}.MyGeneric[str, collections.abc.Callable[[], None]]" == str(t_id.hint2type(hints['x']))
     assert f"tuple[int, ...]" == str(t_id.hint2type(hints['y']))
+    assert f"tuple[()]" == str(t_id.hint2type(hints['t']))
+    assert f"tuple" == str(t_id.hint2type(hints['u']))
     assert """jaxtyping.Float[jax.Array, "10 20"]""" == str(t_id.hint2type(hints['z']))
 
 
