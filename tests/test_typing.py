@@ -86,8 +86,6 @@ def test_get_value_type():
 
     assert "tuple[()]" == get_value_type(tuple())
     assert "tuple[int, str]" == get_value_type((1, "foo"))
-#    assert "tuple[()]" == get_value_type(tuple())  # FIXME
-#    assert "tuple[int, ...]" == get_value_type((1, 2, 3, 4))
 
     assert "collections.abc.KeysView[str]" == get_value_type({'a':0, 'b':1}.keys())
     assert "collections.abc.ValuesView[int]" == get_value_type({'a':0, 'b':1}.values())
@@ -339,8 +337,8 @@ def test_hint2type_pre_3_10():
 def test_typeinfo():
     assert "foo.bar" == str(TypeInfo("foo", "bar"))
     assert "foo.bar[m.baz, \"x y\"]" == str(TypeInfo("foo", "bar", (TypeInfo("m", "baz"), "x y")))
-    assert "int" == str(TypeInfo("", "int"))
-    assert "tuple[bool]" == str(TypeInfo("", "tuple", args=(TypeInfo('', 'bool'),)))
+    assert "int" == str(TypeInfo.from_type(int))
+    assert "tuple[bool]" == str(TypeInfo.from_type(tuple, args=(TypeInfo.from_type(bool),)))
 
     t = TypeInfo.from_type(type(None))
     assert t.module == ''
@@ -402,44 +400,44 @@ def test_typeinfo_from_set():
 
 def test_merged_types():
     assert "None" == str(merged_types(set()))
-    assert "bool" == str(merged_types({TypeInfo("", "bool")}))
+    assert "bool" == str(merged_types({TypeInfo.from_type(bool)}))
 
-    assert "bool|int|zoo.bar" == str(merged_types({
-            TypeInfo("", "bool"),
-            TypeInfo("", "int"),
+    assert "int|str|zoo.bar" == str(merged_types({
+            TypeInfo.from_type(str),
+            TypeInfo.from_type(int),
             TypeInfo("zoo", "bar"),
         }
     ))
 
-    assert "bool|int|None" == str(merged_types({
+    assert "bool|str|None" == str(merged_types({
             TypeInfo.from_type(type(None)),
-            TypeInfo("", "bool"),
-            TypeInfo("", "int"),
+            TypeInfo.from_type(bool),
+            TypeInfo.from_type(str),
         }
     ))
 
 
 def test_merged_types_generics():
     assert "list[bool]|list[int]" == str(merged_types({
-            TypeInfo("", "list", type_obj=list, args=(TypeInfo("", "int"),)),
-            TypeInfo("", "list", type_obj=list, args=(TypeInfo("", "bool"),))
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(bool),))
         }
     ))
 
     assert "list" == str(merged_types({
-            TypeInfo.from_type(list, args=(TypeInfo("", "int"),)),
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
             TypeInfo.from_type(list),
         }
     ))
 
     assert "tuple" == str(merged_types({
-            TypeInfo.from_type(tuple, args=(TypeInfo("", "int"), ...)),
+            TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), ...)),
             TypeInfo.from_type(tuple),
         }
     ))
 
     assert "tuple" == str(merged_types({
-            TypeInfo.from_type(tuple, args=(TypeInfo("", "int"), ...)),
+            TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), ...)),
             TypeInfo.from_type(tuple),
         }
     ))
@@ -448,6 +446,32 @@ def test_merged_types_generics():
             t_id.hint2type(abc.Callable[[], None]),
             t_id.hint2type(abc.Callable[[int], None]),
             t_id.hint2type(abc.Callable),
+        }
+    ))
+
+
+def test_merged_types_generics_never():
+    assert "list[int]" == str(merged_types({
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(typing.Never),)),
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
+        }
+    ))
+
+    assert "dict[str, int]" == str(merged_types({
+            TypeInfo.from_type(dict, args=(TypeInfo.from_type(typing.Never),TypeInfo.from_type(typing.Never),)),
+            TypeInfo.from_type(dict, args=(TypeInfo.from_type(str),TypeInfo.from_type(int),)),
+        }
+    ))
+
+    assert "tuple[int, ...]|tuple[typing.Never, ...]" == str(merged_types({
+            TypeInfo.from_type(tuple, args=(TypeInfo.from_type(typing.Never), ...)),
+            TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), ...))
+        }
+    ))
+
+    assert "tuple[()]|tuple[int, ...]" == str(merged_types({
+            TypeInfo.from_type(tuple, args=((),)),
+            TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), ...))
         }
     ))
 
@@ -490,7 +514,7 @@ def test_merged_types_superclass():
         }
     ))
 
-    assert f"list[int]|list[typing.Never]|{name(A)}" == str(merged_types({
+    assert f"list[int]|{name(A)}" == str(merged_types({
             TypeInfo.from_type(A),
             TypeInfo.from_type(D),
             rt_get_value_type([1]),
