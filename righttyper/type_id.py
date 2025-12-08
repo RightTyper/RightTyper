@@ -342,8 +342,7 @@ def find_function(code: CodeType) -> abc.Callable|None:
     """Attempts to map back from a code object to the function that uses it."""
 
     for r in gc.get_referrers(code):
-        if getattr(r, "__code__", None) is code and callable(r):#isinstance(r, abc.Callable):
-#            (hasattr(obj, "__call__") or type(obj) is classmethod)
+        if getattr(r, "__code__", None) is code and callable(r):
             return r
 
     return None
