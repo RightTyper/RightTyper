@@ -4992,6 +4992,35 @@ def test_json_variables_object():
     assert 'int|str' == functions['C.__init__']['vars'].get('self.x', None)
 
 
+def test_variables_change_not_assignment():
+    t = textwrap.dedent("""\
+        class C:
+            def __init__(self):
+                self.x = []
+
+            def foo(self):
+                self.x.append(1)
+
+        c = C()
+        c.foo()
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--json-output', 't.py')
+    print(Path("righttyper.json").read_text())
+    with Path("righttyper.json").open("r") as f:
+        data = json.load(f)
+
+    t_data = data['files'].get(str(Path('t.py').resolve()), {})
+    functions = t_data.get('functions', {})
+    assert 'C.__init__' in functions
+
+    # function (method) variable
+    assert 'self.x' in functions['C.__init__'].get('vars', {})
+    assert 'list[int]' == functions['C.__init__']['vars'].get('self.x', None)
+
+
 def test_variables_nested():
     t = textwrap.dedent("""\
         def f():

@@ -15,7 +15,9 @@ def get(mapping: dict[types.CodeType, variables.CodeVars], name: str):
     """Returns a code->variables mapping by code name only."""
     for co, codevars in mapping.items():
         if co.co_qualname == name:
-            return set(codevars.variables.values()) | {v for v in codevars.attributes.values() if v is not None}
+            return set(codevars.variables.values()) | (
+                {f"{codevars.self}.{attr}" for attr in codevars.attributes} if (codevars.attributes and codevars.self) else set()
+            )
     return set()
 
 
@@ -249,13 +251,17 @@ def test_self_attribute_in_various_methods():
                 myself.x = 1
                 myself.y = 2
                 myself.z = 3
+
+            def f3(self):
+                pass
         """)
     m = map_variables(src)
 
-    assert get(m, "C.__init__") == {"self.x"}
-    assert get(m, "C.__init__.<locals>.f") == {"self.y"}
-    assert get(m, "C.f") == {"me.x", "me.z"}
+    assert get(m, "C.__init__") == {"self.x", "self.y", "self.z"}
+    assert get(m, "C.__init__.<locals>.f") == {"self.x", "self.y", "self.z"}
+    assert get(m, "C.f") == {"me.x", "me.y", "me.z"}
     assert get(m, "C.f2") == {"myself.x", "myself.y", "myself.z"}
+    assert get(m, "C.f3") == {"self.x", "self.y", "self.z"}
 
 
 def test_lambdas_and_comprehensions_have_their_own_code_objects():

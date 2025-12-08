@@ -26,8 +26,8 @@ class CodeVars:
     # name of 'self' for this object, if any
     self: str | None = None
 
-    # maps attributes to their name under the local 'self'
-    attributes: dict[str, str] = field(default_factory=dict)
+    # the 'self' attributes
+    attributes: set[str]|None = None
 
 
 """Maps code objects to the variables assigned/bound within each object."""
@@ -83,6 +83,12 @@ def _from_pattern(p: ast.pattern) -> abc.Iterator[str]:
         yield from _from_pattern(p.patterns[0])
 
 
+@dataclass
+class ClassInfo:
+    name: str
+    attributes: set[str] = field(default_factory=set)
+
+
 class VariableFinder(ast.NodeVisitor):
     """
     Walks the AST, collecting all variable names (dot-separated where applicable) that are
@@ -101,7 +107,7 @@ class VariableFinder(ast.NodeVisitor):
         self._scope_stack: list[list[str]] = [[]]
 
         # Qualified name of the current class
-        self._class_stack: list[str] = []
+        self._class_stack: list[ClassInfo] = []
 
         # Holds the current name of 'self', or None if none
         self._self_stack: list[str|None] = [None]
@@ -113,29 +119,25 @@ class VariableFinder(ast.NodeVisitor):
         # Resulting map of executing code object to their CodeVars
         self.code_vars: dict[str, CodeVars] = dict()
 
-    def _record_name(self, name: str, attribute: str|None = None) -> None:
-        if not attribute and name in self._not_locals_stack[-1]:
+    def _record_variable(self, name: str) -> None:
+        if name in self._not_locals_stack[-1]:
             return
 
         scope = self._scope_stack[-1]
         codevars = self.code_vars.setdefault(self._code_stack[-1],
             CodeVars('.'.join(scope[:-1]) if scope else '<module>') # -1 to omit "<locals>"
         )
-        if attribute:
-            codevars.class_name = self._class_stack[-1]
-            codevars.self = name
-            codevars.attributes[attribute] = f"{name}.{attribute}"
-        else:
-            codevars.variables[name] = '.'.join(self._qualname_stack[len(scope):] + [name])
+        codevars.variables[name] = '.'.join(self._qualname_stack[len(scope):] + [name])
 
     def _record_target(self, t: ast.AST) -> None:
         if isinstance(t, ast.Name):
-            self._record_name(t.id)
+            self._record_variable(t.id)
             if t.id == self._self_stack[-1]:
                 self._self_stack[-1] = None # a new assignment masked 'self'
         elif (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)):
             if t.value.id == self._self_stack[-1]:
-                self._record_name(t.value.id, t.attr)
+                class_info = self._class_stack[-1]
+                class_info.attributes.add(t.attr)
 
     def _qualname(self) -> str:
         return '.'.join(self._qualname_stack)
@@ -181,6 +183,15 @@ class VariableFinder(ast.NodeVisitor):
             self._self_stack.append(None)
         self._not_locals_stack.append(set(arguments))
 
+        if self._class_stack:
+            class_info = self._class_stack[-1]
+            self.code_vars[self._code_stack[-1]] = CodeVars(
+                '.'.join(self._qualname_stack[:-1]),    # -1 to omit "<locals>"
+                class_name=class_info.name,
+                self=self._self_stack[-1],
+                attributes=class_info.attributes if self._self_stack[-1] else None
+            )
+
         self.generic_visit(node)
 
         self._not_locals_stack.pop()
@@ -194,10 +205,10 @@ class VariableFinder(ast.NodeVisitor):
         self.visit_FunctionDef(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self._record_name(node.name)
+        self._record_variable(node.name)
         self._qualname_stack.append(node.name)
         self._code_stack.append(self._qualname())
-        self._class_stack.append(self._code_stack[-1])
+        self._class_stack.append(ClassInfo(self._code_stack[-1]))
 
         self.generic_visit(node)
 
@@ -265,14 +276,14 @@ class VariableFinder(ast.NodeVisitor):
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if isinstance(node.name, str):
-            self._record_name(node.name)
+            self._record_variable(node.name)
         self.generic_visit(node)
 
     def visit_Match(self, node: ast.Match) -> None:
         # Bind names from patterns
         for case in node.cases:
             for nm in _from_pattern(case.pattern):
-                self._record_name(nm)
+                self._record_variable(nm)
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:

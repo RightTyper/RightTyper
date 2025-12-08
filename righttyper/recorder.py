@@ -238,11 +238,9 @@ class ObservationsRecorder:
 
         if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
             obj_attrs = self._object_attributes[codevars.class_key]
-            for src, dst in codevars.attributes.items():
-                if (value := getattr(self_obj, src, NO_OBJECT)) is not NO_OBJECT:
-                    type_set = obj_attrs[VariableName(src)]
-                    type_set.add(get_value_type(value))
-                    if dst: scope_vars[VariableName(dst)] = type_set
+            for attr in cast_not_None(codevars.attributes):
+                if (value := getattr(self_obj, attr, NO_OBJECT)) is not NO_OBJECT:
+                    obj_attrs[VariableName(attr)].add(get_value_type(value))
 
 
     def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:
@@ -325,6 +323,22 @@ class ObservationsRecorder:
                     except:
                         pass
 
+    def _assign_attributes_to_scopes(self) -> None:
+        for codevars in code2variables.values():
+            if codevars.self:
+                assert codevars.class_key is not None
+                assert codevars.attributes is not None
+                assert codevars.scope_code is not None
+
+                if (func_info := self._code2func_info.get(cast_not_None(codevars.scope_code))):
+                    scope_vars = func_info.variables
+                else:
+                    scope_vars = self._obs.module_variables[Filename(codevars.scope_code.co_filename)]
+
+                obj_attrs = self._object_attributes[codevars.class_key]
+                for attr in codevars.attributes:
+                    scope_vars[VariableName(f"{codevars.self}.{attr}")] = obj_attrs[VariableName(attr)]
+
 
     def finish_recording(self, main_globals: dict[str, Any]) -> Observations:
         # Any generators left?
@@ -332,6 +346,8 @@ class ObservationsRecorder:
             for tr in per_frame.values():
                 if tr.is_generator:
                     self._record_return_type(tr, code, None)
+
+        self._assign_attributes_to_scopes()
 
         obs, self._obs = self._obs, Observations()
         self._code2func_info.clear()

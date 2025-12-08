@@ -1,3 +1,4 @@
+import typing
 from typing import cast, Sequence, Iterator
 import collections.abc as abc
 from collections import defaultdict, Counter
@@ -10,6 +11,27 @@ from righttyper.options import output_options
 
 def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
     """Attempts to merge types in a set before forming their union."""
+
+    # When we encounter empty containers, we type them with "typing.Never" arguments, such
+    # as in "list[Never]" (leaving their types incomplete (e.g., "list") would be equivalent
+    # to typing "list[Any]").  So here, we delete any "never" generics if a non-"never" version
+    # is also in the set.  Leaving both in would yield errors, as "never" generics cannot
+    # contain anything, so we need to do this even if 'simplify_types' is false.
+    if (never_types := set(
+        t
+        for t in typeinfoset
+        if t.args
+        # we don't need this for immutable containers
+        and t.type_obj not in (tuple, abc.Sequence, abc.Set, abc.Mapping)
+        and isinstance(t.args[0], TypeInfo)
+        and t.args[0].type_obj is typing.Never
+    )):
+        typeinfoset -= never_types
+        typeinfoset |= set(
+            t
+            for t in never_types
+            if not any(t2.type_obj is t.type_obj for t2 in typeinfoset)
+        )
 
     if len(typeinfoset) > 1 and output_options.simplify_types:
         typeinfoset = simplify(typeinfoset)
