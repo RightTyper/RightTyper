@@ -10,7 +10,6 @@ from functools import cache
 import itertools
 from types import (
     CodeType,
-    FrameType,
     FunctionType,
     MethodType,
     GeneratorType,
@@ -25,6 +24,7 @@ import builtins
 import types
 from typing import Any, cast, get_type_hints, get_origin, get_args, TypeGuard
 import typing
+import gc
 
 from righttyper.random_dict import RandomDict
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
@@ -338,67 +338,20 @@ def src2module(src: str) -> ModuleType|None:
     )
 
 
-def find_function(
-    caller_frame: FrameType,
-    code: CodeType
-) -> abc.Callable|None:
+def find_function(code: CodeType) -> abc.Callable|None:
     """Attempts to map back from a code object to the function that uses it."""
 
-    parts = code.co_qualname.split('.')
-
-    def find_in(namespace: dict[str, Any]|MappingProxyType[str, Any], index: int=0) -> abc.Callable|None:
-        if index < len(parts):
-            name = parts[index]
-            if (
-                name.startswith("__")
-                and not name.endswith("__")
-                and index > 0
-                and parts[index-1] != '<locals>'
-            ):
-                name = f"_{parts[index-1]}{name}"   # private method/attribute
-
-            if obj := namespace.get(name):
-                if (
-                    # don't use isinstance(obj, Callable), as it relies on __class__, which may be overridden
-                    (hasattr(obj, "__call__") or type(obj) is classmethod)
-                    and (obj := unwrap(obj))
-                    and getattr(obj, "__code__", None) is code
-                ):
-                    return obj
-
-                if type(obj) is dict:
-                    return find_in(obj, index+1)
-                elif isinstance(obj, type):
-                    return find_in(obj.__dict__, index+1)
-
-        return None
-
-
-    if '<locals>' in parts:
-        # Python re-creates the function object dynamically with each invocation;
-        # look for it on the stack.
-        if caller_frame and caller_frame.f_back:
-            after_locals = len(parts) - parts[::-1].index('<locals>')
-            parts = parts[after_locals:]
-            return find_in(caller_frame.f_back.f_locals)
-
-    else:
-        # look for it in its module
-        if (m := src2module(code.co_filename)):
-            return find_in(m.__dict__)
+    for r in gc.get_referrers(code):
+        if getattr(r, "__code__", None) is code and callable(r):#isinstance(r, abc.Callable):
+#            (hasattr(obj, "__call__") or type(obj) is classmethod)
+            return r
 
     return None
 
 
-def _type_for_generator(
-    type_obj: type,
-    frame: FrameType,
-    code: CodeType,
-) -> TypeInfo:
-
+def _type_for_generator(type_obj: type, code: CodeType) -> TypeInfo:
     retval: TypeInfo|None = None
-    # FIXME: using find_function here prevents us from using annotations from <locals> functions
-    if not output_options.ignore_annotations and (f := find_function(frame, code)): # FIXME should be a run option
+    if not output_options.ignore_annotations and (f := find_function(code)): # FIXME should be a run option
         try:
             if (retval_hint := get_type_hints(f).get('return')):
                 retval = hint2type(retval_hint)
@@ -432,7 +385,6 @@ def _random_item[T](container: abc.Collection[T]) -> T:
 
 def _first_referent(value: Any) -> object|None:
     """Returns the first object 'value' refers to, if any."""
-    import gc
     ref = gc.get_referents(value)
     return ref[0] if len(ref) else None
 
@@ -641,9 +593,9 @@ _type2handler: dict[type, abc.Callable[[Any, int], TypeInfo|None]] = {
 
     FunctionType: lambda v, d: _type_for_callable(v),
     MethodType: lambda v, d: _type_for_callable(v),
-    GeneratorType: lambda v, d: _type_for_generator(abc.Generator, v.gi_frame, v.gi_code),
-    AsyncGeneratorType: lambda v, d: _type_for_generator(abc.AsyncGenerator, v.ag_frame, v.ag_code),
-    CoroutineType: lambda v, d: _type_for_generator(abc.Coroutine, v.cr_frame, v.cr_code)
+    GeneratorType: lambda v, d: _type_for_generator(abc.Generator, v.gi_code),
+    AsyncGeneratorType: lambda v, d: _type_for_generator(abc.AsyncGenerator, v.ag_code),
+    CoroutineType: lambda v, d: _type_for_generator(abc.Coroutine, v.cr_code)
 }
 
 

@@ -137,7 +137,7 @@ class ObservationsRecorder:
                 *((arg_info.keywords,) if arg_info.keywords else ())
             )
 
-            defaults = get_defaults(code, frame)
+            defaults = get_defaults(code)
 
             self._code2func_info[code] = func_info = FuncInfo(
                 CodeId.from_code(code),
@@ -455,8 +455,8 @@ def get_self_type(
     return None, None, None
 
 
-def get_defaults(code, frame) -> dict[str, TypeInfo]:
-    if (function := find_function(frame, code)):
+def get_defaults(code: CodeType) -> dict[str, TypeInfo]:
+    if (function := find_function(code)):
         return {
             param_name: get_value_type(param.default)
             for param_name, param in inspect.signature(function).parameters.items()
