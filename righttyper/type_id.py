@@ -341,6 +341,8 @@ def src2module(src: str) -> ModuleType|None:
 def find_function(code: CodeType) -> abc.Callable|None:
     """Attempts to map back from a code object to the function that uses it."""
 
+    # Note: if using gc here ever becomes a problem, we could enable the CALL sys.monitoring
+    # event and collect a code->function for functions called.
     for r in gc.get_referrers(code):
         if getattr(r, "__code__", None) is code and callable(r):
             return r
