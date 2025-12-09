@@ -37,7 +37,7 @@ struct State {
     py::object _restart_callable; // callable to (re)start events
     py::object _unwind_handler;
 
-    // Cached settings (read once from 'options' in configure)
+    // Cached settings (read once from 'run_options' in configure)
     double _target_overhead_threshold = 0.05; // proportion, e.g., 0.025 for 2.5%
     bool _save_profiling = false;
 
@@ -48,18 +48,18 @@ struct State {
 
 
     // Configures self-profiling
-    void configure(const py::object& options, const py::set& disabled_code, const py::function& restart_callable) {
-        if (options.is_none())
-            throw std::runtime_error("configure: 'options' must not be None.");
+    void configure(const py::object& run_options, const py::set& disabled_code, const py::function& restart_callable) {
+        if (run_options.is_none())
+            throw std::runtime_error("configure: 'run_options' must not be None.");
 
         try {
-            double target_percent = py::cast<double>(options.attr("target_overhead"));
+            double target_percent = py::cast<double>(run_options.attr("target_overhead"));
             _target_overhead_threshold = target_percent / 100.0;
         } catch (const py::error_already_set&) {
-            throw std::runtime_error("options.target_overhead must be a float (percent).");
+            throw std::runtime_error("run_options.target_overhead must be a float (percent).");
         }
 
-        _save_profiling = !(options.attr("save_profiling")).is_none();
+        _save_profiling = !(run_options.attr("save_profiling")).is_none();
 
         if (disabled_code.is_none())
             throw std::runtime_error("configure: 'disabled_code' must not be None.");
@@ -216,10 +216,10 @@ PYBIND11_MODULE(self_profiling, m) {
     m.doc() = "C++ extension for self-profiling instrumentation";
 
     m.def("configure",
-          [](py::object options, py::set disabled_code, py::function restart_callable) {
-              G.configure(options, disabled_code, restart_callable);
+          [](py::object run_options, py::set disabled_code, py::function restart_callable) {
+              G.configure(run_options, disabled_code, restart_callable);
           },
-          py::arg("options"),
+          py::arg("run_options"),
           py::arg("disabled_code"),
           py::arg("restart_callable")
     );

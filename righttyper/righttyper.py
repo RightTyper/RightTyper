@@ -34,10 +34,6 @@ from righttyper.righttyper_tool import (
     reset_monitoring
 )
 import righttyper.loader as loader
-from righttyper.righttyper_alarm import (
-    SignalAlarm,
-    ThreadAlarm,
-)
 from righttyper.righttyper_utils import should_skip_function, detected_test_modules
 from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_types import CodeId, Filename, FunctionName
@@ -826,7 +822,7 @@ def run(
     pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
     os.environ["PYTEST_PLUGINS"] = pytest_plugins
 
-    self_profiling.configure(options, disabled_code, sys.monitoring.restart_events)
+    self_profiling.configure(run_options, disabled_code, sys.monitoring.restart_events)
 
     # the unwind handler can't be disabled, so we do some pre-filtering in native code
     self_profiling.set_unwind_handler(unwind_handler)
