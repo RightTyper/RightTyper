@@ -719,8 +719,7 @@ def add_output_options(group=None):
 )
 @click.option(
     "--save-profiling",
-    type=str,
-    metavar="NAME",
+    is_flag=True,
     hidden=True,
     help=f"""Save record of self-profiling results in "{TOOL_NAME}-profiling.json", under the given name."""
 )
@@ -892,6 +891,12 @@ def run(
         end_time = time.perf_counter()
         logger.info(f"Finished in {end_time-start_time:.0f}s")
 
+        sp_history = self_profiling.get_history()
+        samples_instr = sum(sp_history['samples_instrumentation'])
+        samples_total = sum(sp_history['samples_total'])
+        frac = f"{samples_instr/samples_total:.3f}" if samples_total else ""
+        logger.info(f"Instrumentation: {samples_instr}/{samples_total} {frac}")
+
         if run_options.save_profiling:
             try:
                 with open(f"{TOOL_NAME}-profiling.json", "r") as pf:
@@ -900,12 +905,11 @@ def run(
                 data = []
 
             data.append({
-                    'name': run_options.save_profiling,
                     'command': subprocess.list2cmdline(sys.orig_argv),
                     'start_time': start_time,
                     'end_time': end_time,
                     'elapsed': end_time - start_time,
-                    **self_profiling.get_history()
+                    **sp_history
                 }
             )
 

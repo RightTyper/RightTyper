@@ -69,7 +69,7 @@ class RunOptions:
     test_modules: tuple[str, ...] = ('pytest', '_pytest', 'py.test', 'unittest')
     adjust_type_names: bool = True
     variables: bool = True
-    save_profiling: str|None = None
+    save_profiling: bool = False
     allow_runtime_exceptions: bool = False
 
 

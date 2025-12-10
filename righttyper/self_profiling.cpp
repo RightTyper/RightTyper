@@ -6,8 +6,8 @@
 #include <chrono>
 
 static constexpr double ALPHA = 0.4;        // for exponential smoothing
-static constexpr int PERIOD = 250;          // compute overhead every N samples
-static constexpr double TIMER_INTERVAL = 0.002;
+static constexpr int PERIOD = 500;          // compute overhead every N samples
+static constexpr double TIMER_INTERVAL = 0.001;
 
 namespace py = pybind11;
 
@@ -91,6 +91,16 @@ struct State {
     }
 
 
+    void save_and_reset_counters(bool restarted = false) {
+        _hist_samples_instr.push_back(_sample_count_instrumentation);
+        _hist_samples_total.push_back(_sample_count_total);
+        _hist_overhead.push_back(_overhead);
+        _hist_restarted.push_back(restarted);
+
+        _sample_count_instrumentation = _sample_count_total = 0;
+    }
+
+
     // Called regularly by timer thread to self-profile
     void self_profile() {
         if (!_configured) return;
@@ -117,14 +127,7 @@ struct State {
                 _restart_callable();
             }
 
-            if (_save_profiling) {
-                _hist_samples_instr.push_back(_sample_count_instrumentation);
-                _hist_samples_total.push_back(_sample_count_total);
-                _hist_overhead.push_back(_overhead);
-                _hist_restarted.push_back(restart);
-            }
-
-            _sample_count_instrumentation = _sample_count_total = 0;
+            save_and_reset_counters(restart);
         }
     }
 
@@ -162,6 +165,7 @@ struct State {
                 this->self_profile();
                 std::this_thread::sleep_for(tick);
             }
+            this->save_and_reset_counters();
         });
     }
 
