@@ -63,6 +63,8 @@ def is_instrumentation(f):
         try:
             instrumentation_counter.inc()
             return f(*args, **kwargs)
+        except KeyboardInterrupt:
+            raise
         except:
             logger.error("exception in instrumentation", exc_info=True)
             if run_options.allow_runtime_exceptions: raise
