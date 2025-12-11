@@ -10,7 +10,7 @@ static constexpr int PERIOD = 500;          // compute overhead every N samples
 static constexpr double TIMER_INTERVAL = 0.001;
 
 static const std::vector<float> MODEL = {
-    1.291130727685219, 4.177299218050203, -1.2553987325133402e-05
+    1.2850532814104125, 3.9667904371269294, -1.1454537705064482e-05
 };
 
 namespace py = pybind11;
@@ -19,7 +19,30 @@ static double exp_smooth(double value, double previous) {
     return (previous < 0.0) ? value : ALPHA * value + (1.0 - ALPHA) * previous;
 }
 
+class InstrGuard {
+    std::atomic<long long>& _counter;
+
+public:
+    InstrGuard(std::atomic<long long>& counter) : _counter(counter) {
+        _counter.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    ~InstrGuard() {
+        long long new_val = _counter.fetch_sub(1, std::memory_order_relaxed) - 1;
+        if (new_val < 0) {
+            // clamp to zero and warn
+            _counter.store(0, std::memory_order_relaxed);
+            PyErr_WarnEx(PyExc_RuntimeWarning,
+                         "exit_instrumentation() called when counter was already zero; clamping.", 1);
+        }
+    }
+};
+
 class __attribute__((visibility("hidden"))) State {
+    py::object sysmon() {
+        return py::module_::import("sys").attr("monitoring");
+    }
+
     // atomic counter: number of "active instrumentation" contexts
     std::atomic<long long> _instr_active_count{0};
 
@@ -38,13 +61,21 @@ class __attribute__((visibility("hidden"))) State {
     std::vector<bool>      _hist_restarted;
 
     // External dependencies provided by user code
-    py::object _disabled_code;    // set; we call .clear()
-    py::object _restart_callable; // callable to (re)start events
-    py::object _unwind_handler;
+    py::object _disabled_code = py::none(); // set; we call .clear()
+
+public:
+    enum Event {
+        START, YIELD, RETURN, UNWIND,
+        COUNT // dummy for length
+    };
+
+private:
+    py::object _handler[COUNT];
+    py::object _restart_events = sysmon().attr("restart_events");
+    py::object _sysmon_disable = sysmon().attr("DISABLE");
 
     // Cached settings (read once from 'run_options' in configure)
-    double _target_overhead_threshold = 0.05; // proportion, e.g., 0.025 for 2.5%
-    bool _save_profiling = false;
+    double _target_overhead_threshold = 1.05;
 
     // Background timer
     std::atomic<bool> _timer_running{false};
@@ -53,47 +84,25 @@ class __attribute__((visibility("hidden"))) State {
 
 
 public:
+    State() {
+        for (py::object& h: _handler)
+            h = py::none();
+    }
+
     // Configures self-profiling
-    void configure(const py::object& run_options, const py::set& disabled_code, const py::function& restart_callable) {
+    void configure(const py::object& run_options, const py::set& disabled_code) {
         if (run_options.is_none())
             throw std::runtime_error("configure: 'run_options' must not be None.");
 
         try {
             double target_percent = py::cast<double>(run_options.attr("target_overhead"));
-            _target_overhead_threshold = target_percent / 100.0;
+            _target_overhead_threshold = 1.0 + target_percent / 100.0;
         } catch (const py::error_already_set&) {
             throw std::runtime_error("run_options.target_overhead must be a float (percent).");
         }
 
-        _save_profiling = !(run_options.attr("save_profiling")).is_none();
-
-        if (disabled_code.is_none())
-            throw std::runtime_error("configure: 'disabled_code' must not be None.");
         _disabled_code = disabled_code;
-
-        if (restart_callable.is_none())
-            throw std::runtime_error("configure: 'restart_callable' must not be None.");
-        _restart_callable = restart_callable;
-
         _configured = true;
-    }
-
-
-    // Called to indicate entering self-instrumentation
-    void enter_instrumentation() {
-        _instr_active_count.fetch_add(1, std::memory_order_relaxed);
-    }
-
-
-    // Called to indicate exiting self-instrumentation
-    void exit_instrumentation() {
-        long long new_val = _instr_active_count.fetch_sub(1, std::memory_order_relaxed) - 1;
-        if (new_val < 0) {
-            // clamp to zero and warn
-            _instr_active_count.store(0, std::memory_order_relaxed);
-            PyErr_WarnEx(PyExc_RuntimeWarning,
-                         "exit_instrumentation() called when counter was already zero; clamping.", 1);
-        }
     }
 
 
@@ -138,7 +147,7 @@ public:
 
                 // TODO maybe combine these in a single callable
                 _disabled_code.attr("clear")();
-                _restart_callable();
+                _restart_events();
             }
         }
     }
@@ -197,26 +206,32 @@ public:
         }
     }
 
-    void set_unwind_handler(const py::function& unwind_handler) {
-        _unwind_handler = unwind_handler;
+    void set_handler(Event event, const py::function& handler) {
+        _handler[event] = handler;
     }
 
-    void unwind_handler(const py::object& code, int offset, const py::object& exception) {
-        // Since PY_UNWIND can't be disabled, we do some filtering for relevant events here.
-        if (_configured && !_unwind_handler.is_none()) {
+    py::object handler(Event event, py::args& args) {
+        InstrGuard g(_instr_active_count);
+
+        if (_configured && !_handler[event].is_none()) {
             py::set disabled = py::reinterpret_borrow<py::set>(_disabled_code);
-            uintptr_t id = reinterpret_cast<uintptr_t>(code.ptr());
-            if (!disabled.contains(id))
-                _unwind_handler(code, offset, exception);
-        }
-    }
+            if (disabled.contains(args[0]))
+                return event != UNWIND ? _sysmon_disable : py::none();
 
+            return _handler[event](*args);
+        }
+
+        return py::none();
+    }
 
     // Called from Python to clean up
     void cleanup() {
         _disabled_code = py::none();
-        _restart_callable = py::none();
-        _unwind_handler = py::none();
+
+        for (py::object& h: _handler)
+            h = py::none();
+
+        _restart_events = py::none();
         stop_timer(); // must be last: releases the GIL
     }
 
@@ -227,26 +242,18 @@ public:
     }
 };
 
-static State G;
-
 
 PYBIND11_MODULE(self_profiling, m) {
+    static State G;
+
     m.doc() = "C++ extension for self-profiling instrumentation";
 
     m.def("configure",
-          [](py::object run_options, py::set disabled_code, py::function restart_callable) {
-              G.configure(run_options, disabled_code, restart_callable);
+          [](py::object run_options, py::set disabled_code) {
+              G.configure(run_options, disabled_code);
           },
           py::arg("run_options"),
-          py::arg("disabled_code"),
-          py::arg("restart_callable")
-    );
-
-    m.def("enter_instrumentation", []() { G.enter_instrumentation(); },
-          "Called to indicate entering instrumentation."
-    );
-    m.def("exit_instrumentation", []() { G.exit_instrumentation(); },
-          "Called to indicate exiting instrumentation."
+          py::arg("disabled_code")
     );
 
     m.def("start", [](double interval_sec) { G.start_timer(interval_sec); },
@@ -259,13 +266,17 @@ PYBIND11_MODULE(self_profiling, m) {
 
     m.def("get_history", []() { return G.get_history(); }, "Returns self-profiling history.");
 
-    m.def("set_unwind_handler", [](py::function handler) { G.set_unwind_handler(handler); });
-    m.def("unwind_handler",
-          [](py::object code, int offset, py::object exception) -> py::object {
-              G.unwind_handler(code, offset, exception);
-              return py::none();
-          }
-    );
+    m.def("set_start_handler", [](py::function handler) { G.set_handler(G.START, handler); });
+    m.def("start_handler", [](py::args args) -> py::object {return G.handler(G.START, args);});
+
+    m.def("set_yield_handler", [](py::function handler) { G.set_handler(G.YIELD, handler); });
+    m.def("yield_handler", [](py::args args) -> py::object {return G.handler(G.YIELD, args);});
+
+    m.def("set_return_handler", [](py::function handler) { G.set_handler(G.RETURN, handler); });
+    m.def("return_handler", [](py::args args) -> py::object {return G.handler(G.RETURN, args);});
+
+    m.def("set_unwind_handler", [](py::function handler) { G.set_handler(G.UNWIND, handler); });
+    m.def("unwind_handler", [](py::args args) -> py::object {return G.handler(G.UNWIND, args);});
 
     // If we don't clean up our references to Python objects while Python is still alive,
     // we may get a SIGSEGV in ~State() as it tries to reclaim memory.

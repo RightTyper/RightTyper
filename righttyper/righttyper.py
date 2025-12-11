@@ -55,15 +55,12 @@ def is_instrumentation(f):
     """Decorator that marks a function as being instrumentation."""
     def wrapper(*args, **kwargs):
         try:
-            self_profiling.enter_instrumentation()
             return f(*args, **kwargs)
         except KeyboardInterrupt:
             raise
         except:
             logger.error("exception in instrumentation", exc_info=True)
             if run_options.allow_runtime_exceptions: raise
-        finally:
-            self_profiling.exit_instrumentation()
 
     return wrapper
 
@@ -104,9 +101,6 @@ def start_handler(code: CodeType, offset: int) -> Any:
     Process the function entry point, perform monitoring related operations,
     and manage the profiling of function execution.
     """
-    if code in disabled_code:
-        return sys.monitoring.DISABLE
-
     if should_skip_function(code):
         disabled_code.add(code)
         return sys.monitoring.DISABLE
@@ -136,9 +130,6 @@ def yield_handler(
     instruction_offset (int): position of the current instruction.
     yield_value (Any): return value of the function.
     """
-    if code in disabled_code:
-        return sys.monitoring.DISABLE
-
     frame = inspect.currentframe()
     while frame and frame.f_code is not code:
         frame = frame.f_back
@@ -164,9 +155,6 @@ def return_handler(
     instruction_offset (int): position of the current instruction.
     return_value (Any): return value of the function.
     """
-    if code in disabled_code:
-        return sys.monitoring.DISABLE
-
     frame = inspect.currentframe()
     while frame and frame.f_code is not code:
         frame = frame.f_back
@@ -195,10 +183,6 @@ def unwind_handler(
     instruction_offset: int,
     exception: BaseException,
 ) -> Any:
-    # Unnecessary because self_profiling.unwind_handler already does it
-    # if code in disabled_code:
-    #    return None # PY_UNWIND can't be disabled
-
     frame = inspect.currentframe()
     while frame and frame.f_code is not code:
         frame = frame.f_back
@@ -823,15 +807,17 @@ def run(
     pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
     os.environ["PYTEST_PLUGINS"] = pytest_plugins
 
-    self_profiling.configure(run_options, disabled_code, sys.monitoring.restart_events)
+    self_profiling.configure(run_options, disabled_code)
 
-    # the unwind handler can't be disabled, so we do some pre-filtering in native code
+    self_profiling.set_start_handler(start_handler)
+    self_profiling.set_yield_handler(yield_handler)
+    self_profiling.set_return_handler(return_handler)
     self_profiling.set_unwind_handler(unwind_handler)
 
     register_monitoring_callbacks(
-        start_handler,
-        return_handler,
-        yield_handler,
+        self_profiling.start_handler,
+        self_profiling.return_handler,
+        self_profiling.yield_handler,
         self_profiling.unwind_handler,
     )
 
