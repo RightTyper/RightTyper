@@ -9,24 +9,29 @@ static constexpr double ALPHA = 0.4;        // for exponential smoothing
 static constexpr int PERIOD = 500;          // compute overhead every N samples
 static constexpr double TIMER_INTERVAL = 0.001;
 
+static const std::vector<float> MODEL = {
+    1.291130727685219, 4.177299218050203, -1.2553987325133402e-05
+};
+
 namespace py = pybind11;
 
 static double exp_smooth(double value, double previous) {
     return (previous < 0.0) ? value : ALPHA * value + (1.0 - ALPHA) * previous;
 }
 
-struct State {
+class __attribute__((visibility("hidden"))) State {
     // atomic counter: number of "active instrumentation" contexts
     std::atomic<long long> _instr_active_count{0};
 
     // sampling window
-    long _sample_count_instrumentation = 0;
+    long _sample_count_instr = 0;
     long _sample_count_total = 0;
-    double _overhead = -1.0;  // sentinel value until first measured
 
     bool _configured = false;
 
     // Python lists to store history
+    long _prev_count_instr = 0;
+    long _prev_count_total = 0;
     std::vector<long long> _hist_samples_instr;
     std::vector<long long> _hist_samples_total;
     std::vector<double>    _hist_overhead;
@@ -47,6 +52,7 @@ struct State {
     double _interval_sec = TIMER_INTERVAL;
 
 
+public:
     // Configures self-profiling
     void configure(const py::object& run_options, const py::set& disabled_code, const py::function& restart_callable) {
         if (run_options.is_none())
@@ -91,13 +97,27 @@ struct State {
     }
 
 
-    void save_and_reset_counters(bool restarted = false) {
-        _hist_samples_instr.push_back(_sample_count_instrumentation);
-        _hist_samples_total.push_back(_sample_count_total);
-        _hist_overhead.push_back(_overhead);
-        _hist_restarted.push_back(restarted);
+    bool calculate_overhead() {
+        if (_sample_count_total) {
+            auto overhead = static_cast<double>(_sample_count_instr)
+                          / static_cast<double>(_sample_count_total);
+            overhead = MODEL[0] + MODEL[1]*overhead + MODEL[2]*_sample_count_total;
 
-        _sample_count_instrumentation = _sample_count_total = 0;
+//            _overhead = exp_smooth(period_overhead, _overhead);
+            const bool restart = (overhead <= _target_overhead_threshold);
+
+            // save history
+            _hist_samples_instr.push_back(_sample_count_instr - _prev_count_instr);
+            _prev_count_instr = _sample_count_instr;
+            _hist_samples_total.push_back(_sample_count_total - _prev_count_total);
+            _prev_count_total = _sample_count_total;
+            _hist_overhead.push_back(overhead);
+            _hist_restarted.push_back(restart);
+
+            return restart;
+        }
+
+        return false;
     }
 
 
@@ -105,46 +125,38 @@ struct State {
     void self_profile() {
         if (!_configured) return;
 
+        // sample instrumentation activity
         _sample_count_total += 1;
-
         if (_instr_active_count.load(std::memory_order_relaxed) > 0) {
-            _sample_count_instrumentation += 1;
+            _sample_count_instr += 1;
         }
 
         if ((_sample_count_total % PERIOD) == 0) {
-            const double this_period =
-                    static_cast<double>(_sample_count_instrumentation)
-                        / static_cast<double>(_sample_count_total);
-
-            _overhead = exp_smooth(this_period, _overhead);
-
-            const bool restart = (_overhead <= _target_overhead_threshold);
-            if (restart) {
+            bool should_restart = calculate_overhead();
+            if (should_restart) {
                 py::gil_scoped_acquire gil;  // ensure GIL for Python interactions
 
                 // TODO maybe combine these in a single callable
                 _disabled_code.attr("clear")();
                 _restart_callable();
             }
-
-            save_and_reset_counters(restart);
         }
     }
 
 
     // Returns collected self-profiling history, if any
     py::dict get_history() {
-        py::list a, b, c, d;
-        for (auto v : _hist_samples_instr)  a.append(v);
-        for (auto v : _hist_samples_total)  b.append(v);
-        for (auto v : _hist_overhead)       c.append(v);
-        for (auto v : _hist_restarted)      d.append(py::bool_(v));
-
         py::dict out;
-        out["samples_instrumentation"] = std::move(a);
-        out["samples_total"] = std::move(b);
-        out["overhead"] = std::move(c);
-        out["restarted"] = std::move(d);
+        out["samples_instrumentation"] = py::cast(_hist_samples_instr);
+        out["samples_total"] = py::cast(_hist_samples_total);
+        out["overhead"] = py::cast(_hist_overhead);
+        out["restarted"] =  [this]() {
+            py::list l;
+            for (bool b: _hist_restarted)
+                l.append(py::bool_(b));
+            return l;
+        }();
+        out["model"] = py::cast(MODEL);
         return out;
     }
 
@@ -165,7 +177,9 @@ struct State {
                 this->self_profile();
                 std::this_thread::sleep_for(tick);
             }
-            this->save_and_reset_counters();
+
+            // calculate a last time to save any partial period
+            this->calculate_overhead();
         });
     }
 
