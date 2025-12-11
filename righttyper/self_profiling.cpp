@@ -5,19 +5,19 @@
 #include <thread>
 #include <chrono>
 
-static constexpr double ALPHA = 0.4;        // for exponential smoothing
-static constexpr int PERIOD = 500;          // compute overhead every N samples
-static constexpr double TIMER_INTERVAL = 0.001;
+static constexpr double ALPHA = 0.4;            // for exponential smoothing
+static constexpr int PERIOD = 500;              // compute overhead every N samples
+static constexpr double TIMER_INTERVAL = 0.001; // seconds
 
 static const std::vector<float> MODEL = {
     1.2850532814104125, 3.9667904371269294, -1.1454537705064482e-05
 };
 
-namespace py = pybind11;
-
 static double exp_smooth(double value, double previous) {
     return (previous < 0.0) ? value : ALPHA * value + (1.0 - ALPHA) * previous;
 }
+
+namespace py = pybind11;
 
 class InstrGuard {
     std::atomic<long long>& _counter;
@@ -171,8 +171,7 @@ public:
 
 
     // Starts the timer thread
-    void start_timer(double interval) {
-        _interval_sec = interval > 0 ? interval : TIMER_INTERVAL;
+    void start_timer() {
         if (_timer_running.exchange(true, std::memory_order_acq_rel)) {
             return;  // already running
         }
@@ -181,7 +180,7 @@ public:
         // we need a mutex around _timer_thread
         _timer_thread = std::thread([this]() {
             using namespace std::chrono;
-            const auto tick = duration<double>(_interval_sec);
+            const auto tick = duration<double>(TIMER_INTERVAL);
             while (_timer_running.load(std::memory_order_acquire)) {
                 this->self_profile();
                 std::this_thread::sleep_for(tick);
@@ -256,8 +255,7 @@ PYBIND11_MODULE(self_profiling, m) {
           py::arg("disabled_code")
     );
 
-    m.def("start", [](double interval_sec) { G.start_timer(interval_sec); },
-          py::arg("interval_sec") = TIMER_INTERVAL,
+    m.def("start", []() { G.start_timer(); },
           "Starts self-profiling."
     );
     m.def("stop", []() { G.stop_timer(); },
