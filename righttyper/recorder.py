@@ -104,10 +104,17 @@ class ObservationsRecorder:
         self._obs = Observations()
 
 
-    def trace_count(self, code: CodeType) -> int:
+    def needs_more_traces(self, code: CodeType) -> bool:
         if (func_info := self._code2func_info.get(code)):
-            return func_info.traces.total()
-        return 0
+            traces = func_info.traces
+            if (n := traces.total()) < 5:
+                return True
+
+            _, top = next(traces.most_common())
+            if top/n >= .95 or (sum(c == 1 for c in traces.values()) / n) <= .10:
+                return False
+
+        return True
 
 
     def record_module(

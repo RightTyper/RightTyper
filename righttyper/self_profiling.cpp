@@ -19,7 +19,7 @@ class __attribute__((visibility("hidden"))) State {
     // Python lists to store history
     std::vector<long> _hist_instr;
     std::vector<long> _hist_instr_python;
-    std::vector<bool>      _hist_restarted;
+    std::vector<bool> _hist_restarted;
 
     // Sets of disabled code objects
     py::object _disabled = py::set();
@@ -67,7 +67,10 @@ public:
         auto instr_count = _instr_count.exchange(0, std::memory_order_relaxed);
         auto instr_python_count = _instr_python_count.exchange(0, std::memory_order_relaxed);
 
-        bool restart = instr_python_count < _reenable_max_calls;
+        bool restart = (
+            instr_python_count < _reenable_max_calls
+            && py::len(_disabled) > py::len(_permanently_disabled) // anything disabled since the last restart?
+        );
 
         _hist_instr.push_back(instr_count);
         _hist_instr_python.push_back(instr_python_count);

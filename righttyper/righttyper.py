@@ -165,7 +165,7 @@ def return_handler(
     if (
         found
         and run_options.sampling
-        and rec.trace_count(code) >= 5
+        and rec.needs_more_traces(code)
         and not (
             (no_sampling_for := run_options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
@@ -194,7 +194,7 @@ def unwind_handler(
     if (
         found
         and run_options.sampling
-        and rec.trace_count(code) >= 5
+        and rec.needs_more_traces(code)
         and not (
             (no_sampling_for := run_options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
