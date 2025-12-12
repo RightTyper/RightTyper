@@ -102,7 +102,7 @@ def start_handler(code: CodeType, offset: int) -> Any:
     and manage the profiling of function execution.
     """
     if should_skip_function(code):
-        disabled_code.add(code)
+        self_profiling.permanently_disable(code)
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -165,12 +165,13 @@ def return_handler(
     if (
         found
         and run_options.sampling
+        and rec.trace_count(code) >= 5
         and not (
             (no_sampling_for := run_options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
         )
     ):
-        disabled_code.add(code)
+        self_profiling.disable(code)
         rec.clear_pending(code)
         return sys.monitoring.DISABLE
 
@@ -193,18 +194,17 @@ def unwind_handler(
     if (
         found
         and run_options.sampling
+        and rec.trace_count(code) >= 5
         and not (
             (no_sampling_for := run_options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
         )
     ):
-        disabled_code.add(code)
+        self_profiling.disable(code)
         rec.clear_pending(code)
 
     return None # PY_UNWIND can't be disabled
 
-
-disabled_code: set[CodeType] = set()
 
 main_globals: dict[str, Any]|None = None
 
@@ -671,6 +671,18 @@ def add_output_options(group=None):
     help="Process only files under the given directory.  If omitted, the script's directory (or, for -m, the current directory) is used.",
 )
 @click.option(
+    "--reenable-interval",
+    type=float,
+    default=run_options.reenable_interval,
+    help="Interval at which to check whether to re-enable previously disabled instrumentation.",
+)
+@click.option(
+    "--reenable-max-calls",
+    type=int,
+    default=run_options.reenable_max_calls,
+    help="Reenable previuosly disabled instrumentation if fewer than this number of instrumented calls are observed in an interval.",
+)
+@click.option(
     "--target-overhead",
     type=float,
     default=run_options.target_overhead,
@@ -807,7 +819,7 @@ def run(
     pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
     os.environ["PYTEST_PLUGINS"] = pytest_plugins
 
-    self_profiling.configure(run_options, disabled_code)
+    self_profiling.configure(run_options)
 
     self_profiling.set_start_handler(start_handler)
     self_profiling.set_yield_handler(yield_handler)
@@ -879,12 +891,6 @@ def run(
         end_time = time.perf_counter()
         logger.info(f"Finished in {end_time-start_time:.0f}s")
 
-        sp_history = self_profiling.get_history()
-        samples_instr = sum(sp_history['samples_instrumentation'])
-        samples_total = sum(sp_history['samples_total'])
-        frac = f"{samples_instr/samples_total:.3f}" if samples_total else ""
-        logger.info(f"Instrumentation: {samples_instr}/{samples_total} {frac}")
-
         if run_options.save_profiling:
             try:
                 with open(f"{TOOL_NAME}-profiling.json", "r") as pf:
@@ -897,7 +903,7 @@ def run(
                     'start_time': start_time,
                     'end_time': end_time,
                     'elapsed': end_time - start_time,
-                    **sp_history
+                    **self_profiling.get_history()
                 }
             )
 

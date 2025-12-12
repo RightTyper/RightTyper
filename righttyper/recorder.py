@@ -104,6 +104,12 @@ class ObservationsRecorder:
         self._obs = Observations()
 
 
+    def trace_count(self, code: CodeType) -> int:
+        if (func_info := self._code2func_info.get(code)):
+            return func_info.traces.total()
+        return 0
+
+
     def record_module(
         self,
         code: CodeType,
