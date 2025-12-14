@@ -778,7 +778,7 @@ def add_output_options(group=None):
 )
 @click.option(
     "--save-profiling",
-    type=str,
+    is_flag=True,
     metavar="NAME",
     hidden=True,
     help=f"""Save record of self-profiling results in "{TOOL_NAME}-profiling.json", under the given name."""
@@ -957,7 +957,6 @@ def run(
                 data = []
 
             data.append({
-                    'name': run_options.save_profiling,
                     'command': subprocess.list2cmdline(sys.orig_argv),
                     'start_time': start_time,
                     'end_time': end_time,
