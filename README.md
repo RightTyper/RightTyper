@@ -128,8 +128,14 @@ Options:
                                   directory.  If omitted, the script's
                                   directory (or, for -m, the current
                                   directory) is used.
-  --target-overhead FLOAT         Target overhead, as a percentage (e.g., 5).
-                                  [default: 5.0]
+  --restart-interval FLOAT RANGE  Interval (in seconds) at which previously
+                                  stopped instrumentation may be restarted.
+                                  [default: 0.5; x>=0.1]
+  --restart-max-instr INTEGER RANGE
+                                  Max. number of instrumentation events per
+                                  interval. If above this number, previously
+                                  stopped instrumentation isn't restarted.
+                                  [default: 0; x>=0]
   --sampling / --no-sampling      Whether to sample calls or to use every one.
                                   [default: sampling]
   --no-sampling-for REGEX         Rather than sample, record every invocation

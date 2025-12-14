@@ -68,8 +68,6 @@ def is_instrumentation(f):
         except:
             logger.error("exception in instrumentation", exc_info=True)
             if run_options.allow_runtime_exceptions: raise
-        finally:
-            instrumentation_counter.dec()
 
     return wrapper
 
@@ -110,11 +108,11 @@ def start_handler(code: CodeType, offset: int) -> Any:
     Process the function entry point, perform monitoring related operations,
     and manage the profiling of function execution.
     """
-    if code in disabled_code:
+    if code in unwanted_code or code in disabled_code:
         return sys.monitoring.DISABLE
 
     if should_skip_function(code):
-        disabled_code.add(code)
+        unwanted_code.add(code)
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -142,7 +140,7 @@ def yield_handler(
     instruction_offset (int): position of the current instruction.
     yield_value (Any): return value of the function.
     """
-    if code in disabled_code:
+    if code in unwanted_code or code in disabled_code:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -170,7 +168,7 @@ def return_handler(
     instruction_offset (int): position of the current instruction.
     return_value (Any): return value of the function.
     """
-    if code in disabled_code:
+    if code in unwanted_code or code in disabled_code:
         return sys.monitoring.DISABLE
 
     frame = inspect.currentframe()
@@ -201,8 +199,7 @@ def unwind_handler(
     instruction_offset: int,
     exception: BaseException,
 ) -> Any:
-
-    if code in disabled_code:
+    if code in unwanted_code or code in disabled_code:
         return None # PY_UNWIND can't be disabled
 
     frame = inspect.currentframe()
@@ -226,51 +223,22 @@ def unwind_handler(
     return None # PY_UNWIND can't be disabled
 
 
-sample_count_instrumentation = 0
-sample_count_total = 0
-overhead: float|None = None
-samples_instrumentation = []
-samples_total = []
-instrumentation_overhead = []
-instrumentation_restarted = []
+unwanted_code: set[CodeType] = set()
 disabled_code: set[CodeType] = set()
-
-def exp_smooth(value: float, previous: float|None) -> float:
-    """Exponentially smooths a value."""
-    if previous is None: return value
-
-    alpha = 0.4
-    return alpha * value + (1-alpha) * previous
-
+hist_instrumentation = []
+hist_restarted = []
 
 def self_profile() -> None:
     """
     Measures the instrumentation overhead, restarting event delivery
     if it lies below the target overhead.
     """
-    global sample_count_instrumentation, sample_count_total, overhead
-    sample_count_total += 1
-    if instrumentation_counter.count() > 0:
-        sample_count_instrumentation += 1
+    current = instrumentation_counter.count_and_clear()
+    restart = bool(current <= run_options.restart_max_instr and disabled_code)
 
-    # Only calculate overhead every so often, so as to allow the currently
-    # enabled events to be triggered.  Doing it every time makes it jumpy
-    if (sample_count_total % 50) == 0:
-        interval = float(sample_count_instrumentation) / sample_count_total
-        overhead = exp_smooth(interval, overhead)
-
-        if (restart := (overhead <= run_options.target_overhead / 100.0)):
-            # Instrumentation overhead is low enough: restart instrumentation.
-            disabled_code.clear()
-            sys.monitoring.restart_events()
-
-        if run_options.save_profiling is not None:
-            samples_instrumentation.append(sample_count_instrumentation)
-            samples_total.append(sample_count_total)
-            instrumentation_overhead.append(overhead)
-            instrumentation_restarted.append(restart)
-
-        sample_count_instrumentation = sample_count_total = 0
+    if run_options.save_profiling:
+        hist_instrumentation.append(current)
+        hist_restarted.append(restart)
 
 
 main_globals: dict[str, Any]|None = None
@@ -738,10 +706,16 @@ def add_output_options(group=None):
     help="Process only files under the given directory.  If omitted, the script's directory (or, for -m, the current directory) is used.",
 )
 @click.option(
-    "--target-overhead",
-    type=float,
-    default=run_options.target_overhead,
-    help="Target overhead, as a percentage (e.g., 5).",
+    "--restart-interval",
+    type=click.FloatRange(.1, None),
+    default=run_options.restart_interval,
+    help="Interval (in seconds) at which previously stopped instrumentation may be restarted.",
+)
+@click.option(
+    "--restart-max-instr",
+    type=click.IntRange(0, None),
+    default=run_options.restart_max_instr,
+    help="Max. number of instrumentation events per interval. If above this number, previously stopped instrumentation isn't restarted.",
 )
 @click.option(
     "--sampling/--no-sampling",
@@ -779,7 +753,6 @@ def add_output_options(group=None):
 @click.option(
     "--save-profiling",
     is_flag=True,
-    metavar="NAME",
     hidden=True,
     help=f"""Save record of self-profiling results in "{TOOL_NAME}-profiling.json", under the given name."""
 )
@@ -879,7 +852,7 @@ def run(
             sys.exit(1)
 
     alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
-    alarm = alarm_cls(self_profile, 0.01)
+    alarm = alarm_cls(self_profile, run_options.restart_interval)
 
     pytest_plugins = os.environ.get("PYTEST_PLUGINS")
     pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
@@ -961,10 +934,8 @@ def run(
                     'start_time': start_time,
                     'end_time': end_time,
                     'elapsed': end_time - start_time,
-                    'overhead': instrumentation_overhead,
-                    'restarted': instrumentation_restarted,
-                    'samples_instrumentation': samples_instrumentation,
-                    'samples_total': samples_total,
+                    'instrumentation': hist_instrumentation,
+                    'restarted': hist_restarted,
                 }
             )
 

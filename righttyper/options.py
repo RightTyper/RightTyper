@@ -59,7 +59,8 @@ class RunOptions:
     exclude_files: tuple[str, ...] = ()
     exclude_test_files: bool = True
     include_functions: tuple[str, ...] = ()
-    target_overhead: float = 5.0
+    restart_interval: float = .5
+    restart_max_instr: int = 0
     infer_shapes: bool = False
     sampling: bool = True
     no_sampling_for: tuple[str, ...] = ()
