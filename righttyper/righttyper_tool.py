@@ -22,8 +22,8 @@ TOOL_ID: int = _setup_tool_id(3)
 _EVENTS = frozenset(
     {
         sys.monitoring.events.PY_START,
-        sys.monitoring.events.PY_RETURN,
         sys.monitoring.events.PY_YIELD,
+        sys.monitoring.events.PY_RETURN,
         sys.monitoring.events.PY_UNWIND,
     }
 )
@@ -32,15 +32,14 @@ EVENT_BITSET = functools.reduce(int.__or__, _EVENTS, 0)
 
 def register_monitoring_callbacks(
     start_handler: Callable[[CodeType, int], Any],
-    return_handler: Callable[[CodeType, int, Any], object],
     yield_handler: Callable[[CodeType, int, Any], object],
+    return_handler: Callable[[CodeType, int, Any], object],
     unwind_handler: Callable[[CodeType, int, BaseException], Any],
 ) -> None:
-    """Set up tracking for all enters, exits, yields, and calls."""
     fns: dict[Any, Callable[..., Any]] = {
         sys.monitoring.events.PY_START: start_handler,
-        sys.monitoring.events.PY_RETURN: return_handler,
         sys.monitoring.events.PY_YIELD: yield_handler,
+        sys.monitoring.events.PY_RETURN: return_handler,
         sys.monitoring.events.PY_UNWIND: unwind_handler,
     }
 

@@ -887,8 +887,8 @@ def run(
 
     register_monitoring_callbacks(
         start_handler,
-        return_handler,
         yield_handler,
+        return_handler,
         unwind_handler,
     )
     sys.monitoring.restart_events()
