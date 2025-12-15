@@ -44,7 +44,6 @@ def set_test_files_and_modules(files: set[str], modules: set[str]) -> None:
     # Clear caches, as these functions' results may now change
     is_test_module.cache_clear()
     skip_this_file.cache_clear()
-    should_skip_function.cache_clear()
 
 
 @cache
@@ -58,11 +57,7 @@ def is_test_module(m: str) -> bool:
     )
 
 
-@cache
-def should_skip_function(code: CodeType) -> bool:
-    if skip_this_file(code.co_filename):
-        return True
-
+def skip_this_code(code: CodeType) -> bool:
     if (
         (include_functions := run_options.include_functions_re)
         and not include_functions.search(code.co_name)

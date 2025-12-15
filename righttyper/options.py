@@ -61,6 +61,7 @@ class RunOptions:
     include_functions: tuple[str, ...] = ()
     restart_interval: float = .5
     restart_max_instr: int = 0
+    trace_type_threshold: float = .1
     infer_shapes: bool = False
     sampling: bool = True
     no_sampling_for: tuple[str, ...] = ()

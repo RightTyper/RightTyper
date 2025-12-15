@@ -104,6 +104,21 @@ class ObservationsRecorder:
         self._obs = Observations()
 
 
+    def needs_more_traces(self, code: CodeType) -> bool:
+        if (func_info := self._code2func_info.get(code)):
+            traces = func_info.traces
+
+            # Require a minimum number of traces to help stabilize the estimate
+            # Note that because we resample types upon return, we've only seen n/2 calls
+            if (n := traces.total())/2 < 5:
+                return True
+
+            if (sum(c == 1 for c in traces.values()) / (n/2)) <= run_options.trace_type_threshold:
+                return False
+
+        return True
+
+
     def record_module(
         self,
         code: CodeType,

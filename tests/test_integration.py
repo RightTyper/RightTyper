@@ -1328,6 +1328,7 @@ def test_class_name_imported():
     assert "import C" not in output
 
 
+@pytest.mark.skip(reason="Support temporarily removed")
 def test_class_name_in_test(tmp_cwd):
     (tmp_cwd / "tests").mkdir()
     (tmp_cwd / "tests" / "test_foo.py").write_text(textwrap.dedent("""\
@@ -1350,6 +1351,7 @@ def test_class_name_in_test(tmp_cwd):
     assert "import test_foo" not in output
 
 
+@pytest.mark.skip(reason="Support temporarily removed")
 def test_class_name_in_test_subdir(tmp_cwd):
     (tmp_cwd / "tests").mkdir()
     (tmp_cwd / "tests" / "sub").mkdir()

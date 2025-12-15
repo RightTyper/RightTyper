@@ -11,7 +11,8 @@ import typing
 
 from righttyper.ast_instrument import instrument
 from righttyper.variable_capture import code2variables, map_variables
-from righttyper.righttyper_utils import skip_this_file
+from righttyper.righttyper_utils import skip_this_file, skip_this_code
+from righttyper.righttyper_tool import setup_monitoring_for_code
 
 
 class RightTyperLoader(ExecutionLoader):
@@ -44,6 +45,8 @@ class RightTyperLoader(ExecutionLoader):
         tree = instrument(tree, replace_dict=self.replace_dict)
         code = compile(tree, str(self.path), "exec")
         code2variables.update(map_variables(tree, code))
+        if not skip_this_code(code):
+            setup_monitoring_for_code(code)
         return code
 
     def create_module(self, spec):
@@ -52,7 +55,7 @@ class RightTyperLoader(ExecutionLoader):
         return None
 
     def exec_module(self, module):
-        exec(self.get_code(''), module.__dict__)
+        exec(self.get_code(self.fullname), module.__dict__)
 
 
 class RightTyperMetaPathFinder(MetaPathFinder):
