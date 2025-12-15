@@ -93,7 +93,7 @@ number of levels to include in type.
 For example, with `--type-depth-limit=1`, a type inferred as `list[tuple[tuple[int, int]]]` would be emitted as `list[tuple]` instead.
 
 ### Option overview
-Below is the full list of options for the run command:
+Below is the full list of options:
 
 ```
 Usage: python -m righttyper [OPTIONS] COMMAND [ARGS]...
@@ -208,7 +208,7 @@ Options:
                                   Python version for which to emit
                                   annotations.  [default: 3.12]
     --use-top-pct PCT             Only use the PCT% most common call traces.
-                                  [default: 80; 1<=x<=100]
+                                  [default: 100; 1<=x<=100]
     --use-typing-never / --no-use-typing-never
                                   Whether to emit "typing.Never".  [default:
                                   use-typing-never]

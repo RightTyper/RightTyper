@@ -21,7 +21,7 @@ class OutputOptions:
     use_typing_self: bool = False
     use_typing_never: bool = False
     inline_generics: bool = False
-    use_top_pct: int = 80
+    use_top_pct: int = 100
     simplify_types: bool = True
     exclude_test_types: bool = True
     always_quote_annotations: bool = False
