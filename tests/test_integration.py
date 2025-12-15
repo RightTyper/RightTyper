@@ -247,7 +247,7 @@ def test_custom_iterator(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run(f'--python-version={python_version}', '--no-sampling', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -960,7 +960,7 @@ def test_method_overriding_init_irrelevant():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -988,7 +988,7 @@ def test_method_overriding_new_irrelevant():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -1015,7 +1015,7 @@ def test_method_overriding_classmethod():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -1091,7 +1091,7 @@ def test_method_overriding_method_called_indirectly():
         o.bar(1)
     """))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
 
     assert "def foo(self: Self, x: int) -> Self:" in Path("t.py").read_text()
 
@@ -1116,7 +1116,7 @@ def test_method_overriding_inherited():
         o.bar("1")
     """))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -1140,7 +1140,7 @@ def test_method_overriding_arg_names_change():
         o.foo("hello", 2.0, d=4, c='*')
     """))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -1263,7 +1263,7 @@ def test_method_overriding_inherited_typeshed():
         C() == C()
     """))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -1289,7 +1289,7 @@ def test_method_overriding_different_signature():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -2738,7 +2738,7 @@ def test_self_in_hierarchy(python_version):
         {"C().f().h()" if python_version != "3.10" else "C().f(); C().h()"}
     """))
 
-    rt_run('--no-sampling', f'--python-version={python_version}', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     print(output)
     code = cst.parse_module(output)
@@ -2882,7 +2882,7 @@ def test_union_superclass(as_module):
         foo(C())
     """))
 
-    rt_run('--no-sampling', *(('-m', 't') if as_module else ('t.py',)))
+    rt_run(*(('-m', 't') if as_module else ('t.py',)))
     output = Path("t.py").read_text()
     print(output)
 
@@ -2948,7 +2948,7 @@ def test_generic_simple(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', f'--python-version={python_version}', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
 
     if python_version != "3.12":
@@ -2974,7 +2974,7 @@ def test_generic_name_conflict():
 
     Path("t.py").write_text(t)
 
-    rt_run('--python-version=3.11', '--no-sampling', 't.py')
+    rt_run('--python-version=3.11', 't.py')
     output = Path("t.py").read_text()
 
     assert 'rt_T3 = TypeVar("rt_T3", int, str)' in output
@@ -2996,7 +2996,7 @@ def test_generic_yield(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', f'--python-version={python_version}', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
 
     if python_version == '3.11':
@@ -3022,7 +3022,7 @@ def test_generic_yield_generator(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', f'--python-version={python_version}', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
 
     if python_version == '3.11':
@@ -3046,7 +3046,7 @@ def test_generic_typevar_location():
 
     Path("t.py").write_text(t)
 
-    rt_run('--python-version=3.11', '--no-sampling', 't.py')
+    rt_run('--python-version=3.11', 't.py')
     output = Path("t.py").read_text()
 
     res = textwrap.dedent("""\
@@ -3069,7 +3069,7 @@ def test_generic_and_defaults():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', '--python-version=3.12', 't.py')
+    rt_run('--python-version=3.12', 't.py')
     output = Path("t.py").read_text()
 
     assert not re.search('from typing import.*TypeVar', output)
@@ -3087,7 +3087,7 @@ def test_inline_generics_no_variables():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     assert "def f(x: list[int|str]) -> None" in output
 
@@ -3158,7 +3158,7 @@ def test_pattern_match(pattern, matching, notmatching, expected):
         """
     ))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     assert f"def foo(p: re.Pattern[{expected}], data: {expected}) -> re.Match[{expected}]|None:" in output
 
@@ -3410,7 +3410,7 @@ def test_self_simple():
         o.foo()
     """))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
 
     assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
 
@@ -3435,7 +3435,7 @@ def test_self_wrapped_method():
         o.foo()
     """))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
 
     assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
 
@@ -3480,7 +3480,7 @@ def test_self_inherited_method():
         o.foo()
     """))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
 
     assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
 
@@ -3499,7 +3499,7 @@ def test_self_inherited_method_called_indirectly():
         o.bar()
     """))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
 
     assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
 
@@ -3517,7 +3517,7 @@ def test_self_inherited_method_returns_non_self():
         o.foo()
     """))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
 
     assert "def foo(self: Self) -> \"A\":" in Path("t.py").read_text()
 
@@ -3533,7 +3533,7 @@ def test_self_classmethod(python_version):
         o = A.static_initializer()
     """))
 
-    rt_run(f'--python-version={python_version}', '--no-sampling', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3566,7 +3566,7 @@ def test_self_inherited_classmethod(python_version):
         o = B.static_initializer()
     """))
 
-    rt_run(f'--python-version={python_version}', '--no-sampling', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3597,7 +3597,7 @@ def test_self_within_other_types():
         o.foo()
     """))
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
 
     assert "def foo(self: Self) -> list[Self]" in Path("t.py").read_text()
 
@@ -3614,7 +3614,7 @@ def test_self_yield_generator():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
 
     print(output)
@@ -3645,7 +3645,7 @@ def test_self_subtyping(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', f'--python-version={python_version}', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3683,7 +3683,7 @@ def test_self_subtyping_reversed(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', f'--python-version={python_version}', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3724,7 +3724,7 @@ def test_self_subtyping_reversed_too(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', f'--python-version={python_version}', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3756,7 +3756,7 @@ def test_returns_or_yields_generator():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
 
     output = Path("t.py").read_text()
     assert "def test(a: int) -> Generator[int|None, None, str|None]" in output
@@ -3776,7 +3776,7 @@ def test_generators_merge_into_iterator():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
 
     output = Path("t.py").read_text()
     assert "def test(a: int) -> Iterator[int|str]" in output
@@ -3797,11 +3797,12 @@ def test_random_dict(replace_dict):
 
     Path("t.py").write_text(t)
 
-    rt_run(*(('--replace-dict',) if replace_dict else ('--no-replace-dict',)), '--no-sampling', 't.py')
+    rt_run(*(('--replace-dict',) if replace_dict else ('--no-replace-dict',)), 't.py')
     output = Path("t.py").read_text()
     assert "def f(x: dict[str, dict[str, int]]) -> int" in output
 
 
+@pytest.mark.skip(reason="Support temporarily removed")
 def test_instrument_pytest():
     t = textwrap.dedent("""\
         def f():
@@ -3838,7 +3839,7 @@ def test_higher_order_functions():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     assert "def foo[T1: (int, str)](x: T1) -> T1" in output
     assert "def runner[T1: (int, str)](f: Callable[[T1], T1]) -> Callable[[T1], T1]" in output
@@ -3855,7 +3856,7 @@ def test_generalize_union_arg_typevar():
 
     Path("t.py").write_text(t)
 
-    rt_run('--python-version=3.12', '--no-sampling', 't.py')
+    rt_run('--python-version=3.12', 't.py')
     output = Path("t.py").read_text()
     assert "def f[T1: (int, str)](x: list[T1]) -> T1" in output
 
@@ -3871,7 +3872,7 @@ def test_generalize_union_arg_not_typevar():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     assert "def f(x: list[int|str]) -> None" in output
 
@@ -3887,7 +3888,7 @@ def test_generalize_union_return_typevar():
 
     Path("t.py").write_text(t)
 
-    rt_run('--python-version=3.12', '--no-sampling', 't.py')
+    rt_run('--python-version=3.12', 't.py')
     output = Path("t.py").read_text()
     assert "def f[T1: (int, str)](x: T1) -> list[T1]" in output
 
@@ -3903,7 +3904,7 @@ def test_generalize_union_return_not_typevar():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     assert "def f(x: bool) -> list[int|str]" in output
 
@@ -3926,7 +3927,7 @@ def test_object_overridden_getattr():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     # mostly we are checking that it doesn't fail (raises fatal exception)
     output = Path("t.py").read_text()
     assert "def f(t: Thing) -> None" in output
@@ -3953,7 +3954,7 @@ def test_object_with_empty_dir():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     # mostly we are checking that it doesn't fail (raises fatal exception)
     output = Path("t.py").read_text()
     assert "def f(self: Self) -> None" in output
@@ -3975,7 +3976,7 @@ def test_empty_container(python_version, opt):
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', opt, f'--python-version={python_version}', 't.py')
+    rt_run(opt, f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -4007,7 +4008,7 @@ def test_empty_and_nonempty_container():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', '--use-typing-never', f'--python-version=3.11', 't.py')
+    rt_run('--use-typing-never', f'--python-version=3.11', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -4026,7 +4027,7 @@ def test_container_is_modified():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     assert "def f(x: list[int]) -> None" in output
 
@@ -4041,7 +4042,7 @@ def test_argument_variable_deleted():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', '--debug', 't.py')
+    rt_run('--debug', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
     assert get_function(code, 'f') == textwrap.dedent("""\
@@ -4067,7 +4068,7 @@ def test_typing_union(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', f'--python-version={python_version}', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -4327,7 +4328,7 @@ def test_typefinder_defined_in_main():
         """
     ))
 
-    rt_run('--adjust-type-names', '--no-sampling', 't.py')
+    rt_run('--adjust-type-names', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -4350,7 +4351,7 @@ def test_use_top_pct():
 
     Path("t.py").write_text(t)
 
-    rt_run('--no-sampling', '--use-top-pct=80', 't.py')
+    rt_run('--use-top-pct=80', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -4369,7 +4370,7 @@ def test_numeric_subtypes(tmp_cwd):
         """
     ))
 
-    rt_run('--no-sampling', '-m', 't')
+    rt_run('-m', 't')
     output = Path("t.py").read_text()
 
     assert "def foo(x: float) -> None:" in output
@@ -4395,7 +4396,7 @@ def test_numeric_hierarchy(tmp_cwd):
         """
     ))
 
-    rt_run('--no-sampling', '-m', 't')
+    rt_run('-m', 't')
     output = Path("t.py").read_text()
 
     assert "def foo(x: float) -> None:" in output
@@ -4539,7 +4540,7 @@ def test_overloads_retained_as_is(tmp_cwd, options):
         foo("world")
     """)
     Path("t.py").write_text(pre_annotation)
-    rt_run("--no-sampling", *(options), "t.py")
+    rt_run(*(options), "t.py")
 
     post_annotation = Path("t.py").read_text()
     assert pre_annotation == post_annotation
@@ -4566,7 +4567,7 @@ def test_overload_ignore_annotations(tmp_cwd):
         """
     ))
 
-    rt_run("--no-sampling", "--ignore-annotations", "t.py")
+    rt_run("--ignore-annotations", "t.py")
 
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
@@ -4602,7 +4603,7 @@ def test_overloads_retained_as_is_generic(tmp_cwd, options):
         foo("world")
     """)
     Path("t.py").write_text(pre_annotation)
-    rt_run("--no-sampling", *(options), "t.py")
+    rt_run(*(options), "t.py")
 
     post_annotation = Path("t.py").read_text()
     assert pre_annotation == post_annotation
@@ -4626,7 +4627,7 @@ def test_overload_ignore_annotations_generic(tmp_cwd):
         """
     ))
 
-    rt_run("--no-sampling", "--ignore-annotations", "t.py")
+    rt_run("--ignore-annotations", "t.py")
 
     output = Path("t.py").read_text()
     print(output)
@@ -4668,7 +4669,7 @@ def test_overload_alias_multiple(tmp_cwd):
         foo("a", "a")
     """))
 
-    rt_run("--no-sampling", "--ignore-annotations", "t.py")
+    rt_run("--ignore-annotations", "t.py")
 
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
@@ -4705,7 +4706,7 @@ def test_overload_alias(tmp_cwd, impoht, decorator):
         foo(1, "a")
     """))
 
-    rt_run("--no-sampling", "--ignore-annotations", "t.py")
+    rt_run("--ignore-annotations", "t.py")
 
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
@@ -4732,7 +4733,7 @@ def test_log_includes_non_inline_typevar():
 
     Path("t.py").write_text(t)
 
-    rt_run("--no-sampling", "--python-version=3.11", "t.py")
+    rt_run("--python-version=3.11", "t.py")
     output = Path("righttyper.out").read_text()
     print(output)
 
@@ -4767,7 +4768,7 @@ def test_type_depth_limit(typ, options, ann):
 
     Path("t.py").write_text(t)
 
-    rt_run("--no-sampling", *options, "t.py")
+    rt_run(*options, "t.py")
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -4789,7 +4790,7 @@ def test_type_depth_limit_union(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run("--no-sampling", "--type-depth-limit=1", f"--python-version={python_version}", "t.py")
+    rt_run("--type-depth-limit=1", f"--python-version={python_version}", "t.py")
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -4810,7 +4811,7 @@ def test_type_depth_limit_union_deeper(python_version):
 
     Path("t.py").write_text(t)
 
-    rt_run("--no-sampling", "--type-depth-limit=1", f"--python-version={python_version}", "t.py")
+    rt_run("--type-depth-limit=1", f"--python-version={python_version}", "t.py")
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 

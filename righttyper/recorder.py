@@ -110,10 +110,10 @@ class ObservationsRecorder:
 
             # Require a minimum number of traces to help stabilize the estimate
             # Note that because we resample types upon return, we've only seen n/2 calls
-            if (n := traces.total())/2 < 5:
+            if (n := traces.total()//2) < run_options.trace_min_samples:
                 return True
 
-            if (sum(c == 1 for c in traces.values()) / (n/2)) <= run_options.trace_type_threshold:
+            if (sum(c == 1 for c in traces.values()) / n) <= run_options.trace_type_threshold:
                 return False
 
         return True

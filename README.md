@@ -136,6 +136,15 @@ Options:
                                   interval. If above this number, previously
                                   stopped instrumentation isn't restarted.
                                   [default: 0; x>=0]
+  --trace-min-samples INTEGER RANGE
+                                  Minimum number of call traces to sample
+                                  before stopping its instrumentation.
+                                  [default: 5; x>=1]
+  --trace-type-threshold FLOAT RANGE
+                                  Stop gathering traces for a function if the
+                                  estimated likelihood of finding a new type
+                                  falls below this threshold.  [default: 0.1;
+                                  x>=0.01]
   --sampling / --no-sampling      Whether to sample calls or to use every one.
                                   [default: sampling]
   --no-sampling-for REGEX         Rather than sample, record every invocation

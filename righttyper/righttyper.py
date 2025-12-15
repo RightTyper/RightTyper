@@ -717,6 +717,12 @@ def add_output_options(group=None):
     help="Max. number of instrumentation events per interval. If above this number, previously stopped instrumentation isn't restarted.",
 )
 @click.option(
+    "--trace-min-samples",
+    type=click.IntRange(1, None),
+    default=run_options.trace_min_samples,
+    help="Minimum number of call traces to sample before stopping its instrumentation.",
+)
+@click.option(
     "--trace-type-threshold",
     type=click.FloatRange(0.01, None),
     default=run_options.trace_type_threshold,
