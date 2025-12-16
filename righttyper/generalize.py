@@ -9,7 +9,7 @@ from righttyper.righttyper_types import cast_not_None
 from righttyper.options import output_options
 
 
-def delete_never(typeinfoset: set[TypeInfo]) -> None:
+def delete_never(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     # When we encounter empty containers, we type them with "typing.Never" arguments, such
     # as in "list[Never]" (leaving their types incomplete (e.g., "list") would be equivalent
     # to typing "list[Any]").  So here, we delete any "never" generics if a non-"never" version
