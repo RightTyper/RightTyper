@@ -9,9 +9,7 @@ from righttyper.righttyper_types import cast_not_None
 from righttyper.options import output_options
 
 
-def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
-    """Attempts to merge types in a set before forming their union."""
-
+def delete_never(typeinfoset: set[TypeInfo]) -> None:
     # When we encounter empty containers, we type them with "typing.Never" arguments, such
     # as in "list[Never]" (leaving their types incomplete (e.g., "list") would be equivalent
     # to typing "list[Any]").  So here, we delete any "never" generics if a non-"never" version
@@ -32,6 +30,14 @@ def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
             for t in never_types
             if not any(t2.type_obj is t.type_obj for t2 in typeinfoset)
         )
+
+    return typeinfoset
+
+
+def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
+    """Attempts to merge types in a set before forming their union."""
+
+    delete_never(typeinfoset)
 
     if len(typeinfoset) > 1 and output_options.simplify_types:
         typeinfoset = simplify(typeinfoset)

@@ -4042,11 +4042,47 @@ def test_argument_variable_deleted():
 
     Path("t.py").write_text(t)
 
-    rt_run('--debug', 't.py')
+    rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
     assert get_function(code, 'f') == textwrap.dedent("""\
         def f(x: int) -> None: ...
+    """)
+
+
+def test_argument_variable_deleted_varargs():
+    t = textwrap.dedent("""\
+        def f(*args):
+            del args
+
+        f(1)
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(*args: int) -> None: ...
+    """)
+
+
+def test_argument_variable_deleted_kwargs():
+    t = textwrap.dedent("""\
+        def f(**args):
+            del args
+
+        f(x=1)
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(**args: int) -> None: ...
     """)
 
 
