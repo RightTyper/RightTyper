@@ -240,7 +240,7 @@ def self_profile() -> None:
         hist_restarted.append(restart)
 
 
-main_globals: dict[str, Any]|None = None
+main_globals: dict[str, Any] = dict()
 
 def execute_script_or_module(
     script: str,
@@ -805,6 +805,13 @@ def add_output_options(group=None):
     hidden=True,
 )
 @click.option(
+    "--generalize-tuples",
+    metavar="N",
+    type=click.IntRange(0, None),
+    default=run_options.generalize_tuples,
+    help="Generalize homogenous fixed-length tuples to tuple[T, ...] if length ≥ N.  N=0 disables generalization."
+)
+@click.option(
     "--debug",
     is_flag=True,
     help="Include diagnostic information in log file.",
@@ -888,7 +895,6 @@ def run(
         alarm.stop()
 
         try:
-            assert main_globals is not None
             obs = rec.finish_recording(main_globals)
 
             logger.debug(f"observed {len(obs.source_to_module_name)} file(s)")

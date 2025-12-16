@@ -5593,3 +5593,36 @@ def test_merge_executions():
             foo("bar!")
         """
     )
+
+
+@pytest.mark.parametrize("generalize", [0, 3, 4])
+def test_generalize_tuples(generalize):
+    t = textwrap.dedent(f"""\
+        def f(x):
+            pass
+
+        def g(x):
+            pass
+
+        f(((1,), (2,), (3,),))
+        g((1, "foo", 2))
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run(f"--generalize-tuples={generalize}", 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    if generalize == 0 or generalize > 3:
+        assert get_function(code, 'f') == textwrap.dedent(f"""\
+            def f(x: tuple[tuple[int], tuple[int], tuple[int]]) -> None: ...
+        """)
+    else:
+        assert get_function(code, 'f') == textwrap.dedent(f"""\
+            def f(x: tuple[tuple[int], ...]) -> None: ...
+        """)
+
+    assert get_function(code, 'g') == textwrap.dedent(f"""\
+        def g(x: tuple[int, str, int]) -> None: ...
+    """)

@@ -442,6 +442,12 @@ def _handle_tuple(value: Any, depth: int) -> TypeInfo:
 
     if value:
         args = tuple(get_value_type(fld, depth+1) for fld in value)
+        if (
+            run_options.generalize_tuples
+            and len(args) >= run_options.generalize_tuples
+            and all(a == args[0] for a in args[1:])
+        ):
+            args = (args[0], ...)
     else:
         args = ((),)
     return TypeInfo.from_type(tuple, args=args)
