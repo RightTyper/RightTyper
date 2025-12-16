@@ -22,8 +22,8 @@ class TypeInfo:
     args: tuple[TypeInfoArg, ...] = tuple()    # arguments within []
 
     # These fields are included for convenience, but don't affect what type is meant
-    code_id: CodeId | None = field(default=None, compare=False)  # if a callable, generator or coroutine, the CodeId
-    is_bound: bool = field(default=False, compare=False)    # if a callable, whether bound
+    code_id: CodeId | None = field(default=None, compare=False) # if a callable, generator or coroutine, the CodeId
+    is_bound: bool = field(default=False, compare=False)        # if a callable, whether bound
     type_obj: type|SpecialForms|None = field(default=None, compare=False)
     is_unknown: bool = field(default=False, compare=False)  # for UnknownTypeInfo; indicates we don't know the type.
 
@@ -66,6 +66,10 @@ class TypeInfo:
 
 
     def __str__(self) -> str:
+        return self.format()
+
+
+    def __repr__(self) -> str:
         return self.format()
 
 
