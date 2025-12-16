@@ -62,6 +62,7 @@ class RunOptions:
     restart_interval: float = .5
     restart_max_instr: int = 0
     trace_min_samples: int = 5
+    trace_max_samples: int = 25
     trace_type_threshold: float = .1
     infer_shapes: bool = False
     sampling: bool = True

@@ -723,6 +723,12 @@ def add_output_options(group=None):
     help="Minimum number of call traces to sample before stopping its instrumentation.",
 )
 @click.option(
+    "--trace-max-samples",
+    type=click.IntRange(1, None),
+    default=run_options.trace_max_samples,
+    help="Maximum number of call traces to sample before stopping its instrumentation.",
+)
+@click.option(
     "--trace-type-threshold",
     type=click.FloatRange(0.01, None),
     default=run_options.trace_type_threshold,

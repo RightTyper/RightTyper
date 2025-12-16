@@ -156,9 +156,13 @@ class ObservationsRecorder:
             if (n := traces.total()) < run_options.trace_min_samples:
                 return True
 
-            if (sum(c == 1 for c in traces.values()) / n) <= run_options.trace_type_threshold:
-                logger.debug(f"{code=} {traces}")
+            if n >= run_options.trace_max_samples:
                 return False
+
+            if (sum(c == 1 for c in traces.values()) / n) <= run_options.trace_type_threshold:
+                return False
+
+#            logger.info(f"{code=} {traces}")
 
         return True
 
