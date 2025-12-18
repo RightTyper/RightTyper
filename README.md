@@ -93,7 +93,7 @@ number of levels to include in type.
 For example, with `--type-depth-limit=1`, a type inferred as `list[tuple[tuple[int, int]]]` would be emitted as `list[tuple]` instead.
 
 ### Option overview
-Below is the full list of options for the run command:
+Below is the full list of options:
 
 ```
 Usage: python -m righttyper [OPTIONS] COMMAND [ARGS]...
@@ -128,8 +128,23 @@ Options:
                                   directory.  If omitted, the script's
                                   directory (or, for -m, the current
                                   directory) is used.
-  --target-overhead FLOAT         Target overhead, as a percentage (e.g., 5).
-                                  [default: 5.0]
+  --restart-interval FLOAT RANGE  Interval (in seconds) at which previously
+                                  stopped instrumentation may be restarted.
+                                  [default: 0.5; x>=0.1]
+  --restart-max-instr INTEGER RANGE
+                                  Max. number of instrumentation events per
+                                  interval. If above this number, previously
+                                  stopped instrumentation isn't restarted.
+                                  [default: 0; x>=0]
+  --trace-min-samples INTEGER RANGE
+                                  Minimum number of call traces to sample
+                                  before stopping its instrumentation.
+                                  [default: 5; x>=1]
+  --trace-type-threshold FLOAT RANGE
+                                  Stop gathering traces for a function if the
+                                  estimated likelihood of finding a new type
+                                  falls below this threshold.  [default: 0.1;
+                                  x>=0.01]
   --sampling / --no-sampling      Whether to sample calls or to use every one.
                                   [default: sampling]
   --no-sampling-for REGEX         Rather than sample, record every invocation
@@ -193,7 +208,7 @@ Options:
                                   Python version for which to emit
                                   annotations.  [default: 3.12]
     --use-top-pct PCT             Only use the PCT% most common call traces.
-                                  [default: 80; 1<=x<=100]
+                                  [default: 100; 1<=x<=100]
     --use-typing-never / --no-use-typing-never
                                   Whether to emit "typing.Never".  [default:
                                   use-typing-never]
