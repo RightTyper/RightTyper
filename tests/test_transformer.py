@@ -2051,6 +2051,41 @@ def test_generics_inline_nested():
     """)
 
 
+@pytest.mark.parametrize('override', [False, True])
+def test_generics_existing_identical(override):
+    code = cst.parse_module(textwrap.dedent("""\
+        def add[T1: (int, str)](a: T1, b: T1) -> list[T1]:
+            return [a, b]
+    """))
+
+    T1 = make_typevar([int, str], 1)
+    f = get_code_id('foo.py', code, 'add')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                f: _mkAnnotation(
+                    [
+                        (ArgumentName("a"), T1),
+                        (ArgumentName("b"), T1),
+                    ],
+                    TypeInfo.from_type(list, args=(T1,)),
+                ),
+            },
+            module_variables = ModuleVars([]),
+            module_name = 'foo',
+            override_annotations=override,
+            only_update_annotations=False,
+            inline_generics=True
+        )
+
+    code = t.transform_code(code)
+
+    assert get_function(code, 'add') == textwrap.dedent("""\
+        def add[T1: (int, str)](a: T1, b: T1) -> list[T1]:
+            return [a, b]
+    """)
+
+
 def test_generics_defined_simple():
     code = cst.parse_module(textwrap.dedent("""\
         def add(a, b):
