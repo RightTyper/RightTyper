@@ -1279,14 +1279,14 @@ def list_rindex(lst: list[typing.Any], item: object) -> int:
 class TypeHintDeleter(cst.CSTTransformer):
     """Deletes type hint comments."""
 
-    _TYPE_HINT_COMMENT = re.compile(r"\s*#\s+type:\s.*")
+    _TYPE_HINT_COMMENT = re.compile(r"#\s+type:[^#]*")
 
 
     def leave_EmptyLine(self, node: cst.EmptyLine, updated: cst.EmptyLine) -> cst.EmptyLine|cst.RemovalSentinel:
         if not updated.comment or not self._TYPE_HINT_COMMENT.search(updated.comment.value):
             return updated
 
-        comment = self._TYPE_HINT_COMMENT.sub("", updated.comment.value)
+        comment = self._TYPE_HINT_COMMENT.sub("", updated.comment.value).rstrip()
         if not comment:
             return cst.RemoveFromParent()
 
@@ -1304,7 +1304,7 @@ class TypeHintDeleter(cst.CSTTransformer):
         if not updated.comment or not self._TYPE_HINT_COMMENT.search(updated.comment.value):
             return updated
 
-        comment = self._TYPE_HINT_COMMENT.sub("", updated.comment.value)
+        comment = self._TYPE_HINT_COMMENT.sub("", updated.comment.value).rstrip()
         return updated.with_changes(
             whitespace=updated.whitespace if comment else cst.SimpleWhitespace(''),
             comment=cst.Comment(comment) if comment else None
