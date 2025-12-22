@@ -183,6 +183,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         override_annotations: bool = True,
         only_update_annotations: bool = False,
         inline_generics: bool = True,
+        always_quote_annotations: bool = False,
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
@@ -196,6 +197,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.override_annotations = override_annotations
         self.only_update_annotations = only_update_annotations
         self.inline_generics = inline_generics
+        self.always_quote_annotations = always_quote_annotations
         self.has_future_annotations = False
         self.change_list: list[Change] = []
 
@@ -328,9 +330,9 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def _process_generics(
         self,
-        ann: FuncAnnotation,
+        annmap: dict[str, TypeInfo],
         used_inline_names: set[str]
-    ) -> tuple[FuncAnnotation, dict[TypeInfo, str]]:
+    ) -> dict[TypeInfo, str]:
         """Transforms an annotation, defining type variables and using them."""
         used_inline_names = set(used_inline_names)
 
@@ -355,14 +357,10 @@ class UnifiedTransformer(cst.CSTTransformer):
                 return super().visit(node)
 
         tr = GenericsNameAssigningTransformer()
-        updated_ann = FuncAnnotation(
-            [(name, tr.visit(ti)) for name, ti in ann.args],
-            tr.visit(ann.retval),
-            varargs=ann.varargs, kwargs=ann.kwargs,
-            variables=[(name, tr.visit(ti)) for name, ti in ann.variables],
-        )
+        for k in list(annmap):
+            annmap[k] = tr.visit(annmap[k])
         
-        return (updated_ann, tr.generics)
+        return tr.generics
                     
     def _qualified_name_in(self, decorator: cst.CSTNode, names: set[str]) -> bool:
         try:
@@ -874,44 +872,14 @@ class UnifiedTransformer(cst.CSTTransformer):
         unknown.visit(annotation)
         self.unknown_types |= unknown.types 
 
-        if not self.has_future_annotations and (unknown.types - _TYPING_TYPES):
+        if (
+            self.always_quote_annotations
+            or (not self.has_future_annotations and (unknown.types - _TYPING_TYPES))
+        ):
             annotation_expr = cst.SimpleString(_quote(str(annotation)))
 
         return annotation_expr
-    
-    def _process_parameter(
-        self,
-        parameter: cst.Param,
-        ann: FuncAnnotation,
-        generics: dict[TypeInfo, str]
-    ) -> cst.Param:
-        """Processes a parameter, either returning an updated parameter or the original one."""
-        if self.only_update_annotations and parameter.annotation is None:
-            return parameter
 
-        if (
-            not (parameter.annotation is None or self.override_annotations)
-            or (annotation := next(
-                (
-                    annotation for arg, annotation in ann.args
-                    if arg == parameter.name.value
-                ), None)
-            ) is None
-        ):
-            return parameter
-
-        if (
-            annotation.fullname() == "typing.Any"
-            or not (annotation_expr := self._get_annotation_expr(annotation, generics))
-        ):
-            new_par = parameter.with_changes(annotation=None)
-        else:
-            new_par = parameter.with_changes(
-                annotation=cst.Annotation(annotation=annotation_expr)
-            )
-
-        new_par = typing.cast(cst.Param, new_par.visit(TypeHintDeleter()))
-        return new_par
 
     def leave_FunctionDef(
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
@@ -941,43 +909,61 @@ class UnifiedTransformer(cst.CSTTransformer):
         )
 
         # If our function is an overload signature, we append it to the overload list.
-        # NOTE: This check technically misses if @overload is aliased or used as
+        # NOTE: is_overload may miss if @overload is aliased or used as
         # the result of an expression, but not even mypy handles that.
         if is_overload:
             self.overload_stack[-1].append(original_node)
             return cst.RemoveFromParent()
 
+        def _will_update(existing_annotation: cst.Annotation|None) -> bool:
+            if (
+                (self.only_update_annotations and existing_annotation is None)
+                or (not self.override_annotations and existing_annotation is not None)
+            ):
+                return False
+            return True
+
         if ann := typing.cast(FuncAnnotation, self.func_ann_stack.pop()):  # cast to make mypy happy
+            annmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
+
+            for par in typing.cast(typing.Iterator[cst.Param],
+                                   cstm.findall(updated_node.params, cstm.Param())):
+                if par.name.value in annmap and not _will_update(par.annotation):
+                    del annmap[par.name.value]
+
             pre_function: list[cst.SimpleStatementLine | cst.BaseCompoundStatement] = []
-            argmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
             overloads = self.overload_stack[-1]
             self.overload_stack[-1] = []
 
-            retained_name_annotations = {   # if a typevar is retained, it'll be in this set
+            retained_annotation_names = {   # if a typevar is retained, it'll be in this set
                 name.value
                 for par in typing.cast(typing.Iterator[cst.Param],
                                        cstm.findall(updated_node.params,
                                                     cstm.Param(annotation=cstm.Annotation())))
+                if par.name.value not in annmap
                 if par.annotation is not None
                 for name in typing.cast(typing.Iterator[cst.Name],
                                         cstm.findall(par.annotation, cstm.Name()))
-                if not self.override_annotations or par.name.value not in argmap
             }
 
-            if updated_node.returns is not None and (not self.override_annotations or ann.retval is None):
-                retained_name_annotations |= {
+            if not _will_update(updated_node.returns) and updated_node.returns is not None:
+                retained_annotation_names |= {
                     name.value
                     for name in typing.cast(typing.Iterator[cst.Name],
                                             cstm.findall(updated_node.returns, cstm.Name()))
                 }
+            else:
+                annmap['return'] = ann.retval
 
-            del argmap
+#            print(f"{annmap.keys()=}")
+#            print(f"{retained_annotation_names=}")
 
             generics: dict[TypeInfo, str] = {}
 
             # We don't yet support updating overloads; if they are present and not being removed, leave the function alone.
             if overloads == [] or self.override_annotations:
-                ann, generics = self._process_generics(ann, retained_name_annotations)
+                # Note: _process_generics doesn't yet update ann.variables
+                generics = self._process_generics(annmap, retained_annotation_names)
 
                 if self.inline_generics:
                     type_params = [
@@ -985,7 +971,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                         for tpar in typing.cast(typing.Iterator[cst.TypeParam],
                                                 cstm.findall(updated_node,
                                                              cstm.TypeParam(param=cstm.TypeVar())))
-                        if tpar.param.name.value in retained_name_annotations
+                        if tpar.param.name.value in retained_annotation_names
                     ]
 
                     # add type parameters
@@ -1029,16 +1015,24 @@ class UnifiedTransformer(cst.CSTTransformer):
                 # Now update the parameters
                 class ParamChanger(cst.CSTTransformer):
                     def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
-                        return self._process_parameter(updated_node, ann, generics)
+                        if (annotation := annmap.get(updated_node.name.value)) is None:
+                            return updated_node
+
+                        if (
+                            annotation.fullname() == "typing.Any"
+                            or not (annotation_expr := self._get_annotation_expr(annotation, generics))
+                        ):
+                            new_par = updated_node.with_changes(annotation=None)
+                        else:
+                            new_par = updated_node.with_changes(
+                                annotation=cst.Annotation(annotation=annotation_expr)
+                            )
+
+                        return typing.cast(cst.Param, new_par.visit(TypeHintDeleter()))
 
                 updated_node = updated_node.with_changes(params=updated_node.params.visit(ParamChanger()))
 
-                should_update_ret = (
-                    self.override_annotations
-                    or (self.only_update_annotations and updated_node.returns is not None)
-                    or (not self.only_update_annotations and updated_node.returns is None)
-                )
-                if should_update_ret:
+                if _will_update(updated_node.returns):
                     if (
                         ann.retval.fullname() == "typing.Any"
                         or not (annotation_expr := self._get_annotation_expr(ann.retval, generics))
@@ -1285,14 +1279,14 @@ def list_rindex(lst: list[typing.Any], item: object) -> int:
 class TypeHintDeleter(cst.CSTTransformer):
     """Deletes type hint comments."""
 
-    _TYPE_HINT_COMMENT = re.compile(r"\s*#\s+type:\s.*")
+    _TYPE_HINT_COMMENT = re.compile(r"#\s+type:[^#]*")
 
 
     def leave_EmptyLine(self, node: cst.EmptyLine, updated: cst.EmptyLine) -> cst.EmptyLine|cst.RemovalSentinel:
         if not updated.comment or not self._TYPE_HINT_COMMENT.search(updated.comment.value):
             return updated
 
-        comment = self._TYPE_HINT_COMMENT.sub("", updated.comment.value)
+        comment = self._TYPE_HINT_COMMENT.sub("", updated.comment.value).rstrip()
         if not comment:
             return cst.RemoveFromParent()
 
@@ -1310,7 +1304,7 @@ class TypeHintDeleter(cst.CSTTransformer):
         if not updated.comment or not self._TYPE_HINT_COMMENT.search(updated.comment.value):
             return updated
 
-        comment = self._TYPE_HINT_COMMENT.sub("", updated.comment.value)
+        comment = self._TYPE_HINT_COMMENT.sub("", updated.comment.value).rstrip()
         return updated.with_changes(
             whitespace=updated.whitespace if comment else cst.SimpleWhitespace(''),
             comment=cst.Comment(comment) if comment else None

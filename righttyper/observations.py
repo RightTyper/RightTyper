@@ -59,6 +59,9 @@ class FuncInfo:
 
     def most_common_traces(self) -> list[CallTrace]:
         """Returns the top X% most common call traces, turning type checking into anomaly detection."""
+        if output_options.use_top_pct == 100:
+            return list(self.traces)
+
         threshold = sum(self.traces.values()) * output_options.use_top_pct / 100
         cumulative = 0
 

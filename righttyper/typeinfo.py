@@ -10,7 +10,7 @@ from righttyper.righttyper_utils import normalize_module_name
 type SpecialForms = typing.Any|typing.Never
 
 # What is allowed in TypeInfo.args
-type TypeInfoArg = TypeInfo|str|types.EllipsisType
+type TypeInfoArg = TypeInfo|str|types.EllipsisType|tuple[()]
 
 
 @dataclass(eq=True, frozen=True)
@@ -22,8 +22,8 @@ class TypeInfo:
     args: tuple[TypeInfoArg, ...] = tuple()    # arguments within []
 
     # These fields are included for convenience, but don't affect what type is meant
-    code_id: CodeId | None = field(default=None, compare=False)  # if a callable, generator or coroutine, the CodeId
-    is_bound: bool = field(default=False, compare=False)    # if a callable, whether bound
+    code_id: CodeId | None = field(default=None, compare=False) # if a callable, generator or coroutine, the CodeId
+    is_bound: bool = field(default=False, compare=False)        # if a callable, whether bound
     type_obj: type|SpecialForms|None = field(default=None, compare=False)
     is_unknown: bool = field(default=False, compare=False)  # for UnknownTypeInfo; indicates we don't know the type.
 
@@ -38,11 +38,13 @@ class TypeInfo:
 
 
     @staticmethod
-    def _arg2str(a: "TypeInfo|str|ellipsis", modifier: Callable[["TypeInfo"], str|None]|None) -> str:
+    def _arg2str(a: TypeInfoArg, modifier: Callable[["TypeInfo"], str|None]|None) -> str:
         if a is Ellipsis:
             return '...'
         if isinstance(a, str):
             return f'"{a}"'
+        if isinstance(a, tuple):
+            return str(a)
         return a.format(modifier)
 
 
@@ -67,8 +69,12 @@ class TypeInfo:
         return self.format()
 
 
+    def __repr__(self) -> str:
+        return self.format()
+
+
     @staticmethod
-    def list(args: "list[TypeInfo|str|ellipsis]") -> "TypeInfo":
+    def list(args: list[TypeInfoArg]) -> "TypeInfo":
         """Builds a list, such as the first argument of a Callable"""
         return ListTypeInfo.from_type(ListTypeInfo, args=tuple(args))
 

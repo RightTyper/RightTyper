@@ -21,6 +21,7 @@ from righttyper.righttyper_utils import (
 )
 from righttyper.type_id import find_function, unwrap, get_value_type, get_type_name, hint2type, PostponedArg0
 from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
+from righttyper.generalize import delete_never
 
 
 # Singleton used to differentiate from None
@@ -39,32 +40,75 @@ def id(obj: FrameType|object) -> FrameId|int:
     return builtins.id(obj)
 
 
-@dataclass
 class PendingCallTrace:
-    arg_info: inspect.ArgInfo
-    args: tuple[TypeInfo, ...]
-    yields: set[TypeInfo] = field(default_factory=set)
-    sends: set[TypeInfo] = field(default_factory=set)
-    returns: TypeInfo = NoneTypeInfo
-    is_async: bool = False
-    is_generator: bool = False
-    self_type: TypeInfo | None = None
-    self_replacement: TypeInfo | None = None
+    """Builds a call trace."""
+
+    def __init__(
+        self,
+        arg_info: inspect.ArgInfo,
+        co_flags: int,
+        self_type: TypeInfo|None,
+        self_replacement: TypeInfo|None
+    ) -> None:
+        self.arg_info = arg_info
+        self.args_start = self._get_arg_types(arg_info)
+        self.yields: set[TypeInfo] = set()
+        self.sends: set[TypeInfo] = set()
+        self.is_async = bool(co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE))
+        self.is_generator=bool(co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR))
+        self.self_type = self_type
+        self.self_replacement = self_replacement
 
 
-    def process(self) -> CallTrace:
-        retval = self.returns
+    @staticmethod
+    def _get_arg_types(arg_info: inspect.ArgInfo) -> tuple[TypeInfo, ...]:
+        """Computes the types of the given arguments."""
+        return (
+            *(
+                get_value_type(arg_info.locals[arg_name]) if arg_name in arg_info.locals else None
+                for arg_name in arg_info.args
+            ),
+            *(
+                (
+                    TypeInfo.from_set({
+                        get_value_type(val) for val in arg_info.locals[arg_info.varargs]
+                    })
+                    if arg_info.varargs in arg_info.locals else None,
+                )
+                if arg_info.varargs else ()
+            ),
+            *(
+                (
+                    TypeInfo.from_set({
+                        get_value_type(val) for val in arg_info.locals[arg_info.keywords].values()
+                    })
+                    if arg_info.keywords in arg_info.locals else None,
+                )
+                if arg_info.keywords else ()
+            )
+        )
 
+
+    def finish(self, retval: TypeInfo) -> CallTrace:
         if self.is_generator:
             y = TypeInfo.from_set(self.yields)
             s = TypeInfo.from_set(self.sends)
 
             if self.is_async:
-                retval = TypeInfo.from_type(abc.AsyncGenerator, module="typing", args=(y, s))
+                retval = TypeInfo.from_type(abc.AsyncGenerator, args=(y, s))
             else:
-                retval = TypeInfo.from_type(abc.Generator, module="typing", args=(y, s, self.returns))
+                retval = TypeInfo.from_type(abc.Generator, args=(y, s, retval))
             
-        type_data = (*self.args, retval)
+        # Arguments may change value (and, in particular, empty containers may be added to)
+        # during the function execution, so we sample a 2nd time at the end.
+        args_now = self._get_arg_types(self.arg_info)
+        type_data: tuple[TypeInfo, ...] = (
+            *tuple(
+                at_start if now is None else TypeInfo.from_set(delete_never({at_start, now}))
+                for at_start, now in zip(self.args_start, args_now)
+            ),
+            retval
+        )
 
         if self.self_type and self.self_replacement:
             self_type = self.self_type
@@ -102,6 +146,25 @@ class ObservationsRecorder:
         self._object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
 
         self._obs = Observations()
+
+
+    def needs_more_traces(self, code: CodeType) -> bool:
+        if (func_info := self._code2func_info.get(code)):
+            traces = func_info.traces
+
+            # Require a minimum number of traces to help stabilize the estimate
+            if (n := traces.total()) < run_options.trace_min_samples:
+                return True
+
+            if n >= run_options.trace_max_samples:
+                return False
+
+            if (sum(c == 1 for c in traces.values()) / n) <= run_options.trace_type_threshold:
+                return False
+
+#            logger.info(f"{code=} {traces}")
+
+        return True
 
 
     def record_module(
@@ -152,26 +215,6 @@ class ObservationsRecorder:
             self._obs.func_info[func_info.code_id] = func_info
 
 
-    @staticmethod
-    def _get_arg_types(arg_info: inspect.ArgInfo) -> tuple[TypeInfo, ...]:
-        """Computes the types of the given arguments."""
-        return (
-            *(get_value_type(arg_info.locals[arg_name]) for arg_name in arg_info.args),
-            *(
-                (TypeInfo.from_set({
-                    get_value_type(val) for val in arg_info.locals[arg_info.varargs]
-                }),)
-                if arg_info.varargs else ()
-            ),
-            *(
-                (TypeInfo.from_set({
-                    get_value_type(val) for val in arg_info.locals[arg_info.keywords].values()
-                }),)
-                if arg_info.keywords else ()
-            )
-        )
-
-
     def record_start(
         self,
         code: CodeType,
@@ -192,11 +235,7 @@ class ObservationsRecorder:
             self.record_function(code, frame, arg_info, overrides)
 
             self._pending_traces[code][id(frame)] = PendingCallTrace(
-                arg_info=arg_info,
-                args=self._get_arg_types(arg_info),
-                is_async=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE)),
-                is_generator=bool(code.co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR)),
-                self_type=self_type, self_replacement=self_replacement
+                arg_info, code.co_flags, self_type, self_replacement
             )
 
 
@@ -238,18 +277,16 @@ class ObservationsRecorder:
 
         if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
             obj_attrs = self._object_attributes[codevars.class_key]
-            for src, dst in codevars.attributes.items():
-                if (value := getattr(self_obj, src, NO_OBJECT)) is not NO_OBJECT:
-                    type_set = obj_attrs[VariableName(src)]
-                    type_set.add(get_value_type(value))
-                    if dst: scope_vars[VariableName(dst)] = type_set
+            for attr in cast_not_None(codevars.attributes):
+                if (value := getattr(self_obj, attr, NO_OBJECT)) is not NO_OBJECT:
+                    obj_attrs[VariableName(attr)].add(get_value_type(value))
 
 
     def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:
         """Records a pending call trace's return type, finishing the trace."""
         assert tr is not None
 
-        tr.returns = (
+        retval_type = (
             ret_type if ret_type is not None
             else (
                 # Generators may still be running, or exit with a GeneratorExit exception; we still
@@ -259,15 +296,7 @@ class ObservationsRecorder:
         )
 
         func_info = self._code2func_info[code]
-        func_info.traces.update((tr.process(),))
-
-        # Resample arguments in case they change during execution (e.g., containers)
-        try:
-            tr.args = self._get_arg_types(tr.arg_info)
-        except KeyError:
-            pass # could happen if the variable holding the argument is deleted
-        else:
-            func_info.traces.update((tr.process(),))
+        func_info.traces.update((tr.finish(retval_type),))
 
 
     def record_return(self, code: CodeType, frame: FrameType, return_value: Any) -> bool:
@@ -325,6 +354,22 @@ class ObservationsRecorder:
                     except:
                         pass
 
+    def _assign_attributes_to_scopes(self) -> None:
+        for codevars in code2variables.values():
+            if codevars.self:
+                assert codevars.class_key is not None
+                assert codevars.attributes is not None
+                assert codevars.scope_code is not None
+
+                if (func_info := self._code2func_info.get(cast_not_None(codevars.scope_code))):
+                    scope_vars = func_info.variables
+                else:
+                    scope_vars = self._obs.module_variables[Filename(codevars.scope_code.co_filename)]
+
+                obj_attrs = self._object_attributes[codevars.class_key]
+                for attr in codevars.attributes:
+                    scope_vars[VariableName(f"{codevars.self}.{attr}")] = obj_attrs[VariableName(attr)]
+
 
     def finish_recording(self, main_globals: dict[str, Any]) -> Observations:
         # Any generators left?
@@ -332,6 +377,8 @@ class ObservationsRecorder:
             for tr in per_frame.values():
                 if tr.is_generator:
                     self._record_return_type(tr, code, None)
+
+        self._assign_attributes_to_scopes()
 
         obs, self._obs = self._obs, Observations()
         self._code2func_info.clear()
