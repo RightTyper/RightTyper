@@ -238,6 +238,139 @@ class ObservationsRecorder:
                 arg_info, code.co_flags, self_type, self_replacement
             )
 
+            # Check for wrapped functions (e.g., JIT decorators that don't execute original)
+            if code.co_name == "__call__":
+                self._record_wrapped_function_types(code, frame, arg_info)
+
+
+    def _record_wrapped_function_types(
+        self,
+        code: CodeType,
+        frame: FrameType,
+        arg_info: inspect.ArgInfo
+    ) -> None:
+        """Records types for wrapped functions that never execute.
+
+        When a __call__ method is invoked on an object with __wrapped__ (e.g., a JIT
+        decorator), we can propagate the observed argument types to the wrapped function
+        even though it never actually executes.
+        """
+        # Get self from the __call__ method
+        if not arg_info.args:
+            return
+        self_obj = arg_info.locals.get(arg_info.args[0])
+        if self_obj is None:
+            return
+
+        # Check if self has __wrapped__ pointing to a function
+        wrapped = getattr(self_obj, "__wrapped__", None)
+        if wrapped is None or not callable(wrapped):
+            return
+
+        wrapped_code = getattr(wrapped, "__code__", None)
+        if wrapped_code is None:
+            return
+
+        # Skip if wrapped function is not in a file we're tracking
+        if skip_this_file(wrapped_code.co_filename):
+            return
+
+        # Get the signature of the wrapped function to map args
+        try:
+            sig = inspect.signature(wrapped)
+            wrapped_params = list(sig.parameters.keys())
+        except (ValueError, TypeError):
+            return
+
+        if not wrapped_params:
+            return
+
+        # Get *args and **kwargs from the __call__ method
+        args_values: tuple[Any, ...] = ()
+        kwargs_values: dict[str, Any] = {}
+
+        if arg_info.varargs and arg_info.varargs in arg_info.locals:
+            args_values = arg_info.locals[arg_info.varargs]
+        if arg_info.keywords and arg_info.keywords in arg_info.locals:
+            kwargs_values = arg_info.locals[arg_info.keywords]
+
+        # Map args to wrapped function's parameters
+        arg_types: list[TypeInfo | None] = []
+        for i, param_name in enumerate(wrapped_params):
+            param = sig.parameters[param_name]
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                # Skip *args and **kwargs in wrapped function for now
+                arg_types.append(None)
+            elif i < len(args_values):
+                # Positional arg
+                arg_types.append(get_value_type(args_values[i]))
+            elif param_name in kwargs_values:
+                # Keyword arg
+                arg_types.append(get_value_type(kwargs_values[param_name]))
+            else:
+                # No value provided (will use default)
+                arg_types.append(None)
+
+        # Create FuncInfo for wrapped function if it doesn't exist
+        if wrapped_code not in self._code2func_info:
+            wrapped_arg_names = tuple(
+                ArgumentName(name) for name in wrapped_params
+            )
+            # Get defaults from the wrapped function
+            wrapped_defaults: dict[str, TypeInfo] = {}
+            if hasattr(wrapped, "__defaults__") and wrapped.__defaults__:
+                defaults_start = len(wrapped_params) - len(wrapped.__defaults__)
+                for i, default_val in enumerate(wrapped.__defaults__):
+                    param_name = wrapped_params[defaults_start + i]
+                    wrapped_defaults[param_name] = get_value_type(default_val)
+            if hasattr(wrapped, "__kwdefaults__") and wrapped.__kwdefaults__:
+                for name, default_val in wrapped.__kwdefaults__.items():
+                    wrapped_defaults[name] = get_value_type(default_val)
+
+            # Determine varargs/kwargs for wrapped function
+            wrapped_varargs: ArgumentName | None = None
+            wrapped_kwargs: ArgumentName | None = None
+            for param_name, param in sig.parameters.items():
+                if param.kind == inspect.Parameter.VAR_POSITIONAL:
+                    wrapped_varargs = ArgumentName(param_name)
+                elif param.kind == inspect.Parameter.VAR_KEYWORD:
+                    wrapped_kwargs = ArgumentName(param_name)
+
+            func_info = FuncInfo(
+                CodeId.from_code(wrapped_code),
+                tuple(
+                    ArgInfo(ArgumentName(name), wrapped_defaults.get(name))
+                    for name in wrapped_params
+                    if sig.parameters[name].kind not in (
+                        inspect.Parameter.VAR_POSITIONAL,
+                        inspect.Parameter.VAR_KEYWORD
+                    )
+                ),
+                wrapped_varargs,
+                wrapped_kwargs,
+                None  # No overrides for wrapped functions
+            )
+            self._code2func_info[wrapped_code] = func_info
+            self._obs.func_info[func_info.code_id] = func_info
+
+        # Record the call trace for the wrapped function
+        # Filter out None values and VAR_POSITIONAL/VAR_KEYWORD params
+        filtered_arg_types = [
+            t for i, t in enumerate(arg_types)
+            if t is not None and sig.parameters[wrapped_params[i]].kind not in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD
+            )
+        ]
+
+        # We don't know the return type without executing, so use UnknownTypeInfo
+        # Actually, we could potentially get it from HLOThing.__call__'s return...
+        # For now, just record the arg types (return type will be incomplete)
+        if filtered_arg_types:
+            from righttyper.typeinfo import UnknownTypeInfo
+            call_trace: CallTrace = (*filtered_arg_types, UnknownTypeInfo)
+            self._code2func_info[wrapped_code].traces.update((call_trace,))
+
 
     def record_yield(self, code: CodeType, frame: FrameType, yield_value: Any) -> None:
         """Records a yield."""

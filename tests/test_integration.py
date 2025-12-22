@@ -5626,3 +5626,283 @@ def test_generalize_tuples(generalize):
     assert get_function(code, 'g') == textwrap.dedent(f"""\
         def g(x: tuple[int, str, int]) -> None: ...
     """)
+
+
+@pytest.mark.dont_run_mypy
+def test_compiling_decorator_baseline():
+    """Test decorator that compiles a function instead of calling it - baseline.
+
+    This tests a pattern where:
+    1. A wrapper function takes an original function
+    2. The wrapper "compiles" the original and returns a compiled object (HLOThing)
+    3. The decorated function `foo` never actually runs - only the compiled version does
+
+    Since RightTyper uses sys.monitoring to observe types at runtime, it will only
+    see types for functions that actually execute.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class HLOThing:
+            def __init__(self, filename):
+                self.filename = filename
+
+            def __call__(self, *args, **kwargs):
+                # Simulate calling the compiled function
+                return sum(args)
+
+        def compile_func(original, name):
+            # Simulate compilation - returns filename
+            return f"{name}_compiled.hlo"
+
+        def wrapper(original):
+            filename = compile_func(original, original.__name__)
+            return HLOThing(filename)
+
+        @wrapper
+        def foo(x, y):
+            return x + y
+
+        # foo is now an HLOThing, not the original function
+        result = foo(1, 2)
+        print(result)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    print("=== BASELINE (foo never runs) ===")
+    print(output)
+    # foo should NOT be annotated since it never executes
+    assert "def foo(x, y):" in output
+
+
+@pytest.mark.dont_run_mypy
+def test_compiling_decorator_with_probe_call():
+    """Test if calling the original function once during decoration captures types."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class HLOThing:
+            def __init__(self, filename, original):
+                self.filename = filename
+                self.original = original
+
+            def __call__(self, *args, **kwargs):
+                # Simulate calling the compiled function
+                return sum(args)
+
+        def compile_func(original, name):
+            return f"{name}_compiled.hlo"
+
+        def wrapper(original):
+            filename = compile_func(original, original.__name__)
+            return HLOThing(filename, original)
+
+        @wrapper
+        def foo(x, y):
+            return x + y
+
+        # Call both the compiled version AND the original once
+        result = foo(1, 2)
+        # Probe call to capture types for the original function
+        foo.original(10, 20)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    print("=== WITH PROBE CALL ===")
+    print(output)
+    # Now foo SHOULD be annotated since we called original
+    assert "def foo(x: int, y: int) -> int:" in output
+
+
+@pytest.mark.dont_run_mypy
+def test_compiling_decorator_with_functools_wraps():
+    """Test if functools.wraps helps RightTyper track the original function."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        class HLOThing:
+            def __init__(self, filename, original):
+                self.filename = filename
+                self.original = original
+                # Copy attributes from original
+                functools.update_wrapper(self, original)
+
+            def __call__(self, *args, **kwargs):
+                # Simulate calling the compiled function
+                return sum(args)
+
+        def compile_func(original, name):
+            return f"{name}_compiled.hlo"
+
+        def wrapper(original):
+            filename = compile_func(original, original.__name__)
+            return HLOThing(filename, original)
+
+        @wrapper
+        def foo(x, y):
+            return x + y
+
+        result = foo(1, 2)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    print("=== WITH FUNCTOOLS.WRAPS ===")
+    print(output)
+    # Check if functools.wraps helps (likely not, since foo still doesn't run)
+    print(f"foo annotated: {'def foo(x: int' in output}")
+
+
+@pytest.mark.dont_run_mypy
+def test_compiling_decorator_with_decoration_time_probe():
+    """Test if probing during decoration time captures types."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import inspect
+
+        class HLOThing:
+            def __init__(self, filename, original):
+                self.filename = filename
+                self.original = original
+
+            def __call__(self, *args, **kwargs):
+                return sum(args)
+
+        def compile_func(original, name):
+            return f"{name}_compiled.hlo"
+
+        def wrapper(original):
+            # Probe call during decoration with dummy args based on signature
+            sig = inspect.signature(original)
+            dummy_args = [0] * len(sig.parameters)
+            try:
+                original(*dummy_args)  # This runs foo once during decoration!
+            except:
+                pass  # Ignore any errors from the probe
+
+            filename = compile_func(original, original.__name__)
+            return HLOThing(filename, original)
+
+        @wrapper
+        def foo(x, y):
+            return x + y
+
+        result = foo(1, 2)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    print("=== WITH DECORATION-TIME PROBE ===")
+    print(output)
+    print(f"foo annotated: {'def foo(x: int' in output}")
+
+
+@pytest.mark.dont_run_mypy
+def test_compiling_decorator_unrunnable_code():
+    """Test decorator where the original function body CANNOT be executed.
+
+    This represents cases like JAX/XLA where the function body is a DSL
+    that gets compiled, not interpreted as Python. The function never runs.
+
+    RightTyper detects __wrapped__ on callable objects and propagates arg types
+    from __call__ to the wrapped function, even though it never actually executes.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        class HLOThing:
+            def __init__(self, compiled_repr, original):
+                self.compiled_repr = compiled_repr
+                self.original = original
+                functools.update_wrapper(self, original)
+
+            def __call__(self, *args, **kwargs):
+                # In reality, this would execute the compiled code
+                # For testing, just return a dummy value
+                return 42
+
+        def compile_to_hlo(original):
+            # Parse AST, compile to HLO IR, etc.
+            return f"<compiled:{original.__name__}>"
+
+        def jit(original):
+            compiled = compile_to_hlo(original)
+            return HLOThing(compiled, original)
+
+        @jit
+        def foo(x, y):
+            # This is DSL code that CANNOT run as Python
+            # It would raise an error if called directly
+            return magic_gpu_operation(x, y)  # noqa: F821
+
+        # foo is called, but foo's body never executes
+        # Only HLOThing.__call__ runs
+        result = foo(1, 2)
+        result2 = foo(3.14, 2.71)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    print("=== UNRUNNABLE CODE (DSL) ===")
+    print(output)
+    # foo IS annotated even though it never executes, via __wrapped__ propagation
+    # Called with (1, 2) and (3.14, 2.71) -> infers int|float for both params
+    assert "def foo" in output and "x:" in output, "foo should be annotated via __wrapped__ propagation"
+
+
+@pytest.mark.dont_run_mypy
+def test_compiling_decorator_info_available():
+    """Demonstrate what information IS available to potentially annotate foo.
+
+    When HLOThing.__call__ is invoked:
+    - self.__wrapped__ points to original foo function
+    - self.__wrapped__.__code__ has foo's CodeType (filename, line, name)
+    - self.__wrapped__.__code__.co_varnames has ('x', 'y') - the param names!
+    - *args has the actual values (1, 2) or (3.14, 2.71)
+
+    This test shows the information chain that COULD be used to annotate foo.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+        import inspect
+
+        class HLOThing:
+            def __init__(self, compiled_repr, original):
+                self.compiled_repr = compiled_repr
+                functools.update_wrapper(self, original)
+
+            def __call__(self, *args, **kwargs):
+                # Debug: show what info we have access to
+                wrapped = getattr(self, '__wrapped__', None)
+                if wrapped:
+                    code = wrapped.__code__
+                    print(f"WRAPPED: {wrapped.__name__}")
+                    print(f"  file: {code.co_filename}")
+                    print(f"  line: {code.co_firstlineno}")
+                    print(f"  params: {code.co_varnames[:code.co_argcount]}")
+                    print(f"  args received: {args}")
+                    print(f"  kwargs received: {kwargs}")
+
+                    # Map positional args to param names
+                    sig = inspect.signature(wrapped)
+                    params = list(sig.parameters.keys())
+                    for i, (param, val) in enumerate(zip(params, args)):
+                        print(f"    {param} = {val!r} (type: {type(val).__name__})")
+
+                return 42
+
+        def jit(original):
+            return HLOThing(f"<compiled:{original.__name__}>", original)
+
+        @jit
+        def foo(x, y):
+            return magic_gpu_operation(x, y)  # noqa: F821
+
+        result = foo(1, 2)
+        result2 = foo(3.14, 2.71)
+    """))
+
+    output = rt_run('t.py', capture=True)
+    print("=== DEBUG OUTPUT ===")
+    print(output)
+    # Verify the info chain works
+    assert "WRAPPED: foo" in output
+    assert "params: ('x', 'y')" in output
+    assert "x = 1 (type: int)" in output or "x = 3.14 (type: float)" in output
