@@ -556,6 +556,44 @@ def cli(debug: bool):
         logger.setLevel(logging.DEBUG)
 
 
+def add_advanced_options(group=None):
+    """Decorates a click command, adding advanced/rarely-used options."""
+
+    def dec(func):
+        base = optgroup if group else click
+
+        for opt in reversed([
+            *(
+                (optgroup.group(group),) if group else ()
+            ),
+            base.option(
+                "--signal-wakeup/--thread-wakeup",
+                default=not platform.system() == "Windows",
+                help="Whether to use signal-based wakeups or thread-based wakeups."
+            ),
+            base.option(
+                "--save-profiling",
+                is_flag=True,
+                help=f"""Save record of self-profiling results in "{TOOL_NAME}-profiling.json"."""
+            ),
+            base.option(
+                "--allow-runtime-exceptions/--no-allow-runtime-exceptions",
+                is_flag=True,
+                default=run_options.allow_runtime_exceptions,
+                help="Allow exceptions in instrumentation to propagate (for debugging).",
+            ),
+            base.option(
+                "--infer-wrapped-return-type/--no-infer-wrapped-return-type",
+                is_flag=True,
+                default=run_options.infer_wrapped_return_type,
+                help="For wrapped functions that never execute, infer return type from wrapper's return value. If disabled, use None.",
+            ),
+        ]):
+            func = opt(func)
+        return func
+    return dec
+
+
 def add_output_options(group=None):
     """Decorates a click command, adding our common output options."""
 
@@ -749,12 +787,6 @@ def add_output_options(group=None):
     help=f"Rather than sample, record every invocation of any functions matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
-    "--signal-wakeup/--thread-wakeup",
-    default=not platform.system() == "Windows",
-    hidden=True,
-    help="Whether to use signal-based wakeups or thread-based wakeups."
-)
-@click.option(
     "--replace-dict/--no-replace-dict",
     is_flag=True,
     help="Whether to replace 'dict' to enable efficient, statistically correct samples."
@@ -766,12 +798,6 @@ def add_output_options(group=None):
     show_default=True,
     metavar="[INTEGER|none]",
     help="Maximum number of container elements considered when sampling; 'none' means unlimited.",
-)
-@click.option(
-    "--save-profiling",
-    is_flag=True,
-    hidden=True,
-    help=f"""Save record of self-profiling results in "{TOOL_NAME}-profiling.json", under the given name."""
 )
 @click.option(
     "--resolve-mocks/--no-resolve-mocks",
@@ -805,12 +831,6 @@ def add_output_options(group=None):
           " You can later process using RightTyper's \"process\" command."
 )
 @click.option(
-    "--allow-runtime-exceptions/--no-allow-runtime-exceptions",
-    is_flag=True,
-    default=run_options.allow_runtime_exceptions,
-    hidden=True,
-)
-@click.option(
     "--generalize-tuples",
     metavar="N",
     type=click.IntRange(0, None),
@@ -822,6 +842,7 @@ def add_output_options(group=None):
     is_flag=True,
     help="Include diagnostic information in log file.",
 )
+@add_advanced_options(group="Advanced options")
 @add_output_options(group="Output options")
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
@@ -829,7 +850,6 @@ def run(
     module: str,
     root: str,
     args: list[str],
-    signal_wakeup: bool,
     only_collect: bool,
     debug: bool,
     **kwargs,
@@ -878,7 +898,7 @@ def run(
                 print(f" * {package}")
             sys.exit(1)
 
-    alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
+    alarm_cls = SignalAlarm if kwargs.get('signal_wakeup', not platform.system() == "Windows") else ThreadAlarm
     alarm = alarm_cls(self_profile, run_options.restart_interval)
 
     pytest_plugins = os.environ.get("PYTEST_PLUGINS")

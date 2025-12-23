@@ -142,6 +142,10 @@ class ObservationsRecorder:
         # Started, but not (yet) completed traces
         self._pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = defaultdict(dict)
 
+        # Pending wrapped function traces: (wrapper_code, wrapper_frame_id) -> (wrapped_code, arg_types)
+        # These are completed when the wrapper returns, using the wrapper's return type
+        self._pending_wrapped_traces: dict[tuple[CodeType, FrameId], tuple[CodeType, list[TypeInfo]]] = {}
+
         # Object attributes: class_key -> attr_name -> set[TypeInfo]
         self._object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
 
@@ -413,11 +417,16 @@ class ObservationsRecorder:
             logger.debug(f"_record_wrapped: skipping {wrapped.__name__} - no args provided")
             return
 
-        # Record the call trace for the wrapped function
-        # We don't know the return type without executing, so use NoneTypeInfo
-        call_trace: CallTrace = (*filtered_arg_types, NoneTypeInfo)
-        logger.debug(f"_record_wrapped: recording trace for {wrapped.__name__}: {call_trace}")
-        self._code2func_info[wrapped_code].traces.update((call_trace,))
+        if run_options.infer_wrapped_return_type:
+            # Store pending trace - will be completed when wrapper returns with actual return type
+            wrapper_key = (code, id(frame))
+            self._pending_wrapped_traces[wrapper_key] = (wrapped_code, filtered_arg_types)
+            logger.debug(f"_record_wrapped: stored pending trace for {wrapped.__name__}: {filtered_arg_types}")
+        else:
+            # Use NoneTypeInfo as placeholder since we can't know return type without execution
+            call_trace: CallTrace = (*filtered_arg_types, NoneTypeInfo)
+            logger.debug(f"_record_wrapped: recording trace with None return for {wrapped.__name__}: {call_trace}")
+            self._code2func_info[wrapped_code].traces.update((call_trace,))
 
 
     def record_yield(self, code: CodeType, frame: FrameType, yield_value: Any) -> None:
@@ -485,6 +494,17 @@ class ObservationsRecorder:
 
         # print(f"record_return {code.co_qualname}")
         frame_id = id(frame)
+
+        # Check for pending wrapped function traces to complete
+        wrapper_key = (code, frame_id)
+        if wrapper_key in self._pending_wrapped_traces:
+            wrapped_code, arg_types = self._pending_wrapped_traces.pop(wrapper_key)
+            # Use the wrapper's return type for the wrapped function
+            return_type = get_value_type(return_value)
+            call_trace: CallTrace = (*arg_types, return_type)
+            logger.debug(f"_record_wrapped: completing trace with return type {return_type}")
+            self._code2func_info[wrapped_code].traces.update((call_trace,))
+
         if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
             self._record_return_type(tr, code, get_value_type(return_value))
             self._record_variables(code, frame)
@@ -501,6 +521,13 @@ class ObservationsRecorder:
 
         # print(f"record_no_return {code.co_qualname}")
         frame_id = id(frame)
+
+        # Check for pending wrapped function traces - discard if wrapper raised exception
+        wrapper_key = (code, frame_id)
+        if wrapper_key in self._pending_wrapped_traces:
+            # Wrapper raised exception, discard the pending wrapped trace
+            self._pending_wrapped_traces.pop(wrapper_key)
+
         if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
             self._record_return_type(tr, code, None)
             self._record_variables(code, frame)
@@ -564,6 +591,7 @@ class ObservationsRecorder:
         obs, self._obs = self._obs, Observations()
         self._code2func_info.clear()
         self._pending_traces.clear()
+        self._pending_wrapped_traces.clear()
         self._object_attributes.clear()
 
         # The type map depends on main_globals as well as the on the state
