@@ -238,9 +238,8 @@ class ObservationsRecorder:
                 arg_info, code.co_flags, self_type, self_replacement
             )
 
-            # Check for wrapped functions (e.g., JIT decorators that don't execute original)
-            if code.co_name == "__call__":
-                self._record_wrapped_function_types(code, frame, arg_info)
+            # Check for wrapped functions (e.g., JIT decorators or functools.wraps)
+            self._record_wrapped_function_types(code, frame, arg_info)
 
 
     def _record_wrapped_function_types(
@@ -251,19 +250,58 @@ class ObservationsRecorder:
     ) -> None:
         """Records types for wrapped functions that never execute.
 
-        When a __call__ method is invoked on an object with __wrapped__ (e.g., a JIT
-        decorator), we can propagate the observed argument types to the wrapped function
-        even though it never actually executes.
-        """
-        # Get self from the __call__ method
-        if not arg_info.args:
-            return
-        self_obj = arg_info.locals.get(arg_info.args[0])
-        if self_obj is None:
-            return
+        When a function with __wrapped__ is invoked (e.g., a JIT decorator or
+        functools.wraps wrapper), we can propagate the observed argument types
+        to the wrapped function even though it never actually executes.
 
-        # Check if self has __wrapped__ pointing to a function
-        wrapped = getattr(self_obj, "__wrapped__", None)
+        Handles two cases:
+        1. __call__ methods on objects with __wrapped__ (JIT-style decorators)
+        2. Regular functions with __wrapped__ (functools.wraps decorators)
+        """
+        wrapped = None
+
+        # Case 1: __call__ method on an object with __wrapped__
+        if code.co_name == "__call__" and arg_info.args:
+            self_obj = arg_info.locals.get(arg_info.args[0])
+            if self_obj is not None:
+                wrapped = getattr(self_obj, "__wrapped__", None)
+
+        # Case 2: Regular function with __wrapped__ (functools.wraps)
+        if wrapped is None:
+            func = find_function(frame, code)
+            if func is not None:
+                wrapped = getattr(func, "__wrapped__", None)
+
+        # Case 3: Wrapper function created by functools.wraps
+        # When functools.wraps is used, the wrapper has __wrapped__.
+        # Try to find the wrapper by checking closure first, then searching caller's namespace.
+        if wrapped is None and frame.f_back is not None:
+            # First try: look for 'func' in closure (common pattern)
+            func_obj = frame.f_locals.get('func')
+
+            if func_obj is not None and callable(func_obj):
+                # We have the original function from closure - use it directly
+                wrapped = func_obj
+            else:
+                # Try to find which specific wrapper is being called by checking
+                # if there's only ONE function with this code and __wrapped__
+                candidates = []
+                for namespace in (frame.f_back.f_locals, frame.f_back.f_globals):
+                    for name, obj in namespace.items():
+                        if (
+                            callable(obj)
+                            and getattr(obj, "__code__", None) is code
+                            and hasattr(obj, "__wrapped__")
+                        ):
+                            candidates.append((name, obj))
+
+                # Only proceed if there's exactly one candidate (unambiguous)
+                # or if all candidates have the same __wrapped__ (same original function)
+                if candidates:
+                    unique_wrapped = set(id(c[1].__wrapped__) for c in candidates)
+                    if len(unique_wrapped) == 1:
+                        wrapped = candidates[0][1].__wrapped__
+
         if wrapped is None or not callable(wrapped):
             return
 
@@ -280,9 +318,6 @@ class ObservationsRecorder:
             sig = inspect.signature(wrapped)
             wrapped_params = list(sig.parameters.keys())
         except (ValueError, TypeError):
-            return
-
-        if not wrapped_params:
             return
 
         # Get *args and **kwargs from the __call__ method
@@ -363,13 +398,26 @@ class ObservationsRecorder:
             )
         ]
 
-        # We don't know the return type without executing, so use UnknownTypeInfo
-        # Actually, we could potentially get it from HLOThing.__call__'s return...
-        # For now, just record the arg types (return type will be incomplete)
-        if filtered_arg_types:
-            from righttyper.typeinfo import UnknownTypeInfo
-            call_trace: CallTrace = (*filtered_arg_types, UnknownTypeInfo)
-            self._code2func_info[wrapped_code].traces.update((call_trace,))
+        # Only record if we have actual argument values to propagate
+        # (i.e., the wrapper was called with args, not just during decoration)
+        # For zero-param functions, filtered_arg_types will be empty but args_values will too
+        num_regular_params = sum(
+            1 for p in sig.parameters.values()
+            if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        )
+
+        logger.debug(f"_record_wrapped: {wrapped.__name__} num_params={num_regular_params} args={args_values} kwargs={kwargs_values}")
+
+        # Skip if wrapped function expects args but we don't have any
+        if num_regular_params > 0 and not args_values and not kwargs_values:
+            logger.debug(f"_record_wrapped: skipping {wrapped.__name__} - no args provided")
+            return
+
+        # Record the call trace for the wrapped function
+        # We don't know the return type without executing, so use NoneTypeInfo
+        call_trace: CallTrace = (*filtered_arg_types, NoneTypeInfo)
+        logger.debug(f"_record_wrapped: recording trace for {wrapped.__name__}: {call_trace}")
+        self._code2func_info[wrapped_code].traces.update((call_trace,))
 
 
     def record_yield(self, code: CodeType, frame: FrameType, yield_value: Any) -> None:

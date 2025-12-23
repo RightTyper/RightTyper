@@ -5848,6 +5848,50 @@ def test_compiling_decorator_unrunnable_code():
 
 
 @pytest.mark.dont_run_mypy
+def test_functools_wraps_decorator():
+    """Test decorator using functools.wraps where original function never runs.
+
+    This tests the common pattern where functools.wraps is used but the wrapper
+    doesn't call the original function (e.g., mocking, caching shortcuts).
+    The wrapper must reference 'func' in its body for type propagation to work
+    with multiple decorated functions (to distinguish which one is being called).
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+        from typing import Callable
+
+        def my_decorator(func: Callable) -> Callable:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                # Log the call (this keeps 'func' in the closure)
+                print(f"Calling {func.__name__}")
+                return "intercepted"
+            return wrapper
+
+        @my_decorator
+        def add_numbers(x, y):
+            return x + y
+
+        @my_decorator
+        def greet(name):
+            return f"Hello, {name}!"
+
+        # Call the decorated functions
+        add_numbers(1, 2)
+        add_numbers(3.14, 2.71)
+        greet("Alice")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    print("=== FUNCTOOLS.WRAPS ===")
+    print(output)
+    # Both wrapped functions should be annotated via __wrapped__ propagation
+    assert "def add_numbers" in output and "x:" in output
+    assert "def greet" in output and "name:" in output
+
+
+@pytest.mark.dont_run_mypy
 def test_compiling_decorator_info_available():
     """Demonstrate what information IS available to potentially annotate foo.
 
