@@ -100,3 +100,29 @@ CLI (righttyper.py)
 - `test_typing.py`: Type handling and inference tests
 - `test_generalize.py`: Type generalization algorithm tests
 - Pytest markers: `dont_run_mypy`, `mypy_args` for controlling mypy validation in tests
+- Use `--no-mypy` flag when running tests without mypy installed
+
+### CLI Option Organization
+
+- Use `click_option_group` (`optgroup`) to group related options in help output
+- Create decorator functions like `add_output_options()` and `add_advanced_options()` to apply option groups
+- Options in groups are applied via decorators: `@add_advanced_options(group="Advanced options")`
+- Rarely-used options go in "Advanced options" group instead of being hidden
+
+### Wrapped Function Type Propagation
+
+RightTyper handles decorators where the wrapped function never executes (e.g., JIT compilers, `functools.wraps`):
+
+1. **Detection**: In `recorder.py`, `_record_wrapped_function_types()` detects wrapped functions via:
+   - `__call__` methods on objects with `__wrapped__` attribute
+   - Regular functions with `__wrapped__` attribute
+   - Wrapper functions created by `functools.wraps`
+
+2. **Pending Traces Pattern**: Since wrapped functions don't execute, we can't observe their return type directly:
+   - Store pending trace at wrapper invocation: `_pending_wrapped_traces[(wrapper_code, frame_id)] = (wrapped_code, arg_types)`
+   - Complete trace when wrapper returns: use wrapper's return type for the wrapped function
+   - Clean up on exception: discard pending trace if wrapper raises
+
+3. **Configurable via `--infer-wrapped-return-type`**:
+   - Default (enabled): infer return type from wrapper's actual return value
+   - Disabled: use `None` as placeholder return type
