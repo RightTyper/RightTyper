@@ -76,6 +76,7 @@ class RunOptions:
     save_profiling: str|None = None
     allow_runtime_exceptions: bool = False
     generalize_tuples: int = 3
+    infer_wrapped_return_type: bool = True
 
 
     def process_args(self, kwargs: dict[str, Any]) -> None:
