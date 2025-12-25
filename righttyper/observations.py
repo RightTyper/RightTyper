@@ -1,5 +1,4 @@
 import ast
-import typeshed_client as typeshed
 import typing
 import builtins
 from collections import defaultdict, Counter
@@ -25,6 +24,7 @@ from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownType
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId
 from righttyper.annotation import FuncAnnotation, ModuleVars
 from righttyper.type_id import PostponedArg0
+from righttyper.typeshed import get_typeshed_func_params
 
 
 @dataclass
@@ -407,57 +407,12 @@ def get_typeshed_arg_types(
 ) -> tuple[TypeInfo|None, ...] | None:
     """Returns typeshed type annotations for a parent's method's arguments."""
 
-    def find_def(tree: ast.AST, qualified_name: str) -> list[ast.FunctionDef|ast.AsyncFunctionDef]:
-        parts = qualified_name.split('.')
-        results = []
-
-        def visit(node: ast.AST, path: list[str]) -> None:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                full_name = '.'.join(path + [node.name])
-                if full_name == qualified_name:
-                    results.append(node)
-            elif isinstance(node, ast.ClassDef):
-                new_path = path + [node.name]
-                for body_item in node.body:
-                    visit(body_item, new_path)
-            elif isinstance(node, ast.Module):
-                for body_item in node.body:
-                    visit(body_item, path)
-
-        visit(tree, [])
-        return results
-
     module = parents_func.module if parents_func.module else 'builtins'
-    if stub_ast := typeshed.get_stub_ast(module):
-        if defs := find_def(stub_ast, parents_func.qualname):
-            #print(ast.dump(defs[0], indent=4))
+    if not (args := get_typeshed_func_params(module, parents_func.qualname)):
+        return None
 
-            # First the positional, looking up by their names given in the parent.
-            # Note that for the override to be valid, their signatures must have
-            # the same number of positional arguments.
-            pos_args = [
-                # FIXME only handles simple 'builtins' types!
-                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
-                for a in (defs[0].args.posonlyargs + defs[0].args.args)
-                if isinstance(a, ast.arg)
-            ]
-
-            # Then kwonly, going by the order (and quantity) in the child
-            kw_args = [
-                # FIXME only handles simple 'builtins' types!
-                TypeInfo('', ast.unparse(a.annotation)) if a.annotation else None
-                for child_arg in child_args[len(pos_args):]
-                for a in defs[0].args.kwonlyargs
-                if isinstance(a, ast.arg)
-                if a.arg == child_arg.arg_name
-            ]
-
-            # FIXME varargs and kwargs are missing here
-
-            t = LoadAndCheckTypesT()
-            return tuple(
-                t.visit(arg) if arg is not None else None
-                for arg in pos_args + kw_args
-            )
-
-    return None
+    t = LoadAndCheckTypesT()
+    return tuple(
+        t.visit(arg) if arg is not None else None
+        for arg in args
+    )

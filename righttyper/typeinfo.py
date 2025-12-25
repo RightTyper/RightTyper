@@ -70,7 +70,7 @@ class TypeInfo:
 
 
     def __repr__(self) -> str:
-        return self.format()
+        return f"({self.module}, {self.name}, {self.format()})"
 
 
     @staticmethod
