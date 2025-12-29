@@ -4,6 +4,8 @@ import re
 import sys
 
 import collections
+from collections import Counter, OrderedDict
+from dataclasses import dataclass
 import collections.abc as abc
 from abc import ABCMeta
 from functools import cache
@@ -437,6 +439,81 @@ def _first_referent(value: Any) -> object|None:
     return ref[0] if len(ref) else None
 
 
+def _needs_more_samples(counters: list[Counter]) -> bool:
+    if (n := counters[0].total()) < run_options.container_min_samples:
+        return True
+
+    if n >= run_options.container_max_samples:
+        return False
+
+    if any(
+        (sum(c == 1 for c in counter.values()) / n) <= run_options.container_type_threshold
+        for counter in counters
+    ):
+        return False
+
+    return True
+
+
+@dataclass
+class Entry:
+    o: object
+    counters: tuple[Counter[object], ...]
+
+class ContainerTypeCache:
+    """LRU cache of type information about a container."""
+    def __init__(self, capacity: int):
+        self._capacity = capacity
+        self._cache: OrderedDict[int, counter] = OrderedDict()
+
+    def get(self, o: object, n_counters: int) -> tuple[Counter[object], ...]:
+        o_id = id(o)    # accommodate non-hashable objects
+        if not (e := self._cache.get(o_id, None)) or e.o is not o:
+            e = Entry(o, tuple(Counter() for _ in range(n_counters)))
+            self._cache[o_id] = e
+            self._cache.move_to_end(o_id)
+            if len(self._cache) > self._capacity:
+                self._cache.popitem(last=False)
+            return e.counters
+
+        self._cache.move_to_end(o_id)
+        return e.counters
+
+_cache = ContainerTypeCache(1024)
+
+def _get_container_args(
+    container: Any,
+    n_counters: typing.Literal[1,2],
+    sampler: abc.Callable[[], tuple[TypeInfo, ...]],
+    depth: int
+) -> tuple[TypeInfo, ...]:
+
+    counters = _cache.get(container, n_counters)
+
+    if container:
+        # In the first time, if it's a small container, just scan it
+        if counters[0].total() == 0 and len(container) <= run_options.container_min_samples:
+            if n_counters == 1:
+                for v in container:
+                    counters[0].update((get_value_type(v, depth+1),))
+            else:
+                for it in container.items():
+                    for c, v in zip(counters, it):
+                        c.update((get_value_type(v, depth+1),))
+        else:
+            # Take as many samples as G-T suggests we need, but at least one to
+            # try and accommodate changing data
+            while True:
+                sample = sampler()
+                for c, v in zip(counters, sample):
+                    c.update((get_value_type(v, depth+1),))
+
+                if not _needs_more_samples(counters):
+                    break
+
+    return tuple(TypeInfo.from_set(set(c)) for c in counters)
+
+
 def _handle_tuple(value: Any, depth: int) -> TypeInfo:
     args: tuple[TypeInfoArg, ...]
 
@@ -454,14 +531,10 @@ def _handle_tuple(value: Any, depth: int) -> TypeInfo:
 
 
 def _handle_dict(value: Any, depth: int) -> TypeInfo:
-    t: type = type(value)
-    if value:
-        # it's more efficient to sample a key and then use it than to build .items()
-        el = _random_item(value)
-        args = (get_value_type(el, depth+1), get_value_type(value[el], depth+1))
-    else:
-        args = (TypeInfo.from_type(typing.Never), TypeInfo.from_type(typing.Never))
+    sampler = lambda: ((el := _random_item(value)), value[el])
+    args = _get_container_args(value, 2, sampler, depth)
 
+    t: type = type(value)
     if (ti := _BUILTINS.get(t)):
         return ti.replace(args=args)
 
@@ -469,37 +542,24 @@ def _handle_dict(value: Any, depth: int) -> TypeInfo:
 
 
 def _handle_randomdict(value: Any, depth: int) -> TypeInfo:
-    args: tuple[TypeInfo, ...] = ()
+    sampler = lambda: ((el := value.random_item())[0], el[1])
+
     try:
-        if value:
-            el = value.random_item()
-            args = tuple(get_value_type(fld, depth+1) for fld in el)
-        else:
-            args = (TypeInfo.from_type(typing.Never), TypeInfo.from_type(typing.Never))
-    except Exception:
-        pass
-    return TypeInfo.from_type(dict, args=args)
+        args = _get_container_args(value, 2, sampler, depth)
+    except Exception as e:
+        return TypeInfo.from_type(dict)
+    else:
+        return TypeInfo.from_type(dict, args=args)
 
 
 def _handle_list(value: Any, depth: int) -> TypeInfo:
-    if value:
-        el = value[random.randint(0, len(value)-1)] # this is O(1), much faster than islice()
-        args = (get_value_type(el, depth+1),)
-    else:
-        args = (TypeInfo.from_type(typing.Never),)
-    return TypeInfo.from_type(list, args=args)
+    sampler = lambda: (value[random.randint(0, len(value)-1)],) # this is O(1), much faster than islice()
+    return TypeInfo.from_type(list, args=_get_container_args(value, 1, sampler, depth))
 
 
 def _handle_set(value: Any, depth: int) -> TypeInfo:
-    t = type(value)
-    # note that deque is-a Sequence, but its integer indexing is O(N)
-    if value:
-        el = _random_item(value)
-        args = (get_value_type(el, depth+1),)
-    else:
-        args = (TypeInfo.from_type(typing.Never),)
-
-    return TypeInfo.from_type(t, args=args)
+    sampler = lambda: (_random_item(value),)
+    return TypeInfo.from_type(type(value), args=_get_container_args(value, 1, sampler, depth))
 
 
 def _handle_dict_keyiter(value: Any, depth: int) -> TypeInfo|None:
@@ -536,12 +596,8 @@ def _handle_set_iter(value: Any, depth: int) -> TypeInfo|None:
 
 def _handle_tuple_iter(value: Any, depth: int) -> TypeInfo|None:
     if type(t := _first_referent(value)) is tuple:
-        if t:
-            el = t[random.randint(0, len(t)-1)] # this is O(1), much faster than islice()
-            args = (get_value_type(el, depth+1),)
-        else:
-            args = (TypeInfo.from_type(typing.Never),)
-        return TypeInfo.from_type(abc.Iterator, args=args)
+        sampler = lambda: (t[random.randint(0, len(t)-1)],) # this is O(1), much faster than islice()
+        return TypeInfo.from_type(abc.Iterator, args=_get_container_args(t, 1, sampler, depth))
     return None
 
 
