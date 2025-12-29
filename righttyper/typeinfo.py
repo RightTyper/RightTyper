@@ -97,9 +97,9 @@ class TypeInfo:
 
 
     @staticmethod
-    def from_set(s: "set[TypeInfo]", **kwargs: Any) -> "TypeInfo":
+    def from_set(s: "set[TypeInfo]", empty_is_none=False, **kwargs: Any) -> "TypeInfo":
         if not s:
-            return NoneTypeInfo
+            return NoneTypeInfo if empty_is_none else TypeInfo.from_type(typing.Never)
 
         def expand_unions(t: "TypeInfo") -> Iterator["TypeInfo"]:
             # Don't merge unions designated as typevars, or the typevar gets lost.
