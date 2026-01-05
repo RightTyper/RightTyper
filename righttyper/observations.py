@@ -223,6 +223,12 @@ class Observations:
                             f"{[tuple(str(t) for t in s) for s in traces]}")
                 return None
 
+            # signature has n argument types + 1 return type, so len(signature) - 1 = number of arg types
+            num_sig_args = len(signature) - 1
+            if num_sig_args < len(func_info.args):
+                logger.info(f"Unable to annotate {func_info.code_id}: signature has {num_sig_args} args, expected {len(func_info.args)}")
+                return None
+
             ann = FuncAnnotation(
                 args=[
                     (
