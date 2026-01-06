@@ -1157,20 +1157,97 @@ class UnifiedTransformer(cst.CSTTransformer):
         # Add additional type checking imports if needed
         if missing_modules or self.new_if_checking_aliases:
             if self.no_type_checking:
-                # Add imports as regular imports (not under TYPE_CHECKING)
-                # This makes them available at runtime for typing.get_type_hints()
-                import_position = find_beginning(new_body)
-                for m in sorted(missing_modules, reverse=True):
-                    new_body.insert(import_position, cst.SimpleStatementLine([
-                        cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
-                    ]))
-                for m, a in sorted(self.new_if_checking_aliases, reverse=True):
-                    new_body.insert(import_position, cst.SimpleStatementLine([
-                        cst.Import([cst.ImportAlias(
-                            name=_dotted_name_to_nodes(m),
-                            asname=cst.AsName(cst.Name(a))
-                        )])
-                    ]))
+                # Use lazy imports via module-level __getattr__ (PEP 562)
+                # This avoids circular import issues at module load time while still
+                # making imports available for typing.get_type_hints() at runtime.
+
+                # Add `from __future__ import annotations` if not already present
+                if not self.has_future_annotations:
+                    future_annotations_import = cst.SimpleStatementLine([
+                        cst.ImportFrom(
+                            module=cst.Name("__future__"),
+                            names=[cst.ImportAlias(name=cst.Name("annotations"))]
+                        )
+                    ])
+                    future_imports.insert(0, future_annotations_import)
+
+                # Keep TYPE_CHECKING imports for static analysis
+                existing_body = [*(typing.cast(cst.If, new_body[if_type_checking_position]).body.body
+                                   if if_type_checking_position is not None
+                                   else ())]
+
+                new_stmt: cst.BaseStatement = cst.If(
+                    test=cst.Name("TYPE_CHECKING"),
+                    body=cst.IndentedBlock(
+                        body=existing_body + [
+                            cst.SimpleStatementLine([
+                                cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
+                            ])
+                            for m in sorted(missing_modules)
+                        ] + [
+                            cst.SimpleStatementLine([
+                                cst.Import([cst.ImportAlias(
+                                    name=_dotted_name_to_nodes(m),
+                                    asname=cst.AsName(cst.Name(a))
+                                )])
+                            ])
+                            for m, a in sorted(self.new_if_checking_aliases)
+                        ]
+                    )
+                )
+
+                if if_type_checking_position is not None:
+                    new_body[if_type_checking_position] = new_stmt
+                else:
+                    if_type_checking_position = find_beginning(new_body)
+                    new_body.insert(if_type_checking_position, new_stmt)
+
+                if 'TYPE_CHECKING' not in self.known_names[-1]:
+                    self.unknown_types.add('TYPE_CHECKING')
+
+                # Build the lazy import mapping: top-level name -> full module path
+                lazy_import_map: dict[str, set[str]] = {}
+                for m in missing_modules:
+                    top_level = m.split('.')[0]
+                    if top_level not in lazy_import_map:
+                        lazy_import_map[top_level] = set()
+                    lazy_import_map[top_level].add(m)
+
+                for m, a in self.new_if_checking_aliases:
+                    # For aliases, we need to import the module and bind the alias
+                    if a not in lazy_import_map:
+                        lazy_import_map[a] = set()
+                    lazy_import_map[a].add(m)
+
+                # Generate the __getattr__ function for lazy imports
+                if lazy_import_map:
+                    # Build the mapping as a string for the code
+                    map_items = []
+                    for name, modules in sorted(lazy_import_map.items()):
+                        # Use the deepest module path for each name
+                        deepest = max(modules, key=lambda x: x.count('.'))
+                        map_items.append(f"'{name}': '{deepest}'")
+                    map_str = "{" + ", ".join(map_items) + "}"
+
+                    getattr_code = f'''
+def __getattr__(name):
+    _rt_lazy_imports = {map_str}
+    if name in _rt_lazy_imports:
+        import importlib as _rt_importlib
+        _rt_mod = _rt_importlib.import_module(_rt_lazy_imports[name])
+        # For nested modules, get the top-level module
+        _rt_top = _rt_mod
+        while '.' in getattr(_rt_top, '__name__', ''):
+            _rt_parent_name = _rt_top.__name__.rsplit('.', 1)[0]
+            if _rt_parent_name == name:
+                break
+            _rt_top = _rt_importlib.import_module(_rt_parent_name)
+        globals()[name] = _rt_top if name == _rt_top.__name__.split('.')[0] else _rt_mod
+        return globals()[name]
+    raise AttributeError(f"module {{__name__!r}} has no attribute {{name!r}}")
+'''
+                    getattr_func = cst.parse_statement(getattr_code.strip())
+                    new_body.append(getattr_func)
             else:
                 # Add `from __future__ import annotations` if not already present
                 # This is needed to defer annotation evaluation, allowing TYPE_CHECKING

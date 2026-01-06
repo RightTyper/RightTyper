@@ -126,3 +126,57 @@ RightTyper handles decorators where the wrapped function never executes (e.g., J
 3. **Configurable via `--infer-wrapped-return-type`**:
    - Default (enabled): infer return type from wrapper's actual return value
    - Disabled: use `None` as placeholder return type
+
+### Lazy Imports for Runtime Type Hints (`--no-type-checking`)
+
+When code calls `typing.get_type_hints()` at runtime, it needs the imported modules to be available in the function's namespace. However, placing imports at the top level can cause circular import errors in complex codebases.
+
+The `--no-type-checking` option solves this using **lazy imports via module-level `__getattr__`** (PEP 562):
+
+1. **Problem**:
+   - Standard behavior adds imports under `TYPE_CHECKING` guard
+   - `typing.get_type_hints()` fails with `NameError` because imports aren't available at runtime
+   - Moving imports to top level causes circular import errors
+
+2. **Solution** (unified_transformer.py):
+   - Keep `from __future__ import annotations` (annotations remain strings)
+   - Keep `TYPE_CHECKING` imports (for static analysis tools like mypy)
+   - Add module-level `__getattr__` function that lazily imports modules when first accessed
+   - Lazy imports only happen when `get_type_hints()` tries to resolve names
+
+3. **Generated Code Pattern**:
+   ```python
+   from __future__ import annotations
+   from typing import TYPE_CHECKING
+
+   if TYPE_CHECKING:
+       import some.module
+
+   # ... functions with annotations ...
+
+   def __getattr__(name):
+       _rt_lazy_imports = {'some': 'some.module'}
+       if name in _rt_lazy_imports:
+           import importlib
+           mod = importlib.import_module(_rt_lazy_imports[name])
+           globals()[name] = mod
+           return mod
+       raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+   ```
+
+4. **Why This Works**:
+   - At module load time, no imports happen (avoiding circular imports)
+   - `TYPE_CHECKING` imports satisfy static type checkers
+   - When `get_type_hints()` resolves annotation strings, it accesses module globals
+   - `__getattr__` is called for missing names, triggering lazy import
+   - By this time, all modules are loaded, so circular imports succeed
+
+5. **Usage**:
+   ```bash
+   python3 -m righttyper run --no-type-checking -m pytest tests/
+   ```
+
+6. **Key Files**:
+   - `unified_transformer.py`: Contains the lazy import generation logic in `leave_Module()`
+   - `options.py`: Defines `no_type_checking` option
+   - `righttyper.py`: Exposes `--no-type-checking` CLI flag

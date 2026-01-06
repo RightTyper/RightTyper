@@ -2917,10 +2917,11 @@ def test_get_changes_variables_unchanged():
     assert not changes
 
 
-def test_no_type_checking_adds_imports_at_runtime():
-    """When no_type_checking=True, imports are added as regular imports (not under TYPE_CHECKING).
+def test_no_type_checking_uses_lazy_imports():
+    """When no_type_checking=True, lazy imports via __getattr__ are used.
 
-    This is needed when code calls typing.get_type_hints() at runtime.
+    This avoids circular import issues while still making imports available
+    for typing.get_type_hints() at runtime.
     """
     code = cst.parse_module(textwrap.dedent("""\
         def foo(x, y):
@@ -2947,25 +2948,30 @@ def test_no_type_checking_adds_imports_at_runtime():
             override_annotations=False,
             only_update_annotations=False,
             inline_generics=False,
-            no_type_checking=True  # Key: imports should be at runtime, not under TYPE_CHECKING
+            no_type_checking=True  # Key: use lazy imports for runtime availability
         )
 
     code = t.transform_code(code)
 
-    # Function should be annotated with quoted strings since imports are at runtime
+    # Function should be annotated with quoted strings
     assert get_function(code, 'foo') == textwrap.dedent("""\
         def foo(x: int, y: "x.y.WholeNumber|None") -> "x.z.FloatingPointNumber":
             return x/2
     """)
 
-    # Imports should be at the top level, NOT under if TYPE_CHECKING:
-    assert get_if_type_checking(code) is None
-
-    # Verify the imports are present as regular imports
     code_str = str(code.code)
-    assert "import x\n" in code_str or "import x\r" in code_str
-    assert "import x.y\n" in code_str or "import x.y\r" in code_str
-    # Should NOT have TYPE_CHECKING
-    assert "TYPE_CHECKING" not in code_str
-    # Should NOT have from __future__ import annotations
-    assert "__future__" not in code_str
+
+    # Should have TYPE_CHECKING imports for static analysis
+    assert get_if_type_checking(code) == textwrap.dedent("""\
+        if TYPE_CHECKING:
+            import x
+            import x.y
+    """)
+
+    # Should have from __future__ import annotations
+    assert "from __future__ import annotations" in code_str
+
+    # Should have __getattr__ function for lazy imports
+    assert "def __getattr__(name):" in code_str
+    assert "_rt_lazy_imports" in code_str
+    assert "'x': 'x.y'" in code_str  # x.y is the deepest module for 'x'
