@@ -2918,7 +2918,7 @@ def test_get_changes_variables_unchanged():
 
 
 def test_no_type_checking_uses_lazy_imports():
-    """When no_type_checking=True, lazy imports via __getattr__ are used.
+    """When no_type_checking=True, lazy module proxies are used.
 
     This avoids circular import issues while still making imports available
     for typing.get_type_hints() at runtime.
@@ -2971,7 +2971,7 @@ def test_no_type_checking_uses_lazy_imports():
     # Should have from __future__ import annotations
     assert "from __future__ import annotations" in code_str
 
-    # Should have __getattr__ function for lazy imports
-    assert "def __getattr__(name):" in code_str
-    assert "_rt_lazy_imports" in code_str
-    assert "'x': 'x.y'" in code_str  # x.y is the deepest module for 'x'
+    # Should have _LazyModule class for lazy imports
+    assert "class _LazyModule:" in code_str
+    # Should have lazy proxy instances
+    assert "x = _LazyModule('x', 'x.y')" in code_str  # x.y is the deepest module for 'x'

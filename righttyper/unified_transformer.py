@@ -1219,35 +1219,45 @@ class UnifiedTransformer(cst.CSTTransformer):
                         lazy_import_map[a] = set()
                     lazy_import_map[a].add(m)
 
-                # Generate the __getattr__ function for lazy imports
+                # Generate lazy module proxies for typing.get_type_hints() support
+                # Unlike __getattr__, proxies are placed directly in globals() where
+                # get_type_hints() can find them during annotation string evaluation.
                 if lazy_import_map:
-                    # Build the mapping as a string for the code
-                    map_items = []
-                    for name, modules in sorted(lazy_import_map.items()):
-                        # Use the deepest module path for each name
-                        deepest = max(modules, key=lambda x: x.count('.'))
-                        map_items.append(f"'{name}': '{deepest}'")
-                    map_str = "{" + ", ".join(map_items) + "}"
+                    # Generate the _LazyModule class once
+                    lazy_module_class = cst.parse_statement('''
+class _LazyModule:
+    """Proxy that lazily imports a module for typing.get_type_hints() support."""
+    __slots__ = ("_rt_top_name", "_rt_full_path", "_rt_mod")
+    def __init__(self, top_name, full_path):
+        object.__setattr__(self, "_rt_top_name", top_name)
+        object.__setattr__(self, "_rt_full_path", full_path)
+        object.__setattr__(self, "_rt_mod", None)
+    def _rt_load(self):
+        mod = object.__getattribute__(self, "_rt_mod")
+        if mod is None:
+            import importlib
+            import sys
+            full_path = object.__getattribute__(self, "_rt_full_path")
+            top_name = object.__getattribute__(self, "_rt_top_name")
+            importlib.import_module(full_path)
+            mod = sys.modules[top_name]
+            object.__setattr__(self, "_rt_mod", mod)
+        return mod
+    def __getattr__(self, name):
+        return getattr(self._rt_load(), name)
+    def __repr__(self):
+        return f"<lazy module {object.__getattribute__(self, '_rt_top_name')!r}>"
+'''.strip())
+                    new_body.append(lazy_module_class)
 
-                    getattr_code = f'''
-def __getattr__(name):
-    _rt_lazy_imports = {map_str}
-    if name in _rt_lazy_imports:
-        import importlib as _rt_importlib
-        _rt_mod = _rt_importlib.import_module(_rt_lazy_imports[name])
-        # For nested modules, get the top-level module
-        _rt_top = _rt_mod
-        while '.' in getattr(_rt_top, '__name__', ''):
-            _rt_parent_name = _rt_top.__name__.rsplit('.', 1)[0]
-            if _rt_parent_name == name:
-                break
-            _rt_top = _rt_importlib.import_module(_rt_parent_name)
-        globals()[name] = _rt_top if name == _rt_top.__name__.split('.')[0] else _rt_mod
-        return globals()[name]
-    raise AttributeError(f"module {{__name__!r}} has no attribute {{name!r}}")
-'''
-                    getattr_func = cst.parse_statement(getattr_code.strip())
-                    new_body.append(getattr_func)
+                    # Generate a lazy proxy instance for each top-level module
+                    for name, modules in sorted(lazy_import_map.items()):
+                        # Use the deepest module path to ensure all intermediate modules are populated
+                        deepest = max(modules, key=lambda x: x.count('.'))
+                        proxy_assignment = cst.parse_statement(
+                            f'{name} = _LazyModule({name!r}, {deepest!r})'
+                        )
+                        new_body.append(proxy_assignment)
             else:
                 # Add `from __future__ import annotations` if not already present
                 # This is needed to defer annotation evaluation, allowing TYPE_CHECKING
