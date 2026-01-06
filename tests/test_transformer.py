@@ -936,6 +936,7 @@ def test_existing_typing_imports():
 
     code_str = str(code.code)
     assert code_str.startswith(textwrap.dedent("""\
+        from __future__ import annotations
         from typing import TYPE_CHECKING, List
         if TYPE_CHECKING:
             import m
@@ -1260,6 +1261,7 @@ def test_if_type_checking_insertion():
     code = t.transform_code(code)
 
     assert str(code.code).startswith(textwrap.dedent("""\
+        from __future__ import annotations
         from typing import TYPE_CHECKING, Any
         if TYPE_CHECKING:
             import c
@@ -2913,3 +2915,63 @@ def test_get_changes_variables_unchanged():
     code = t.transform_code(code)
     changes = t.get_changes()
     assert not changes
+
+
+def test_no_type_checking_uses_lazy_imports():
+    """When no_type_checking=True, lazy module proxies are used.
+
+    This avoids circular import issues while still making imports available
+    for typing.get_type_hints() at runtime.
+    """
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(x, y):
+            return x/2
+    """))
+
+    foo = get_code_id('foo.py', code, 'foo')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: _mkAnnotation(
+                    [
+                        (ArgumentName('x'), TypeInfo.from_type(int, module='')),
+                        (ArgumentName('y'), TypeInfo.from_set({
+                            TypeInfo(module='x.y', name='WholeNumber'),
+                            NoneTypeInfo
+                        }))
+                    ],
+                    TypeInfo(module='x', name='z.FloatingPointNumber'),
+                )
+            },
+            module_variables = ModuleVars([]),
+            module_name = 'foo',
+            override_annotations=False,
+            only_update_annotations=False,
+            inline_generics=False,
+            no_type_checking=True  # Key: use lazy imports for runtime availability
+        )
+
+    code = t.transform_code(code)
+
+    # Function should be annotated with quoted strings
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int, y: "x.y.WholeNumber|None") -> "x.z.FloatingPointNumber":
+            return x/2
+    """)
+
+    code_str = str(code.code)
+
+    # Should have TYPE_CHECKING imports for static analysis
+    assert get_if_type_checking(code) == textwrap.dedent("""\
+        if TYPE_CHECKING:
+            import x
+            import x.y
+    """)
+
+    # Should have from __future__ import annotations
+    assert "from __future__ import annotations" in code_str
+
+    # Should have _LazyModule class for lazy imports
+    assert "class _LazyModule:" in code_str
+    # Should have lazy proxy instances
+    assert "x = _LazyModule('x', 'x.y')" in code_str  # x.y is the deepest module for 'x'

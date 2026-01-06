@@ -25,6 +25,8 @@ class OutputOptions:
     simplify_types: bool = True
     exclude_test_types: bool = True
     always_quote_annotations: bool = False
+    no_type_checking: bool = False
+    no_generalize_typevars: bool = False
 
 
     def process_args(self, kwargs: dict[str, Any]) -> None:
