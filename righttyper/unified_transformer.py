@@ -184,6 +184,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         only_update_annotations: bool = False,
         inline_generics: bool = True,
         always_quote_annotations: bool = False,
+        no_type_checking: bool = False,
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
@@ -198,6 +199,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.only_update_annotations = only_update_annotations
         self.inline_generics = inline_generics
         self.always_quote_annotations = always_quote_annotations
+        self.no_type_checking = no_type_checking
         self.has_future_annotations = False
         self.change_list: list[Change] = []
 
@@ -1167,40 +1169,56 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         # Add additional type checking imports if needed
         if missing_modules or self.new_if_checking_aliases:
-            existing_body = [*(typing.cast(cst.If, new_body[if_type_checking_position]).body.body
-                               if if_type_checking_position is not None
-                               else ())]
-
-            # TODO delete modules already imported
-
-            new_stmt: cst.BaseStatement = cst.If(
-                test=cst.Name("TYPE_CHECKING"),
-                body=cst.IndentedBlock(
-                    body=existing_body + [
-                        cst.SimpleStatementLine([
-                            cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
-                        ])
-                        for m in sorted(missing_modules)
-                    ] + [
-                        cst.SimpleStatementLine([
-                            cst.Import([cst.ImportAlias(
-                                name=_dotted_name_to_nodes(m),
-                                asname=cst.AsName(cst.Name(a))
-                            )])
-                        ])
-                        for m, a in sorted(self.new_if_checking_aliases)
-                    ]
-                )
-            )
-
-            if if_type_checking_position is not None:
-                new_body[if_type_checking_position] = new_stmt
+            if self.no_type_checking:
+                # Add imports as regular imports (not under TYPE_CHECKING)
+                # This makes them available at runtime for typing.get_type_hints()
+                import_position = find_beginning(new_body)
+                for m in sorted(missing_modules, reverse=True):
+                    new_body.insert(import_position, cst.SimpleStatementLine([
+                        cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
+                    ]))
+                for m, a in sorted(self.new_if_checking_aliases, reverse=True):
+                    new_body.insert(import_position, cst.SimpleStatementLine([
+                        cst.Import([cst.ImportAlias(
+                            name=_dotted_name_to_nodes(m),
+                            asname=cst.AsName(cst.Name(a))
+                        )])
+                    ]))
             else:
-                if_type_checking_position = find_beginning(new_body)
-                new_body.insert(if_type_checking_position, new_stmt)
+                existing_body = [*(typing.cast(cst.If, new_body[if_type_checking_position]).body.body
+                                   if if_type_checking_position is not None
+                                   else ())]
 
-            if 'TYPE_CHECKING' not in self.known_names[-1]:
-                self.unknown_types.add('TYPE_CHECKING')
+                # TODO delete modules already imported
+
+                new_stmt: cst.BaseStatement = cst.If(
+                    test=cst.Name("TYPE_CHECKING"),
+                    body=cst.IndentedBlock(
+                        body=existing_body + [
+                            cst.SimpleStatementLine([
+                                cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
+                            ])
+                            for m in sorted(missing_modules)
+                        ] + [
+                            cst.SimpleStatementLine([
+                                cst.Import([cst.ImportAlias(
+                                    name=_dotted_name_to_nodes(m),
+                                    asname=cst.AsName(cst.Name(a))
+                                )])
+                            ])
+                            for m, a in sorted(self.new_if_checking_aliases)
+                        ]
+                    )
+                )
+
+                if if_type_checking_position is not None:
+                    new_body[if_type_checking_position] = new_stmt
+                else:
+                    if_type_checking_position = find_beginning(new_body)
+                    new_body.insert(if_type_checking_position, new_stmt)
+
+                if 'TYPE_CHECKING' not in self.known_names[-1]:
+                    self.unknown_types.add('TYPE_CHECKING')
 
         # Emit "from typing import ..."
         if (typing_types := (self.unknown_types & _TYPING_TYPES)):
