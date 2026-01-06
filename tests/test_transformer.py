@@ -936,6 +936,7 @@ def test_existing_typing_imports():
 
     code_str = str(code.code)
     assert code_str.startswith(textwrap.dedent("""\
+        from __future__ import annotations
         from typing import TYPE_CHECKING, List
         if TYPE_CHECKING:
             import m
@@ -1260,6 +1261,7 @@ def test_if_type_checking_insertion():
     code = t.transform_code(code)
 
     assert str(code.code).startswith(textwrap.dedent("""\
+        from __future__ import annotations
         from typing import TYPE_CHECKING, Any
         if TYPE_CHECKING:
             import c

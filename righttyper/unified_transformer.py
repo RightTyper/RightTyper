@@ -1116,19 +1116,6 @@ class UnifiedTransformer(cst.CSTTransformer):
             else:
                 new_body.append(stmt)
 
-        # Add `from __future__ import annotations` if not already present
-        # This is needed to defer annotation evaluation, allowing TYPE_CHECKING
-        # imports to work correctly at runtime
-        if not self.has_future_annotations:
-            future_annotations_import = cst.SimpleStatementLine([
-                cst.ImportFrom(
-                    module=cst.Name("__future__"),
-                    names=[cst.ImportAlias(name=cst.Name("annotations"))]
-                )
-            ])
-            # Insert at the beginning of future imports
-            future_imports.insert(0, future_annotations_import)
-
         missing_modules = {
             mod
             for mod in (
@@ -1185,6 +1172,19 @@ class UnifiedTransformer(cst.CSTTransformer):
                         )])
                     ]))
             else:
+                # Add `from __future__ import annotations` if not already present
+                # This is needed to defer annotation evaluation, allowing TYPE_CHECKING
+                # imports to work correctly at runtime
+                if not self.has_future_annotations:
+                    future_annotations_import = cst.SimpleStatementLine([
+                        cst.ImportFrom(
+                            module=cst.Name("__future__"),
+                            names=[cst.ImportAlias(name=cst.Name("annotations"))]
+                        )
+                    ])
+                    # Insert at the beginning of future imports
+                    future_imports.insert(0, future_annotations_import)
+
                 existing_body = [*(typing.cast(cst.If, new_body[if_type_checking_position]).body.body
                                    if if_type_checking_position is not None
                                    else ())]
