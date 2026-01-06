@@ -2915,3 +2915,57 @@ def test_get_changes_variables_unchanged():
     code = t.transform_code(code)
     changes = t.get_changes()
     assert not changes
+
+
+def test_no_type_checking_adds_imports_at_runtime():
+    """When no_type_checking=True, imports are added as regular imports (not under TYPE_CHECKING).
+
+    This is needed when code calls typing.get_type_hints() at runtime.
+    """
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(x, y):
+            return x/2
+    """))
+
+    foo = get_code_id('foo.py', code, 'foo')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: _mkAnnotation(
+                    [
+                        (ArgumentName('x'), TypeInfo.from_type(int, module='')),
+                        (ArgumentName('y'), TypeInfo.from_set({
+                            TypeInfo(module='x.y', name='WholeNumber'),
+                            NoneTypeInfo
+                        }))
+                    ],
+                    TypeInfo(module='x', name='z.FloatingPointNumber'),
+                )
+            },
+            module_variables = ModuleVars([]),
+            module_name = 'foo',
+            override_annotations=False,
+            only_update_annotations=False,
+            inline_generics=False,
+            no_type_checking=True  # Key: imports should be at runtime, not under TYPE_CHECKING
+        )
+
+    code = t.transform_code(code)
+
+    # Function should be annotated with quoted strings since imports are at runtime
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int, y: "x.y.WholeNumber|None") -> "x.z.FloatingPointNumber":
+            return x/2
+    """)
+
+    # Imports should be at the top level, NOT under if TYPE_CHECKING:
+    assert get_if_type_checking(code) is None
+
+    # Verify the imports are present as regular imports
+    code_str = str(code.code)
+    assert "import x\n" in code_str or "import x\r" in code_str
+    assert "import x.y\n" in code_str or "import x.y\r" in code_str
+    # Should NOT have TYPE_CHECKING
+    assert "TYPE_CHECKING" not in code_str
+    # Should NOT have from __future__ import annotations
+    assert "__future__" not in code_str
