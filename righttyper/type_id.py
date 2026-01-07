@@ -311,16 +311,28 @@ def get_type_name(t: type, depth: int = 0) -> TypeInfo:
 
 
 def unwrap(method: abc.Callable|None) -> abc.Callable|None:
-    """Follows a chain of `__wrapped__` attributes to find the original function."""
+    """Follows a chain of `__wrapped__` and `__func__` attributes to find the original function.
+
+    Handles:
+    - `__wrapped__` chains from functools.wraps decorators
+    - `classmethod` and `staticmethod` descriptors via their `__func__` attribute
+    """
 
     # Remember objects by id to work around unhashable items, but point to object so
     # that the object can't go away (possibly reusing the id)
     visited = {}
-    while hasattr(method, "__wrapped__"):
-        if id(method) in visited: return None
+    while method is not None:
+        if id(method) in visited:
+            return None
         visited[id(method)] = method
 
-        method = getattr(method, "__wrapped__")
+        # Handle classmethod and staticmethod descriptors
+        if type(method) in (classmethod, staticmethod):
+            method = getattr(method, "__func__", None)
+        elif hasattr(method, "__wrapped__"):
+            method = getattr(method, "__wrapped__")
+        else:
+            break
 
     return method
 
@@ -360,7 +372,7 @@ def find_function(
             if obj := namespace.get(name):
                 if (
                     # don't use isinstance(obj, Callable), as it relies on __class__, which may be overridden
-                    (hasattr(obj, "__call__") or type(obj) is classmethod)
+                    (hasattr(obj, "__call__") or type(obj) in (classmethod, staticmethod))
                     and (obj := unwrap(obj))
                     and getattr(obj, "__code__", None) is code
                 ):
