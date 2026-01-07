@@ -188,11 +188,17 @@ def test_jit_compilation():
 
 #### Compiling Decorator Tests
 
-Tests for JIT compilation patterns (simulating Numba, JAX, PyTorch) demonstrate `__wrapped__` type propagation:
+Tests for JIT compilation patterns demonstrate `__wrapped__` type propagation:
 
+**Simulated decorator tests** (fast, no dependencies, run by default):
 1. **test_compiling_decorator_baseline** - Decorated function never executes, no types inferred
 2. **test_compiling_decorator_with_probe_call** - Calling `.original` enables type inference
 3. **test_compiling_decorator_with_functools_wraps** - `functools.update_wrapper` enables propagation
 4. **test_compiling_decorator_unrunnable_code** - DSL code that can't execute as Python
 5. **test_functools_wraps_decorator** - Multiple wrapped functions with different types
 6. **test_compiling_decorator_info_available** - Debug output showing available type information
+
+**Optional integration tests** (require external libraries):
+- **test_jax_jit_integration** - Real JAX `@jit` decorator validation (requires `jax` package)
+
+These optional tests use `@pytest.mark.skipif` to skip when dependencies aren't installed, ensuring CI passes without heavyweight libraries while still providing end-to-end validation when available.

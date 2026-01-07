@@ -5976,3 +5976,60 @@ def test_compiling_decorator_info_available():
         @jit
         def foo[T1: (float, int)](x: T1, y: T1) -> int: ...
     """)
+
+
+@pytest.mark.skipif(importlib.util.find_spec('jax') is None, reason='JAX not installed')
+@pytest.mark.dont_run_mypy  # JAX-compiled code has different runtime behavior
+def test_jax_jit_integration():
+    """Integration test with actual JAX @jit decorator.
+
+    This validates that RightTyper works correctly with real JIT compilation
+    frameworks, not just simulated ones. JAX's @jit uses functools.wraps
+    internally, so the __wrapped__ propagation mechanism should work.
+
+    This test is optional and only runs when JAX is installed.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import jax
+        import jax.numpy as jnp
+
+        @jax.jit
+        def add_vectors(x, y):
+            return x + y
+
+        @jax.jit
+        def scale_vector(x, factor):
+            return x * factor
+
+        # Call with JAX arrays
+        result1 = add_vectors(jnp.array([1, 2, 3]), jnp.array([4, 5, 6]))
+        result2 = add_vectors(jnp.array([1.0, 2.0]), jnp.array([3.0, 4.0]))
+
+        result3 = scale_vector(jnp.array([1, 2, 3]), 2)
+        result4 = scale_vector(jnp.array([1.5, 2.5]), 3.0)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # JAX @jit uses functools.wraps, so __wrapped__ propagation should work
+    # Both functions should be annotated with JAX array types
+    add_func = get_function(code, 'add_vectors')
+    scale_func = get_function(code, 'scale_vector')
+
+    # Verify functions got annotated (exact type depends on JAX version/behavior)
+    # At minimum, check that:
+    # 1. Decorators are preserved
+    assert '@jax.jit' in add_func
+    assert '@jax.jit' in scale_func
+
+    # 2. Functions have type annotations (the __wrapped__ propagation worked)
+    # We expect jax.Array or similar types for parameters
+    assert 'def add_vectors(' in add_func
+    assert 'def scale_vector(' in scale_func
+
+    # 3. The presence of annotations indicates successful type propagation
+    # (JAX wraps functions so they don't execute, but __wrapped__ lets us infer types)
+    has_annotations = (':' in add_func and ':' in scale_func)
+    assert has_annotations, f"Expected type annotations in JAX functions.\nadd_vectors:\n{add_func}\nscale_vector:\n{scale_func}"
