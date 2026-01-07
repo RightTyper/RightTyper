@@ -114,15 +114,36 @@ CLI (righttyper.py)
 RightTyper handles decorators where the wrapped function never executes (e.g., JIT compilers, `functools.wraps`):
 
 1. **Detection**: In `recorder.py`, `_record_wrapped_function_types()` detects wrapped functions via:
-   - `__call__` methods on objects with `__wrapped__` attribute
-   - Regular functions with `__wrapped__` attribute
-   - Wrapper functions created by `functools.wraps`
+   - Case 1: `__call__` methods on objects with `__wrapped__` attribute
+   - Case 2: Regular functions with `__wrapped__` attribute
+   - Case 3: Wrapper functions created by `functools.wraps` (closure-based detection)
+   - Case 4: Tracing JIT pattern where function and representative args are passed together
 
 2. **Pending Traces Pattern**: Since wrapped functions don't execute, we can't observe their return type directly:
-   - Store pending trace at wrapper invocation: `_pending_wrapped_traces[(wrapper_code, frame_id)] = (wrapped_code, arg_types)`
+   - Store pending trace at wrapper invocation: `_pending_wrapped_traces[(wrapper_code, frame_id)] = (wrapped_code, arg_types, trace_count)`
    - Complete trace when wrapper returns: use wrapper's return type for the wrapped function
+   - Skip wrapped trace if the wrapped function was directly observed during wrapper execution (avoids duplicate/conflicting traces)
    - Clean up on exception: discard pending trace if wrapper raises
 
 3. **Configurable via `--infer-wrapped-return-type`**:
    - Default (enabled): infer return type from wrapper's actual return value
    - Disabled: use `None` as placeholder return type
+
+4. **Classmethod and Staticmethod Support**: The `unwrap()` function in `type_id.py` handles descriptor unwrapping:
+   - Follows `__func__` attribute on `classmethod` and `staticmethod` descriptors
+   - Then follows `__wrapped__` chain to find the original function
+   - Example: `@classmethod @decorator def foo(cls, x)` → unwrap finds original `foo`
+
+5. **Wrapper Argument Capture**: When capturing arguments to propagate to wrapped functions:
+   - Captures both regular positional parameters (e.g., `cls` in `def wrapper(cls, *args, **kwargs)`)
+   - Plus `*args` and `**kwargs` values
+   - This ensures classmethod wrappers correctly propagate the `cls` argument
+
+6. **Avoiding Decorator vs Wrapper Confusion**: Case 3 detection (closure-based `func` lookup) checks that `func` is a closure variable, not a function argument. This prevents false triggering when the decorator itself is called (e.g., `decorator(foo)`) vs when the wrapper is called.
+
+7. **Tracing JIT Pattern (Case 4)**: Handles tracing-based JIT decorators where function and representative arguments are passed together:
+   - Pattern: `trace(func, *args)` where `func` is the function to type and `*args` are representative values
+   - Detection: function has a callable argument named `func`/`f`/`fn`/`function`/`callable` AND has `*args` with values
+   - Only `*args` values are propagated (not `cls` or `func` parameters which are decorator machinery)
+   - Example: `TraceKernel.trace(add, 3, 4)` infers types `add(a: int, b: int) -> ...`
+   - Reference: https://eli.thegreenplace.net/2025/decorator-jits-python-as-a-dsl/

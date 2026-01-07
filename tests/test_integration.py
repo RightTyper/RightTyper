@@ -3440,6 +3440,62 @@ def test_self_wrapped_method():
     assert "def foo(self: Self) -> Self:" in Path("t.py").read_text()
 
 
+def test_self_wrapped_classmethod():
+    """Test that wrapped classmethods get their types propagated correctly."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(cls, *args, **kwargs):
+                return func(cls, *args, **kwargs)
+
+            return wrapper
+
+        class A:
+            @classmethod
+            @decorator
+            def foo(cls, x):
+                return x
+
+        A.foo(42)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    # The wrapped classmethod should have its types inferred
+    assert "def foo(cls" in output and "x:" in output
+
+
+def test_self_wrapped_staticmethod():
+    """Test that wrapped staticmethods get their types propagated correctly."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                return func(*args, **kwargs)
+
+            return wrapper
+
+        class A:
+            @staticmethod
+            @decorator
+            def foo(x, y):
+                return x + y
+
+        A.foo(1, 2)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    # The wrapped staticmethod should have its types inferred
+    assert "def foo(" in output and "x:" in output
+
+
 def test_self_bound_method():
     # It's important to use a separate function (h() below) to make sure a bound method
     # object is created... Python 3.12 seems to optimize things like "(C().f)()"
