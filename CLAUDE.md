@@ -126,3 +126,73 @@ RightTyper handles decorators where the wrapped function never executes (e.g., J
 3. **Configurable via `--infer-wrapped-return-type`**:
    - Default (enabled): infer return type from wrapper's actual return value
    - Disabled: use `None` as placeholder return type
+
+## Test Writing Guidelines
+
+### Integration Test Assertions (Updated 2026-01-07)
+
+When writing integration tests in `test_integration.py`, follow these patterns:
+
+#### Use `get_function()` Helper for Assertions
+
+**DO:**
+```python
+rt_run('t.py')
+output = Path("t.py").read_text()
+code = cst.parse_module(output)
+assert get_function(code, 'foo') == textwrap.dedent("""\
+    @decorator
+    def foo(x: int, y: int) -> int: ...
+""")
+```
+
+**DON'T:**
+```python
+rt_run('t.py')
+output = Path("t.py").read_text()
+print("=== OUTPUT ===")
+print(output)
+assert "def foo(x: int" in output  # Too weak - doesn't check full signature
+```
+
+#### Expected Type Annotations
+
+RightTyper infers TypeVar constraints when parameters have the same type across multiple calls:
+
+```python
+# Given these calls:
+foo(1, 2)
+foo(3.14, 2.71)
+
+# RightTyper infers (note the TypeVar constraint):
+def foo[T1: (float, int)](x: T1, y: T1) -> ...: ...
+
+# NOT:
+def foo(x: int | float, y: int | float) -> ...: ...
+```
+
+This TypeVar pattern captures the constraint that both params must have the same type in each call.
+
+#### mypy Validation in Tests
+
+- **Enable mypy** (default) for tests with valid Python code
+- **Disable mypy** with explanatory comments for:
+  - DSL code with intentionally undefined functions (e.g., JAX operations)
+  - Wrapper patterns causing return type mismatches
+
+```python
+@pytest.mark.dont_run_mypy  # DSL code with intentionally undefined functions
+def test_jit_compilation():
+    ...
+```
+
+#### Compiling Decorator Tests
+
+Tests for JIT compilation patterns (simulating Numba, JAX, PyTorch) demonstrate `__wrapped__` type propagation:
+
+1. **test_compiling_decorator_baseline** - Decorated function never executes, no types inferred
+2. **test_compiling_decorator_with_probe_call** - Calling `.original` enables type inference
+3. **test_compiling_decorator_with_functools_wraps** - `functools.update_wrapper` enables propagation
+4. **test_compiling_decorator_unrunnable_code** - DSL code that can't execute as Python
+5. **test_functools_wraps_decorator** - Multiple wrapped functions with different types
+6. **test_compiling_decorator_info_available** - Debug output showing available type information
