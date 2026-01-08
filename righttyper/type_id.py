@@ -439,7 +439,7 @@ def _first_referent(value: Any) -> object|None:
     return ref[0] if len(ref) else None
 
 
-def _needs_more_samples(counters: list[Counter]) -> bool:
+def _needs_more_samples(counters: tuple[Counter[TypeInfo], ...]) -> bool:
     if (n := counters[0].total()) < run_options.container_min_samples:
         return True
 
@@ -460,15 +460,15 @@ def _needs_more_samples(counters: list[Counter]) -> bool:
 @dataclass
 class Entry:
     o: object
-    counters: tuple[Counter[object], ...]
+    counters: tuple[Counter[TypeInfo], ...]
 
 class ContainerTypeCache:
     """LRU cache of type information about a container."""
     def __init__(self, capacity: int):
         self._capacity = capacity
-        self._cache: OrderedDict[int, counter] = OrderedDict()
+        self._cache: OrderedDict[int, Entry] = OrderedDict()
 
-    def get(self, o: object, n_counters: int) -> tuple[Counter[object], ...]:
+    def get(self, o: object, n_counters: int) -> tuple[Counter[TypeInfo], ...]:
         o_id = id(o)    # accommodate non-hashable objects
         if not (e := self._cache.get(o_id, None)) or e.o is not o:
             e = Entry(o, tuple(Counter() for _ in range(n_counters)))
