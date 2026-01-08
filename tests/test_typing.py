@@ -141,8 +141,8 @@ def test_get_value_type():
     ["iter(range(1 << 1000))", "collections.abc.Iterator[int]", 0],
     ["iter({'a'})", "collections.abc.Iterator[str]", 'a'],
     ["iter('ab')", "collections.abc.Iterator[str]", 'a'],
-    ["iter(('a', 'b'))", "collections.abc.Iterator[str]", 'a'],
-    ["iter(tuple(c for c in ('a', 'b')))", "collections.abc.Iterator[str]", 'a'],
+    ["iter(('a', 0))", "collections.abc.Iterator[int|str]", 'a'],
+    ["iter(tuple(c for c in ('a', 0)))", "collections.abc.Iterator[int|str]", 'a'],
     ["zip([0], ('a',))", "collections.abc.Iterator[tuple[int, str]]", (0, 'a')],
     ["iter(zip([0], ('a',)))", "collections.abc.Iterator[tuple[int, str]]", (0, 'a')],
     ["enumerate(('a', 'b'))", "enumerate[str]", (0, 'a')],
@@ -349,7 +349,10 @@ def test_typeinfo():
 
 def test_typeinfo_from_set():
     t = TypeInfo.from_set(set())
-    assert t == NoneTypeInfo    # or should this be Never ?
+    assert str(t) == "typing.Never"
+
+    t = TypeInfo.from_set(set(), empty_is_none=True)
+    assert t is NoneTypeInfo
 
     t = TypeInfo.from_set({TypeInfo.from_type(int)})
 
@@ -399,7 +402,7 @@ def test_typeinfo_from_set():
 
 
 def test_merged_types():
-    assert "None" == str(merged_types(set()))
+    assert "typing.Never" == str(merged_types(set()))
     assert "bool" == str(merged_types({TypeInfo.from_type(bool)}))
 
     assert "int|str|zoo.bar" == str(merged_types({
