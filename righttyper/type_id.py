@@ -446,8 +446,9 @@ def _needs_more_samples(counters: tuple[Counter[TypeInfo], ...]) -> bool:
     if n >= run_options.container_max_samples:
         return False
 
-    # Good-Turing estimator based heuristic: if we're likely to see a new type
-    # for any of the counters, take another sample
+    # Good-Turing estimator based heuristic: if the number of single-occurence
+    # types divided by the number of samples exceeds a threshold, we estimate
+    # we're likely to see a new type and take another sample.
     if any(
         (sum(c == 1 for c in counter.values()) / n) > run_options.container_type_threshold
         for counter in counters
