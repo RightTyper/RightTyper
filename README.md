@@ -230,7 +230,8 @@ Options:
     --use-top-pct PCT             Only use the PCT% most common call traces.
                                   [default: 100; 1<=x<=100]
     --use-typing-never / --no-use-typing-never
-                                  Whether to emit "typing.Never".  [default:
+                                  Whether to emit "typing.Never" (for Python
+                                  versions that support it).  [default: no-
                                   use-typing-never]
     --simplify-types / --no-simplify-types
                                   Whether to attempt to simplify types, such
@@ -246,5 +247,11 @@ Options:
                                   normally not necessary, but can help avoid
                                   undefined symbol errors.  [default: no-
                                   always-quote-annotations]
+  Advanced options: 
+    --infer-wrapped-return-type / --no-infer-wrapped-return-type
+                                  For wrapped functions that never execute,
+                                  infer return type from wrapper's return
+                                  value. If disabled, use None.  [default:
+                                  infer-wrapped-return-type]
   --help                          Show this message and exit.
 ```

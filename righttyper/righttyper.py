@@ -556,6 +556,48 @@ def cli(debug: bool):
         logger.setLevel(logging.DEBUG)
 
 
+def add_advanced_options(group=None):
+    """Decorates a click command, adding advanced/rarely-used options."""
+
+    def dec(func):
+        base = optgroup if group else click
+
+        for opt in reversed([
+            *(
+                (optgroup.group(group),) if group else ()
+            ),
+            base.option(
+                "--signal-wakeup/--thread-wakeup",
+                default=not platform.system() == "Windows",
+                hidden=True,
+                help="Whether to use signal-based wakeups or thread-based wakeups."
+            ),
+            base.option(
+                "--save-profiling",
+                is_flag=True,
+                hidden=True,
+                help=f"""Save record of self-profiling results in "{TOOL_NAME}-profiling.json"."""
+            ),
+            base.option(
+                "--allow-runtime-exceptions/--no-allow-runtime-exceptions",
+                is_flag=True,
+                default=run_options.allow_runtime_exceptions,
+                hidden=True,
+                help="Allow exceptions in instrumentation to propagate (for debugging).",
+            ),
+            base.option(
+                "--infer-wrapped-return-type/--no-infer-wrapped-return-type",
+                is_flag=True,
+                default=run_options.infer_wrapped_return_type,
+                help="For wrapped functions that never execute, infer return type from wrapper's return value. If disabled, use None.",
+            ),
+        ]):
+            func = opt(func)
+        return func
+    return dec
+
+
+
 def add_output_options(group=None):
     """Decorates a click command, adding our common output options."""
 
@@ -629,8 +671,8 @@ def add_output_options(group=None):
             ),
             base.option(
                 "--use-typing-never/--no-use-typing-never",
-                default=True,
-                help="""Whether to emit "typing.Never".""",
+                default=output_options.use_typing_never,
+                help="""Whether to emit "typing.Never" (for Python versions that support it).""",
             ),
             base.option(
                 "--simplify-types/--no-simplify-types",
@@ -841,6 +883,7 @@ def add_output_options(group=None):
     help="Include diagnostic information in log file.",
 )
 @add_output_options(group="Output options")
+@add_advanced_options(group="Advanced options")
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
     script: str,
