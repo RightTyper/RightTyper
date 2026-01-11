@@ -140,6 +140,10 @@ Options:
                                   Minimum number of call traces to sample
                                   before stopping its instrumentation.
                                   [default: 5; x>=1]
+  --trace-max-samples INTEGER RANGE
+                                  Maximum number of call traces to sample
+                                  before stopping its instrumentation.
+                                  [default: 25; x>=1]
   --trace-type-threshold FLOAT RANGE
                                   Stop gathering traces for a function if the
                                   estimated likelihood of finding a new type
@@ -154,6 +158,18 @@ Options:
                                   Whether to replace 'dict' to enable
                                   efficient, statistically correct samples.
                                   [default: no-replace-dict]
+  --container-min-samples INTEGER RANGE
+                                  Minimum number of entries to sample for a
+                                  container. If the container's length is less
+                                  or equal to this size, fully scan it
+                                  instead.  [default: 15; x>=1]
+  --container-max-samples INTEGER RANGE
+                                  Maximum number of entries to sample for a
+                                  container.  [default: 25; x>=1]
+  --container-type-threshold FLOAT RANGE
+                                  Stop sampling a container if the estimated
+                                  likelihood of finding a new type falls below
+                                  this threshold.  [default: 0.1; x>=0.01]
   --container-sample-limit [INTEGER|none]
                                   Maximum number of container elements
                                   considered when sampling; 'none' means
@@ -179,26 +195,10 @@ Options:
                                   data, save it to "righttyper-N.rt". You can
                                   later process using RightTyper's "process"
                                   command.
-  --generalize-tuples N           Generalize homogenous fixed-length tuples
-                                  to tuple[T, ...] if length >= N. N=0
-                                  disables generalization.  [default: 3]
+  --generalize-tuples N           Generalize homogenous fixed-length tuples to
+                                  tuple[T, ...] if length ≥ N.  N=0 disables
+                                  generalization.  [default: 3; x>=0]
   --debug                         Include diagnostic information in log file.
-  Advanced options:
-    --signal-wakeup / --thread-wakeup
-                                  Whether to use signal-based wakeups or
-                                  thread-based wakeups.  [default: signal-
-                                  wakeup]
-    --save-profiling              Save record of self-profiling results in
-                                  "righttyper-profiling.json".
-    --allow-runtime-exceptions / --no-allow-runtime-exceptions
-                                  Allow exceptions in instrumentation to
-                                  propagate (for debugging).  [default: no-
-                                  allow-runtime-exceptions]
-    --infer-wrapped-return-type / --no-infer-wrapped-return-type
-                                  For wrapped functions that never execute,
-                                  infer return type from wrapper's return
-                                  value. If disabled, use None.  [default:
-                                  infer-wrapped-return-type]
   Output options: 
     --overwrite / --no-overwrite  Overwrite ".py" files with type information.
                                   If disabled, ".py.typed" files are written
@@ -229,7 +229,8 @@ Options:
     --use-top-pct PCT             Only use the PCT% most common call traces.
                                   [default: 100; 1<=x<=100]
     --use-typing-never / --no-use-typing-never
-                                  Whether to emit "typing.Never".  [default:
+                                  Whether to emit "typing.Never" (for Python
+                                  versions that support it).  [default: no-
                                   use-typing-never]
     --simplify-types / --no-simplify-types
                                   Whether to attempt to simplify types, such
@@ -245,5 +246,11 @@ Options:
                                   normally not necessary, but can help avoid
                                   undefined symbol errors.  [default: no-
                                   always-quote-annotations]
+  Advanced options: 
+    --infer-wrapped-return-type / --no-infer-wrapped-return-type
+                                  For wrapped functions that never execute,
+                                  infer return type from wrapper's return
+                                  value. If disabled, use None.  [default:
+                                  infer-wrapped-return-type]
   --help                          Show this message and exit.
 ```

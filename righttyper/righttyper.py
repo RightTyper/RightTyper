@@ -569,17 +569,20 @@ def add_advanced_options(group=None):
             base.option(
                 "--signal-wakeup/--thread-wakeup",
                 default=not platform.system() == "Windows",
+                hidden=True,
                 help="Whether to use signal-based wakeups or thread-based wakeups."
             ),
             base.option(
                 "--save-profiling",
                 is_flag=True,
+                hidden=True,
                 help=f"""Save record of self-profiling results in "{TOOL_NAME}-profiling.json"."""
             ),
             base.option(
                 "--allow-runtime-exceptions/--no-allow-runtime-exceptions",
                 is_flag=True,
                 default=run_options.allow_runtime_exceptions,
+                hidden=True,
                 help="Allow exceptions in instrumentation to propagate (for debugging).",
             ),
             base.option(
@@ -667,8 +670,8 @@ def add_output_options(group=None):
             ),
             base.option(
                 "--use-typing-never/--no-use-typing-never",
-                default=True,
-                help="""Whether to emit "typing.Never".""",
+                default=output_options.use_typing_never,
+                help="""Whether to emit "typing.Never" (for Python versions that support it).""",
             ),
             base.option(
                 "--simplify-types/--no-simplify-types",
@@ -860,8 +863,8 @@ def add_output_options(group=None):
     is_flag=True,
     help="Include diagnostic information in log file.",
 )
-@add_advanced_options(group="Advanced options")
 @add_output_options(group="Output options")
+@add_advanced_options(group="Advanced options")
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
     script: str,
