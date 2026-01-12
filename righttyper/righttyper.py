@@ -585,12 +585,6 @@ def add_advanced_options(group=None):
                 hidden=True,
                 help="Allow exceptions in instrumentation to propagate (for debugging).",
             ),
-            base.option(
-                "--infer-wrapped-return-type/--no-infer-wrapped-return-type",
-                is_flag=True,
-                default=run_options.infer_wrapped_return_type,
-                help="For wrapped functions that never execute, infer return type from wrapper's return value. If disabled, use None.",
-            ),
         ]):
             func = opt(func)
         return func

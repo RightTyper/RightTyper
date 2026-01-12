@@ -355,11 +355,6 @@ class Observations:
         if output_options.use_typing_self:
             self.transform_types(SelfT())
 
-        if not output_options.use_typing_never:
-            self.transform_types(NeverSayNeverT())
-        else:
-            self.transform_types(NoReturnToNeverT())
-
         if output_options.exclude_test_types:
             self.transform_types(ExcludeTestTypesT(self.test_modules))
 
@@ -386,6 +381,12 @@ class Observations:
         # are available for generalization
         if output_options.simplify_types:
             finalizers.append(GeneratorToIteratorT())
+
+        # Only rename away from typing.Never now so that list[X]|list[Never] can be simplified
+        if not output_options.use_typing_never:
+            finalizers.append(NeverSayNeverT())
+        else:
+            finalizers.append(NoReturnToNeverT())
 
         finalizers.append(MakePickleableT())
 
