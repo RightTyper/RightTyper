@@ -792,6 +792,24 @@ def add_output_options(group=None):
     help="Whether to replace 'dict' to enable efficient, statistically correct samples."
 )
 @click.option(
+    "--container-min-samples",
+    type=click.IntRange(1, None),
+    default=run_options.container_min_samples,
+    help="Minimum number of entries to sample for a container. If the container's length is less or equal to this size, fully scan it instead.",
+)
+@click.option(
+    "--container-max-samples",
+    type=click.IntRange(1, None),
+    default=run_options.container_max_samples,
+    help="Maximum number of entries to sample for a container.",
+)
+@click.option(
+    "--container-type-threshold",
+    type=click.FloatRange(0.01, None),
+    default=run_options.container_type_threshold,
+    help="Stop sampling a container if the estimated likelihood of finding a new type falls below this threshold.",
+)
+@click.option(
     "--container-sample-limit",
     default="1000",
     callback=lambda ctx, param, value: parse_none_or_ge_zero(value),

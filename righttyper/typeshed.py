@@ -5,7 +5,6 @@ from libcst.metadata.scope_provider import (
     ImportAssignment,
     BuiltinAssignment
 )
-from libcst.helpers import get_full_name_for_node
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownTypeInfo
 from righttyper.righttyper_utils import normalize_module_name
 import typeshed_client
@@ -14,6 +13,7 @@ from ast import literal_eval
 import typing
 import builtins
 from functools import cache
+from pathlib import Path
 
 
 _BUILTINS: typing.Final[dict[str, TypeInfo]] = {
@@ -23,6 +23,15 @@ _BUILTINS: typing.Final[dict[str, TypeInfo]] = {
 }
 
 
+def get_full_name(node: cst.Attribute|cst.Name|cst.BaseExpression) -> str:
+    """Extracts a module name from CST Attribute/Name nodes."""
+    if isinstance(node, cst.Attribute):
+        return f"{get_full_name(node.value)}.{get_full_name(node.attr)}"
+
+    assert isinstance(node, cst.Name), f"{node=}"
+    return node.value
+
+
 class FunctionFinder(cst.CSTVisitor):
     METADATA_DEPENDENCIES = (ScopeProvider,)
 
@@ -30,10 +39,10 @@ class FunctionFinder(cst.CSTVisitor):
         self._module_name = module_name
         self._name_stack: list[str] = []
         self._want = want.split('.')
-        self.result = []
+        self.result: list[TypeInfo] = []
 
-    def _type_from_name(self, scope, node) -> TypeInfo:
-        full_name = get_full_name_for_node(node)
+    def _type_from_name(self, scope, node: cst.Name|cst.Attribute) -> TypeInfo:
+        full_name = get_full_name(node)
         if full_name == 'None':
             return NoneTypeInfo
 
@@ -46,13 +55,17 @@ class FunctionFinder(cst.CSTVisitor):
                 if isinstance(assignment.node, cst.Import):
                     module_name = ''
                     for i_alias in assignment.node.names:
-                        if isinstance(i_alias.asname, cst.AsName) and i_alias.asname.name.value == first_name:
+                        if (
+                            isinstance(i_alias.asname, cst.AsName)
+                            and isinstance(i_alias.asname.name, cst.Name)
+                            and i_alias.asname.name.value == first_name
+                        ):
                             return TypeInfo(
-                                get_full_name_for_node(i_alias.name),
+                                get_full_name(i_alias.name),
                                 full_name[len(first_name)+1:]
                             )
                         else:
-                            name = get_full_name_for_node(i_alias.name)
+                            name = get_full_name(i_alias.name)
                             if full_name.startswith(name) and full_name[len(name)] == '.':
                                 if not module_name or len(name) > len(module_name):
                                     module_name = name
@@ -63,17 +76,25 @@ class FunctionFinder(cst.CSTVisitor):
                             full_name[len(module_name)+1:]
                         )
 
-                elif isinstance(assignment.node, cst.ImportFrom):
+                elif (
+                    isinstance(assignment.node, cst.ImportFrom)
+                    and assignment.node.module
+                    and not isinstance(assignment.node.names, cst.ImportStar)
+                ):
                     for i_alias in assignment.node.names:
-                        if isinstance(i_alias.asname, cst.AsName) and i_alias.asname.name.value == first_name:
+                        if (
+                            isinstance(i_alias.asname, cst.AsName)
+                            and isinstance(i_alias.asname.name, cst.Name)
+                            and i_alias.asname.name.value == first_name
+                        ):
+                            name = get_full_name(i_alias.name)
                             return TypeInfo(
-                                get_full_name_for_node(assignment.node.module),
-                                i_alias.name.value if len(full_name) == len(first_name)
-                                    else i_alias.name.value + '.' + full_name[len(first_name)+1:]
+                                get_full_name(assignment.node.module),
+                                name if len(full_name) == len(first_name) else name + '.' + full_name[len(first_name)+1:]
                             )
 
                     return TypeInfo(
-                        get_full_name_for_node(assignment.node.module),
+                        get_full_name(assignment.node.module),
                         full_name
                     )
 
@@ -81,7 +102,7 @@ class FunctionFinder(cst.CSTVisitor):
                 if (t := _BUILTINS.get(full_name)):
                     return t
 
-        return TypeInfo(normalize_module_name(self._module_name), get_full_name_for_node(node))
+        return TypeInfo(normalize_module_name(self._module_name), get_full_name(node))
 
 
     def _parse_type(self, scope, expr: cst.BaseExpression | None) -> TypeInfo:
@@ -154,7 +175,9 @@ class FunctionFinder(cst.CSTVisitor):
 
 
     def _save_results(self, f: cst.FunctionDef) -> None:
-        for p in f.params.posonly_params + f.params.params:
+        p: typing.Any
+
+        for p in (*f.params.posonly_params, *f.params.params):
             self.result.append(self._parse_annotation(p.annotation))
 
         if isinstance(p := f.params.star_arg, cst.Param):
@@ -187,7 +210,7 @@ class FunctionFinder(cst.CSTVisitor):
         self._name_stack.pop()
 
 
-def get_func_params(code: cst.Module, module_name: str, func_name: str) -> list[TypeInfo|None, ...]:
+def get_func_params(code: cst.Module, module_name: str, func_name: str) -> list[TypeInfo]:
     finder = FunctionFinder(module_name, func_name)
     w = MetadataWrapper(code)
     w.visit(finder)
@@ -202,7 +225,7 @@ def get_typeshed_module(module_name: str) -> cst.Module|None:
     return cst.parse_module(stub_path.read_text('utf-8'))
 
 
-def get_typeshed_func_params(module_name: str, qualname: str) -> list[TypeInfo|None, ...] | None:
+def get_typeshed_func_params(module_name: str, qualname: str) -> list[TypeInfo] | None:
     if not (module := get_typeshed_module(module_name)):
         return None
 

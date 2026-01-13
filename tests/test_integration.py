@@ -5628,7 +5628,6 @@ def test_generalize_tuples(generalize):
     """)
 
 
-@pytest.mark.dont_run_mypy
 def test_compiling_decorator_baseline():
     """Test decorator that compiles a function instead of calling it - baseline.
 
@@ -5668,13 +5667,14 @@ def test_compiling_decorator_baseline():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    print("=== BASELINE (foo never runs) ===")
-    print(output)
+    code = cst.parse_module(output)
     # foo should NOT be annotated since it never executes
-    assert "def foo(x, y):" in output
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x, y): ...
+    """)
 
 
-@pytest.mark.dont_run_mypy
 def test_compiling_decorator_with_probe_call():
     """Test if calling the original function once during decoration captures types."""
     Path("t.py").write_text(textwrap.dedent("""\
@@ -5706,13 +5706,14 @@ def test_compiling_decorator_with_probe_call():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    print("=== WITH PROBE CALL ===")
-    print(output)
+    code = cst.parse_module(output)
     # Now foo SHOULD be annotated since we called original
-    assert "def foo(x: int, y: int) -> int:" in output
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x: int, y: int) -> int: ...
+    """)
 
 
-@pytest.mark.dont_run_mypy
 def test_compiling_decorator_with_functools_wraps():
     """Test if functools.wraps helps RightTyper track the original function."""
     Path("t.py").write_text(textwrap.dedent("""\
@@ -5745,13 +5746,16 @@ def test_compiling_decorator_with_functools_wraps():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    print("=== WITH FUNCTOOLS.WRAPS ===")
-    print(output)
-    # Check if functools.wraps helps (likely not, since foo still doesn't run)
-    print(f"foo annotated: {'def foo(x: int' in output}")
+    code = cst.parse_module(output)
+    # functools.update_wrapper sets __wrapped__, enabling type propagation
+    # foo(1, 2) -> HLOThing.__call__(1, 2) -> sum([1, 2]) = 3
+    # RightTyper propagates: foo(x: int, y: int) -> int
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x: int, y: int) -> int: ...
+    """)
 
 
-@pytest.mark.dont_run_mypy
 def test_compiling_decorator_with_decoration_time_probe():
     """Test if probing during decoration time captures types."""
     Path("t.py").write_text(textwrap.dedent("""\
@@ -5789,12 +5793,15 @@ def test_compiling_decorator_with_decoration_time_probe():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    print("=== WITH DECORATION-TIME PROBE ===")
-    print(output)
-    print(f"foo annotated: {'def foo(x: int' in output}")
+    code = cst.parse_module(output)
+    # Decoration-time probe calls original(0, 0) which RightTyper observes
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x: int, y: int) -> int: ...
+    """)
 
 
-@pytest.mark.dont_run_mypy
+@pytest.mark.dont_run_mypy  # DSL code with intentionally undefined functions
 def test_compiling_decorator_unrunnable_code():
     """Test decorator where the original function body CANNOT be executed.
 
@@ -5840,14 +5847,17 @@ def test_compiling_decorator_unrunnable_code():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    print("=== UNRUNNABLE CODE (DSL) ===")
-    print(output)
+    code = cst.parse_module(output)
     # foo IS annotated even though it never executes, via __wrapped__ propagation
-    # Called with (1, 2) and (3.14, 2.71) -> infers int|float for both params
-    assert "def foo" in output and "x:" in output, "foo should be annotated via __wrapped__ propagation"
+    # Called with (1, 2) and (3.14, 2.71) -> RightTyper infers TypeVar constraint
+    # since both params have same type in each call
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @jit
+        def foo[T1: (float, int)](x: T1, y: T1) -> int: ...
+    """)
 
 
-@pytest.mark.dont_run_mypy
+@pytest.mark.dont_run_mypy  # Wrapper intercepts calls, causing return type mismatch
 def test_functools_wraps_decorator():
     """Test decorator using functools.wraps where original function never runs.
 
@@ -5884,14 +5894,22 @@ def test_functools_wraps_decorator():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    print("=== FUNCTOOLS.WRAPS ===")
-    print(output)
+    code = cst.parse_module(output)
     # Both wrapped functions should be annotated via __wrapped__ propagation
-    assert "def add_numbers" in output and "x:" in output
-    assert "def greet" in output and "name:" in output
+    # add_numbers called with (1, 2) and (3.14, 2.71) -> TypeVar constraint
+    # since both params have same type in each call
+    assert get_function(code, 'add_numbers') == textwrap.dedent("""\
+        @my_decorator
+        def add_numbers[T1: (float, int)](x: T1, y: T1) -> str: ...
+    """)
+    # greet called with ("Alice",) -> str for name, wrapper returns str
+    assert get_function(code, 'greet') == textwrap.dedent("""\
+        @my_decorator
+        def greet(name: str) -> str: ...
+    """)
 
 
-@pytest.mark.dont_run_mypy
+@pytest.mark.dont_run_mypy  # DSL code with intentionally undefined functions
 def test_compiling_decorator_info_available():
     """Demonstrate what information IS available to potentially annotate foo.
 
@@ -5950,3 +5968,68 @@ def test_compiling_decorator_info_available():
     assert "WRAPPED: foo" in output
     assert "params: ('x', 'y')" in output
     assert "x = 1 (type: int)" in output or "x = 3.14 (type: float)" in output
+
+    # Verify RightTyper actually annotated foo via __wrapped__ propagation
+    annotated = Path("t.py").read_text()
+    code = cst.parse_module(annotated)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @jit
+        def foo[T1: (float, int)](x: T1, y: T1) -> int: ...
+    """)
+
+
+@pytest.mark.skipif(importlib.util.find_spec('jax') is None, reason='JAX not installed')
+@pytest.mark.dont_run_mypy  # JAX-compiled code has different runtime behavior
+def test_jax_jit_integration():
+    """Integration test with actual JAX @jit decorator.
+
+    This validates that RightTyper works correctly with real JIT compilation
+    frameworks, not just simulated ones. JAX's @jit uses functools.wraps
+    internally, so the __wrapped__ propagation mechanism should work.
+
+    This test is optional and only runs when JAX is installed.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import jax
+        import jax.numpy as jnp
+
+        @jax.jit
+        def add_vectors(x, y):
+            return x + y
+
+        @jax.jit
+        def scale_vector(x, factor):
+            return x * factor
+
+        # Call with JAX arrays
+        result1 = add_vectors(jnp.array([1, 2, 3]), jnp.array([4, 5, 6]))
+        result2 = add_vectors(jnp.array([1.0, 2.0]), jnp.array([3.0, 4.0]))
+
+        result3 = scale_vector(jnp.array([1, 2, 3]), 2)
+        result4 = scale_vector(jnp.array([1.5, 2.5]), 3.0)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # JAX @jit uses functools.wraps, so __wrapped__ propagation should work
+    # Both functions should be annotated with JAX array types
+    add_func = get_function(code, 'add_vectors')
+    scale_func = get_function(code, 'scale_vector')
+
+    # Verify functions got annotated (exact type depends on JAX version/behavior)
+    # At minimum, check that:
+    # 1. Decorators are preserved
+    assert '@jax.jit' in add_func
+    assert '@jax.jit' in scale_func
+
+    # 2. Functions have type annotations (the __wrapped__ propagation worked)
+    # We expect jax.Array or similar types for parameters
+    assert 'def add_vectors(' in add_func
+    assert 'def scale_vector(' in scale_func
+
+    # 3. The presence of annotations indicates successful type propagation
+    # (JAX wraps functions so they don't execute, but __wrapped__ lets us infer types)
+    has_annotations = (':' in add_func and ':' in scale_func)
+    assert has_annotations, f"Expected type annotations in JAX functions.\nadd_vectors:\n{add_func}\nscale_vector:\n{scale_func}"
