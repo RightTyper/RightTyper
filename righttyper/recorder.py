@@ -21,7 +21,6 @@ from righttyper.righttyper_utils import (
 )
 from righttyper.type_id import find_function, unwrap, get_value_type, get_type_name, hint2type, PostponedArg0
 from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
-from righttyper.generalize import delete_never
 
 
 # Singleton used to differentiate from None
@@ -104,7 +103,7 @@ class PendingCallTrace:
         args_now = self._get_arg_types(self.arg_info)
         type_data: tuple[TypeInfo, ...] = (
             *tuple(
-                at_start if now is None else TypeInfo.from_set(delete_never({at_start, now}))
+                at_start if now is None else TypeInfo.from_set({at_start, now})
                 for at_start, now in zip(self.args_start, args_now)
             ),
             retval
