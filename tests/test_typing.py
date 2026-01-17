@@ -742,3 +742,90 @@ def test_from_set_with_any():
     assert not t.is_union()
     assert t.fullname() == "typing.Any"
     assert t.args == ()
+
+
+def test_merged_types_for_variable_simple():
+    """Test that for_variable=True merges similar generics."""
+    # Without for_variable, should keep separate
+    assert "list[bool]|list[int]" == str(merged_types({
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(bool),))
+        }
+    ))
+
+    # With for_variable=True, should merge type arguments.
+    # bool is a subtype of int, so simplify() further reduces to list[int]
+    assert "list[int]" == str(merged_types({
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(bool),))
+        },
+        for_variable=True
+    ))
+
+
+def test_merged_types_for_variable_with_none():
+    """Test for_variable with None in the union."""
+    # list[int] | list[bool] | None -> list[int] | None (bool simplified to int)
+    assert "list[int]|None" == str(merged_types({
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(bool),)),
+            TypeInfo.from_type(type(None))
+        },
+        for_variable=True
+    ))
+
+
+def test_merged_types_for_variable_dict():
+    """Test for_variable with dict types."""
+    # dict[str, int] | dict[str, float] -> dict[str, float] (int simplified to float via numeric tower)
+    assert "dict[str, float]" == str(merged_types({
+            TypeInfo.from_type(dict, args=(TypeInfo.from_type(str), TypeInfo.from_type(int))),
+            TypeInfo.from_type(dict, args=(TypeInfo.from_type(str), TypeInfo.from_type(float)))
+        },
+        for_variable=True
+    ))
+
+
+def test_merged_types_for_variable_nested():
+    """Test for_variable with nested generics."""
+    # list[tuple[int, float]] | list[tuple[bool, float]] -> list[tuple[int, float]] (bool simplified to int)
+    assert "list[tuple[int, float]]" == str(merged_types({
+            TypeInfo.from_type(list, args=(
+                TypeInfo.from_type(tuple, args=(
+                    TypeInfo.from_type(bool),
+                    TypeInfo.from_type(float),
+                )),
+            )),
+            TypeInfo.from_type(list, args=(
+                TypeInfo.from_type(tuple, args=(
+                    TypeInfo.from_type(int),
+                    TypeInfo.from_type(float),
+                )),
+            )),
+        },
+        for_variable=True
+    ))
+
+
+def test_merged_types_for_variable_different_containers():
+    """Test that different container types are not merged."""
+    # list[int] | set[int] should stay separate even with for_variable=True
+    assert "list[int]|set[int]" == str(merged_types({
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
+            TypeInfo.from_type(set, args=(TypeInfo.from_type(int),))
+        },
+        for_variable=True
+    ))
+
+
+def test_merged_types_for_variable_different_arity():
+    """Test that generics with different number of args are not merged."""
+    # tuple[int] | tuple[int, str] should stay separate
+    result = str(merged_types({
+            TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int),)),
+            TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), TypeInfo.from_type(str)))
+        },
+        for_variable=True
+    ))
+    assert "tuple[int, str]" in result
+    assert "tuple[int]" in result

@@ -2,17 +2,63 @@ from typing import cast, Sequence, Iterator
 import collections.abc as abc
 from collections import defaultdict, Counter
 from types import EllipsisType
+import itertools
 from righttyper.typeinfo import TypeInfo, CallTrace
 from righttyper.type_id import get_type_name
 from righttyper.righttyper_types import cast_not_None
 from righttyper.options import output_options
 
 
-def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
-    """Attempts to merge types in a set before forming their union."""
+def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
+    """Merge generics with same container but different type args.
 
+    E.g., list[int] | list[bool] → list[int] (bool is subtype of int)
+         dict[str, int] | dict[str, str] → dict[str, int | str]
+
+    This is only safe for variable annotations due to generic invariance.
+    For parameters and return types, this could produce incorrect results.
+    """
+    if not any(t.args for t in typeinfoset):
+        return typeinfoset
+
+    typeinfoset = set(typeinfoset)  # avoid modifying argument
+
+    def group_key(t: TypeInfo) -> tuple[str, str, bool, int]:
+        return t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args)
+
+    for (_mod, _name, all_info, nargs), group in itertools.groupby(
+        sorted(typeinfoset, key=group_key),
+        group_key
+    ):
+        if all_info:
+            group_set = set(group)
+            if len(group_set) > 1:  # only merge if there's more than one
+                first = next(iter(group_set))
+                typeinfoset -= group_set
+                # Recursively merge and simplify inner type arguments.
+                # This allows bool|int -> int, and handles nested generics.
+                typeinfoset.add(first.replace(args=tuple(
+                    merged_types({
+                        cast(TypeInfo, member.args[i]) for member in group_set
+                    }, for_variable=True)
+                    for i in range(nargs)
+                )))
+
+    return typeinfoset
+
+
+def merged_types(typeinfoset: set[TypeInfo], for_variable: bool = False) -> TypeInfo:
+    """Attempts to merge types in a set before forming their union.
+
+    Args:
+        typeinfoset: Set of types to merge
+        for_variable: If True, apply similar generics merging (safe for variables only)
+    """
     if len(typeinfoset) > 1 and output_options.simplify_types:
         typeinfoset = simplify(typeinfoset)
+
+    if for_variable and len(typeinfoset) > 1:
+        typeinfoset = merge_similar_generics(typeinfoset)
 
     return TypeInfo.from_set(typeinfoset)
 

@@ -267,7 +267,7 @@ class Observations:
                 varargs=func_info.varargs,
                 kwargs=func_info.kwargs,
                 variables=[
-                    (var_name, merged_types(var_types))
+                    (var_name, merged_types(var_types, for_variable=True))
                     for var_name, var_types in func_info.variables.items()
                 ]
             )
@@ -403,7 +403,7 @@ class Observations:
 
         module_vars = {
             filename: ModuleVars([
-                (var_name, finalize(merged_types(var_types)))
+                (var_name, finalize(merged_types(var_types, for_variable=True)))
                 for var_name, var_types in var_dict.items()
             ])
             for filename, var_dict in self.module_variables.items()
