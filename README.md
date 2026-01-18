@@ -133,13 +133,18 @@ Options:
                                   [default: 0.5; x>=0.1]
   --restart-max-instr INTEGER RANGE
                                   Max. number of instrumentation events per
-                                  interval. If above this number, previously
-                                  stopped instrumentation isn't restarted.
-                                  [default: 0; x>=0]
+                                  interval. Previously stopped instrumentation
+                                  is restarted when fewer (or equal)
+                                  instrumentation events are handled in an
+                                  interval.  [default: 0; x>=0]
   --trace-min-samples INTEGER RANGE
                                   Minimum number of call traces to sample
                                   before stopping its instrumentation.
                                   [default: 5; x>=1]
+  --trace-max-samples INTEGER RANGE
+                                  Maximum number of call traces to sample
+                                  before stopping its instrumentation.
+                                  [default: 25; x>=1]
   --trace-type-threshold FLOAT RANGE
                                   Stop gathering traces for a function if the
                                   estimated likelihood of finding a new type
@@ -154,6 +159,18 @@ Options:
                                   Whether to replace 'dict' to enable
                                   efficient, statistically correct samples.
                                   [default: no-replace-dict]
+  --container-min-samples INTEGER RANGE
+                                  Minimum number of entries to sample for a
+                                  container. If the container's length is less
+                                  or equal to this size, fully scan it
+                                  instead.  [default: 15; x>=1]
+  --container-max-samples INTEGER RANGE
+                                  Maximum number of entries to sample for a
+                                  container.  [default: 25; x>=1]
+  --container-type-threshold FLOAT RANGE
+                                  Stop sampling a container if the estimated
+                                  likelihood of finding a new type falls below
+                                  this threshold.  [default: 0.1; x>=0.01]
   --container-sample-limit [INTEGER|none]
                                   Maximum number of container elements
                                   considered when sampling; 'none' means
@@ -179,6 +196,9 @@ Options:
                                   data, save it to "righttyper-N.rt". You can
                                   later process using RightTyper's "process"
                                   command.
+  --generalize-tuples N           Generalize homogenous fixed-length tuples to
+                                  tuple[T, ...] if length ≥ N.  N=0 disables
+                                  generalization.  [default: 3; x>=0]
   --debug                         Include diagnostic information in log file.
   Output options: 
     --overwrite / --no-overwrite  Overwrite ".py" files with type information.

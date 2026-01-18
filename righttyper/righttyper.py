@@ -714,7 +714,7 @@ def add_output_options(group=None):
     "--restart-max-instr",
     type=click.IntRange(0, None),
     default=run_options.restart_max_instr,
-    help="Max. number of instrumentation events per interval. If above this number, previously stopped instrumentation isn't restarted.",
+    help="Max. number of instrumentation events per interval. Previously stopped instrumentation is restarted when fewer (or equal) instrumentation events are handled in an interval.",
 )
 @click.option(
     "--trace-min-samples",
