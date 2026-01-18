@@ -271,18 +271,17 @@ class ObservationsRecorder:
             scope_vars = self._obs.module_variables[Filename(code.co_filename)]
 
         f_locals = frame.f_locals
+        prefix = codevars.var_prefix
         value: Any
-        dst: str|None
-        for src, dst in codevars.variables.items():
-            if (value := f_locals.get(src, NO_OBJECT)) is not NO_OBJECT:
-                scope_vars[VariableName(dst)].add(get_value_type(value))
 
-        # Include initial constant types from AST parsing (e.g., x = None).
-        # This ensures types from initial assignments aren't lost when
-        # the variable is reassigned before function exit.
-        for var_name, const_type in codevars.initial_constants.items():
-            if (qualified_name := codevars.variables.get(var_name)):
-                scope_vars[VariableName(qualified_name)].add(TypeInfo.from_type(const_type))
+        for var_name, const_type in codevars.variables.items():
+            qualified = f"{prefix}{var_name}"
+            # Record runtime value
+            if (value := f_locals.get(var_name, NO_OBJECT)) is not NO_OBJECT:
+                scope_vars[VariableName(qualified)].add(get_value_type(value))
+            # Include initial constant type if present (e.g., x = None)
+            if const_type is not None:
+                scope_vars[VariableName(qualified)].add(TypeInfo.from_type(const_type))
 
         if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
             obj_attrs = self._object_attributes[codevars.class_key]
@@ -410,12 +409,11 @@ class ObservationsRecorder:
                         else:
                             scope_vars = self._obs.module_variables[Filename(class_codevars.scope_code.co_filename)]
 
-                        # Use qualified names from the class's variables dict (e.g., "C.monitor")
+                        # Use var_prefix to build qualified names (e.g., "C.monitor")
                         for attr in codevars.class_attributes:
                             if VariableName(attr) in class_attrs:
-                                qualified_name = class_codevars.variables.get(attr)
-                                if qualified_name:
-                                    scope_vars[VariableName(qualified_name)].update(class_attrs[VariableName(attr)])
+                                qualified_name = f"{class_codevars.var_prefix}{attr}"
+                                scope_vars[VariableName(qualified_name)].update(class_attrs[VariableName(attr)])
 
 
     def finish_recording(self, main_globals: dict[str, Any]) -> Observations:

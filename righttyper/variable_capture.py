@@ -14,8 +14,11 @@ class CodeVars:
     # that code object
     scope_code: types.CodeType | None = None
 
-    # maps name in f_locals to name in scope
-    variables: dict[str, str] = field(default_factory=dict)
+    # prefix for qualified variable names (e.g., "C." for class C, "" for functions)
+    var_prefix: str = ""
+
+    # local variable names: var_name -> initial constant type (or None if not a constant)
+    variables: dict[str, type | None] = field(default_factory=dict)
 
     # qualified name of this code object's class, if it's a method
     class_name: str | None = None
@@ -31,9 +34,6 @@ class CodeVars:
 
     # the 'self' attributes: attr_name -> initial constant type (or None if not a constant)
     attributes: dict[str, type | None] | None = None
-
-    # maps variable name to its initial constant's type (if first assignment is a constant)
-    initial_constants: dict[str, type] = field(default_factory=dict)
 
     # class-level attributes (cls.x or class body assignments): attr_name -> initial constant type
     class_attributes: dict[str, type | None] | None = None
@@ -143,13 +143,16 @@ class VariableFinder(ast.NodeVisitor):
             CodeVars('.'.join(scope[:-1]) if scope else '<module>') # -1 to omit "<locals>"
         )
 
+        # Compute var_prefix once (for class bodies, this is "C." or "C.D.", for functions it's "")
+        if not codevars.var_prefix:
+            prefix_parts = self._qualname_stack[len(scope):]
+            if prefix_parts:
+                codevars.var_prefix = '.'.join(prefix_parts) + "."
+
         # Only record if this is the first assignment (variable definition)
         if name not in codevars.variables:
-            codevars.variables[name] = '.'.join(self._qualname_stack[len(scope):] + [name])
-
-            # If initial value is a constant, record its type
-            if value is not None and isinstance(value, ast.Constant):
-                codevars.initial_constants[name] = type(value.value)
+            const_type = type(value.value) if (value is not None and isinstance(value, ast.Constant)) else None
+            codevars.variables[name] = const_type
 
     def _record_target(self, t: ast.AST, value: ast.expr | None = None) -> None:
         if isinstance(t, ast.Name):

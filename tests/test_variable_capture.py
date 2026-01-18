@@ -12,10 +12,11 @@ def map_variables(source: str) -> dict[types.CodeType, variables.CodeVars]:
 
 
 def get(mapping: dict[types.CodeType, variables.CodeVars], name: str):
-    """Returns a code->variables mapping by code name only."""
+    """Returns qualified variable names by code name."""
     for co, codevars in mapping.items():
         if co.co_qualname == name:
-            return set(codevars.variables.values()) | (
+            prefix = codevars.var_prefix
+            return {f"{prefix}{var}" for var in codevars.variables.keys()} | (
                 {f"{codevars.self}.{attr}" for attr in codevars.attributes} if (codevars.attributes and codevars.self) else set()
             )
     return set()
@@ -368,10 +369,10 @@ def test_match_as_simple_name_only():
 
 
 def get_initial_constants(mapping: dict[types.CodeType, variables.CodeVars], name: str):
-    """Returns initial_constants mapping by code name only."""
+    """Returns initial constants mapping by code name (variables where value is not None)."""
     for co, codevars in mapping.items():
         if co.co_qualname == name:
-            return codevars.initial_constants
+            return {k: v for k, v in codevars.variables.items() if v is not None}
     return {}
 
 
