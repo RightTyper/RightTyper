@@ -5626,3 +5626,33 @@ def test_generalize_tuples(generalize):
     assert get_function(code, 'g') == textwrap.dedent(f"""\
         def g(x: tuple[int, str, int]) -> None: ...
     """)
+
+
+def test_class_attributes_via_classmethod():
+    """Test that class attributes assigned via cls.x in classmethods are captured."""
+    t = textwrap.dedent("""\
+        class C:
+            monitor = None
+
+            @classmethod
+            def setup(cls):
+                cls.monitor = "initialized"
+
+        C.setup()
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    # The monitor attribute should have type str | None (from both assignments)
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        class C:
+            monitor: str|None = None
+
+            @classmethod
+            def setup(cls: type[Self]) -> None:
+                cls.monitor = "initialized"
+
+        C.setup()
+    """)

@@ -575,3 +575,172 @@ def test_attribute_non_constant_not_captured():
     m = map_variables(src)
     consts = get_attribute_initial_constants(m, "C.__init__")
     assert "x" not in consts
+
+
+# =============================================================================
+# Tests for class attribute capture (cls.x and class body assignments)
+# =============================================================================
+
+def get_class_attributes(mapping: dict[types.CodeType, variables.CodeVars], name: str):
+    """Returns class_attributes set by code name only."""
+    for co, codevars in mapping.items():
+        if co.co_qualname == name:
+            return codevars.class_attributes or set()
+    return set()
+
+
+def get_class_attribute_initial_constants(mapping: dict[types.CodeType, variables.CodeVars], name: str):
+    """Returns class_attribute_initial_constants mapping by code name."""
+    for co, codevars in mapping.items():
+        if co.co_qualname == name:
+            return codevars.class_attribute_initial_constants or {}
+    return {}
+
+
+def test_class_body_attribute_captured():
+    """Class body assignment like `monitor = None` captures class attribute."""
+    src = textwrap.dedent("""
+        class C:
+            monitor = None
+        """)
+    m = map_variables(src)
+    # Class attributes should be visible from methods in the class
+    # For now, check the class code object itself
+    attrs = get_class_attributes(m, "C")
+    assert "monitor" in attrs
+
+
+def test_class_body_attribute_initial_constant():
+    """Class body assignment `x = None` captures NoneType as initial constant."""
+    src = textwrap.dedent("""
+        class C:
+            x = None
+        """)
+    m = map_variables(src)
+    consts = get_class_attribute_initial_constants(m, "C")
+    assert consts.get("x") == type(None)
+
+
+def test_class_body_non_constant_not_captured():
+    """Class body assignment `x = []` does NOT capture initial constant."""
+    src = textwrap.dedent("""
+        class C:
+            x = []
+        """)
+    m = map_variables(src)
+    consts = get_class_attribute_initial_constants(m, "C")
+    assert "x" not in consts
+
+
+def test_cls_assignment_captured():
+    """cls.x = value in classmethod captures class attribute."""
+    src = textwrap.dedent("""
+        class C:
+            @classmethod
+            def setup(cls):
+                cls.monitor = None
+        """)
+    m = map_variables(src)
+    # The classmethod should have access to class_attributes
+    attrs = get_class_attributes(m, "C.setup")
+    assert "monitor" in attrs
+
+
+def test_cls_assignment_initial_constant():
+    """cls.x = None in classmethod captures NoneType as initial constant."""
+    src = textwrap.dedent("""
+        class C:
+            @classmethod
+            def setup(cls):
+                cls.x = None
+        """)
+    m = map_variables(src)
+    consts = get_class_attribute_initial_constants(m, "C.setup")
+    assert consts.get("x") == type(None)
+
+
+def test_cls_assignment_non_constant():
+    """cls.x = foo() in classmethod does NOT capture initial constant."""
+    src = textwrap.dedent("""
+        class C:
+            @classmethod
+            def setup(cls):
+                cls.x = foo()
+        """)
+    m = map_variables(src)
+    consts = get_class_attribute_initial_constants(m, "C.setup")
+    assert "x" not in consts
+
+
+def test_class_body_and_cls_combined():
+    """Class body + classmethod assignments both contribute to class_attributes."""
+    src = textwrap.dedent("""
+        class C:
+            monitor = None
+
+            @classmethod
+            def setup(cls):
+                cls.other = 42
+        """)
+    m = map_variables(src)
+    # Class body attribute
+    class_attrs = get_class_attributes(m, "C")
+    assert "monitor" in class_attrs
+    # Classmethod attribute (shared from ClassInfo)
+    method_attrs = get_class_attributes(m, "C.setup")
+    assert "other" in method_attrs
+    # Both should be visible since they're on the same ClassInfo
+    assert "monitor" in method_attrs
+
+
+def test_cls_parameter_tracked():
+    """The cls parameter is tracked for classmethods."""
+    src = textwrap.dedent("""
+        class C:
+            @classmethod
+            def setup(cls):
+                cls.x = 1
+        """)
+    m = map_variables(src)
+    # Check that CodeVars has cls field set
+    for co, codevars in m.items():
+        if co.co_qualname == "C.setup":
+            assert codevars.cls == "cls"
+            break
+    else:
+        assert False, "C.setup not found"
+
+
+def test_staticmethod_no_cls():
+    """Static methods should not have cls tracked."""
+    src = textwrap.dedent("""
+        class C:
+            @staticmethod
+            def helper():
+                pass
+        """)
+    m = map_variables(src)
+    for co, codevars in m.items():
+        if co.co_qualname == "C.helper":
+            assert codevars.cls is None
+            assert codevars.self is None
+            break
+    else:
+        assert False, "C.helper not found"
+
+
+def test_regular_method_no_cls():
+    """Regular methods should have self but not cls."""
+    src = textwrap.dedent("""
+        class C:
+            def method(self):
+                pass
+        """)
+    m = map_variables(src)
+    for co, codevars in m.items():
+        if co.co_qualname == "C.method":
+            assert codevars.self == "self"
+            assert codevars.cls is None
+            break
+    else:
+        assert False, "C.method not found"

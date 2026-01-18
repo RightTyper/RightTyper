@@ -144,6 +144,9 @@ class ObservationsRecorder:
         # Object attributes: class_key -> attr_name -> set[TypeInfo]
         self._object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
 
+        # Class attributes: class_key -> attr_name -> set[TypeInfo]
+        self._class_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
+
         self._obs = Observations()
 
 
@@ -256,7 +259,7 @@ class ObservationsRecorder:
 
     def _record_variables(self, code: CodeType, frame: FrameType) -> None:
         """Records variables."""
-        # print(f"record_variables {code.co_qualname}")
+        # Uncomment for debugging: print(f"record_variables {code.co_qualname}")
 
         if not run_options.variables or not (codevars := code2variables.get(code)):
             return
@@ -290,6 +293,17 @@ class ObservationsRecorder:
             # Include initial constant types for attributes (e.g., self.x = None)
             for attr_name, const_type in codevars.attribute_initial_constants.items():
                 obj_attrs[VariableName(attr_name)].add(TypeInfo.from_type(const_type))
+
+        # Record class attributes for classmethods (cls.x = ...)
+        if codevars.cls and (cls_obj := f_locals.get(codevars.cls)) is not None:
+            class_attrs = self._class_attributes[codevars.class_key]
+            for attr in codevars.class_attributes or []:
+                if (value := getattr(cls_obj, attr, NO_OBJECT)) is not NO_OBJECT:
+                    class_attrs[VariableName(attr)].add(get_value_type(value))
+
+            # Include initial constant types for class attributes (e.g., cls.x = None)
+            for attr_name, const_type in codevars.class_attribute_initial_constants.items():
+                class_attrs[VariableName(attr_name)].add(TypeInfo.from_type(const_type))
 
 
     def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:
@@ -380,6 +394,31 @@ class ObservationsRecorder:
                 for attr in codevars.attributes:
                     scope_vars[VariableName(f"{codevars.self}.{attr}")] = obj_attrs[VariableName(attr)]
 
+        # Handle class attributes captured via cls.x in classmethods
+        # These need to be assigned to the class's scope with qualified names (e.g., "C.monitor")
+        for codevars in code2variables.values():
+            if codevars.cls and codevars.class_attributes and codevars.class_key:
+                class_attrs = self._class_attributes.get(codevars.class_key)
+                if class_attrs:
+                    # Find the class's CodeVars to get its scope and variable names
+                    class_codevars = next(
+                        (cv for cv in code2variables.values()
+                         if cv.class_name == codevars.class_name and cv.variables),
+                        None
+                    )
+                    if class_codevars and class_codevars.scope_code:
+                        if (func_info := self._code2func_info.get(class_codevars.scope_code)):
+                            scope_vars = func_info.variables
+                        else:
+                            scope_vars = self._obs.module_variables[Filename(class_codevars.scope_code.co_filename)]
+
+                        # Use qualified names from the class's variables dict (e.g., "C.monitor")
+                        for attr in codevars.class_attributes:
+                            if VariableName(attr) in class_attrs:
+                                qualified_name = class_codevars.variables.get(attr)
+                                if qualified_name:
+                                    scope_vars[VariableName(qualified_name)].update(class_attrs[VariableName(attr)])
+
 
     def finish_recording(self, main_globals: dict[str, Any]) -> Observations:
         # Any generators left?
@@ -394,6 +433,7 @@ class ObservationsRecorder:
         self._code2func_info.clear()
         self._pending_traces.clear()
         self._object_attributes.clear()
+        self._class_attributes.clear()
 
         # The type map depends on main_globals as well as the on the state
         # of sys.modules, so we can't postpone them until collect_annotations,
