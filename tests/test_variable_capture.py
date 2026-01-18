@@ -365,3 +365,213 @@ def test_match_as_simple_name_only():
         """)
     m = map_variables(src)
     assert get(m, "f") == {"y", "z"}
+
+
+def get_initial_constants(mapping: dict[types.CodeType, variables.CodeVars], name: str):
+    """Returns initial_constants mapping by code name only."""
+    for co, codevars in mapping.items():
+        if co.co_qualname == name:
+            return codevars.initial_constants
+    return {}
+
+
+def test_initial_constant_none_captured():
+    """Test that x = None captures NoneType as initial constant."""
+    src = textwrap.dedent("""
+        def foo():
+            x = None
+            x = 5
+            return x
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "foo")
+    assert consts.get("x") == type(None)
+
+
+def test_initial_constant_int_captured():
+    """Test that x = 0 captures int as initial constant."""
+    src = textwrap.dedent("""
+        def foo():
+            x = 0
+            x = "string"
+            return x
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "foo")
+    assert consts.get("x") == int
+
+
+def test_initial_constant_str_captured():
+    """Test that x = "" captures str as initial constant."""
+    src = textwrap.dedent("""
+        def foo():
+            x = "hello"
+            return x
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "foo")
+    assert consts.get("x") == str
+
+
+def test_non_constant_not_captured():
+    """Test that x = [] does NOT capture (not ast.Constant)."""
+    src = textwrap.dedent("""
+        def foo():
+            x = []
+            return x
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "foo")
+    assert "x" not in consts
+
+
+def test_function_call_not_captured():
+    """Test that x = foo() does NOT capture (not ast.Constant)."""
+    src = textwrap.dedent("""
+        def foo():
+            x = some_func()
+            return x
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "foo")
+    assert "x" not in consts
+
+
+def test_reassignment_preserves_initial():
+    """Test that reassignment doesn't overwrite initial constant."""
+    src = textwrap.dedent("""
+        def foo():
+            x = None
+            x = 5
+            x = "hello"
+            return x
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "foo")
+    # Should be NoneType (first assignment), not int or str
+    assert consts.get("x") == type(None)
+
+
+def test_initial_constant_bool_captured():
+    """Test that x = True captures bool as initial constant."""
+    src = textwrap.dedent("""
+        def foo():
+            x = True
+            return x
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "foo")
+    assert consts.get("x") == bool
+
+
+def test_initial_constant_float_captured():
+    """Test that x = 3.14 captures float as initial constant."""
+    src = textwrap.dedent("""
+        def foo():
+            x = 3.14
+            return x
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "foo")
+    assert consts.get("x") == float
+
+
+def test_module_level_initial_constant():
+    """Test initial constants at module level."""
+    src = textwrap.dedent("""
+        x = None
+        y = 42
+        z = []
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "<module>")
+    assert consts.get("x") == type(None)
+    assert consts.get("y") == int
+    assert "z" not in consts
+
+
+def test_annotated_assignment_initial_constant():
+    """Test that x: int = None captures NoneType."""
+    src = textwrap.dedent("""
+        def foo():
+            x: int = None
+            return x
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "foo")
+    assert consts.get("x") == type(None)
+
+
+def test_declaration_without_assignment_not_captured():
+    """Test that x: str (no value) does NOT capture anything from declaration."""
+    src = textwrap.dedent("""
+        def foo():
+            x: str
+            x = 5
+            return x
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "foo")
+    # The declaration has no value, so no initial constant from it
+    # The subsequent assignment x = 5 should capture int (not str from declaration)
+    assert consts.get("x") == int
+
+
+def test_tuple_unpacking_not_captured():
+    """Test that a, b = 0, 1 does NOT capture (can't match values to targets)."""
+    src = textwrap.dedent("""
+        def foo():
+            a, b = 0, 1
+            return a + b
+        """)
+    m = map_variables(src)
+    consts = get_initial_constants(m, "foo")
+    # Tuple unpacking is too complex to match values to targets
+    assert "a" not in consts
+    assert "b" not in consts
+
+
+def get_attribute_initial_constants(mapping: dict[types.CodeType, variables.CodeVars], name: str):
+    """Returns attribute initial_constants for a method by name."""
+    for co, codevars in mapping.items():
+        if co.co_qualname == name:
+            return codevars.attribute_initial_constants if codevars.attribute_initial_constants else {}
+    return {}
+
+
+def test_attribute_initial_constant_none_captured():
+    """Test that self.x = None captures NoneType for attribute."""
+    src = textwrap.dedent("""
+        class C:
+            def __init__(self):
+                self.x = None
+                self.x = some_value
+        """)
+    m = map_variables(src)
+    # Attribute constants are on the method's CodeVars (shared from ClassInfo)
+    consts = get_attribute_initial_constants(m, "C.__init__")
+    assert consts.get("x") == type(None)
+
+
+def test_attribute_initial_constant_int_captured():
+    """Test that self.x = 0 captures int for attribute."""
+    src = textwrap.dedent("""
+        class C:
+            def __init__(self):
+                self.x = 0
+        """)
+    m = map_variables(src)
+    consts = get_attribute_initial_constants(m, "C.__init__")
+    assert consts.get("x") == int
+
+
+def test_attribute_non_constant_not_captured():
+    """Test that self.x = foo() does NOT capture."""
+    src = textwrap.dedent("""
+        class C:
+            def __init__(self):
+                self.x = foo()
+        """)
+    m = map_variables(src)
+    consts = get_attribute_initial_constants(m, "C.__init__")
+    assert "x" not in consts

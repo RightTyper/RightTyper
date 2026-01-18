@@ -274,11 +274,22 @@ class ObservationsRecorder:
             if (value := f_locals.get(src, NO_OBJECT)) is not NO_OBJECT:
                 scope_vars[VariableName(dst)].add(get_value_type(value))
 
+        # Include initial constant types from AST parsing (e.g., x = None).
+        # This ensures types from initial assignments aren't lost when
+        # the variable is reassigned before function exit.
+        for var_name, const_type in codevars.initial_constants.items():
+            if (qualified_name := codevars.variables.get(var_name)):
+                scope_vars[VariableName(qualified_name)].add(TypeInfo.from_type(const_type))
+
         if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
             obj_attrs = self._object_attributes[codevars.class_key]
             for attr in cast_not_None(codevars.attributes):
                 if (value := getattr(self_obj, attr, NO_OBJECT)) is not NO_OBJECT:
                     obj_attrs[VariableName(attr)].add(get_value_type(value))
+
+            # Include initial constant types for attributes (e.g., self.x = None)
+            for attr_name, const_type in codevars.attribute_initial_constants.items():
+                obj_attrs[VariableName(attr_name)].add(TypeInfo.from_type(const_type))
 
 
     def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:

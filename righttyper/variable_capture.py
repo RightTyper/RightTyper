@@ -29,6 +29,12 @@ class CodeVars:
     # the 'self' attributes
     attributes: set[str]|None = None
 
+    # maps variable name to its initial constant's type (if first assignment is a constant)
+    initial_constants: dict[str, type] = field(default_factory=dict)
+
+    # maps attribute name to its initial constant's type (for self.x = None etc.)
+    attribute_initial_constants: dict[str, type] = field(default_factory=dict)
+
 
 """Maps code objects to the variables assigned/bound within each object."""
 code2variables: dict[types.CodeType, CodeVars] = dict()
@@ -87,6 +93,7 @@ def _from_pattern(p: ast.pattern) -> abc.Iterator[str]:
 class ClassInfo:
     name: str
     attributes: set[str] = field(default_factory=set)
+    attribute_initial_constants: dict[str, type] = field(default_factory=dict)
 
 
 class VariableFinder(ast.NodeVisitor):
@@ -119,7 +126,7 @@ class VariableFinder(ast.NodeVisitor):
         # Resulting map of executing code object to their CodeVars
         self.code_vars: dict[str, CodeVars] = dict()
 
-    def _record_variable(self, name: str) -> None:
+    def _record_variable(self, name: str, value: ast.expr | None = None) -> None:
         if name in self._not_locals_stack[-1]:
             return
 
@@ -127,17 +134,28 @@ class VariableFinder(ast.NodeVisitor):
         codevars = self.code_vars.setdefault(self._code_stack[-1],
             CodeVars('.'.join(scope[:-1]) if scope else '<module>') # -1 to omit "<locals>"
         )
-        codevars.variables[name] = '.'.join(self._qualname_stack[len(scope):] + [name])
 
-    def _record_target(self, t: ast.AST) -> None:
+        # Only record if this is the first assignment (variable definition)
+        if name not in codevars.variables:
+            codevars.variables[name] = '.'.join(self._qualname_stack[len(scope):] + [name])
+
+            # If initial value is a constant, record its type
+            if value is not None and isinstance(value, ast.Constant):
+                codevars.initial_constants[name] = type(value.value)
+
+    def _record_target(self, t: ast.AST, value: ast.expr | None = None) -> None:
         if isinstance(t, ast.Name):
-            self._record_variable(t.id)
+            self._record_variable(t.id, value)
             if t.id == self._self_stack[-1]:
                 self._self_stack[-1] = None # a new assignment masked 'self'
         elif (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)):
             if t.value.id == self._self_stack[-1]:
                 class_info = self._class_stack[-1]
                 class_info.attributes.add(t.attr)
+                # Capture initial constant for attribute (only first assignment)
+                if t.attr not in class_info.attribute_initial_constants:
+                    if value is not None and isinstance(value, ast.Constant):
+                        class_info.attribute_initial_constants[t.attr] = type(value.value)
 
     def _qualname(self) -> str:
         return '.'.join(self._qualname_stack)
@@ -189,7 +207,8 @@ class VariableFinder(ast.NodeVisitor):
                 '.'.join(self._qualname_stack[:-1]),    # -1 to omit "<locals>"
                 class_name=class_info.name,
                 self=self._self_stack[-1],
-                attributes=class_info.attributes if self._self_stack[-1] else None
+                attributes=class_info.attributes if self._self_stack[-1] else None,
+                attribute_initial_constants=class_info.attribute_initial_constants if self._self_stack[-1] else {}
             )
 
         self.generic_visit(node)
@@ -221,16 +240,21 @@ class VariableFinder(ast.NodeVisitor):
         pass
 
     def visit_Assign(self, node: ast.Assign) -> None:
+        # Only pass value for simple single-target assignments like "x = None"
+        # or "self.x = None". We skip multi-target (x = y = 1) and tuple
+        # unpacking (a, b = 0, 1) to keep the implementation simple.
+        value = node.value if (len(node.targets) == 1
+                               and isinstance(node.targets[0], (ast.Name, ast.Attribute))) else None
         for tgt in node.targets:
             for t in _iter_target_atoms(tgt):
-                self._record_target(t)
+                self._record_target(t, value)
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         # require value to filter out pure type declarations
         if node.value is not None and node.target is not None:
             for t in _iter_target_atoms(node.target):
-                self._record_target(t)
+                self._record_target(t, node.value)
         self.generic_visit(node)
 
     def visit_TypeAlias(self, node: ast.TypeAlias) -> None:
