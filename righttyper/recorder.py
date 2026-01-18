@@ -286,24 +286,22 @@ class ObservationsRecorder:
 
         if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
             obj_attrs = self._object_attributes[codevars.class_key]
-            for attr in cast_not_None(codevars.attributes):
+            for attr, const_type in cast_not_None(codevars.attributes).items():
                 if (value := getattr(self_obj, attr, NO_OBJECT)) is not NO_OBJECT:
                     obj_attrs[VariableName(attr)].add(get_value_type(value))
-
-            # Include initial constant types for attributes (e.g., self.x = None)
-            for attr_name, const_type in codevars.attribute_initial_constants.items():
-                obj_attrs[VariableName(attr_name)].add(TypeInfo.from_type(const_type))
+                # Include initial constant type if present (e.g., self.x = None)
+                if const_type is not None:
+                    obj_attrs[VariableName(attr)].add(TypeInfo.from_type(const_type))
 
         # Record class attributes for classmethods (cls.x = ...)
         if codevars.cls and (cls_obj := f_locals.get(codevars.cls)) is not None:
             class_attrs = self._class_attributes[codevars.class_key]
-            for attr in codevars.class_attributes or []:
+            for attr, const_type in (codevars.class_attributes or {}).items():
                 if (value := getattr(cls_obj, attr, NO_OBJECT)) is not NO_OBJECT:
                     class_attrs[VariableName(attr)].add(get_value_type(value))
-
-            # Include initial constant types for class attributes (e.g., cls.x = None)
-            for attr_name, const_type in codevars.class_attribute_initial_constants.items():
-                class_attrs[VariableName(attr_name)].add(TypeInfo.from_type(const_type))
+                # Include initial constant type if present (e.g., cls.x = None)
+                if const_type is not None:
+                    class_attrs[VariableName(attr)].add(TypeInfo.from_type(const_type))
 
 
     def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:

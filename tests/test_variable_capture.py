@@ -535,7 +535,9 @@ def get_attribute_initial_constants(mapping: dict[types.CodeType, variables.Code
     """Returns attribute initial_constants for a method by name."""
     for co, codevars in mapping.items():
         if co.co_qualname == name:
-            return codevars.attribute_initial_constants if codevars.attribute_initial_constants else {}
+            if codevars.attributes:
+                return {k: v for k, v in codevars.attributes.items() if v is not None}
+            return {}
     return {}
 
 
@@ -582,18 +584,20 @@ def test_attribute_non_constant_not_captured():
 # =============================================================================
 
 def get_class_attributes(mapping: dict[types.CodeType, variables.CodeVars], name: str):
-    """Returns class_attributes set by code name only."""
+    """Returns class_attributes as a set of attribute names by code name."""
     for co, codevars in mapping.items():
         if co.co_qualname == name:
-            return codevars.class_attributes or set()
+            return set(codevars.class_attributes.keys()) if codevars.class_attributes else set()
     return set()
 
 
 def get_class_attribute_initial_constants(mapping: dict[types.CodeType, variables.CodeVars], name: str):
-    """Returns class_attribute_initial_constants mapping by code name."""
+    """Returns class_attribute initial constants mapping by code name."""
     for co, codevars in mapping.items():
         if co.co_qualname == name:
-            return codevars.class_attribute_initial_constants or {}
+            if codevars.class_attributes:
+                return {k: v for k, v in codevars.class_attributes.items() if v is not None}
+            return {}
     return {}
 
 
