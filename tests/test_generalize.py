@@ -262,3 +262,158 @@ def test_generalize_type_and_never():
         (tt(dict, args=(tt(Never), tt(Never))), tt(Self)),
     ]
     assert generalize(samples) == ['dict[str, str]', 'typing.Self']
+
+
+# =============================================================================
+# Tests for iterable generalization (ABC-based)
+# =============================================================================
+
+import collections.abc as abc
+
+
+def test_find_common_abc():
+    """ABCFinder.find_common_abc should return most specific shared ABC."""
+    from righttyper.type_id import ABCFinder
+
+    # list and tuple share Sequence
+    common = ABCFinder.find_common_abc([list, tuple])
+    assert common == abc.Sequence
+
+    # list and set share Collection (not Sequence)
+    common = ABCFinder.find_common_abc([list, set])
+    assert common == abc.Collection
+
+    # list and dict share Collection (dict is also a Collection)
+    common = ABCFinder.find_common_abc([list, dict])
+    assert common == abc.Collection
+
+    # Empty list returns None
+    assert ABCFinder.find_common_abc([]) is None
+
+    # Single type returns its most specific ABC
+    common = ABCFinder.find_common_abc([list])
+    assert common is not None
+
+
+def test_generalize_iterables_to_common_abc():
+    """Multiple iterables should generalize to their common ABC."""
+    # list, tuple, range are all Sequences
+    types = {
+        tt(list, args=(tt(int),)),
+        tt(tuple, args=(tt(int),)),
+        tt(range),
+    }
+    result = righttyper.generalize.merged_types(types)
+    # Should become Sequence (the common ABC for list, tuple, range)
+    assert not result.is_union(), f"Expected single type, got union: {result}"
+    assert result.type_obj == abc.Sequence, f"Expected Sequence, got {result.type_obj}"
+
+
+def test_generalize_iterables_with_element_type():
+    """Iterables with known element types should preserve them."""
+    # list[int] and tuple[int] - both have int element type
+    types = {
+        tt(list, args=(tt(int),)),
+        tt(tuple, args=(tt(int),)),
+    }
+    result = righttyper.generalize.merged_types(types)
+    # Should become Sequence[int]
+    assert not result.is_union(), f"Expected single type, got union: {result}"
+    assert result.type_obj == abc.Sequence, f"Expected Sequence, got {result.type_obj}"
+    assert len(result.args) == 1, f"Expected 1 type arg, got {len(result.args)}"
+    assert result.args[0].type_obj == int, f"Expected int element, got {result.args[0]}"
+
+
+def test_generalize_iterables_mixed_element_types():
+    """Iterables with different element types should first merge via merge_similar_generics."""
+    types = {
+        tt(list, args=(tt(int),)),
+        tt(list, args=(tt(str),)),
+    }
+    result = righttyper.generalize.merged_types(types, for_variable=True)
+    # merge_similar_generics should handle this: list[int]|list[str] -> list[int|str]
+    assert result.name == 'list'
+    assert result.args  # has element type
+
+
+def test_generalize_iterables_unknown_element():
+    """Iterables without element type info should use bare ABC."""
+    types = {
+        tt(range),  # no element type recorded
+        tt(list, args=(tt(int),)),
+    }
+    result = righttyper.generalize.merged_types(types)
+    # Should become Sequence (bare, no element type since range has none)
+    assert not result.is_union(), f"Expected single type, got union: {result}"
+    assert result.type_obj == abc.Sequence, f"Expected Sequence, got {result.type_obj}"
+    # No element type args since range doesn't have one
+    assert len(result.args) == 0, f"Expected no type args (bare ABC), got {result.args}"
+
+
+def test_generalize_iterables_excludes_str_bytes():
+    """str and bytes should not be grouped with other iterables."""
+    types = {
+        tt(str),
+        tt(list, args=(tt(int),)),
+    }
+    result = righttyper.generalize.merged_types(types)
+    # Should remain as union since str is not grouped with list
+    assert result.is_union()
+    assert len(result.args) == 2
+
+
+def test_generalize_iterables_excludes_bytes():
+    """bytes should not be grouped with other iterables."""
+    types = {
+        tt(bytes),
+        tt(list, args=(tt(int),)),
+    }
+    result = righttyper.generalize.merged_types(types)
+    # Should remain as union since bytes is not grouped with list
+    assert result.is_union()
+    assert len(result.args) == 2
+
+
+def test_generalize_mixed_union():
+    """Only iterable subset should be generalized, others kept as-is."""
+    # list[int] | str | None | range
+    types = {
+        tt(list, args=(tt(int),)),
+        tt(str),
+        TypeInfo.from_type(type(None)),
+        tt(range),
+    }
+    result = righttyper.generalize.merged_types(types)
+
+    # Should have: Sequence (from list+range), str, None = 3 members
+    # NOT: list[int]|range|str|None (4 members)
+    assert result.is_union(), f"Expected union, got {result}"
+    assert len(result.args) == 3, f"Expected 3 members (Sequence, str, None), got {len(result.args)}: {result}"
+
+    # Check that one of the members is Sequence
+    type_objs = [t.type_obj for t in result.args if isinstance(t, TypeInfo)]
+    assert abc.Sequence in type_objs, f"Expected Sequence in union, got {type_objs}"
+    assert str in type_objs, f"Expected str in union, got {type_objs}"
+
+
+def test_generalize_single_iterable_no_change():
+    """A single iterable should not be generalized."""
+    types = {
+        tt(list, args=(tt(int),)),
+        tt(str),
+    }
+    result = righttyper.generalize.merged_types(types)
+    # list is the only "real" iterable (str excluded), so no generalization
+    assert result.is_union()
+
+
+def test_generalize_mappings():
+    """Multiple mappings with same container should merge via merge_similar_generics."""
+    types = {
+        tt(dict, args=(tt(str), tt(int))),
+        tt(dict, args=(tt(str), tt(str))),
+    }
+    result = righttyper.generalize.merged_types(types, for_variable=True)
+    # merge_similar_generics handles: dict[str, int]|dict[str, str] -> dict[str, int|str]
+    assert result.name == 'dict'
+    assert not result.is_union()

@@ -47,6 +47,87 @@ def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     return typeinfoset
 
 
+# Ordered from most specific to most general
+_ITERABLE_HIERARCHY: list[type] = [abc.MutableSequence, abc.Sequence, abc.Collection, abc.Iterable]
+
+
+def _find_common_iterable_abc(types: list[type]) -> type | None:
+    """Find the most specific iterable ABC that all types implement."""
+    for abc_type in _ITERABLE_HIERARCHY:
+        try:
+            if all(issubclass(t, abc_type) for t in types):
+                return abc_type
+        except TypeError:
+            continue
+    return None
+
+
+def _generalize_iterables(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
+    """Generalize multiple iterable types to a common ABC.
+
+    E.g., Generator|Iterator[int]|range|list[str] → Iterable or Iterable[int|str]
+
+    Only generalizes if there are 2+ iterable types. Excludes str and bytes
+    from grouping since they're special cases.
+    """
+    if len(typeinfoset) <= 1:
+        return typeinfoset
+
+    # Separate types by category
+    iterable_types: list[TypeInfo] = []
+    other_types: list[TypeInfo] = []
+
+    for t in typeinfoset:
+        if t.type_obj is None or not isinstance(t.type_obj, type):
+            other_types.append(t)
+            continue
+
+        try:
+            # Exclude str and bytes - they're iterable but shouldn't be grouped with collections
+            if t.type_obj in (str, bytes):
+                other_types.append(t)
+            elif issubclass(t.type_obj, abc.Iterable):
+                iterable_types.append(t)
+            else:
+                other_types.append(t)
+        except TypeError:
+            other_types.append(t)
+
+    result = set(other_types)
+
+    # Only generalize if we have 2+ iterable types
+    if len(iterable_types) >= 2:
+        type_objs = [cast(type, t.type_obj) for t in iterable_types]
+        common_abc = _find_common_iterable_abc(type_objs)
+
+        if common_abc:
+            # Collect element types from args (first type arg is typically the element type)
+            element_types: set[TypeInfo] = set()
+            has_unknown = False
+
+            for t in iterable_types:
+                if t.args and isinstance(t.args[0], TypeInfo):
+                    element_types.add(t.args[0])
+                else:
+                    has_unknown = True
+
+            if has_unknown or not element_types:
+                # Use bare ABC (implies Any element type)
+                result.add(TypeInfo.from_type(common_abc))
+            else:
+                # Merge element types into single type
+                merged_elem = merged_types(element_types, for_variable=True)
+                result.add(TypeInfo.from_type(common_abc, args=(merged_elem,)))
+        else:
+            # No common ABC found, keep original types
+            result.update(iterable_types)
+    else:
+        # 0-1 iterable types, no generalization needed
+        result.update(iterable_types)
+
+    return result
+
+
 def merged_types(typeinfoset: set[TypeInfo], for_variable: bool = False) -> TypeInfo:
     """Attempts to merge types in a set before forming their union.
 
@@ -59,6 +140,9 @@ def merged_types(typeinfoset: set[TypeInfo], for_variable: bool = False) -> Type
 
     if for_variable and len(typeinfoset) > 1:
         typeinfoset = merge_similar_generics(typeinfoset)
+
+    if len(typeinfoset) > 1 and output_options.simplify_types:
+        typeinfoset = _generalize_iterables(typeinfoset)
 
     return TypeInfo.from_set(typeinfoset)
 
