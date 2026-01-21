@@ -25,7 +25,7 @@ from types import (
 )
 import builtins
 import types
-from typing import Any, cast, get_type_hints, get_origin, get_args, TypeGuard, Sequence
+from typing import Any, cast, get_type_hints, get_origin, get_args, TypeGuard
 import typing
 
 from righttyper.random_dict import RandomDict
@@ -289,33 +289,6 @@ class ABCFinder:
 
         t_methods = methods(t)
         return max(matching, key=lambda it: len(methods(it) & t_methods))
-
-
-    @staticmethod
-    def find_common_abc(types: "Sequence[type]") -> type | None:
-        """Find the most specific ABC that ALL types implement.
-
-        Unlike find_abc() which finds the best ABC for a single type,
-        this finds a common ABC shared by multiple types.
-
-        Args:
-            types: Sequence of types to find common ABC for
-
-        Returns:
-            The most specific ABC that all types implement, or None
-        """
-        if not types:
-            return None
-
-        # _ABCs is ordered most specific first
-        for abc_type in ABCFinder._ABCs:
-            try:
-                if all(issubclass(t, abc_type) for t in types):
-                    return abc_type
-            except TypeError:
-                continue  # issubclass can fail for some special types
-
-        return None
 
 
 def get_type_name(t: type, depth: int = 0) -> TypeInfo:
