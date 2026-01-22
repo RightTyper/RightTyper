@@ -93,12 +93,6 @@ class RunOptions:
         return _merge_regexes(self.include_functions)
 
     @functools.cached_property
-    def test_modules_re(self) -> re.Pattern[str]|None:
-        """Returns a regular expression pattern to match test modules with."""
-        # Escape dots and enforce module path boundaries
-        return _merge_regexes([f"{m.replace('.', r'\.')}(?:\\.|$)" for m in self.test_modules])
-
-    @functools.cached_property
     def no_sampling_for_re(self) -> re.Pattern[str]|None:
         """Returns a regular expression pattern for no_sampling_for."""
         return _merge_regexes(self.no_sampling_for)

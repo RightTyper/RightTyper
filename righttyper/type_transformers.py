@@ -43,8 +43,17 @@ class ExcludeTestTypesT(TypeInfo.Transformer):
     def __init__(self, test_modules: set[str]) -> None:
         self._test_modules = test_modules
 
+    def _is_test_module(self, module: str) -> bool:
+        while module:
+            if module in self._test_modules:
+                return True
+            if '.' not in module:
+                break
+            module = module.rsplit('.', 1)[0]
+        return False
+
     def visit(self, node: TypeInfo) -> TypeInfo:
-        if node.module in self._test_modules:
+        if self._is_test_module(node.module):
             return AnyTypeInfo
 
         return super().visit(node)
