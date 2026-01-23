@@ -61,9 +61,6 @@ class RunOptions:
     include_functions: tuple[str, ...] = ()
     poisson_sample_rate: float = 2.0  # Expected capture windows per second
     poisson_warmup_samples: int = 5   # Capture first N samples immediately before Poisson timing
-    trace_min_samples: int = 5
-    trace_max_samples: int = 25
-    trace_type_threshold: float = .05
     infer_shapes: bool = False
     sampling: bool = True
     no_sampling_for: tuple[str, ...] = ()

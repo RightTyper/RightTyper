@@ -150,24 +150,6 @@ class ObservationsRecorder:
         self._obs = Observations()
 
 
-    def needs_more_traces(self, code: CodeType) -> bool:
-        if (func_info := self._code2func_info.get(code)):
-            traces = func_info.traces
-
-            # Require a minimum number of traces to help stabilize the estimate
-            if (n := traces.total()) < run_options.trace_min_samples:
-                return True
-
-            if n >= run_options.trace_max_samples:
-                return False
-
-            if (sum(c == 1 for c in traces.values()) / n) <= run_options.trace_type_threshold:
-                return False
-
-#            logger.info(f"{code=} {traces}")
-
-        return True
-
     def past_warmup(self, code: CodeType) -> bool:
         """Returns True if we've collected enough samples to switch to Poisson timing."""
         if (func_info := self._code2func_info.get(code)):

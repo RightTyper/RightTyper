@@ -32,7 +32,6 @@ from righttyper.righttyper_tool import (
     setup_monitoring,
     shutdown_monitoring,
     stop_events,
-    stop_events_permanently,
     restart_events,
     enabled_code
 )
@@ -177,12 +176,6 @@ def return_handler(
             and no_sampling_for.search(code.co_qualname)
         )
     ):
-        # Check if we've collected enough samples total (Good-Turing limit)
-        if not rec.needs_more_traces(code):
-            stop_events_permanently(code)
-            rec.clear_pending(code)
-            return sys.monitoring.DISABLE
-
         # Poisson sampling: disable after each sample once past warmup
         if rec.past_warmup(code):
             stop_events(code)
@@ -208,16 +201,17 @@ def unwind_handler(
     if (
         found
         and run_options.sampling
-        and not rec.needs_more_traces(code)
         and not (
             (no_sampling_for := run_options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
         )
     ):
-        stop_events_permanently(code)
-        rec.clear_pending(code)
+        # Poisson sampling: disable until next timer (once past warmup)
+        if rec.past_warmup(code):
+            stop_events(code)
+            rec.clear_pending(code)
 
-    return None # PY_UNWIND can't be disabled
+    return None  # PY_UNWIND can't be disabled
 
 
 import random
@@ -722,24 +716,6 @@ def add_output_options(group=None):
     type=click.FloatRange(0.1, None),
     default=run_options.poisson_sample_rate,
     help="Expected sample captures per second (Poisson process rate).",
-)
-@click.option(
-    "--trace-min-samples",
-    type=click.IntRange(1, None),
-    default=run_options.trace_min_samples,
-    help="Minimum number of call traces to sample before stopping its instrumentation.",
-)
-@click.option(
-    "--trace-max-samples",
-    type=click.IntRange(1, None),
-    default=run_options.trace_max_samples,
-    help="Maximum number of call traces to sample before stopping its instrumentation.",
-)
-@click.option(
-    "--trace-type-threshold",
-    type=click.FloatRange(0.01, None),
-    default=run_options.trace_type_threshold,
-    help="Stop gathering traces for a function if the estimated likelihood of finding a new type falls below this threshold.",
 )
 @click.option(
     "--sampling/--no-sampling",
