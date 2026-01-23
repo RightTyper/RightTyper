@@ -74,7 +74,15 @@ def setup_monitoring_for_code(code: CodeType) -> None:
 
 
 def stop_events(code: CodeType) -> None:
-    enabled_code.remove(code)
+    enabled_code.discard(code)
+    if USE_LOCAL_EVENTS:
+        sys.monitoring.set_local_events(TOOL_ID, code, events.NO_EVENTS)
+
+
+def stop_events_permanently(code: CodeType) -> None:
+    """Stop monitoring for code and prevent restart_events from re-enabling it."""
+    enabled_code.discard(code)
+    setup_code.discard(code)
     if USE_LOCAL_EVENTS:
         sys.monitoring.set_local_events(TOOL_ID, code, events.NO_EVENTS)
 

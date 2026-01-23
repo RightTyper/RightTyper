@@ -168,6 +168,12 @@ class ObservationsRecorder:
 
         return True
 
+    def past_warmup(self, code: CodeType) -> bool:
+        """Returns True if we've collected enough samples to switch to Poisson timing."""
+        if (func_info := self._code2func_info.get(code)):
+            return func_info.traces.total() >= run_options.poisson_warmup_samples
+        return False
+
 
     def record_module(
         self,

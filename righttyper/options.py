@@ -59,8 +59,8 @@ class RunOptions:
     exclude_files: tuple[str, ...] = ()
     exclude_test_files: bool = True
     include_functions: tuple[str, ...] = ()
-    restart_interval: float = .5
-    restart_max_instr: int = 0
+    poisson_sample_rate: float = 2.0  # Expected capture windows per second
+    poisson_warmup_samples: int = 5   # Capture first N samples immediately before Poisson timing
     trace_min_samples: int = 5
     trace_max_samples: int = 25
     trace_type_threshold: float = .05
