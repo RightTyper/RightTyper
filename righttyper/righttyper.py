@@ -569,36 +569,6 @@ def cli(debug: bool):
         logger.setLevel(logging.DEBUG)
 
 
-def add_advanced_options(group=None):
-    """Decorates a click command, adding advanced/rarely-used options."""
-
-    def dec(func):
-        base = optgroup if group else click
-
-        for opt in reversed([
-            *(
-                (optgroup.group(group),) if group else ()
-            ),
-            base.option(
-                "--save-profiling",
-                is_flag=True,
-                hidden=True,
-                help=f"""Save record of self-profiling results in "{TOOL_NAME}-profiling.json"."""
-            ),
-            base.option(
-                "--allow-runtime-exceptions/--no-allow-runtime-exceptions",
-                is_flag=True,
-                default=run_options.allow_runtime_exceptions,
-                hidden=True,
-                help="Allow exceptions in instrumentation to propagate (for debugging).",
-            ),
-        ]):
-            func = opt(func)
-        return func
-    return dec
-
-
-
 def add_output_options(group=None):
     """Decorates a click command, adding our common output options."""
 
@@ -872,7 +842,6 @@ def add_output_options(group=None):
     help="Include diagnostic information in log file.",
 )
 @add_output_options(group="Output options")
-@add_advanced_options(group="Advanced options")
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def run(
     script: str,
