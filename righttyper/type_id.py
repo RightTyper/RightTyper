@@ -448,6 +448,7 @@ class ContainerSamples:
         self.all_samples: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(n_counters))
         self.window_samples: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(n_counters))
         self.recent_samples: deque[tuple[TypeInfo, ...]] = deque(maxlen=run_options.container_window_size)
+        self.logged_max_warning = False
 
     @property
     def empty(self) -> bool:
@@ -476,10 +477,16 @@ class ContainerSamples:
         n = len(self.recent_samples)
         if n < run_options.container_min_samples:
             return True
-        if n >= run_options.container_max_samples:
+
+        total = sum(self.all_samples[0].values())
+        if total >= run_options.container_max_samples:
+            if not self.logged_max_warning:
+                self.logged_max_warning = True
+                types = set(self.window_samples[0].keys())
+                logger.info(f"Container sampling hit max limit ({total}): types={types}")
             return False
 
-        # Use pre-computed window counters
+        # Use pre-computed window counters for Good-Turing check
         for counter in self.window_samples:
             singleton_ratio = sum(c == 1 for c in counter.values()) / n
             if singleton_ratio > run_options.container_type_threshold:

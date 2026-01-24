@@ -66,7 +66,7 @@ class RunOptions:
     no_sampling_for: tuple[str, ...] = ()
     replace_dict: bool = False
     container_min_samples: int = 15
-    container_max_samples: int = 25
+    container_max_samples: int = 50
     container_type_threshold: float = .1
     container_sample_limit: int|None = None
     container_window_size: int = 20  # Sliding window size for Good-Turing decision
