@@ -928,10 +928,11 @@ def test_dict_samples_keys_and_values():
 from collections import deque
 
 
-def test_container_sliding_window_detects_changes():
+def test_container_sliding_window_detects_changes(monkeypatch):
     """Container that changes types should be resampled and include all types."""
     from righttyper.type_id import _cache
 
+    monkeypatch.setattr(run_options, 'container_resample_probability', 1.0)
     _cache._cache.clear()
 
     # First observation: list of ints
