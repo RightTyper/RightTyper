@@ -446,6 +446,7 @@ class ContainerSamples:
         self.o = o
         self.n_counters = n_counters
         self.all_samples: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(n_counters))
+        self.window_samples: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(n_counters))
         self.recent_samples: deque[tuple[TypeInfo, ...]] = deque(maxlen=run_options.container_window_size)
 
     @property
@@ -455,8 +456,19 @@ class ContainerSamples:
 
     def add_sample(self, sample: tuple[TypeInfo, ...]) -> None:
         """Add a sample to both full history and sliding window."""
+        # Remove oldest from window counters if at capacity
+        if len(self.recent_samples) == self.recent_samples.maxlen:
+            old = self.recent_samples[0]
+            for c, v in zip(self.window_samples, old):
+                c[v] -= 1
+                if c[v] == 0:
+                    del c[v]
+
+        # Add new to both counters
         for c, v in zip(self.all_samples, sample):
-            c.update((v,))
+            c[v] += 1
+        for c, v in zip(self.window_samples, sample):
+            c[v] += 1
         self.recent_samples.append(sample)
 
     def needs_more_samples(self) -> bool:
@@ -467,9 +479,8 @@ class ContainerSamples:
         if n >= run_options.container_max_samples:
             return False
 
-        # Build counters on demand from window
-        for i in range(self.n_counters):
-            counter = Counter(sample[i] for sample in self.recent_samples)
+        # Use pre-computed window counters
+        for counter in self.window_samples:
             singleton_ratio = sum(c == 1 for c in counter.values()) / n
             if singleton_ratio > run_options.container_type_threshold:
                 return True
