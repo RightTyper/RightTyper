@@ -449,11 +449,31 @@ class ContainerSamples:
         self.window_samples: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(n_counters))
         self.recent_samples: deque[tuple[TypeInfo, ...]] = deque(maxlen=run_options.container_window_size)
         self.logged_max_warning = False
+        self.stabilized = False
+        self.last_sampled_size = 0
+        self.cycle_samples = 0  # Samples taken in current sampling cycle
 
     @property
     def empty(self) -> bool:
         """True if no samples have been collected yet."""
         return not self.all_samples[0]
+
+    def should_resample(self, current_size: int) -> bool:
+        """Check if we should re-sample a previously stabilized container."""
+        if not self.stabilized:
+            return True
+        # Re-sample if container grew
+        if current_size > self.last_sampled_size:
+            return True
+        # Probabilistic fallback to catch nested changes (10% chance)
+        if random.random() < 0.1:
+            return True
+        return False
+
+    def start_sampling_cycle(self) -> None:
+        """Start a new sampling cycle (resets per-cycle counters)."""
+        self.cycle_samples = 0
+        self.logged_max_warning = False
 
     def add_sample(self, sample: tuple[TypeInfo, ...]) -> None:
         """Add a sample to both full history and sliding window."""
@@ -471,6 +491,7 @@ class ContainerSamples:
         for c, v in zip(self.window_samples, sample):
             c[v] += 1
         self.recent_samples.append(sample)
+        self.cycle_samples += 1
 
     def needs_more_samples(self) -> bool:
         """Good-Turing check on sliding window."""
@@ -478,12 +499,13 @@ class ContainerSamples:
         if n < run_options.container_min_samples:
             return True
 
-        total = sum(self.all_samples[0].values())
-        if total >= run_options.container_max_samples:
+        # Per-cycle max limit
+        if self.cycle_samples >= run_options.container_max_samples:
             if not self.logged_max_warning:
                 self.logged_max_warning = True
-                types = set(self.window_samples[0].keys())
-                logger.info(f"Container sampling hit max limit ({total}): types={types}")
+                all_types = [set(c.keys()) for c in self.window_samples]
+                ratios = [sum(c == 1 for c in counter.values()) / n for counter in self.window_samples]
+                logger.info(f"Container sampling hit max limit ({self.cycle_samples}): types={all_types}, ratios={ratios}")
             return False
 
         # Use pre-computed window counters for Good-Turing check
@@ -492,6 +514,8 @@ class ContainerSamples:
             if singleton_ratio > run_options.container_type_threshold:
                 return True
 
+        # Good-Turing passed - types have stabilized
+        self.stabilized = True
         return False
 
 class ContainerTypeCache:
@@ -525,20 +549,26 @@ def _get_container_args(
     entry = _cache.get(container, n_counters)
 
     if container:
+        current_size = len(container)
         # First time + small container: scan completely
-        if entry.empty and len(container) <= run_options.container_min_samples:
+        if entry.empty and current_size <= run_options.container_min_samples:
+            entry.start_sampling_cycle()
             if n_counters == 1:
                 for v in container:
                     entry.add_sample((get_value_type(v, depth+1),))
             else:
                 for k, v in container.items():
                     entry.add_sample((get_value_type(k, depth+1), get_value_type(v, depth+1)))
-        else:
+            entry.stabilized = True
+            entry.last_sampled_size = current_size
+        elif entry.should_resample(current_size):
             # Sample based on GT on the sliding window
+            entry.start_sampling_cycle()
             while True:
                 entry.add_sample(tuple(get_value_type(v, depth+1) for v in sampler()))
                 if not entry.needs_more_samples():
                     break
+            entry.last_sampled_size = current_size
 
     return tuple(TypeInfo.from_set(set(c)) for c in entry.all_samples)
 
