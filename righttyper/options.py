@@ -70,6 +70,7 @@ class RunOptions:
     container_type_threshold: float = .1
     container_sample_limit: int|None = None
     container_window_size: int = 20  # Sliding window size for Good-Turing decision
+    container_resample_probability: float = .1  # Probability of re-sampling a stabilized container
     resolve_mocks: bool = False
     test_modules: tuple[str, ...] = ('pytest', '_pytest', 'py.test', 'unittest')
     adjust_type_names: bool = True

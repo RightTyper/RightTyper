@@ -769,6 +769,12 @@ def add_output_options(group=None):
     help="Sliding window size for Good-Turing sampling decisions on containers.",
 )
 @click.option(
+    "--container-resample-probability",
+    type=click.FloatRange(0.0, 1.0),
+    default=run_options.container_resample_probability,
+    help="Probability of re-sampling a stabilized container to detect nested type changes.",
+)
+@click.option(
     "--save-profiling",
     is_flag=True,
     hidden=True,

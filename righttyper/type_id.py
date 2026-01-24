@@ -465,8 +465,8 @@ class ContainerSamples:
         # Re-sample if container grew
         if current_size > self.last_sampled_size:
             return True
-        # Probabilistic fallback to catch nested changes (10% chance)
-        if random.random() < 0.1:
+        # Probabilistic fallback to catch nested changes
+        if random.random() < run_options.container_resample_probability:
             return True
         return False
 
