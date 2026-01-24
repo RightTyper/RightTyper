@@ -47,6 +47,92 @@ def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     return typeinfoset
 
 
+def type_contains(a: TypeInfo, b: TypeInfo) -> bool:
+    """Check if a contains b (i.e., b's types are a subset of a's).
+
+    This is recursive: for containers, all args of b must be contained by
+    corresponding args of a.
+    """
+    if a == b:
+        return True
+
+    a_set = a.to_set()
+    b_set = b.to_set()
+
+    # Direct subset: b's types are all in a's types
+    if b_set <= a_set:
+        return True
+
+    # Container containment: same generic, each arg of b contained by corresponding arg of a
+    if (a.module == b.module and
+        a.name == b.name and
+        len(a.args) == len(b.args) and
+        a.args and
+        all(isinstance(arg, TypeInfo) for arg in a.args) and
+        all(isinstance(arg, TypeInfo) for arg in b.args)):
+        return all(
+            type_contains(cast(TypeInfo, aa), cast(TypeInfo, ba))
+            for aa, ba in zip(a.args, b.args)
+        )
+
+    return False
+
+
+def merge_container_supersets(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
+    """Remove containers whose element types are subsets of another container's.
+
+    E.g., list[int] | list[int|str] → list[int|str]
+          list[int] | list[str] → list[int] | list[str]  (no subset relationship)
+
+    This is safe for Container types because a subset observation represents
+    an earlier/partial view of the same container accumulating elements.
+    """
+    # Only consider Container types (list, set, dict, etc.)
+    container_types = {
+        t for t in typeinfoset
+        if t.args and
+        type(t.type_obj) is type and
+        issubclass(t.type_obj, abc.Container)
+    }
+
+    if not container_types:
+        return typeinfoset
+
+    typeinfoset = set(typeinfoset)  # avoid modifying argument
+
+    def group_key(t: TypeInfo) -> tuple[str, str, int]:
+        return t.module, t.name, len(t.args)
+
+    for (_mod, _name, nargs), group in itertools.groupby(
+        sorted(container_types, key=group_key),
+        group_key
+    ):
+        group_list = list(group)
+        if len(group_list) <= 1:
+            continue
+
+        # Check if all args are TypeInfo
+        if not all(all(isinstance(arg, TypeInfo) for arg in t.args) for t in group_list):
+            continue
+
+        # Find containers that are strict subsets of others
+        to_remove = set()
+        for t1 in group_list:
+            if t1 in to_remove:
+                continue
+            for t2 in group_list:
+                if t1 is t2 or t2 in to_remove:
+                    continue
+                # If t1 is contained by t2 (and they're not equal), remove t1
+                if t1 != t2 and type_contains(t2, t1):
+                    to_remove.add(t1)
+                    break
+
+        typeinfoset -= to_remove
+
+    return typeinfoset
+
+
 def merged_types(typeinfoset: set[TypeInfo], for_variable: bool = False) -> TypeInfo:
     """Attempts to merge types in a set before forming their union.
 
@@ -57,8 +143,11 @@ def merged_types(typeinfoset: set[TypeInfo], for_variable: bool = False) -> Type
     if len(typeinfoset) > 1 and output_options.simplify_types:
         typeinfoset = simplify(typeinfoset)
 
-    if for_variable and len(typeinfoset) > 1:
-        typeinfoset = merge_similar_generics(typeinfoset)
+    if len(typeinfoset) > 1:
+        if for_variable:
+            typeinfoset = merge_similar_generics(typeinfoset)
+        else:
+            typeinfoset = merge_container_supersets(typeinfoset)
 
     return TypeInfo.from_set(typeinfoset)
 

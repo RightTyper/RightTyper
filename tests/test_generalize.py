@@ -262,3 +262,119 @@ def test_generalize_type_and_never():
         (tt(dict, args=(tt(Never), tt(Never))), tt(Self)),
     ]
     assert generalize(samples) == ['dict[str, str]', 'typing.Self']
+
+
+# Tests for container superset merging
+
+def test_merge_container_supersets_list():
+    """list[int] | list[int|str] -> list[int|str] (int ⊆ int|str)"""
+    from righttyper.generalize import merge_container_supersets
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    list_int = TypeInfo.from_type(list).replace(args=(int_t,))
+    list_int_str = TypeInfo.from_type(list).replace(args=(TypeInfo.from_set({int_t, str_t}),))
+
+    result = merge_container_supersets({list_int, list_int_str})
+    assert result == {list_int_str}
+
+
+def test_merge_container_supersets_no_subset():
+    """list[int] | list[str] -> unchanged (no subset relationship)"""
+    from righttyper.generalize import merge_container_supersets
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    list_int = TypeInfo.from_type(list).replace(args=(int_t,))
+    list_str = TypeInfo.from_type(list).replace(args=(str_t,))
+
+    result = merge_container_supersets({list_int, list_str})
+    assert result == {list_int, list_str}
+
+
+def test_merge_container_supersets_chain():
+    """list[int] | list[int|str] | list[int|str|float] -> list[int|str|float]"""
+    from righttyper.generalize import merge_container_supersets
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    float_t = TypeInfo.from_type(float)
+
+    list_int = TypeInfo.from_type(list).replace(args=(int_t,))
+    list_int_str = TypeInfo.from_type(list).replace(args=(TypeInfo.from_set({int_t, str_t}),))
+    list_all = TypeInfo.from_type(list).replace(args=(TypeInfo.from_set({int_t, str_t, float_t}),))
+
+    result = merge_container_supersets({list_int, list_int_str, list_all})
+    assert result == {list_all}
+
+
+def test_merge_container_supersets_nested():
+    """list[set[int]] | list[set[int|str]] -> list[set[int|str]]"""
+    from righttyper.generalize import merge_container_supersets
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    set_int = TypeInfo.from_type(set).replace(args=(int_t,))
+    set_int_str = TypeInfo.from_type(set).replace(args=(TypeInfo.from_set({int_t, str_t}),))
+    list_set_int = TypeInfo.from_type(list).replace(args=(set_int,))
+    list_set_int_str = TypeInfo.from_type(list).replace(args=(set_int_str,))
+
+    result = merge_container_supersets({list_set_int, list_set_int_str})
+    assert result == {list_set_int_str}
+
+
+def test_merge_container_supersets_dict():
+    """dict[str, int] | dict[str, int|float] -> dict[str, int|float]"""
+    from righttyper.generalize import merge_container_supersets
+
+    str_t = TypeInfo.from_type(str)
+    int_t = TypeInfo.from_type(int)
+    float_t = TypeInfo.from_type(float)
+
+    dict_str_int = TypeInfo.from_type(dict).replace(args=(str_t, int_t))
+    dict_str_int_float = TypeInfo.from_type(dict).replace(args=(str_t, TypeInfo.from_set({int_t, float_t})))
+
+    result = merge_container_supersets({dict_str_int, dict_str_int_float})
+    assert result == {dict_str_int_float}
+
+
+def test_merge_container_supersets_dict_no_subset():
+    """dict[str, int] | dict[int, int] -> unchanged (no subset relationship in keys)"""
+    from righttyper.generalize import merge_container_supersets
+
+    str_t = TypeInfo.from_type(str)
+    int_t = TypeInfo.from_type(int)
+
+    dict_str_int = TypeInfo.from_type(dict).replace(args=(str_t, int_t))
+    dict_int_int = TypeInfo.from_type(dict).replace(args=(int_t, int_t))
+
+    result = merge_container_supersets({dict_str_int, dict_int_int})
+    assert result == {dict_str_int, dict_int_int}
+
+
+def test_merge_container_supersets_dict_key_subset():
+    """dict[str, int] | dict[str|int, int] -> dict[str|int, int] (str ⊆ str|int)"""
+    from righttyper.generalize import merge_container_supersets
+
+    str_t = TypeInfo.from_type(str)
+    int_t = TypeInfo.from_type(int)
+
+    dict_str_int = TypeInfo.from_type(dict).replace(args=(str_t, int_t))
+    dict_str_or_int_int = TypeInfo.from_type(dict).replace(args=(TypeInfo.from_set({str_t, int_t}), int_t))
+
+    result = merge_container_supersets({dict_str_int, dict_str_or_int_int})
+    assert result == {dict_str_or_int_int}
+
+
+def test_merge_container_supersets_mixed_containers():
+    """list[int] | set[int] | list[int|str] -> set[int] | list[int|str]"""
+    from righttyper.generalize import merge_container_supersets
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    list_int = TypeInfo.from_type(list).replace(args=(int_t,))
+    list_int_str = TypeInfo.from_type(list).replace(args=(TypeInfo.from_set({int_t, str_t}),))
+    set_int = TypeInfo.from_type(set).replace(args=(int_t,))
+
+    result = merge_container_supersets({list_int, set_int, list_int_str})
+    assert result == {set_int, list_int_str}
