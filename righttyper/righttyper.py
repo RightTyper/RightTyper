@@ -763,6 +763,12 @@ def add_output_options(group=None):
     help="Maximum number of container elements considered when sampling; 'none' means unlimited.",
 )
 @click.option(
+    "--container-window-size",
+    type=click.IntRange(1, None),
+    default=run_options.container_window_size,
+    help="Sliding window size for Good-Turing sampling decisions on containers.",
+)
+@click.option(
     "--save-profiling",
     is_flag=True,
     hidden=True,

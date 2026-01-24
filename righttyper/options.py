@@ -69,6 +69,7 @@ class RunOptions:
     container_max_samples: int = 25
     container_type_threshold: float = .1
     container_sample_limit: int|None = None
+    container_window_size: int = 20  # Sliding window size for Good-Turing decision
     resolve_mocks: bool = False
     test_modules: tuple[str, ...] = ('pytest', '_pytest', 'py.test', 'unittest')
     adjust_type_names: bool = True

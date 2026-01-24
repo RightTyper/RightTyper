@@ -4,7 +4,7 @@ import re
 import sys
 
 import collections
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, deque
 from dataclasses import dataclass
 import collections.abc as abc
 from abc import ABCMeta
@@ -439,48 +439,61 @@ def _first_referent(value: Any) -> object|None:
     return ref[0] if len(ref) else None
 
 
-def _needs_more_samples(counters: tuple[Counter[TypeInfo], ...]) -> bool:
-    if (n := counters[0].total()) < run_options.container_min_samples:
-        return True
+class ContainerSamples:
+    """Tracks type samples from a container for type inference."""
 
-    if n >= run_options.container_max_samples:
+    def __init__(self, o: object, n_counters: int):
+        self.o = o
+        self.n_counters = n_counters
+        self.all_samples: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(n_counters))
+        self.recent_samples: deque[tuple[TypeInfo, ...]] = deque(maxlen=run_options.container_window_size)
+
+    @property
+    def empty(self) -> bool:
+        """True if no samples have been collected yet."""
+        return not self.all_samples[0]
+
+    def add_sample(self, sample: tuple[TypeInfo, ...]) -> None:
+        """Add a sample to both full history and sliding window."""
+        for c, v in zip(self.all_samples, sample):
+            c.update((v,))
+        self.recent_samples.append(sample)
+
+    def needs_more_samples(self) -> bool:
+        """Good-Turing check on sliding window."""
+        n = len(self.recent_samples)
+        if n < run_options.container_min_samples:
+            return True
+        if n >= run_options.container_max_samples:
+            return False
+
+        # Build counters on demand from window
+        for i in range(self.n_counters):
+            counter = Counter(sample[i] for sample in self.recent_samples)
+            singleton_ratio = sum(c == 1 for c in counter.values()) / n
+            if singleton_ratio > run_options.container_type_threshold:
+                return True
+
         return False
-
-    # Good-Turing estimator based heuristic: if the number of single-occurence
-    # types divided by the number of samples exceeds a threshold, we estimate
-    # we're likely to see a new type and take another sample.
-    if any(
-        (sum(c == 1 for c in counter.values()) / n) > run_options.container_type_threshold
-        for counter in counters
-    ):
-        return True
-
-    return False
-
-
-@dataclass
-class Entry:
-    o: object
-    counters: tuple[Counter[TypeInfo], ...]
 
 class ContainerTypeCache:
     """LRU cache of type information about a container."""
     def __init__(self, capacity: int):
         self._capacity = capacity
-        self._cache: OrderedDict[int, Entry] = OrderedDict()
+        self._cache: OrderedDict[int, ContainerSamples] = OrderedDict()
 
-    def get(self, o: object, n_counters: int) -> tuple[Counter[TypeInfo], ...]:
+    def get(self, o: object, n_counters: int) -> ContainerSamples:
         o_id = id(o)    # accommodate non-hashable objects
         if not (e := self._cache.get(o_id, None)) or e.o is not o:
-            e = Entry(o, tuple(Counter() for _ in range(n_counters)))
+            e = ContainerSamples(o, n_counters)
             self._cache[o_id] = e
             self._cache.move_to_end(o_id)
             if len(self._cache) > self._capacity:
                 self._cache.popitem(last=False)
-            return e.counters
+            return e
 
         self._cache.move_to_end(o_id)
-        return e.counters
+        return e
 
 _cache = ContainerTypeCache(1024)
 
@@ -491,30 +504,25 @@ def _get_container_args(
     depth: int
 ) -> tuple[TypeInfo, ...]:
 
-    counters = _cache.get(container, n_counters)
+    entry = _cache.get(container, n_counters)
 
     if container:
-        # In the first time, if it's a small container, just scan it
-        if counters[0].total() == 0 and len(container) <= run_options.container_min_samples:
+        # First time + small container: scan completely
+        if entry.empty and len(container) <= run_options.container_min_samples:
             if n_counters == 1:
                 for v in container:
-                    counters[0].update((get_value_type(v, depth+1),))
+                    entry.add_sample((get_value_type(v, depth+1),))
             else:
-                for it in container.items():
-                    for c, v in zip(counters, it):
-                        c.update((get_value_type(v, depth+1),))
+                for k, v in container.items():
+                    entry.add_sample((get_value_type(k, depth+1), get_value_type(v, depth+1)))
         else:
-            # Take as many samples as G-T suggests we need, but at least one to
-            # try and accommodate changing data
+            # Sample based on GT on the sliding window
             while True:
-                sample = sampler()
-                for c, v in zip(counters, sample):
-                    c.update((get_value_type(v, depth+1),))
-
-                if not _needs_more_samples(counters):
+                entry.add_sample(tuple(get_value_type(v, depth+1) for v in sampler()))
+                if not entry.needs_more_samples():
                     break
 
-    return tuple(TypeInfo.from_set(set(c)) for c in counters)
+    return tuple(TypeInfo.from_set(set(c)) for c in entry.all_samples)
 
 
 def _handle_tuple(value: Any, depth: int) -> TypeInfo:

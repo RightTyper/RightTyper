@@ -829,3 +829,171 @@ def test_merged_types_for_variable_different_arity():
     ))
     assert "tuple[int, str]" in result
     assert "tuple[int]" in result
+
+
+# =============================================================================
+# Container sampling tests
+# =============================================================================
+
+from collections import Counter
+
+
+def test_container_cache_same_object():
+    """Cache returns same entry for same container object."""
+    from righttyper.type_id import ContainerTypeCache
+
+    cache = ContainerTypeCache(100)
+    data = [1, 2, 3]
+
+    entry1 = cache.get(data, 1)
+    entry2 = cache.get(data, 1)
+    assert entry1 is entry2
+
+
+def test_container_cache_different_objects():
+    """Cache returns different entries for different objects."""
+    from righttyper.type_id import ContainerTypeCache
+
+    cache = ContainerTypeCache(100)
+    data1 = [1, 2, 3]
+    data2 = [1, 2, 3]  # Same content, different object
+
+    entry1 = cache.get(data1, 1)
+    entry2 = cache.get(data2, 1)
+    assert entry1 is not entry2
+
+
+def test_container_cache_lru_eviction():
+    """Cache evicts least recently used entries."""
+    from righttyper.type_id import ContainerTypeCache
+
+    cache = ContainerTypeCache(2)  # Small capacity
+    data1, data2, data3 = [1], [2], [3]
+
+    cache.get(data1, 1)
+    cache.get(data2, 1)
+    cache.get(data3, 1)  # Should evict data1
+
+    assert len(cache._cache) == 2
+
+
+def test_large_container_is_sampled():
+    """Containers larger than min_samples are sampled, not fully scanned."""
+    from righttyper.type_id import _cache
+
+    _cache._cache.clear()
+
+    # Create large list (> container_min_samples which is 15)
+    data = list(range(1000))
+    t = get_value_type(data)
+
+    assert 'int' in t
+    # Verify we didn't scan all 1000 elements
+    entry = _cache.get(data, 1)
+    assert entry.all_samples[0].total() <= run_options.container_max_samples
+
+
+def test_small_container_is_fully_scanned():
+    """Containers smaller than min_samples are fully scanned."""
+    from righttyper.type_id import _cache
+
+    _cache._cache.clear()
+
+    # Small list (< container_min_samples which is 15)
+    data = [1, 'a', 2.0]
+    t = get_value_type(data)
+
+    # Should see all types
+    assert 'int' in t
+    assert 'str' in t
+    assert 'float' in t
+
+
+def test_dict_samples_keys_and_values():
+    """Dict sampling tracks both key and value types."""
+    from righttyper.type_id import _cache
+
+    _cache._cache.clear()
+
+    data = {i: str(i) for i in range(100)}
+    t = get_value_type(data)
+
+    assert t == 'dict[int, str]'
+
+
+# =============================================================================
+# Sliding window container sampling tests (new behavior)
+# =============================================================================
+
+from collections import deque
+
+
+def test_container_sliding_window_detects_changes():
+    """Container that changes types should be resampled and include all types."""
+    from righttyper.type_id import _cache
+
+    _cache._cache.clear()
+
+    # First observation: list of ints
+    data = list(range(100))
+    t1 = get_value_type(data)
+    assert 'int' in t1
+
+    # Mutate to strings
+    data.clear()
+    data.extend(['a'] * 100)
+
+    # Second observation should detect the change and resample
+    t2 = get_value_type(data)
+    # Should include both int and str from full history
+    assert 'int' in t2 and 'str' in t2
+
+
+def test_container_samples_needs_more_stable():
+    """Window with uniform types is stable."""
+    from righttyper.type_id import ContainerSamples
+
+    int_type = TypeInfo.from_type(int)
+    samples = ContainerSamples(o=None, n_counters=1)
+    for _ in range(20):
+        samples.add_sample((int_type,))
+
+    assert samples.needs_more_samples() == False
+
+
+def test_container_samples_needs_more_unstable():
+    """Window with many singletons is unstable."""
+    from righttyper.type_id import ContainerSamples
+
+    # All different types = all singletons = high ratio
+    types = [TypeInfo.from_type(t) for t in [int, str, float, bool, bytes,
+                                              list, dict, set, tuple, type,
+                                              object, complex, range, slice,
+                                              memoryview, bytearray, frozenset]]
+    samples = ContainerSamples(o=None, n_counters=1)
+    for t in types:
+        samples.add_sample((t,))
+
+    assert samples.needs_more_samples() == True
+
+
+def test_container_full_history_preserved():
+    """All types ever seen appear in annotation, even if evicted from window."""
+    from righttyper.type_id import _cache
+
+    _cache._cache.clear()
+
+    data = list(range(100))
+
+    # First: ints
+    get_value_type(data)
+
+    # Mutate and observe many times to push ints out of window
+    for _ in range(run_options.container_window_size + 10):
+        data.clear()
+        data.extend(['a'] * 100)
+        get_value_type(data)
+
+    # Final type should still include int from history
+    t = get_value_type(data)
+    assert 'int' in t
