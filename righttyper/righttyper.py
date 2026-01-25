@@ -737,10 +737,10 @@ def add_output_options(group=None):
     help="Whether to replace 'dict' to enable efficient, statistically correct samples."
 )
 @click.option(
-    "--container-min-samples",
+    "--container-small-threshold",
     type=click.IntRange(1, None),
-    default=run_options.container_min_samples,
-    help="Minimum number of entries to sample for a container. If the container's length is less or equal to this size, fully scan it instead.",
+    default=run_options.container_small_threshold,
+    help="Containers at or below this size are fully scanned instead of sampled.",
 )
 @click.option(
     "--container-max-samples",

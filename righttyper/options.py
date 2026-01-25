@@ -65,12 +65,12 @@ class RunOptions:
     sampling: bool = True
     no_sampling_for: tuple[str, ...] = ()
     replace_dict: bool = False
-    container_min_samples: int = 15
+    container_small_threshold: int = 20  # Containers at or below this size are fully scanned
     container_max_samples: int = 50
-    container_type_threshold: float = .1
+    container_type_threshold: float = .05
     container_sample_limit: int|None = None
-    container_window_size: int = 20  # Sliding window size for Good-Turing decision
-    container_resample_probability: float = .1  # Probability of re-sampling a stabilized container
+    container_window_size: int = 25  # Sliding window size for Good-Turing; also min samples before checking
+    container_resample_probability: float = .5  # Probability of re-sampling a stabilized container
     resolve_mocks: bool = False
     test_modules: tuple[str, ...] = ('pytest', '_pytest', 'py.test', 'unittest')
     adjust_type_names: bool = True

@@ -878,13 +878,14 @@ def test_container_cache_lru_eviction():
 
 
 def test_large_container_is_sampled():
-    """Containers larger than min_samples are sampled, not fully scanned."""
+    """Containers larger than the small threshold are sampled, not fully scanned."""
     from righttyper.type_id import _cache
 
     _cache._cache.clear()
 
-    # Create large list (> container_min_samples which is 15)
+    # Create large list
     data = list(range(1000))
+    assert len(data) > run_options.container_small_threshold  # Test precondition
     t = get_value_type(data)
 
     assert 'int' in t
@@ -894,13 +895,14 @@ def test_large_container_is_sampled():
 
 
 def test_small_container_is_fully_scanned():
-    """Containers smaller than min_samples are fully scanned."""
+    """Containers at or below the small threshold are fully scanned."""
     from righttyper.type_id import _cache
 
     _cache._cache.clear()
 
-    # Small list (< container_min_samples which is 15)
+    # Small list
     data = [1, 'a', 2.0]
+    assert len(data) <= run_options.container_small_threshold  # Test precondition
     t = get_value_type(data)
 
     # Should see all types
@@ -916,6 +918,7 @@ def test_dict_samples_keys_and_values():
     _cache._cache.clear()
 
     data = {i: str(i) for i in range(100)}
+    assert len(data) > run_options.container_small_threshold  # Test precondition
     t = get_value_type(data)
 
     assert t == 'dict[int, str]'
@@ -935,8 +938,9 @@ def test_container_sliding_window_detects_changes(monkeypatch):
     monkeypatch.setattr(run_options, 'container_resample_probability', 1.0)
     _cache._cache.clear()
 
-    # First observation: list of ints
+    # First observation: list of ints (must be large enough to trigger sampling)
     data = list(range(100))
+    assert len(data) > run_options.container_small_threshold  # Test precondition
     t1 = get_value_type(data)
     assert 'int' in t1
 
@@ -956,7 +960,8 @@ def test_container_samples_needs_more_stable():
 
     int_type = TypeInfo.from_type(int)
     samples = ContainerSamples(o=None, n_counters=1)
-    for _ in range(20):
+    # Need at least window_size samples before stability is even checked
+    for _ in range(run_options.container_window_size):
         samples.add_sample((int_type,))
 
     assert samples.needs_more_samples() == False
@@ -985,6 +990,7 @@ def test_container_full_history_preserved():
     _cache._cache.clear()
 
     data = list(range(100))
+    assert len(data) > run_options.container_small_threshold  # Test precondition
 
     # First: ints
     get_value_type(data)

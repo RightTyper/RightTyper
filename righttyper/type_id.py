@@ -462,8 +462,8 @@ class ContainerSamples:
         """Check if we should re-sample a previously stabilized container."""
         if not self.stabilized:
             return True
-        # Re-sample if container grew
-        if current_size > self.last_sampled_size:
+        # Re-sample if container size changed
+        if current_size != self.last_sampled_size:
             return True
         # Probabilistic fallback to catch nested changes
         if random.random() < run_options.container_resample_probability:
@@ -496,7 +496,7 @@ class ContainerSamples:
     def needs_more_samples(self) -> bool:
         """Good-Turing check on sliding window."""
         n = len(self.recent_samples)
-        if n < run_options.container_min_samples:
+        if n < run_options.container_window_size:
             return True
 
         # Per-cycle max limit
@@ -517,6 +517,26 @@ class ContainerSamples:
         # Good-Turing passed - types have stabilized
         self.stabilized = True
         return False
+
+    def has_new_type(self, sample: tuple[TypeInfo, ...]) -> bool:
+        """Check if sample contains a type not seen before."""
+        for v, counter in zip(sample, self.all_samples):
+            if v not in counter:
+                return True
+        return False
+
+    def full_scan(self, container: Any, depth: int) -> None:
+        """Fully scan a small container."""
+        self.start_sampling_cycle()
+        if self.n_counters == 1:
+            for v in container:
+                self.add_sample((get_value_type(v, depth+1),))
+        else:
+            for k, v in container.items():
+                self.add_sample((get_value_type(k, depth+1), get_value_type(v, depth+1)))
+        self.stabilized = True
+        self.last_sampled_size = len(container)
+
 
 class ContainerTypeCache:
     """LRU cache of type information about a container."""
@@ -550,25 +570,27 @@ def _get_container_args(
 
     if container:
         current_size = len(container)
-        # First time + small container: scan completely
-        if entry.empty and current_size <= run_options.container_min_samples:
-            entry.start_sampling_cycle()
-            if n_counters == 1:
-                for v in container:
-                    entry.add_sample((get_value_type(v, depth+1),))
-            else:
-                for k, v in container.items():
-                    entry.add_sample((get_value_type(k, depth+1), get_value_type(v, depth+1)))
-            entry.stabilized = True
-            entry.last_sampled_size = current_size
-        elif entry.should_resample(current_size):
-            # Sample based on GT on the sliding window
-            entry.start_sampling_cycle()
-            while True:
-                entry.add_sample(tuple(get_value_type(v, depth+1) for v in sampler()))
-                if not entry.needs_more_samples():
-                    break
-            entry.last_sampled_size = current_size
+        is_small = current_size <= run_options.container_small_threshold
+
+        if is_small:
+            # Small container strategy: full scan, detect change via size or spot-check
+            if entry.empty or current_size != entry.last_sampled_size:
+                # First visit or size changed: full scan
+                entry.full_scan(container, depth)
+            elif random.random() < run_options.container_resample_probability:
+                # Spot-check: take one sample, rescan if new type found
+                sample = tuple(get_value_type(v, depth+1) for v in sampler())
+                if entry.has_new_type(sample):
+                    entry.full_scan(container, depth)
+        else:
+            # Large container strategy (Good-Turing)
+            if entry.should_resample(current_size):
+                entry.start_sampling_cycle()
+                while True:
+                    entry.add_sample(tuple(get_value_type(v, depth+1) for v in sampler()))
+                    if not entry.needs_more_samples():
+                        break
+                entry.last_sampled_size = current_size
 
     return tuple(TypeInfo.from_set(set(c)) for c in entry.all_samples)
 
