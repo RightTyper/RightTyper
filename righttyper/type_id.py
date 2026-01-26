@@ -503,9 +503,11 @@ class ContainerSamples:
         if self.cycle_samples >= run_options.container_max_samples:
             if not self.logged_max_warning:
                 self.logged_max_warning = True
+                container_type = type(self.o).__name__
+                container_len = len(self.o) if hasattr(self.o, '__len__') else '?'
                 all_types = [set(c.keys()) for c in self.window_samples]
                 ratios = [sum(c == 1 for c in counter.values()) / n for counter in self.window_samples]
-                logger.info(f"Container sampling hit max limit ({self.cycle_samples}): types={all_types}, ratios={ratios}")
+                logger.info(f"Container sampling hit max limit ({self.cycle_samples}): {container_type}[{container_len}], ratios={ratios}, types={all_types}")
             return False
 
         # Use pre-computed window counters for Good-Turing check
