@@ -935,7 +935,7 @@ def test_container_sliding_window_detects_changes(monkeypatch):
     """Container that changes types should be resampled and include all types."""
     from righttyper.type_id import _cache
 
-    monkeypatch.setattr(run_options, 'container_resample_probability', 1.0)
+    monkeypatch.setattr(run_options, 'container_check_probability', 1.0)
     _cache._cache.clear()
 
     # First observation: list of ints (must be large enough to trigger sampling)
@@ -954,33 +954,43 @@ def test_container_sliding_window_detects_changes(monkeypatch):
     assert 'int' in t2 and 'str' in t2
 
 
-def test_container_samples_needs_more_stable():
-    """Window with uniform types is stable."""
+def test_sample_until_stable_uniform_types():
+    """Sampling stops quickly when all samples have the same type."""
     from righttyper.type_id import ContainerSamples
 
-    int_type = TypeInfo.from_type(int)
-    samples = ContainerSamples(o=None, n_counters=1)
-    # Need at least window_size samples before stability is even checked
-    for _ in range(run_options.container_window_size):
-        samples.add_sample((int_type,))
+    # Container with uniform type
+    data = [42] * 100
+    samples = ContainerSamples(o=data, n_counters=1)
+    sampler = lambda: (data[0],)  # Always returns an int
 
-    assert samples.needs_more_samples() == False
+    samples.sample_until_stable(sampler, depth=0)
+
+    # Should have stopped near the minimum samples (all same type = low singleton ratio)
+    total_samples = samples.all_samples[0].total()
+    assert total_samples <= run_options.container_min_samples + 5
 
 
-def test_container_samples_needs_more_unstable():
-    """Window with many singletons is unstable."""
+def test_sample_until_stable_diverse_types():
+    """Sampling continues longer when types are highly diverse."""
     from righttyper.type_id import ContainerSamples
 
-    # All different types = all singletons = high ratio
-    types = [TypeInfo.from_type(t) for t in [int, str, float, bool, bytes,
-                                              list, dict, set, tuple, type,
-                                              object, complex, range, slice,
-                                              memoryview, bytearray, frozenset]]
+    # Create 30 distinct types dynamically - each sample will have a unique type
+    distinct_types = [type(f'Type{i}', (), {}) for i in range(30)]
+    distinct_values = [t() for t in distinct_types]
+    idx = [0]
     samples = ContainerSamples(o=None, n_counters=1)
-    for t in types:
-        samples.add_sample((t,))
 
-    assert samples.needs_more_samples() == True
+    def counting_sampler() -> tuple[Any, ...]:
+        val = distinct_values[idx[0] % len(distinct_values)]
+        idx[0] += 1
+        return (val,)
+
+    samples.sample_until_stable(counting_sampler, depth=0)
+
+    # With 30 distinct types and min_samples=25, singleton ratio stays high
+    # (each type seen only ~once), so sampling should continue beyond min_samples.
+    total_samples = samples.all_samples[0].total()
+    assert total_samples > run_options.container_min_samples
 
 
 def test_container_full_history_preserved():
@@ -996,7 +1006,7 @@ def test_container_full_history_preserved():
     get_value_type(data)
 
     # Mutate and observe many times to push ints out of window
-    for _ in range(run_options.container_window_size + 10):
+    for _ in range(run_options.container_min_samples + 10):
         data.clear()
         data.extend(['a'] * 100)
         get_value_type(data)
@@ -1004,3 +1014,83 @@ def test_container_full_history_preserved():
     # Final type should still include int from history
     t = get_value_type(data)
     assert 'int' in t
+
+
+# Hybrid sampling tests: Good-Turing for stopping, spot-check for change detection
+# =============================================================================
+
+
+def test_hybrid_spot_check_no_new_type_no_resample(monkeypatch):
+    """When spot-check finds an existing type, no full resampling should occur."""
+    from righttyper.type_id import _cache
+
+    monkeypatch.setattr(run_options, 'container_check_probability', 1.0)
+    _cache._cache.clear()
+
+    # Create a uniform list (all ints) large enough to trigger sampling
+    data = list(range(100))
+    assert len(data) > run_options.container_small_threshold
+
+    # First observation: triggers Good-Turing sampling until stable
+    get_value_type(data)
+    entry = _cache.get(data, 1)
+    initial_sample_count = entry.all_samples[0].total()
+
+    # Second observation: spot-check should find int (existing type)
+    # With hybrid approach: should NOT trigger full resampling
+    get_value_type(data)
+
+    # Sample count should increase by at most 1 (the spot-check sample)
+    new_sample_count = entry.all_samples[0].total()
+    samples_added = new_sample_count - initial_sample_count
+    assert samples_added <= 1, f"Expected at most 1 sample (spot-check), got {samples_added}"
+
+
+def test_hybrid_spot_check_new_type_triggers_resample(monkeypatch):
+    """When spot-check finds a new type, full Good-Turing resampling should occur."""
+    from righttyper.type_id import _cache
+
+    monkeypatch.setattr(run_options, 'container_check_probability', 1.0)
+    _cache._cache.clear()
+
+    # First observation with ints
+    data = list(range(100))
+    assert len(data) > run_options.container_small_threshold
+    get_value_type(data)
+
+    entry = _cache.get(data, 1)
+    initial_sample_count = entry.all_samples[0].total()
+
+    # Mutate to all strings - spot-check will find new type
+    data.clear()
+    data.extend(['a'] * 100)
+
+    get_value_type(data)
+
+    # Should have triggered full resampling (many more samples)
+    new_sample_count = entry.all_samples[0].total()
+    samples_added = new_sample_count - initial_sample_count
+    assert samples_added > 1, f"Expected full resampling (>1 sample), got {samples_added}"
+
+
+def test_hybrid_spot_check_sample_preserved(monkeypatch):
+    """The spot-check sample that triggers resampling should be included in results."""
+    from righttyper.type_id import _cache
+
+    monkeypatch.setattr(run_options, 'container_check_probability', 1.0)
+    _cache._cache.clear()
+
+    # First: all ints
+    data = list(range(100))
+    assert len(data) > run_options.container_small_threshold
+    t1 = get_value_type(data)
+    assert 'int' in t1
+
+    # Mutate to all strings
+    data.clear()
+    data.extend(['hello'] * 100)
+
+    t2 = get_value_type(data)
+
+    # Both types should be in the result (int from history, str from new sampling)
+    assert 'int' in t2 and 'str' in t2

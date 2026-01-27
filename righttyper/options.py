@@ -69,8 +69,8 @@ class RunOptions:
     container_max_samples: int = 50
     container_type_threshold: float = .05
     container_sample_limit: int|None = None
-    container_window_size: int = 25  # Sliding window size for Good-Turing; also min samples before checking
-    container_resample_probability: float = .5  # Probability of re-sampling a stabilized container
+    container_min_samples: int = 25  # Minimum samples before checking Good-Turing stopping criterion
+    container_check_probability: float = .5  # Probability of spot-checking a container for new types
     resolve_mocks: bool = False
     test_modules: tuple[str, ...] = ('pytest', '_pytest', 'py.test', 'unittest')
     adjust_type_names: bool = True

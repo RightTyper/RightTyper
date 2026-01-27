@@ -763,16 +763,16 @@ def add_output_options(group=None):
     help="Maximum number of container elements considered when sampling; 'none' means unlimited.",
 )
 @click.option(
-    "--container-window-size",
+    "--container-min-samples",
     type=click.IntRange(1, None),
-    default=run_options.container_window_size,
-    help="Sliding window size for Good-Turing sampling decisions on containers.",
+    default=run_options.container_min_samples,
+    help="Minimum samples before checking Good-Turing stopping criterion.",
 )
 @click.option(
-    "--container-resample-probability",
+    "--container-check-probability",
     type=click.FloatRange(0.0, 1.0),
-    default=run_options.container_resample_probability,
-    help="Probability of re-sampling a stabilized container to detect nested type changes.",
+    default=run_options.container_check_probability,
+    help="Probability of spot-checking a container for new types.",
 )
 @click.option(
     "--save-profiling",

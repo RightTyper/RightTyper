@@ -4,7 +4,7 @@ import re
 import sys
 
 import collections
-from collections import Counter, OrderedDict, deque
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
 import collections.abc as abc
 from abc import ABCMeta
@@ -440,85 +440,24 @@ def _first_referent(value: Any) -> object|None:
 
 
 class ContainerSamples:
-    """Tracks type samples from a container for type inference."""
+    """Tracks type samples from a container for type inference.
+
+    Uses a hybrid sampling strategy:
+    - Good-Turing estimation on cycle-local counters for stopping criterion
+    - Novelty detection against cumulative history for change detection
+    """
 
     def __init__(self, o: object, n_counters: int):
         self.o = o
         self.n_counters = n_counters
+        # Cumulative counters: all types ever seen (for final annotation)
         self.all_samples: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(n_counters))
-        self.window_samples: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(n_counters))
-        self.recent_samples: deque[tuple[TypeInfo, ...]] = deque(maxlen=run_options.container_window_size)
-        self.logged_max_warning = False
-        self.stabilized = False
         self.last_sampled_size = 0
-        self.cycle_samples = 0  # Samples taken in current sampling cycle
-
-    @property
-    def empty(self) -> bool:
-        """True if no samples have been collected yet."""
-        return not self.all_samples[0]
-
-    def should_resample(self, current_size: int) -> bool:
-        """Check if we should re-sample a previously stabilized container."""
-        if not self.stabilized:
-            return True
-        # Re-sample if container size changed
-        if current_size != self.last_sampled_size:
-            return True
-        # Probabilistic fallback to catch nested changes
-        if random.random() < run_options.container_resample_probability:
-            return True
-        return False
-
-    def start_sampling_cycle(self) -> None:
-        """Start a new sampling cycle (resets per-cycle counters)."""
-        self.cycle_samples = 0
-        self.logged_max_warning = False
 
     def add_sample(self, sample: tuple[TypeInfo, ...]) -> None:
-        """Add a sample to both full history and sliding window."""
-        # Remove oldest from window counters if at capacity
-        if len(self.recent_samples) == self.recent_samples.maxlen:
-            old = self.recent_samples[0]
-            for c, v in zip(self.window_samples, old):
-                c[v] -= 1
-                if c[v] == 0:
-                    del c[v]
-
-        # Add new to both counters
+        """Add a sample to cumulative history."""
         for c, v in zip(self.all_samples, sample):
             c[v] += 1
-        for c, v in zip(self.window_samples, sample):
-            c[v] += 1
-        self.recent_samples.append(sample)
-        self.cycle_samples += 1
-
-    def needs_more_samples(self) -> bool:
-        """Good-Turing check on sliding window."""
-        n = len(self.recent_samples)
-        if n < run_options.container_window_size:
-            return True
-
-        # Per-cycle max limit
-        if self.cycle_samples >= run_options.container_max_samples:
-            if not self.logged_max_warning:
-                self.logged_max_warning = True
-                container_type = type(self.o).__name__
-                container_len = len(self.o) if hasattr(self.o, '__len__') else '?'
-                all_types = [set(c.keys()) for c in self.window_samples]
-                ratios = [sum(c == 1 for c in counter.values()) / n for counter in self.window_samples]
-                logger.info(f"Container sampling hit max limit ({self.cycle_samples}): {container_type}[{container_len}], ratios={ratios}, types={all_types}")
-            return False
-
-        # Use pre-computed window counters for Good-Turing check
-        for counter in self.window_samples:
-            singleton_ratio = sum(c == 1 for c in counter.values()) / n
-            if singleton_ratio > run_options.container_type_threshold:
-                return True
-
-        # Good-Turing passed - types have stabilized
-        self.stabilized = True
-        return False
 
     def has_new_type(self, sample: tuple[TypeInfo, ...]) -> bool:
         """Check if sample contains a type not seen before."""
@@ -527,16 +466,56 @@ class ContainerSamples:
                 return True
         return False
 
+    def sample_until_stable(self, sampler: abc.Callable[[], tuple[Any, ...]], depth: int) -> None:
+        """Sample until Good-Turing indicates stability.
+
+        Uses cycle-local counters for the stopping criterion, ensuring accurate
+        estimation of the current container's type distribution.
+        """
+        cycle_counter: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(self.n_counters))
+        n = 0
+        logged_max_warning = False
+
+        while True:
+            sample = tuple(get_value_type(v, depth+1) for v in sampler())
+            # Add to cumulative history
+            for c, v in zip(self.all_samples, sample):
+                c[v] += 1
+            # Add to cycle-local counter
+            for c, v in zip(cycle_counter, sample):
+                c[v] += 1
+            n += 1
+
+            # Minimum samples before checking Good-Turing
+            if n < run_options.container_min_samples:
+                continue
+
+            # Per-cycle max limit
+            if n >= run_options.container_max_samples:
+                if not logged_max_warning:
+                    logged_max_warning = True
+                    container_type = type(self.o).__name__
+                    container_len = len(self.o) if hasattr(self.o, '__len__') else '?'
+                    all_types = [set(c.keys()) for c in cycle_counter]
+                    ratios = [sum(c == 1 for c in counter.values()) / n for counter in cycle_counter]
+                    logger.info(f"Container sampling hit max limit ({n}): {container_type}[{container_len}], ratios={ratios}, types={all_types}")
+                break
+
+            # Good-Turing: stop when singleton ratio is low for all counters
+            if all(
+                sum(c == 1 for c in counter.values()) / n <= run_options.container_type_threshold
+                for counter in cycle_counter
+            ):
+                break
+
     def full_scan(self, container: Any, depth: int) -> None:
         """Fully scan a small container."""
-        self.start_sampling_cycle()
         if self.n_counters == 1:
             for v in container:
                 self.add_sample((get_value_type(v, depth+1),))
         else:
             for k, v in container.items():
                 self.add_sample((get_value_type(k, depth+1), get_value_type(v, depth+1)))
-        self.stabilized = True
         self.last_sampled_size = len(container)
 
 
@@ -576,23 +555,28 @@ def _get_container_args(
 
         if is_small:
             # Small container strategy: full scan, detect change via size or spot-check
-            if entry.empty or current_size != entry.last_sampled_size:
+            if current_size != entry.last_sampled_size:
                 # First visit or size changed: full scan
                 entry.full_scan(container, depth)
-            elif random.random() < run_options.container_resample_probability:
+                entry.last_sampled_size = current_size
+            elif random.random() < run_options.container_check_probability:
                 # Spot-check: take one sample, rescan if new type found
                 sample = tuple(get_value_type(v, depth+1) for v in sampler())
                 if entry.has_new_type(sample):
                     entry.full_scan(container, depth)
         else:
-            # Large container strategy (Good-Turing)
-            if entry.should_resample(current_size):
-                entry.start_sampling_cycle()
-                while True:
-                    entry.add_sample(tuple(get_value_type(v, depth+1) for v in sampler()))
-                    if not entry.needs_more_samples():
-                        break
+            # Large container strategy: Good-Turing for stopping, spot-check for change detection
+            if current_size != entry.last_sampled_size:
+                # Size changed (or first observation): resample
+                entry.sample_until_stable(sampler, depth)
                 entry.last_sampled_size = current_size
+            elif random.random() < run_options.container_check_probability:
+                # Spot-check: resample only if new type found
+                sample = tuple(get_value_type(v, depth+1) for v in sampler())
+                if entry.has_new_type(sample):
+                    entry.add_sample(sample)
+                    entry.sample_until_stable(sampler, depth)
+                    entry.last_sampled_size = current_size
 
     return tuple(TypeInfo.from_set(set(c)) for c in entry.all_samples)
 
