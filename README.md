@@ -171,10 +171,11 @@ Options:
                                   Stop sampling a container if the estimated
                                   likelihood of finding a new type falls below
                                   this threshold.  [default: 0.1; x>=0.01]
-  --container-sample-limit [INTEGER|none]
-                                  Maximum number of container elements
-                                  considered when sampling; 'none' means
-                                  unlimited.  [default: 1000]
+  --container-sample-range [INTEGER|none]
+                                  Largest index from which to sample in a
+                                  container when direct access isn't
+                                  available; 'none' means unlimited.
+                                  [default: 1000]
   --resolve-mocks / --no-resolve-mocks
                                   Whether to attempt to resolve test types,
                                   such as mocks, to non-test types.  [default:

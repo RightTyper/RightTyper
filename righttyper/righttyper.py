@@ -755,12 +755,12 @@ def add_output_options(group=None):
     help="Stop sampling a container if the estimated likelihood of finding a new type falls below this threshold.",
 )
 @click.option(
-    "--container-sample-limit",
+    "--container-sample-range",
     default="1000",
     callback=lambda ctx, param, value: parse_none_or_ge_zero(value),
     show_default=True,
     metavar="[INTEGER|none]",
-    help="Maximum number of container elements considered when sampling; 'none' means unlimited.",
+    help="Largest index from which to sample in a container when direct access isn't available; 'none' means unlimited.",
 )
 @click.option(
     "--container-min-samples",

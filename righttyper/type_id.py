@@ -424,10 +424,10 @@ def _type_for_generator(
 def _random_item[T](container: abc.Collection[T]) -> T:
     """Randomly samples from a container."""
     # Unbounded, islice's running time seems to be O(N);
-    # options.container_sample_limit provides an optional bound
+    # options.container_sample_range provides an optional bound
     limit = len(container)-1
-    if run_options.container_sample_limit is not None:
-        limit = min(limit, run_options.container_sample_limit)
+    if run_options.container_sample_range is not None:
+        limit = min(limit, run_options.container_sample_range)
     n = random.randint(0, limit)
     return next(itertools.islice(container, n, None))
 

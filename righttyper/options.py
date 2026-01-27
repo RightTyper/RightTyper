@@ -65,11 +65,11 @@ class RunOptions:
     sampling: bool = True
     no_sampling_for: tuple[str, ...] = ()
     replace_dict: bool = False
-    container_small_threshold: int = 20  # Containers at or below this size are fully scanned
+    container_small_threshold: int = 32  # Containers at or below this size are fully scanned
     container_max_samples: int = 50
     container_type_threshold: float = .05
-    container_sample_limit: int|None = None
-    container_min_samples: int = 25  # Minimum samples before checking Good-Turing stopping criterion
+    container_sample_range: int|None = None
+    container_min_samples: int = 32  # Minimum samples before checking Good-Turing stopping criterion
     container_check_probability: float = .5  # Probability of spot-checking a container for new types
     resolve_mocks: bool = False
     test_modules: tuple[str, ...] = ('pytest', '_pytest', 'py.test', 'unittest')
