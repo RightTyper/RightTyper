@@ -66,7 +66,7 @@ class RunOptions:
     no_sampling_for: tuple[str, ...] = ()
     replace_dict: bool = False
     container_small_threshold: int = 32  # Containers at or below this size are fully scanned
-    container_max_samples: int = 50
+    container_max_samples: int = 64
     container_type_threshold: float = .05
     container_sample_range: int|None = None
     container_min_samples: int = 32  # Minimum samples before checking Good-Turing stopping criterion
