@@ -9,42 +9,102 @@ from righttyper.righttyper_types import cast_not_None
 from righttyper.options import output_options
 
 
+# Types that are covariant (immutable), so merging their type arguments
+# is safe even for function parameters and return types.
+_COVARIANT_TYPES = (tuple, frozenset)
+
+
 def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     """Merge generics with same container but different type args.
 
     E.g., list[int] | list[bool] → list[int] (bool is subtype of int)
          dict[str, int] | dict[str, str] → dict[str, int | str]
+         tuple[int, ...] | tuple[str, ...] → tuple[int | str, ...]
 
-    This is only safe for variable annotations due to generic invariance.
-    For parameters and return types, this could produce incorrect results.
+    For invariant types (list, dict, set, etc.) this is only safe for variable
+    annotations.  For covariant types (tuple, frozenset) this is safe everywhere;
+    see merged_types() for where that distinction is enforced.
     """
     if not any(t.args for t in typeinfoset):
         return typeinfoset
 
     typeinfoset = set(typeinfoset)  # avoid modifying argument
 
-    def group_key(t: TypeInfo) -> tuple[str, str, bool, int]:
-        return t.module, t.name, all(isinstance(arg, TypeInfo) for arg in t.args), len(t.args)
+    # Group by (module, name, per-position TypeInfo pattern, nargs).
+    # This ensures e.g. tuple[int, str] and tuple[int, ...] end up in
+    # different groups (different TypeInfo/Ellipsis patterns).
+    def group_key(t: TypeInfo) -> tuple[str, str, tuple[bool, ...], int]:
+        return (t.module, t.name,
+                tuple(isinstance(arg, TypeInfo) for arg in t.args),
+                len(t.args))
 
-    for (_mod, _name, all_info, nargs), group in itertools.groupby(
+    for (_mod, _name, is_info_per_arg, nargs), group in itertools.groupby(
         sorted(typeinfoset, key=group_key),
         group_key
     ):
-        if all_info:
-            group_set = set(group)
-            if len(group_set) > 1:  # only merge if there's more than one
-                first = next(iter(group_set))
-                typeinfoset -= group_set
-                # Recursively merge and simplify inner type arguments.
-                # This allows bool|int -> int, and handles nested generics.
-                typeinfoset.add(first.replace(args=tuple(
-                    merged_types({
-                        cast(TypeInfo, member.args[i]) for member in group_set
-                    }, for_variable=True)
-                    for i in range(nargs)
-                )))
+        group_set = set(group)
+        if len(group_set) <= 1:
+            continue
+
+        first = next(iter(group_set))
+
+        # Only merge when every non-TypeInfo arg is Ellipsis
+        if not all(is_info or first.args[i] is Ellipsis
+                   for i, is_info in enumerate(is_info_per_arg)):
+            continue
+
+        typeinfoset -= group_set
+        # Recursively merge and simplify inner type arguments.
+        # This allows bool|int -> int, and handles nested generics.
+        # Ellipsis positions are preserved as-is.
+        typeinfoset.add(first.replace(args=tuple(
+            merged_types({
+                cast(TypeInfo, member.args[i]) for member in group_set
+            }, for_variable=True)
+            if is_info_per_arg[i] else first.args[i]
+            for i in range(nargs)
+        )))
 
     return typeinfoset
+
+
+def _subsume_fixed_by_varlen_tuples(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
+    """Remove fixed-length tuples subsumed by a variable-length tuple.
+
+    tuple[int, int] | tuple[int, ...] → tuple[int, ...]
+    because tuple[int, int] is a subtype of tuple[int, ...] (all elements are ints).
+
+    Also removes tuple[()] (empty tuple) since it is a subtype of any tuple[T, ...].
+    """
+    varlen = {
+        t for t in typeinfoset
+        if t.type_obj is tuple
+        and len(t.args) == 2
+        and t.args[1] is Ellipsis
+        and isinstance(t.args[0], TypeInfo)
+    }
+    if not varlen:
+        return typeinfoset
+
+    # Empty tuples (tuple[()]) are subtypes of any tuple[T, ...]
+    empty = {t for t in typeinfoset if t.type_obj is tuple and t.args == ((),)}
+
+    fixed = {
+        t for t in typeinfoset - varlen - empty
+        if t.type_obj is tuple
+        and t.args
+        and all(isinstance(a, TypeInfo) for a in t.args)
+    }
+
+    to_remove = set(empty)
+    for f in fixed:
+        for v in varlen:
+            elem = cast(TypeInfo, v.args[0])
+            if all(type_contains(elem, cast(TypeInfo, a)) for a in f.args):
+                to_remove.add(f)
+                break
+
+    return typeinfoset - to_remove if to_remove else typeinfoset
 
 
 def type_contains(a: TypeInfo, b: TypeInfo) -> bool:
@@ -148,6 +208,18 @@ def merged_types(typeinfoset: set[TypeInfo], for_variable: bool = False) -> Type
             typeinfoset = merge_similar_generics(typeinfoset)
         else:
             typeinfoset = merge_container_supersets(typeinfoset)
+            # Covariant (immutable) types can safely have their type args
+            # merged even for params/returns, since there is no write path.
+            if len(typeinfoset) > 1:
+                covariant = {t for t in typeinfoset
+                             if t.args
+                             and isinstance(t.type_obj, type)
+                             and issubclass(t.type_obj, _COVARIANT_TYPES)}
+                if len(covariant) > 1:
+                    others = typeinfoset - covariant
+                    typeinfoset = merge_similar_generics(covariant) | others
+            if len(typeinfoset) > 1:
+                typeinfoset = _subsume_fixed_by_varlen_tuples(typeinfoset)
 
     return TypeInfo.from_set(typeinfoset)
 

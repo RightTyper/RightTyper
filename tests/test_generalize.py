@@ -378,3 +378,172 @@ def test_merge_container_supersets_mixed_containers():
 
     result = merge_container_supersets({list_int, set_int, list_int_str})
     assert result == {set_int, list_int_str}
+
+
+# Tests for covariant type merging in merged_types
+
+def test_merge_covariant_tuple():
+    """tuple[int] | tuple[bool] -> tuple[int] for params (covariant, bool <: int)"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    bool_t = TypeInfo.from_type(bool)
+    tuple_int = TypeInfo.from_type(tuple).replace(args=(int_t,))
+    tuple_bool = TypeInfo.from_type(tuple).replace(args=(bool_t,))
+
+    result = merged_types({tuple_int, tuple_bool}, for_variable=False)
+    assert result == TypeInfo.from_type(tuple).replace(args=(int_t,))
+
+
+def test_merge_covariant_tuple_multi_arg():
+    """tuple[int, str] | tuple[float, str] -> tuple[float, str] for params
+    (int simplifies into float via numeric tower)"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    float_t = TypeInfo.from_type(float)
+    str_t = TypeInfo.from_type(str)
+    tuple_is = TypeInfo.from_type(tuple).replace(args=(int_t, str_t))
+    tuple_fs = TypeInfo.from_type(tuple).replace(args=(float_t, str_t))
+
+    result = merged_types({tuple_is, tuple_fs}, for_variable=False)
+    # int|float simplifies to float via PEP 3141 numeric tower
+    expected = TypeInfo.from_type(tuple).replace(args=(float_t, str_t))
+    assert result == expected
+
+
+def test_merge_covariant_tuple_varlen():
+    """tuple[int, ...] | tuple[str, ...] -> tuple[int|str, ...] for params"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    tuple_int_var = TypeInfo.from_type(tuple).replace(args=(int_t, Ellipsis))
+    tuple_str_var = TypeInfo.from_type(tuple).replace(args=(str_t, Ellipsis))
+
+    result = merged_types({tuple_int_var, tuple_str_var}, for_variable=False)
+    expected = TypeInfo.from_type(tuple).replace(
+        args=(TypeInfo.from_set({int_t, str_t}), Ellipsis)
+    )
+    assert result == expected
+
+
+def test_merge_covariant_frozenset():
+    """frozenset[int] | frozenset[str] -> frozenset[int|str] for params"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    fs_int = TypeInfo.from_type(frozenset).replace(args=(int_t,))
+    fs_str = TypeInfo.from_type(frozenset).replace(args=(str_t,))
+
+    result = merged_types({fs_int, fs_str}, for_variable=False)
+    expected = TypeInfo.from_type(frozenset).replace(
+        args=(TypeInfo.from_set({int_t, str_t}),)
+    )
+    assert result == expected
+
+
+def test_merge_covariant_tuple_different_lengths():
+    """tuple[int] | tuple[int, str] -> unchanged (different arities)"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    tuple_1 = TypeInfo.from_type(tuple).replace(args=(int_t,))
+    tuple_2 = TypeInfo.from_type(tuple).replace(args=(int_t, str_t))
+
+    result = merged_types({tuple_1, tuple_2}, for_variable=False)
+    assert result == TypeInfo.from_set({tuple_1, tuple_2})
+
+
+def test_merge_covariant_tuple_fixed_vs_varlen():
+    """tuple[int, str] | tuple[int, ...] -> unchanged (structural mismatch)"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    tuple_fixed = TypeInfo.from_type(tuple).replace(args=(int_t, str_t))
+    tuple_var = TypeInfo.from_type(tuple).replace(args=(int_t, Ellipsis))
+
+    result = merged_types({tuple_fixed, tuple_var}, for_variable=False)
+    assert result == TypeInfo.from_set({tuple_fixed, tuple_var})
+
+
+def test_merge_invariant_list_unchanged():
+    """list[int] | list[str] -> unchanged for params (lists are invariant)"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    list_int = TypeInfo.from_type(list).replace(args=(int_t,))
+    list_str = TypeInfo.from_type(list).replace(args=(str_t,))
+
+    result = merged_types({list_int, list_str}, for_variable=False)
+    assert result == TypeInfo.from_set({list_int, list_str})
+
+
+# Tests for fixed-length tuple subsumption by variable-length tuples
+
+def test_subsume_fixed_by_varlen_tuple():
+    """tuple[int, int] | tuple[int, ...] -> tuple[int, ...] (all elements match)"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    tuple_fixed = TypeInfo.from_type(tuple).replace(args=(int_t, int_t))
+    tuple_var = TypeInfo.from_type(tuple).replace(args=(int_t, Ellipsis))
+
+    result = merged_types({tuple_fixed, tuple_var}, for_variable=False)
+    assert result == tuple_var
+
+
+def test_no_subsume_fixed_by_varlen_tuple():
+    """tuple[int, str] | tuple[int, ...] -> unchanged (str not contained by int)"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    tuple_fixed = TypeInfo.from_type(tuple).replace(args=(int_t, str_t))
+    tuple_var = TypeInfo.from_type(tuple).replace(args=(int_t, Ellipsis))
+
+    result = merged_types({tuple_fixed, tuple_var}, for_variable=False)
+    assert result == TypeInfo.from_set({tuple_fixed, tuple_var})
+
+
+def test_subsume_fixed_by_varlen_tuple_union_elem():
+    """tuple[int, str] | tuple[int|str, ...] -> tuple[int|str, ...] (all elements in union)"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    int_or_str = TypeInfo.from_set({int_t, str_t})
+    tuple_fixed = TypeInfo.from_type(tuple).replace(args=(int_t, str_t))
+    tuple_var = TypeInfo.from_type(tuple).replace(args=(int_or_str, Ellipsis))
+
+    result = merged_types({tuple_fixed, tuple_var}, for_variable=False)
+    assert result == tuple_var
+
+
+def test_subsume_multiple_fixed_by_varlen():
+    """tuple[int] | tuple[int, int] | tuple[int, ...] -> tuple[int, ...]"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    tuple_1 = TypeInfo.from_type(tuple).replace(args=(int_t,))
+    tuple_2 = TypeInfo.from_type(tuple).replace(args=(int_t, int_t))
+    tuple_var = TypeInfo.from_type(tuple).replace(args=(int_t, Ellipsis))
+
+    result = merged_types({tuple_1, tuple_2, tuple_var}, for_variable=False)
+    assert result == tuple_var
+
+
+def test_subsume_empty_tuple_by_varlen():
+    """tuple[()] | tuple[int, ...] -> tuple[int, ...] (empty tuple is zero-or-more ints)"""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    tuple_empty = TypeInfo.from_type(tuple).replace(args=((),))
+    tuple_var = TypeInfo.from_type(tuple).replace(args=(int_t, Ellipsis))
+
+    result = merged_types({tuple_empty, tuple_var}, for_variable=False)
+    assert result == tuple_var

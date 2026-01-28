@@ -466,13 +466,16 @@ def test_merged_types_generics_never():
         }
     ))
 
-    assert "tuple[int, ...]|tuple[typing.Never, ...]" == str(merged_types({
+    # tuple is covariant, so tuple[Never, ...] | tuple[int, ...] merges to
+    # tuple[int, ...] (Never is subsumed, and tuple[int, ...] includes empty tuples)
+    assert "tuple[int, ...]" == str(merged_types({
             TypeInfo.from_type(tuple, args=(TypeInfo.from_type(typing.Never), ...)),
             TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), ...))
         }
     ))
 
-    assert "tuple[()]|tuple[int, ...]" == str(merged_types({
+    # Empty tuple is subsumed by variable-length tuple (zero or more ints)
+    assert "tuple[int, ...]" == str(merged_types({
             TypeInfo.from_type(tuple, args=((),)),
             TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), ...))
         }
