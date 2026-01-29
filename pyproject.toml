@@ -45,8 +45,7 @@ name = "righttyper"
 dynamic = ["version", "readme"]
 license = "Apache-2.0"
 authors = [
-  { name="Emery Berger", email="emerydb@amazon.com" },
-  { name="Juan Altmayer Pizzorno", email="jpizzorno@umass.edu" },
+  { name="Anonymous" },
 ]
 dependencies = [
     "libcst >= 1.2.0",
