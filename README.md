@@ -7,7 +7,7 @@
 ![tests](https://github.com/righttyper/righttyper/workflows/tests/badge.svg)
 
 RightTyper is a Python tool that generates types for your function arguments and return values.
-RightTyper lets your code run at nearly full speed (below 25% overhead) and little memory overhead.
+RightTyper lets your code run at nearly full speed (approx. 25% overhead) and little memory overhead.
 As a result, you won't experience slowdowns in your code or large memory consumption while using it,
 allowing you to integrate it with your standard tests and development process.
 By virtue of its design, and in a significant departure from previous approaches, RightTyper only captures the most commonly used types,
@@ -25,14 +25,11 @@ In addition to generating types, RightTyper has the following features:
 * It efficiently computes type annotation "coverage" for a file or directory of files
 * It infers shape annotations for NumPy/JAX/PyTorch tensors, compatible with [`jaxtyping`](https://docs.kidger.site/jaxtyping/) and [`beartype`](https://github.com/beartype/beartype) or [`typeguard`](https://typeguard.readthedocs.io/en/latest/).
 
-For details about how RightTyper works, please see the following paper: **[RightTyper: Effective and Efficient Type Annotation for Python](https://www.arxiv.org/abs/2507.16051)**.
-
-
 ## Performance Comparison
 The graph below presents the overhead of using RightTyper versus two previous tools, PyAnnotate and MonkeyType, across a range of benchmarks.
-On average, RightTyper imposes less than 25% overhead compared to running plain Python.
-On running the popular "black", RightTyper imposes only 30% overhead, while MonkeyType slows down execution by 35x.
-In extreme cases, MonkeyType runs over 270x slower than RightTyper.
+On average, RightTyper imposes approx. 25% overhead compared to running plain Python.
+On running the popular "black", RightTyper imposes only 46% overhead, while MonkeyType slows down execution by 41x.
+In extreme cases, MonkeyType runs over 240x slower than RightTyper.
 
 ![Overhead](docs/benchmark_comparison_execution_times.png)
 
