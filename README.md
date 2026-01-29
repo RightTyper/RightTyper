@@ -128,28 +128,8 @@ Options:
                                   directory.  If omitted, the script's
                                   directory (or, for -m, the current
                                   directory) is used.
-  --restart-interval FLOAT RANGE  Interval (in seconds) at which previously
-                                  stopped instrumentation may be restarted.
-                                  [default: 0.5; x>=0.1]
-  --restart-max-instr INTEGER RANGE
-                                  Max. number of instrumentation events per
-                                  interval. Previously stopped instrumentation
-                                  is restarted when fewer (or equal)
-                                  instrumentation events are handled in an
-                                  interval.  [default: 0; x>=0]
-  --trace-min-samples INTEGER RANGE
-                                  Minimum number of call traces to sample
-                                  before stopping its instrumentation.
-                                  [default: 5; x>=1]
-  --trace-max-samples INTEGER RANGE
-                                  Maximum number of call traces to sample
-                                  before stopping its instrumentation.
-                                  [default: 25; x>=1]
-  --trace-type-threshold FLOAT RANGE
-                                  Stop gathering traces for a function if the
-                                  estimated likelihood of finding a new type
-                                  falls below this threshold.  [default: 0.1;
-                                  x>=0.01]
+  --poisson-rate FLOAT RANGE      Expected sample captures per second (Poisson
+                                  process rate).  [default: 2.0; x>=0.1]
   --sampling / --no-sampling      Whether to sample calls or to use every one.
                                   [default: sampling]
   --no-sampling-for REGEX         Rather than sample, record every invocation
@@ -159,23 +139,28 @@ Options:
                                   Whether to replace 'dict' to enable
                                   efficient, statistically correct samples.
                                   [default: no-replace-dict]
-  --container-min-samples INTEGER RANGE
-                                  Minimum number of entries to sample for a
-                                  container. If the container's length is less
-                                  or equal to this size, fully scan it
-                                  instead.  [default: 15; x>=1]
+  --container-small-threshold INTEGER RANGE
+                                  Containers at or below this size are fully
+                                  scanned instead of sampled.  [default: 32;
+                                  x>=1]
   --container-max-samples INTEGER RANGE
                                   Maximum number of entries to sample for a
-                                  container.  [default: 25; x>=1]
+                                  container.  [default: 64; x>=1]
   --container-type-threshold FLOAT RANGE
                                   Stop sampling a container if the estimated
                                   likelihood of finding a new type falls below
-                                  this threshold.  [default: 0.1; x>=0.01]
+                                  this threshold.  [default: 0.05; x>=0.01]
   --container-sample-range [INTEGER|none]
                                   Largest index from which to sample in a
                                   container when direct access isn't
                                   available; 'none' means unlimited.
                                   [default: 1000]
+  --container-min-samples INTEGER RANGE
+                                  Minimum samples before checking Good-Turing
+                                  stopping criterion.  [default: 32; x>=1]
+  --container-check-probability FLOAT RANGE
+                                  Probability of spot-checking a container for
+                                  new types.  [default: 0.5; 0.0<=x<=1.0]
   --resolve-mocks / --no-resolve-mocks
                                   Whether to attempt to resolve test types,
                                   such as mocks, to non-test types.  [default:
@@ -248,11 +233,5 @@ Options:
                                   normally not necessary, but can help avoid
                                   undefined symbol errors.  [default: no-
                                   always-quote-annotations]
-  Advanced options: 
-    --infer-wrapped-return-type / --no-infer-wrapped-return-type
-                                  For wrapped functions that never execute,
-                                  infer return type from wrapper's return
-                                  value. If disabled, use None.  [default:
-                                  infer-wrapped-return-type]
   --help                          Show this message and exit.
 ```
