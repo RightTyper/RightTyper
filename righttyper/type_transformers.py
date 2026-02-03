@@ -1,7 +1,6 @@
 import typing
 import types
 import collections.abc as abc
-import re
 from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo
 from righttyper.generalize import merged_types
 from functools import cache
@@ -41,32 +40,11 @@ class NoReturnToNeverT(TypeInfo.Transformer):
 class ExcludeTestTypesT(TypeInfo.Transformer):
     """Removes types from test modules."""
 
-    # Pattern to detect test modules by name (e.g., test_foo, foo.test.bar, foo_test)
-    _TEST_MODULE_PATTERN = re.compile(
-        r'(?:^|\.)'      # start of string or after a dot
-        r'(?:'
-        r'test_'         # test_ prefix
-        r'|tests?(?:\.|$)'  # test or tests as a component
-        r'|[^.]+_test'   # _test suffix
-        r')'
-    )
-
     def __init__(self, test_modules: set[str]) -> None:
         self._test_modules = test_modules
 
-    def _is_test_module(self, module: str) -> bool:
-        """Check if module is a test module or a submodule of one."""
-        # Check explicit test modules (including submodules)
-        for test_mod in self._test_modules:
-            if module == test_mod or module.startswith(test_mod + '.'):
-                return True
-        # Heuristic: detect test modules by naming pattern
-        if self._TEST_MODULE_PATTERN.search(module):
-            return True
-        return False
-
     def visit(self, node: TypeInfo) -> TypeInfo:
-        if self._is_test_module(node.module):
+        if node.module in self._test_modules:
             return AnyTypeInfo
 
         return super().visit(node)

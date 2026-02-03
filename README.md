@@ -179,26 +179,7 @@ Options:
                                   data, save it to "righttyper-N.rt". You can
                                   later process using RightTyper's "process"
                                   command.
-  --generalize-tuples N           Generalize homogenous fixed-length tuples
-                                  to tuple[T, ...] if length >= N. N=0
-                                  disables generalization.  [default: 3]
   --debug                         Include diagnostic information in log file.
-  Advanced options:
-    --signal-wakeup / --thread-wakeup
-                                  Whether to use signal-based wakeups or
-                                  thread-based wakeups.  [default: signal-
-                                  wakeup]
-    --save-profiling              Save record of self-profiling results in
-                                  "righttyper-profiling.json".
-    --allow-runtime-exceptions / --no-allow-runtime-exceptions
-                                  Allow exceptions in instrumentation to
-                                  propagate (for debugging).  [default: no-
-                                  allow-runtime-exceptions]
-    --infer-wrapped-return-type / --no-infer-wrapped-return-type
-                                  For wrapped functions that never execute,
-                                  infer return type from wrapper's return
-                                  value. If disabled, use None.  [default:
-                                  infer-wrapped-return-type]
   Output options: 
     --overwrite / --no-overwrite  Overwrite ".py" files with type information.
                                   If disabled, ".py.typed" files are written

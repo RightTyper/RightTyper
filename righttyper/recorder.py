@@ -142,10 +142,6 @@ class ObservationsRecorder:
         # Started, but not (yet) completed traces
         self._pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = defaultdict(dict)
 
-        # Pending wrapped function traces: (wrapper_code, wrapper_frame_id) -> (wrapped_code, arg_types)
-        # These are completed when the wrapper returns, using the wrapper's return type
-        self._pending_wrapped_traces: dict[tuple[CodeType, FrameId], tuple[CodeType, list[TypeInfo]]] = {}
-
         # Object attributes: class_key -> attr_name -> set[TypeInfo]
         self._object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
 
@@ -242,192 +238,6 @@ class ObservationsRecorder:
                 arg_info, code.co_flags, self_type, self_replacement
             )
 
-            # Check for wrapped functions (e.g., JIT decorators or functools.wraps)
-            self._record_wrapped_function_types(code, frame, arg_info)
-
-
-    def _record_wrapped_function_types(
-        self,
-        code: CodeType,
-        frame: FrameType,
-        arg_info: inspect.ArgInfo
-    ) -> None:
-        """Records types for wrapped functions that never execute.
-
-        When a function with __wrapped__ is invoked (e.g., a JIT decorator or
-        functools.wraps wrapper), we can propagate the observed argument types
-        to the wrapped function even though it never actually executes.
-
-        Handles two cases:
-        1. __call__ methods on objects with __wrapped__ (JIT-style decorators)
-        2. Regular functions with __wrapped__ (functools.wraps decorators)
-        """
-        wrapped = None
-
-        # Case 1: __call__ method on an object with __wrapped__
-        if code.co_name == "__call__" and arg_info.args:
-            self_obj = arg_info.locals.get(arg_info.args[0])
-            if self_obj is not None:
-                wrapped = getattr(self_obj, "__wrapped__", None)
-
-        # Case 2: Regular function with __wrapped__ (functools.wraps)
-        if wrapped is None:
-            func = find_function(frame, code)
-            if func is not None:
-                wrapped = getattr(func, "__wrapped__", None)
-
-        # Case 3: Wrapper function created by functools.wraps
-        # When functools.wraps is used, the wrapper has __wrapped__.
-        # Try to find the wrapper by checking closure first, then searching caller's namespace.
-        if wrapped is None and frame.f_back is not None:
-            # First try: look for 'func' in closure (common pattern)
-            func_obj = frame.f_locals.get('func')
-
-            if func_obj is not None and callable(func_obj):
-                # We have the original function from closure - use it directly
-                wrapped = func_obj
-            else:
-                # Try to find which specific wrapper is being called by checking
-                # if there's only ONE function with this code and __wrapped__
-                candidates = []
-                for namespace in (frame.f_back.f_locals, frame.f_back.f_globals):
-                    for name, obj in namespace.items():
-                        if (
-                            callable(obj)
-                            and getattr(obj, "__code__", None) is code
-                            and hasattr(obj, "__wrapped__")
-                        ):
-                            candidates.append((name, obj))
-
-                # Only proceed if there's exactly one candidate (unambiguous)
-                # or if all candidates have the same __wrapped__ (same original function)
-                if candidates:
-                    unique_wrapped = set(id(c[1].__wrapped__) for c in candidates)
-                    if len(unique_wrapped) == 1:
-                        wrapped = candidates[0][1].__wrapped__
-
-        if wrapped is None or not callable(wrapped):
-            return
-
-        wrapped_code = getattr(wrapped, "__code__", None)
-        if wrapped_code is None:
-            return
-
-        # Skip if wrapped function is not in a file we're tracking
-        if skip_this_file(wrapped_code.co_filename):
-            return
-
-        # Get the signature of the wrapped function to map args
-        try:
-            sig = inspect.signature(wrapped)
-            wrapped_params = list(sig.parameters.keys())
-        except (ValueError, TypeError):
-            return
-
-        # Get *args and **kwargs from the __call__ method
-        args_values: tuple[Any, ...] = ()
-        kwargs_values: dict[str, Any] = {}
-
-        if arg_info.varargs and arg_info.varargs in arg_info.locals:
-            args_values = arg_info.locals[arg_info.varargs]
-        if arg_info.keywords and arg_info.keywords in arg_info.locals:
-            kwargs_values = arg_info.locals[arg_info.keywords]
-
-        # Map args to wrapped function's parameters
-        arg_types: list[TypeInfo | None] = []
-        for i, param_name in enumerate(wrapped_params):
-            param = sig.parameters[param_name]
-            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                # Skip *args and **kwargs in wrapped function for now
-                arg_types.append(None)
-            elif i < len(args_values):
-                # Positional arg
-                arg_types.append(get_value_type(args_values[i]))
-            elif param_name in kwargs_values:
-                # Keyword arg
-                arg_types.append(get_value_type(kwargs_values[param_name]))
-            else:
-                # No value provided (will use default)
-                arg_types.append(None)
-
-        # Create FuncInfo for wrapped function if it doesn't exist
-        if wrapped_code not in self._code2func_info:
-            wrapped_arg_names = tuple(
-                ArgumentName(name) for name in wrapped_params
-            )
-            # Get defaults from the wrapped function
-            wrapped_defaults: dict[str, TypeInfo] = {}
-            if hasattr(wrapped, "__defaults__") and wrapped.__defaults__:
-                defaults_start = len(wrapped_params) - len(wrapped.__defaults__)
-                for i, default_val in enumerate(wrapped.__defaults__):
-                    param_name = wrapped_params[defaults_start + i]
-                    wrapped_defaults[param_name] = get_value_type(default_val)
-            if hasattr(wrapped, "__kwdefaults__") and wrapped.__kwdefaults__:
-                for name, default_val in wrapped.__kwdefaults__.items():
-                    wrapped_defaults[name] = get_value_type(default_val)
-
-            # Determine varargs/kwargs for wrapped function
-            wrapped_varargs: ArgumentName | None = None
-            wrapped_kwargs: ArgumentName | None = None
-            for param_name, param in sig.parameters.items():
-                if param.kind == inspect.Parameter.VAR_POSITIONAL:
-                    wrapped_varargs = ArgumentName(param_name)
-                elif param.kind == inspect.Parameter.VAR_KEYWORD:
-                    wrapped_kwargs = ArgumentName(param_name)
-
-            func_info = FuncInfo(
-                CodeId.from_code(wrapped_code),
-                tuple(
-                    ArgInfo(ArgumentName(name), wrapped_defaults.get(name))
-                    for name in wrapped_params
-                    if sig.parameters[name].kind not in (
-                        inspect.Parameter.VAR_POSITIONAL,
-                        inspect.Parameter.VAR_KEYWORD
-                    )
-                ),
-                wrapped_varargs,
-                wrapped_kwargs,
-                None  # No overrides for wrapped functions
-            )
-            self._code2func_info[wrapped_code] = func_info
-            self._obs.func_info[func_info.code_id] = func_info
-
-        # Record the call trace for the wrapped function
-        # Filter out None values and VAR_POSITIONAL/VAR_KEYWORD params
-        filtered_arg_types = [
-            t for i, t in enumerate(arg_types)
-            if t is not None and sig.parameters[wrapped_params[i]].kind not in (
-                inspect.Parameter.VAR_POSITIONAL,
-                inspect.Parameter.VAR_KEYWORD
-            )
-        ]
-
-        # Only record if we have actual argument values to propagate
-        # (i.e., the wrapper was called with args, not just during decoration)
-        # For zero-param functions, filtered_arg_types will be empty but args_values will too
-        num_regular_params = sum(
-            1 for p in sig.parameters.values()
-            if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-        )
-
-        logger.debug(f"_record_wrapped: {wrapped.__name__} num_params={num_regular_params} args={args_values} kwargs={kwargs_values}")
-
-        # Skip if wrapped function expects args but we don't have any
-        if num_regular_params > 0 and not args_values and not kwargs_values:
-            logger.debug(f"_record_wrapped: skipping {wrapped.__name__} - no args provided")
-            return
-
-        if run_options.infer_wrapped_return_type:
-            # Store pending trace - will be completed when wrapper returns with actual return type
-            wrapper_key = (code, id(frame))
-            self._pending_wrapped_traces[wrapper_key] = (wrapped_code, filtered_arg_types)
-            logger.debug(f"_record_wrapped: stored pending trace for {wrapped.__name__}: {filtered_arg_types}")
-        else:
-            # Use NoneTypeInfo as placeholder since we can't know return type without execution
-            call_trace: CallTrace = (*filtered_arg_types, NoneTypeInfo)
-            logger.debug(f"_record_wrapped: recording trace with None return for {wrapped.__name__}: {call_trace}")
-            self._code2func_info[wrapped_code].traces.update((call_trace,))
-
 
     def record_yield(self, code: CodeType, frame: FrameType, yield_value: Any) -> None:
         """Records a yield."""
@@ -494,17 +304,6 @@ class ObservationsRecorder:
 
         # print(f"record_return {code.co_qualname}")
         frame_id = id(frame)
-
-        # Check for pending wrapped function traces to complete
-        wrapper_key = (code, frame_id)
-        if wrapper_key in self._pending_wrapped_traces:
-            wrapped_code, arg_types = self._pending_wrapped_traces.pop(wrapper_key)
-            # Use the wrapper's return type for the wrapped function
-            return_type = get_value_type(return_value)
-            call_trace: CallTrace = (*arg_types, return_type)
-            logger.debug(f"_record_wrapped: completing trace with return type {return_type}")
-            self._code2func_info[wrapped_code].traces.update((call_trace,))
-
         if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
             self._record_return_type(tr, code, get_value_type(return_value))
             self._record_variables(code, frame)
@@ -521,13 +320,6 @@ class ObservationsRecorder:
 
         # print(f"record_no_return {code.co_qualname}")
         frame_id = id(frame)
-
-        # Check for pending wrapped function traces - discard if wrapper raised exception
-        wrapper_key = (code, frame_id)
-        if wrapper_key in self._pending_wrapped_traces:
-            # Wrapper raised exception, discard the pending wrapped trace
-            self._pending_wrapped_traces.pop(wrapper_key)
-
         if (per_frame := self._pending_traces.get(code)) and (tr := per_frame.get(frame_id)):
             self._record_return_type(tr, code, None)
             self._record_variables(code, frame)
@@ -591,7 +383,6 @@ class ObservationsRecorder:
         obs, self._obs = self._obs, Observations()
         self._code2func_info.clear()
         self._pending_traces.clear()
-        self._pending_wrapped_traces.clear()
         self._object_attributes.clear()
 
         # The type map depends on main_globals as well as the on the state
