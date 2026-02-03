@@ -133,7 +133,7 @@ def test_builtin_iterator_of_empty(init, expected):
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run('--use-typing-never', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -355,7 +355,8 @@ def test_callable_from_annotations(future, cache, ignore):
 
 
 @pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
-def test_callable_from_annotations_typing_special(future):
+@pytest.mark.parametrize("use_never", ["--no-use-typing-never", "--use-typing-never"])
+def test_callable_from_annotations_typing_special(future, use_never):
     t = textwrap.dedent(f"""\
         {future}
         import typing
@@ -373,14 +374,19 @@ def test_callable_from_annotations_typing_special(future):
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run(use_never, 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    # note that for Python >= 3.11, we convert NoReturn to Never
-    assert get_function(code, 'C.g') == textwrap.dedent("""\
-        def g(self: Self) -> Callable[[int, Any], Never]: ...
-    """)
+    if use_never == '--use-typing-never':
+        # note that for Python >= 3.11, we convert NoReturn to Never
+        assert get_function(code, 'C.g') == textwrap.dedent("""\
+            def g(self: Self) -> Callable[[int, Any], Never]: ...
+        """)
+    else:
+        assert get_function(code, 'C.g') == textwrap.dedent("""\
+            def g(self: Self) -> Callable[[int, Any], NoReturn]: ...
+        """)
 
 
 @pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
@@ -4868,7 +4874,7 @@ def test_function_raises(python_version):
     Path("t.py").write_text(t)
 
     with pytest.raises(subprocess.CalledProcessError):
-        rt_run(f"--python-version={python_version}", "t.py")
+        rt_run("--use-typing-never", f"--python-version={python_version}", "t.py")
 
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
@@ -4907,13 +4913,13 @@ def test_run_exits_with_exception(tmp_cwd):
     ))
 
     with pytest.raises(subprocess.CalledProcessError):
-        rt_run('t.py')
+        rt_run('--no-use-typing-never', 't.py')
 
     output = (tmp_cwd / "m.py").read_text()
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent(f"""\
-        def f(x: \"t.C\") -> Never: ...
+        def f(x: \"t.C\") -> NoReturn: ...
     """)
 
 
@@ -5418,13 +5424,13 @@ def test_variables_slots():
     output = Path("t.py").read_text()
 
     assert output == textwrap.dedent("""\
-        from typing import Never, Self
+        from typing import Any, Self
         class C:
             __slots__ = ('x', 'y', 'z')
 
             def __init__(self: Self, x: str) -> None:
                 self.x: str = x
-                self.y: dict[Never, Never] = {}
+                self.y: dict[Any, Any] = {}
 
         c: C = C('tada')
         """
@@ -5625,4 +5631,34 @@ def test_generalize_tuples(generalize):
 
     assert get_function(code, 'g') == textwrap.dedent(f"""\
         def g(x: tuple[int, str, int]) -> None: ...
+    """)
+
+
+def test_class_attributes_via_classmethod():
+    """Test that class attributes assigned via cls.x in classmethods are captured."""
+    t = textwrap.dedent("""\
+        class C:
+            monitor = None
+
+            @classmethod
+            def setup(cls):
+                cls.monitor = "initialized"
+
+        C.setup()
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    # The monitor attribute should have type str | None (from both assignments)
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        class C:
+            monitor: str|None = None
+
+            @classmethod
+            def setup(cls: type[Self]) -> None:
+                cls.monitor = "initialized"
+
+        C.setup()
     """)

@@ -48,13 +48,15 @@ def set_test_files_and_modules(files: set[str], modules: set[str]) -> None:
 
 @cache
 def is_test_module(m: str) -> bool:
-    return bool(
-        m in detected_test_modules
-        or (
-            (opt_test_modules := run_options.test_modules_re)
-            and opt_test_modules.match(m)
-        )
-    )
+    if m in detected_test_modules:
+        return True
+    while m:
+        if m in run_options.test_modules:
+            return True
+        if '.' not in m:
+            break
+        m = m.rsplit('.', 1)[0]
+    return False
 
 
 def skip_this_code(code: CodeType) -> bool:

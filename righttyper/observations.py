@@ -167,12 +167,34 @@ class Observations:
 
         for func_id, func_info2 in obs2.func_info.items():
             if (func_info := self.func_info.get(func_id)):
-                for attr in ('args', 'varargs', 'kwargs', 'overrides'):
+                for attr in ('varargs', 'kwargs', 'overrides'):
                     if getattr(func_info, attr) != getattr(func_info2, attr):
-                        raise ValueError("Incompatible {attr} for {func_id.func_name}:\n" +\
-                                        f"    {getattr(func_info, attr)}\n" +\
-                                        f"    {getattr(func_info2, attr)}"
+                        raise ValueError(f"Incompatible {attr} for {func_id.func_name}:\n" +\
+                                         f"    {getattr(func_info, attr)}\n" +\
+                                         f"    {getattr(func_info2, attr)}"
                         )
+
+                # Merge args, unioning default types if they differ
+                args1, args2 = func_info.args, func_info2.args
+                if len(args1) != len(args2):
+                    raise ValueError(f"Incompatible args length for {func_id.func_name}:\n" +\
+                                     f"    {args1}\n" +\
+                                     f"    {args2}"
+                    )
+                for a1, a2 in zip(args1, args2):
+                    if a1.arg_name != a2.arg_name:
+                        raise ValueError(f"Incompatible arg names for {func_id.func_name}:\n" +\
+                                         f"    {a1.arg_name}\n" +\
+                                         f"    {a2.arg_name}"
+                        )
+                if args1 != args2:
+                    func_info.args = tuple(
+                        ArgInfo(
+                            a1.arg_name,
+                            TypeInfo.from_set({d for d in (a1.default, a2.default) if d is not None}, empty_is_none=True)
+                        )
+                        for a1, a2 in zip(args1, args2)
+                    )
 
                 func_info.traces.update(func_info2.traces)
 
@@ -245,7 +267,7 @@ class Observations:
                 varargs=func_info.varargs,
                 kwargs=func_info.kwargs,
                 variables=[
-                    (var_name, merged_types(var_types))
+                    (var_name, merged_types(var_types, for_variable=True))
                     for var_name, var_types in func_info.variables.items()
                 ]
             )
@@ -333,11 +355,6 @@ class Observations:
         if output_options.use_typing_self:
             self.transform_types(SelfT())
 
-        if not output_options.use_typing_never:
-            self.transform_types(NeverSayNeverT())
-        else:
-            self.transform_types(NoReturnToNeverT())
-
         if output_options.exclude_test_types:
             self.transform_types(ExcludeTestTypesT(self.test_modules))
 
@@ -365,6 +382,12 @@ class Observations:
         if output_options.simplify_types:
             finalizers.append(GeneratorToIteratorT())
 
+        # Only rename away from typing.Never now so that list[X]|list[Never] can be simplified
+        if not output_options.use_typing_never:
+            finalizers.append(NeverSayNeverT())
+        else:
+            finalizers.append(NoReturnToNeverT())
+
         finalizers.append(MakePickleableT())
 
         annotations = {
@@ -381,7 +404,7 @@ class Observations:
 
         module_vars = {
             filename: ModuleVars([
-                (var_name, finalize(merged_types(var_types)))
+                (var_name, finalize(merged_types(var_types, for_variable=True)))
                 for var_name, var_types in var_dict.items()
             ])
             for filename, var_dict in self.module_variables.items()

@@ -121,6 +121,25 @@ class TypeInfo:
         if not_never:
             s = not_never
 
+        # Remove "Never generics" (e.g., dict[Never, Never]) when a non-Never version
+        # of the same container also exists (e.g., dict[str, str]).
+        # We exclude immutable containers since an empty one cannot become non-empty.
+        import collections.abc as abc
+        never_generics = {
+            t for t in s
+            if t.args
+            and t.type_obj not in (tuple, abc.Sequence, abc.Set, abc.Mapping)
+            and isinstance(t.args[0], TypeInfo)
+            and t.args[0].type_obj is typing.Never
+        }
+        if never_generics:
+            # Keep Never generic only if no non-Never version of that container exists
+            s -= never_generics
+            s |= {
+                t for t in never_generics
+                if not any(t2.type_obj is t.type_obj for t2 in s)
+            }
+
         if len(s) == 1:
             return next(iter(s))
 

@@ -59,19 +59,18 @@ class RunOptions:
     exclude_files: tuple[str, ...] = ()
     exclude_test_files: bool = True
     include_functions: tuple[str, ...] = ()
-    restart_interval: float = .5
-    restart_max_instr: int = 0
-    trace_min_samples: int = 5
-    trace_max_samples: int = 25
-    trace_type_threshold: float = .1
+    poisson_sample_rate: float = 2.0  # Expected capture windows per second
+    poisson_warmup_samples: int = 5   # Capture first N samples immediately before Poisson timing
     infer_shapes: bool = False
     sampling: bool = True
     no_sampling_for: tuple[str, ...] = ()
     replace_dict: bool = False
-    container_min_samples: int = 15
-    container_max_samples: int = 25
-    container_type_threshold: float = .1
-    container_sample_limit: int|None = None
+    container_small_threshold: int = 32  # Containers at or below this size are fully scanned
+    container_max_samples: int = 64
+    container_type_threshold: float = .05
+    container_sample_range: int|None = None
+    container_min_samples: int = 32  # Minimum samples before checking Good-Turing stopping criterion
+    container_check_probability: float = .5  # Probability of spot-checking a container for new types
     resolve_mocks: bool = False
     test_modules: tuple[str, ...] = ('pytest', '_pytest', 'py.test', 'unittest')
     adjust_type_names: bool = True
@@ -91,12 +90,6 @@ class RunOptions:
     def include_functions_re(self) -> re.Pattern[str]|None:
         """Returns a regular expression pattern for no_sampling_for."""
         return _merge_regexes(self.include_functions)
-
-    @functools.cached_property
-    def test_modules_re(self) -> re.Pattern[str]|None:
-        """Returns a regular expression pattern to match test modules with."""
-        # Escape dots and enforce module path boundaries
-        return _merge_regexes([f"{m.replace('.', r'\.')}(?:\\.|$)" for m in self.test_modules])
 
     @functools.cached_property
     def no_sampling_for_re(self) -> re.Pattern[str]|None:

@@ -21,7 +21,6 @@ from righttyper.righttyper_utils import (
 )
 from righttyper.type_id import find_function, unwrap, get_value_type, get_type_name, hint2type, PostponedArg0
 from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
-from righttyper.generalize import delete_never
 
 
 # Singleton used to differentiate from None
@@ -104,7 +103,7 @@ class PendingCallTrace:
         args_now = self._get_arg_types(self.arg_info)
         type_data: tuple[TypeInfo, ...] = (
             *tuple(
-                at_start if now is None else TypeInfo.from_set(delete_never({at_start, now}))
+                at_start if now is None else TypeInfo.from_set({at_start, now})
                 for at_start, now in zip(self.args_start, args_now)
             ),
             retval
@@ -145,26 +144,17 @@ class ObservationsRecorder:
         # Object attributes: class_key -> attr_name -> set[TypeInfo]
         self._object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
 
+        # Class attributes: class_key -> attr_name -> set[TypeInfo]
+        self._class_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
+
         self._obs = Observations()
 
 
-    def needs_more_traces(self, code: CodeType) -> bool:
+    def past_warmup(self, code: CodeType) -> bool:
+        """Returns True if we've collected enough samples to switch to Poisson timing."""
         if (func_info := self._code2func_info.get(code)):
-            traces = func_info.traces
-
-            # Require a minimum number of traces to help stabilize the estimate
-            if (n := traces.total()) < run_options.trace_min_samples:
-                return True
-
-            if n >= run_options.trace_max_samples:
-                return False
-
-            if (sum(c == 1 for c in traces.values()) / n) <= run_options.trace_type_threshold:
-                return False
-
-#            logger.info(f"{code=} {traces}")
-
-        return True
+            return func_info.traces.total() >= run_options.poisson_warmup_samples
+        return False
 
 
     def record_module(
@@ -257,7 +247,7 @@ class ObservationsRecorder:
 
     def _record_variables(self, code: CodeType, frame: FrameType) -> None:
         """Records variables."""
-        # print(f"record_variables {code.co_qualname}")
+        # Uncomment for debugging: print(f"record_variables {code.co_qualname}")
 
         if not run_options.variables or not (codevars := code2variables.get(code)):
             return
@@ -269,17 +259,36 @@ class ObservationsRecorder:
             scope_vars = self._obs.module_variables[Filename(code.co_filename)]
 
         f_locals = frame.f_locals
+        prefix = codevars.var_prefix
         value: Any
-        dst: str|None
-        for src, dst in codevars.variables.items():
-            if (value := f_locals.get(src, NO_OBJECT)) is not NO_OBJECT:
-                scope_vars[VariableName(dst)].add(get_value_type(value))
+
+        for var_name, const_type in codevars.variables.items():
+            qualified = f"{prefix}{var_name}"
+            # Record runtime value
+            if (value := f_locals.get(var_name, NO_OBJECT)) is not NO_OBJECT:
+                scope_vars[VariableName(qualified)].add(get_value_type(value))
+            # Include initial constant type if present (e.g., x = None)
+            if const_type is not None:
+                scope_vars[VariableName(qualified)].add(TypeInfo.from_type(const_type))
 
         if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
             obj_attrs = self._object_attributes[codevars.class_key]
-            for attr in cast_not_None(codevars.attributes):
+            for attr, const_type in cast_not_None(codevars.attributes).items():
                 if (value := getattr(self_obj, attr, NO_OBJECT)) is not NO_OBJECT:
                     obj_attrs[VariableName(attr)].add(get_value_type(value))
+                # Include initial constant type if present (e.g., self.x = None)
+                if const_type is not None:
+                    obj_attrs[VariableName(attr)].add(TypeInfo.from_type(const_type))
+
+        # Record class attributes for classmethods (cls.x = ...)
+        if codevars.cls and (cls_obj := f_locals.get(codevars.cls)) is not None:
+            class_attrs = self._class_attributes[codevars.class_key]
+            for attr, const_type in (codevars.class_attributes or {}).items():
+                if (value := getattr(cls_obj, attr, NO_OBJECT)) is not NO_OBJECT:
+                    class_attrs[VariableName(attr)].add(get_value_type(value))
+                # Include initial constant type if present (e.g., cls.x = None)
+                if const_type is not None:
+                    class_attrs[VariableName(attr)].add(TypeInfo.from_type(const_type))
 
 
     def _record_return_type(self, tr: PendingCallTrace, code: CodeType, ret_type: Any) -> None:
@@ -370,6 +379,30 @@ class ObservationsRecorder:
                 for attr in codevars.attributes:
                     scope_vars[VariableName(f"{codevars.self}.{attr}")] = obj_attrs[VariableName(attr)]
 
+        # Handle class attributes captured via cls.x in classmethods
+        # These need to be assigned to the class's scope with qualified names (e.g., "C.monitor")
+        for codevars in code2variables.values():
+            if codevars.cls and codevars.class_attributes and codevars.class_key:
+                class_attrs = self._class_attributes.get(codevars.class_key)
+                if class_attrs:
+                    # Find the class's CodeVars to get its scope and variable names
+                    class_codevars = next(
+                        (cv for cv in code2variables.values()
+                         if cv.class_name == codevars.class_name and cv.variables),
+                        None
+                    )
+                    if class_codevars and class_codevars.scope_code:
+                        if (func_info := self._code2func_info.get(class_codevars.scope_code)):
+                            scope_vars = func_info.variables
+                        else:
+                            scope_vars = self._obs.module_variables[Filename(class_codevars.scope_code.co_filename)]
+
+                        # Use var_prefix to build qualified names (e.g., "C.monitor")
+                        for attr in codevars.class_attributes:
+                            if VariableName(attr) in class_attrs:
+                                qualified_name = f"{class_codevars.var_prefix}{attr}"
+                                scope_vars[VariableName(qualified_name)].update(class_attrs[VariableName(attr)])
+
 
     def finish_recording(self, main_globals: dict[str, Any]) -> Observations:
         # Any generators left?
@@ -384,6 +417,7 @@ class ObservationsRecorder:
         self._code2func_info.clear()
         self._pending_traces.clear()
         self._object_attributes.clear()
+        self._class_attributes.clear()
 
         # The type map depends on main_globals as well as the on the state
         # of sys.modules, so we can't postpone them until collect_annotations,

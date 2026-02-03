@@ -424,10 +424,10 @@ def _type_for_generator(
 def _random_item[T](container: abc.Collection[T]) -> T:
     """Randomly samples from a container."""
     # Unbounded, islice's running time seems to be O(N);
-    # options.container_sample_limit provides an optional bound
+    # options.container_sample_range provides an optional bound
     limit = len(container)-1
-    if run_options.container_sample_limit is not None:
-        limit = min(limit, run_options.container_sample_limit)
+    if run_options.container_sample_range is not None:
+        limit = min(limit, run_options.container_sample_range)
     n = random.randint(0, limit)
     return next(itertools.islice(container, n, None))
 
@@ -439,48 +439,104 @@ def _first_referent(value: Any) -> object|None:
     return ref[0] if len(ref) else None
 
 
-def _needs_more_samples(counters: tuple[Counter[TypeInfo], ...]) -> bool:
-    if (n := counters[0].total()) < run_options.container_min_samples:
-        return True
+class ContainerSamples:
+    """Tracks type samples from a container for type inference.
 
-    if n >= run_options.container_max_samples:
+    Uses a hybrid sampling strategy:
+    - Good-Turing estimation on cycle-local counters for stopping criterion
+    - Novelty detection against cumulative history for change detection
+    """
+
+    def __init__(self, o: object, n_counters: int):
+        self.o = o
+        self.n_counters = n_counters
+        # Cumulative counters: all types ever seen (for final annotation)
+        self.all_samples: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(n_counters))
+        self.last_sampled_size = 0
+
+    def add_sample(self, sample: tuple[TypeInfo, ...]) -> None:
+        """Add a sample to cumulative history."""
+        for c, v in zip(self.all_samples, sample):
+            c[v] += 1
+
+    def has_new_type(self, sample: tuple[TypeInfo, ...]) -> bool:
+        """Check if sample contains a type not seen before."""
+        for v, counter in zip(sample, self.all_samples):
+            if v not in counter:
+                return True
         return False
 
-    # Good-Turing estimator based heuristic: if the number of single-occurence
-    # types divided by the number of samples exceeds a threshold, we estimate
-    # we're likely to see a new type and take another sample.
-    if any(
-        (sum(c == 1 for c in counter.values()) / n) > run_options.container_type_threshold
-        for counter in counters
-    ):
-        return True
+    def sample_until_stable(self, sampler: abc.Callable[[], tuple[Any, ...]], depth: int) -> None:
+        """Sample until Good-Turing indicates stability.
 
-    return False
+        Uses cycle-local counters for the stopping criterion, ensuring accurate
+        estimation of the current container's type distribution.
+        """
+        cycle_counter: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(self.n_counters))
+        n = 0
+        logged_max_warning = False
 
+        while True:
+            sample = tuple(get_value_type(v, depth+1) for v in sampler())
+            # Add to cumulative history
+            for c, v in zip(self.all_samples, sample):
+                c[v] += 1
+            # Add to cycle-local counter
+            for c, v in zip(cycle_counter, sample):
+                c[v] += 1
+            n += 1
 
-@dataclass
-class Entry:
-    o: object
-    counters: tuple[Counter[TypeInfo], ...]
+            # Minimum samples before checking Good-Turing
+            if n < run_options.container_min_samples:
+                continue
+
+            # Per-cycle max limit
+            if n >= run_options.container_max_samples:
+                if not logged_max_warning:
+                    logged_max_warning = True
+                    container_type = type(self.o).__name__
+                    container_len = len(self.o) if hasattr(self.o, '__len__') else '?'
+                    all_types = [set(c.keys()) for c in cycle_counter]
+                    ratios = [sum(c == 1 for c in counter.values()) / n for counter in cycle_counter]
+                    logger.info(f"Container sampling hit max limit ({n}): {container_type}[{container_len}], ratios={ratios}, types={all_types}")
+                break
+
+            # Good-Turing: stop when singleton ratio is low for all counters
+            if all(
+                sum(c == 1 for c in counter.values()) / n <= run_options.container_type_threshold
+                for counter in cycle_counter
+            ):
+                break
+
+    def full_scan(self, container: Any, depth: int) -> None:
+        """Fully scan a small container."""
+        if self.n_counters == 1:
+            for v in container:
+                self.add_sample((get_value_type(v, depth+1),))
+        else:
+            for k, v in container.items():
+                self.add_sample((get_value_type(k, depth+1), get_value_type(v, depth+1)))
+        self.last_sampled_size = len(container)
+
 
 class ContainerTypeCache:
     """LRU cache of type information about a container."""
     def __init__(self, capacity: int):
         self._capacity = capacity
-        self._cache: OrderedDict[int, Entry] = OrderedDict()
+        self._cache: OrderedDict[int, ContainerSamples] = OrderedDict()
 
-    def get(self, o: object, n_counters: int) -> tuple[Counter[TypeInfo], ...]:
+    def get(self, o: object, n_counters: int) -> ContainerSamples:
         o_id = id(o)    # accommodate non-hashable objects
         if not (e := self._cache.get(o_id, None)) or e.o is not o:
-            e = Entry(o, tuple(Counter() for _ in range(n_counters)))
+            e = ContainerSamples(o, n_counters)
             self._cache[o_id] = e
             self._cache.move_to_end(o_id)
             if len(self._cache) > self._capacity:
                 self._cache.popitem(last=False)
-            return e.counters
+            return e
 
         self._cache.move_to_end(o_id)
-        return e.counters
+        return e
 
 _cache = ContainerTypeCache(1024)
 
@@ -491,30 +547,38 @@ def _get_container_args(
     depth: int
 ) -> tuple[TypeInfo, ...]:
 
-    counters = _cache.get(container, n_counters)
+    entry = _cache.get(container, n_counters)
 
     if container:
-        # In the first time, if it's a small container, just scan it
-        if counters[0].total() == 0 and len(container) <= run_options.container_min_samples:
-            if n_counters == 1:
-                for v in container:
-                    counters[0].update((get_value_type(v, depth+1),))
-            else:
-                for it in container.items():
-                    for c, v in zip(counters, it):
-                        c.update((get_value_type(v, depth+1),))
+        current_size = len(container)
+        is_small = current_size <= run_options.container_small_threshold
+
+        if is_small:
+            # Small container strategy: full scan, detect change via size or spot-check
+            if current_size != entry.last_sampled_size:
+                # First visit or size changed: full scan
+                entry.full_scan(container, depth)
+                entry.last_sampled_size = current_size
+            elif random.random() < run_options.container_check_probability:
+                # Spot-check: take one sample, rescan if new type found
+                sample = tuple(get_value_type(v, depth+1) for v in sampler())
+                if entry.has_new_type(sample):
+                    entry.full_scan(container, depth)
         else:
-            # Take as many samples as G-T suggests we need, but at least one to
-            # try and accommodate changing data
-            while True:
-                sample = sampler()
-                for c, v in zip(counters, sample):
-                    c.update((get_value_type(v, depth+1),))
+            # Large container strategy: Good-Turing for stopping, spot-check for change detection
+            if current_size != entry.last_sampled_size:
+                # Size changed (or first observation): resample
+                entry.sample_until_stable(sampler, depth)
+                entry.last_sampled_size = current_size
+            elif random.random() < run_options.container_check_probability:
+                # Spot-check: resample only if new type found
+                sample = tuple(get_value_type(v, depth+1) for v in sampler())
+                if entry.has_new_type(sample):
+                    entry.add_sample(sample)
+                    entry.sample_until_stable(sampler, depth)
+                    entry.last_sampled_size = current_size
 
-                if not _needs_more_samples(counters):
-                    break
-
-    return tuple(TypeInfo.from_set(set(c)) for c in counters)
+    return tuple(TypeInfo.from_set(set(c)) for c in entry.all_samples)
 
 
 def _handle_tuple(value: Any, depth: int) -> TypeInfo:

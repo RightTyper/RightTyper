@@ -7,7 +7,6 @@ import logging
 import os
 import runpy
 import sys
-import platform
 import dill as pickle
 import datetime
 import json
@@ -37,10 +36,6 @@ from righttyper.righttyper_tool import (
     enabled_code
 )
 import righttyper.loader as loader
-from righttyper.righttyper_alarm import (
-    SignalAlarm,
-    ThreadAlarm,
-)
 from righttyper.righttyper_utils import detected_test_modules
 from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_types import CodeId, Filename, FunctionName
@@ -176,15 +171,16 @@ def return_handler(
     if (
         found
         and run_options.sampling
-        and not rec.needs_more_traces(code)
         and not (
             (no_sampling_for := run_options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
         )
     ):
-        stop_events(code)
-        rec.clear_pending(code)
-        return sys.monitoring.DISABLE
+        # Poisson sampling: disable after each sample once past warmup
+        if rec.past_warmup(code):
+            stop_events(code)
+            rec.clear_pending(code)
+            return sys.monitoring.DISABLE
 
     return None
 
@@ -205,39 +201,50 @@ def unwind_handler(
     if (
         found
         and run_options.sampling
-        and not rec.needs_more_traces(code)
         and not (
             (no_sampling_for := run_options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
         )
     ):
-        stop_events(code)
-        rec.clear_pending(code)
+        # Poisson sampling: disable until next timer (once past warmup)
+        if rec.past_warmup(code):
+            stop_events(code)
+            rec.clear_pending(code)
 
-    return None # PY_UNWIND can't be disabled
+    return None  # PY_UNWIND can't be disabled
 
 
-any_since_restart: bool = False
-hist_instrumentation = []
-hist_restarted = []
+import random
+import threading
 
-def self_profile() -> None:
-    """
-    Monitors instrumentation, restarting events if quiescent.
-    """
-    global any_since_restart
+# Poisson-timed sampling state
+capture_timer: threading.Timer | None = None
+hist_capture_times: list[float] = []
 
-    current = instrumentation_counter.count_and_clear()
-    any_since_restart |= bool(current)
-    restart = bool(current <= run_options.restart_max_instr and any_since_restart)
+def schedule_next_capture() -> None:
+    """Schedule the next monitoring window at a random future time."""
+    global capture_timer
 
-    if restart:
-        any_since_restart = False
-        restart_events()
+    # Exponential inter-arrival time (Poisson process)
+    delay = random.expovariate(run_options.poisson_sample_rate)
+    capture_timer = threading.Timer(delay, begin_capture)
+    capture_timer.daemon = True
+    capture_timer.start()
 
+def begin_capture() -> None:
+    """Enable monitoring briefly to capture samples."""
     if run_options.save_profiling:
-        hist_instrumentation.append(current)
-        hist_restarted.append(restart)
+        hist_capture_times.append(time.perf_counter())
+
+    restart_events()  # Re-enable monitoring for all previously-seen code
+    schedule_next_capture()
+
+def stop_capture() -> None:
+    """Cancel any pending capture timer."""
+    global capture_timer
+    if capture_timer:
+        capture_timer.cancel()
+        capture_timer = None
 
 
 main_globals: dict[str, Any] = dict()
@@ -629,8 +636,8 @@ def add_output_options(group=None):
             ),
             base.option(
                 "--use-typing-never/--no-use-typing-never",
-                default=True,
-                help="""Whether to emit "typing.Never".""",
+                default=output_options.use_typing_never,
+                help="""Whether to emit "typing.Never" (for Python versions that support it).""",
             ),
             base.option(
                 "--simplify-types/--no-simplify-types",
@@ -705,34 +712,10 @@ def add_output_options(group=None):
     help="Process only files under the given directory.  If omitted, the script's directory (or, for -m, the current directory) is used.",
 )
 @click.option(
-    "--restart-interval",
-    type=click.FloatRange(.1, None),
-    default=run_options.restart_interval,
-    help="Interval (in seconds) at which previously stopped instrumentation may be restarted.",
-)
-@click.option(
-    "--restart-max-instr",
-    type=click.IntRange(0, None),
-    default=run_options.restart_max_instr,
-    help="Max. number of instrumentation events per interval. If above this number, previously stopped instrumentation isn't restarted.",
-)
-@click.option(
-    "--trace-min-samples",
-    type=click.IntRange(1, None),
-    default=run_options.trace_min_samples,
-    help="Minimum number of call traces to sample before stopping its instrumentation.",
-)
-@click.option(
-    "--trace-max-samples",
-    type=click.IntRange(1, None),
-    default=run_options.trace_max_samples,
-    help="Maximum number of call traces to sample before stopping its instrumentation.",
-)
-@click.option(
-    "--trace-type-threshold",
-    type=click.FloatRange(0.01, None),
-    default=run_options.trace_type_threshold,
-    help="Stop gathering traces for a function if the estimated likelihood of finding a new type falls below this threshold.",
+    "--poisson-rate",
+    type=click.FloatRange(0.1, None),
+    default=run_options.poisson_sample_rate,
+    help="Expected sample captures per second (Poisson process rate).",
 )
 @click.option(
     "--sampling/--no-sampling",
@@ -749,21 +732,15 @@ def add_output_options(group=None):
     help=f"Rather than sample, record every invocation of any functions matching the given regular expression. Can be passed multiple times.",
 )
 @click.option(
-    "--signal-wakeup/--thread-wakeup",
-    default=not platform.system() == "Windows",
-    hidden=True,
-    help="Whether to use signal-based wakeups or thread-based wakeups."
-)
-@click.option(
     "--replace-dict/--no-replace-dict",
     is_flag=True,
     help="Whether to replace 'dict' to enable efficient, statistically correct samples."
 )
 @click.option(
-    "--container-min-samples",
+    "--container-small-threshold",
     type=click.IntRange(1, None),
-    default=run_options.container_min_samples,
-    help="Minimum number of entries to sample for a container. If the container's length is less or equal to this size, fully scan it instead.",
+    default=run_options.container_small_threshold,
+    help="Containers at or below this size are fully scanned instead of sampled.",
 )
 @click.option(
     "--container-max-samples",
@@ -778,12 +755,24 @@ def add_output_options(group=None):
     help="Stop sampling a container if the estimated likelihood of finding a new type falls below this threshold.",
 )
 @click.option(
-    "--container-sample-limit",
+    "--container-sample-range",
     default="1000",
     callback=lambda ctx, param, value: parse_none_or_ge_zero(value),
     show_default=True,
     metavar="[INTEGER|none]",
-    help="Maximum number of container elements considered when sampling; 'none' means unlimited.",
+    help="Largest index from which to sample in a container when direct access isn't available; 'none' means unlimited.",
+)
+@click.option(
+    "--container-min-samples",
+    type=click.IntRange(1, None),
+    default=run_options.container_min_samples,
+    help="Minimum samples before checking Good-Turing stopping criterion.",
+)
+@click.option(
+    "--container-check-probability",
+    type=click.FloatRange(0.0, 1.0),
+    default=run_options.container_check_probability,
+    help="Probability of spot-checking a container for new types.",
 )
 @click.option(
     "--save-profiling",
@@ -847,7 +836,7 @@ def run(
     module: str,
     root: str,
     args: list[str],
-    signal_wakeup: bool,
+    poisson_rate: float,
     only_collect: bool,
     debug: bool,
     **kwargs,
@@ -879,6 +868,7 @@ def run(
     if not run_options.exclude_test_files:
         raise click.UsageError("Typing test files is temporarily disabled.")
 
+    run_options.poisson_sample_rate = poisson_rate
     run_options.process_args(kwargs)
     output_options.process_args(kwargs)
 
@@ -896,9 +886,6 @@ def run(
                 print(f" * {package}")
             sys.exit(1)
 
-    alarm_cls = SignalAlarm if signal_wakeup else ThreadAlarm
-    alarm = alarm_cls(self_profile, run_options.restart_interval)
-
     pytest_plugins = os.environ.get("PYTEST_PLUGINS")
     pytest_plugins = (pytest_plugins + "," if pytest_plugins else "") + "righttyper.pytest"
     os.environ["PYTEST_PLUGINS"] = pytest_plugins
@@ -909,14 +896,16 @@ def run(
         return_handler,
         unwind_handler,
     )
-    alarm.start()
+
+    if run_options.sampling:
+        schedule_next_capture()
 
     try:
         execute_script_or_module(script, is_module=bool(module), args=args)
     finally:
         rec.try_close_generators()
         shutdown_monitoring()
-        alarm.stop()
+        stop_capture()
 
         try:
             obs = rec.finish_recording(main_globals)
@@ -977,8 +966,8 @@ def run(
                     'start_time': start_time,
                     'end_time': end_time,
                     'elapsed': end_time - start_time,
-                    'instrumentation': hist_instrumentation,
-                    'restarted': hist_restarted,
+                    'poisson_rate': run_options.poisson_sample_rate,
+                    'capture_times': hist_capture_times,
                 }
             )
 
