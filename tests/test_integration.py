@@ -1787,6 +1787,67 @@ def test_generator(ann, ignore, no_simplify):
             """)
 
 
+@pytest.mark.parametrize("ann", ["", " -> Generator[MyType, None, None]"])
+@pytest.mark.parametrize("ignore", [(), ('--ignore-annotations',)])
+@pytest.mark.parametrize("no_simplify", [(), ('--no-simplify-types',)])
+def test_generator_from_function(ann, ignore, no_simplify):
+    t = textwrap.dedent(f"""\
+        from collections.abc import Generator
+        type MyType = float
+
+        def f():
+            def gen(){ann}:
+                yield 10
+                yield 1.2
+
+            return gen()
+
+        def main():
+            for _ in f():
+                pass
+
+        def g(f):
+            pass
+
+        main()
+        g(f())
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run(*ignore, *no_simplify, 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    if ann and not ignore:
+        assert get_function(code, 'f.<locals>.gen') == textwrap.dedent("""\
+            def gen() -> Generator[MyType, None, None]: ...
+        """)
+        if no_simplify:
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Generator[MyType, None, None]) -> None: ...
+            """)
+        else:
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Iterator[MyType]) -> None: ...
+            """)
+    else:
+        if no_simplify:
+            assert get_function(code, 'f.<locals>.gen') == textwrap.dedent("""\
+                def gen() -> Generator[float|int, None, None]: ...
+            """)
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Generator[float|int, None, None]) -> None: ...
+            """)
+        else:
+            assert get_function(code, 'f.<locals>.gen') == textwrap.dedent("""\
+                def gen() -> Iterator[float]: ...
+            """)
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Iterator[float]) -> None: ...
+            """)
+
+
 @pytest.mark.dont_run_mypy # fails because of SomethingUnknown
 def test_generator_annotation_errors():
     t = textwrap.dedent("""\

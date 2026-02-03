@@ -17,9 +17,9 @@ from righttyper.options import run_options
 from righttyper.righttyper_utils import (
     source_to_module_fqn, get_main_module_fqn, skip_this_file,
     detected_test_files, detected_test_modules, is_test_module,
-    normalize_module_name
+    normalize_module_name, unwrap
 )
-from righttyper.type_id import find_function, unwrap, get_value_type, get_type_name, hint2type, PostponedArg0
+from righttyper.type_id import find_function, get_value_type, get_type_name, hint2type, PostponedArg0
 from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
 
 

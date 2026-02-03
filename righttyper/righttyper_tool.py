@@ -4,6 +4,8 @@ from typing import Any, Final
 from collections.abc import Callable
 import functools
 
+from righttyper.righttyper_utils import unwrap
+
 TOOL_NAME: Final[str] = "righttyper"
 
 def _setup_tool_id(tool_id: int) -> int:
@@ -23,6 +25,24 @@ USE_LOCAL_EVENTS = True
 events = sys.monitoring.events
 
 
+def _call_handler(code: CodeType, offset: int, callable: object, arg0: object) -> Any:
+    callee_code = getattr(callable, "__code__", None)
+    if callee_code in code_to_callable:
+        call_mapping[(code, offset)] = callable
+    elif (
+        callee_code in setup_code
+        or (
+            # Check __dict__ directly to avoid triggering __getattr__ (e.g., on MagicMock)
+            "__wrapped__" in getattr(callable, "__dict__", ())
+            and (callable := unwrap(callable))
+            and (callee_code := getattr(callable, "__code__", None)) in setup_code
+        )
+    ):
+        call_mapping[(code, offset)] = callable
+        code_to_callable[callee_code] = callable
+    return sys.monitoring.DISABLE
+
+
 def setup_monitoring(
     start_handler: Callable[[CodeType, int], Any],
     yield_handler: Callable[[CodeType, int, Any], object],
@@ -33,14 +53,17 @@ def setup_monitoring(
     sys.monitoring.register_callback(TOOL_ID, events.PY_YIELD, yield_handler)
     sys.monitoring.register_callback(TOOL_ID, events.PY_RETURN, return_handler)
     sys.monitoring.register_callback(TOOL_ID, events.PY_UNWIND, unwind_handler)
+    sys.monitoring.register_callback(TOOL_ID, events.CALL, _call_handler)
+
+    # UNWIND and CALL are always global
+    global_events = events.PY_UNWIND | events.CALL
 
     if USE_LOCAL_EVENTS:
-        # but UNWIND must always be global
-        sys.monitoring.set_events(TOOL_ID, events.PY_UNWIND)
+        sys.monitoring.set_events(TOOL_ID, global_events)
     else:
         sys.monitoring.set_events(
             TOOL_ID,
-            events.PY_START|events.PY_YIELD|events.PY_RETURN|events.PY_UNWIND
+            global_events|events.PY_START|events.PY_YIELD|events.PY_RETURN
         )
 
 
@@ -49,6 +72,7 @@ def shutdown_monitoring() -> None:
     sys.monitoring.register_callback(TOOL_ID, events.PY_YIELD, None)
     sys.monitoring.register_callback(TOOL_ID, events.PY_RETURN, None)
     sys.monitoring.register_callback(TOOL_ID, events.PY_UNWIND, None)
+    sys.monitoring.register_callback(TOOL_ID, events.CALL, None)
 
     try:
         sys.monitoring.set_events(TOOL_ID, sys.monitoring.events.NO_EVENTS)
@@ -58,6 +82,9 @@ def shutdown_monitoring() -> None:
 
 setup_code: set[CodeType] = set()
 enabled_code: set[CodeType] = set()
+
+call_mapping: dict[tuple[CodeType, int], object] = {}
+code_to_callable: dict[CodeType, object] = {}
 
 
 def setup_monitoring_for_code(code: CodeType) -> None:
