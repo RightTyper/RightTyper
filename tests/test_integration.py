@@ -5790,6 +5790,37 @@ def test_wrapped_function_with_functools_wraps():
     """)
 
 
+def test_wrapped_function_probe_call():
+    """Calling the original function directly captures types without needing propagation."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class CompiledFunc:
+            def __init__(self, fn):
+                self.original = fn
+            def __call__(self, *args, **kwargs):
+                return sum(args)
+
+        def wrapper(fn):
+            return CompiledFunc(fn)
+
+        @wrapper
+        def foo(x, y):
+            return x + y
+
+        result = foo(1, 2)
+        # Probe call to capture types for the original function
+        foo.original(10, 20)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # foo SHOULD be annotated since we called original directly
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x: int, y: int) -> int: ...
+    """)
+
+
 def test_functools_wraps_decorator():
     """Decorator using functools.wraps where original function never runs."""
     Path("t.py").write_text(textwrap.dedent("""\
