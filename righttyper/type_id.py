@@ -1,3 +1,4 @@
+import gc
 import inspect
 import random
 import re
@@ -31,9 +32,10 @@ import typing
 from righttyper.random_dict import RandomDict
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
 from righttyper.righttyper_types import Filename, FunctionName, CodeId
-from righttyper.righttyper_utils import is_test_module, normalize_module_name
+from righttyper.righttyper_utils import is_test_module, normalize_module_name, unwrap
 from righttyper.options import run_options, output_options
 from righttyper.logger import logger
+from righttyper.righttyper_tool import call_mapping, code_to_callable
 
 
 @cache
@@ -312,32 +314,6 @@ def get_type_name(t: type, depth: int = 0) -> TypeInfo:
     return TypeInfo.from_type(t)
 
 
-def unwrap(method: abc.Callable|None) -> abc.Callable|None:
-    """Follows a chain of `__wrapped__` attributes to find the original function."""
-
-    # Remember objects by id to work around unhashable items, but point to object so
-    # that the object can't go away (possibly reusing the id)
-    visited = {}
-    while hasattr(method, "__wrapped__"):
-        if id(method) in visited: return None
-        visited[id(method)] = method
-
-        method = getattr(method, "__wrapped__")
-
-    return method
-
-
-@cache
-def src2module(src: str) -> ModuleType|None:
-    """Maps a module's source file to the module."""
-    return next(
-        (
-            m
-            for m in list(sys.modules.values()) # sys.modules may change during iteration
-            if getattr(m, "__file__", None) == src
-        ),
-        None
-    )
 
 
 def find_function(
@@ -346,48 +322,21 @@ def find_function(
 ) -> abc.Callable|None:
     """Attempts to map back from a code object to the function that uses it."""
 
-    parts = code.co_qualname.split('.')
+    # Try CALL event mappings first
+    if caller_frame and (back := caller_frame.f_back):
+        func = call_mapping.get((back.f_code, back.f_lasti))
+        if func and getattr(func, "__code__", None) is code:
+            return func
 
-    def find_in(namespace: dict[str, Any]|MappingProxyType[str, Any], index: int=0) -> abc.Callable|None:
-        if index < len(parts):
-            name = parts[index]
-            if (
-                name.startswith("__")
-                and not name.endswith("__")
-                and index > 0
-                and parts[index-1] != '<locals>'
-            ):
-                name = f"_{parts[index-1]}{name}"   # private method/attribute
+    if (func := code_to_callable.get(code)):
+        return func
 
-            if obj := namespace.get(name):
-                if (
-                    # don't use isinstance(obj, Callable), as it relies on __class__, which may be overridden
-                    (hasattr(obj, "__call__") or type(obj) is classmethod)
-                    and (obj := unwrap(obj))
-                    and getattr(obj, "__code__", None) is code
-                ):
-                    return obj
-
-                if type(obj) is dict:
-                    return find_in(obj, index+1)
-                elif isinstance(obj, type):
-                    return find_in(obj.__dict__, index+1)
-
-        return None
-
-
-    if '<locals>' in parts:
-        # Python re-creates the function object dynamically with each invocation;
-        # look for it on the stack.
-        if caller_frame and caller_frame.f_back:
-            after_locals = len(parts) - parts[::-1].index('<locals>')
-            parts = parts[after_locals:]
-            return find_in(caller_frame.f_back.f_locals)
-
-    else:
-        # look for it in its module
-        if (m := src2module(code.co_filename)):
-            return find_in(m.__dict__)
+    # gc.get_referrers is expensive; disabled for now
+    #logger.debug(f"find_function fallback for {code.co_qualname} in {code.co_filename}")
+    #for r in gc.get_referrers(code):
+    #    if getattr(r, "__code__", None) is code and callable(r):
+    #        code_to_callable[code] = r
+    #        return r
 
     return None
 
@@ -399,7 +348,6 @@ def _type_for_generator(
 ) -> TypeInfo:
 
     retval: TypeInfo|None = None
-    # FIXME: using find_function here prevents us from using annotations from <locals> functions
     if not output_options.ignore_annotations and (f := find_function(frame, code)): # FIXME should be a run option
         try:
             if (retval_hint := get_type_hints(f).get('return')):
