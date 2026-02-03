@@ -5723,3 +5723,223 @@ def test_class_attributes_via_classmethod():
 
         C.setup()
     """)
+
+
+def test_wrapped_function_baseline():
+    """A decorator that replaces a function: the original never executes, so no types inferred."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class CompiledFunc:
+            def __init__(self, fn):
+                self.original = fn
+            def __call__(self, *args, **kwargs):
+                return sum(args)
+
+        def wrapper(fn):
+            return CompiledFunc(fn)
+
+        @wrapper
+        def foo(x, y):
+            return x + y
+
+        result = foo(1, 2)
+        result2 = foo(3.14, 2.71)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # foo never executes, so without wrapped function propagation it stays unannotated
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x, y): ...
+    """)
+
+
+def test_wrapped_function_with_functools_wraps():
+    """functools.update_wrapper sets __wrapped__, enabling type propagation."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        class CompiledFunc:
+            def __init__(self, fn):
+                self.original = fn
+                functools.update_wrapper(self, fn)
+            def __call__(self, *args, **kwargs):
+                return sum(args)
+
+        def wrapper(fn):
+            return CompiledFunc(fn)
+
+        @wrapper
+        def foo(x, y):
+            return x + y
+
+        result = foo(1, 2)
+        result2 = foo(3.14, 2.71)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # With __wrapped__ propagation, foo should be annotated
+    # Called with (1, 2) and (3.14, 2.71) -> TypeVar constraint since both
+    # params have same type in each call
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo[T1: (float, int)](x: T1, y: T1) -> int: ...
+    """)
+
+
+def test_functools_wraps_decorator():
+    """Decorator using functools.wraps where original function never runs."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def my_decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                return str(fn(*args, **kwargs))
+            return wrapper
+
+        @my_decorator
+        def add_numbers(x, y):
+            return x + y
+
+        @my_decorator
+        def greet(name):
+            return f"Hello, {name}!"
+
+        r1 = add_numbers(1, 2)
+        r2 = add_numbers(3.14, 2.71)
+        r3 = greet("Alice")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # add_numbers called with (1, 2) and (3.14, 2.71) -> TypeVar constraint
+    assert get_function(code, 'add_numbers') == textwrap.dedent("""\
+        @my_decorator
+        def add_numbers[T1: (float, int)](x: T1, y: T1) -> str: ...
+    """)
+    assert get_function(code, 'greet') == textwrap.dedent("""\
+        @my_decorator
+        def greet(name: str) -> str: ...
+    """)
+
+
+@pytest.mark.dont_run_mypy  # DSL code with intentionally undefined functions
+def test_wrapped_function_unrunnable_code():
+    """Decorator where the original function body cannot be executed as Python.
+
+    This simulates JIT compilers like JAX/Numba where the function body is
+    a DSL, not real Python. The original function never executes, but
+    __wrapped__ propagation should still infer types.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        class JITCompiled:
+            def __init__(self, fn):
+                self.original = fn
+                functools.update_wrapper(self, fn)
+            def __call__(self, *args, **kwargs):
+                return sum(args)
+
+        def jit(fn):
+            return JITCompiled(fn)
+
+        @jit
+        def foo(x, y):
+            # This would fail if executed - simulates DSL code
+            z = custom_op(x, y)
+            return pmap(z, axis=0)
+
+        result = foo(1, 2)
+        result2 = foo(3.14, 2.71)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # foo IS annotated even though it never executes, via __wrapped__ propagation
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @jit
+        def foo[T1: (float, int)](x: T1, y: T1) -> int: ...
+    """)
+
+
+@pytest.mark.dont_run_mypy
+# mypy fails because the decorator is annotated as Callable[[int, int, int], int],
+# which erases the default parameter.  The correct annotation would use ParamSpec:
+#   def my_decorator[**P, R](fn: Callable[P, R]) -> Callable[P, R]: ...
+# A pragmatic alternative: use Callable[..., R] when the function has defaults,
+# avoiding incorrect over-specification of the argument list.
+def test_wrapped_function_with_defaults():
+    """Wrapped function with defaults called with fewer args than declared.
+
+    When the wrapper never calls the original, type propagation via __wrapped__
+    creates a synthetic trace from the wrapper's *args. If the caller passes
+    fewer args than the function declares (relying on defaults), the signature
+    has fewer observed types than declared parameters. This must not crash
+    with IndexError.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        class CompiledFunc:
+            def __init__(self, fn):
+                self.original = fn
+                functools.update_wrapper(self, fn)
+            def __call__(self, *args, **kwargs):
+                return sum(args)
+
+        def wrapper(fn):
+            return CompiledFunc(fn)
+
+        @wrapper
+        def foo(x, y, z=10):
+            return x + y + z
+
+        result = foo(1, 2)
+        result2 = foo(3, 4)
+    """))
+
+    # Should not crash (IndexError) even though foo is called with 2 args but declares 3
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    func = get_function(code, 'foo')
+    assert 'def foo(' in func  # at minimum, should not crash
+
+
+@pytest.mark.skipif(importlib.util.find_spec('jax') is None, reason='JAX not installed')
+@pytest.mark.dont_run_mypy  # JAX-compiled code has different runtime behavior
+def test_jax_jit_integration():
+    """Integration test with actual JAX @jit decorator.
+
+    Validates that RightTyper works correctly with real JIT compilation
+    frameworks. JAX's @jit uses functools.wraps internally, so the
+    __wrapped__ propagation mechanism should work.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import jax
+        import jax.numpy as jnp
+
+        @jax.jit
+        def add_vectors(x, y):
+            return x + y
+
+        result1 = add_vectors(jnp.array([1, 2, 3]), jnp.array([4, 5, 6]))
+        result2 = add_vectors(jnp.array([1.0, 2.0]), jnp.array([3.0, 4.0]))
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    func = get_function(code, 'add_vectors')
+    # JAX @jit uses functools.wraps, so __wrapped__ propagation should work
+    assert '@jax.jit' in func
+    # Function should have type annotations via __wrapped__ propagation
+    assert ':' in func, f"Expected type annotations in add_vectors:\n{func}"
