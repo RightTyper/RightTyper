@@ -171,6 +171,26 @@ def test_generalize_callable():
     assert generalize(samples) == ['T1', 'Callable[..., T1]']
 
 
+def test_generalize_callable_different_code_ids():
+    """Resolved Callables with different code_ids and different signatures
+    should produce a union, not be merged as homogeneous."""
+    from righttyper.righttyper_types import CodeId, Filename, FunctionName
+
+    code_id_a = CodeId(Filename('f.py'), FunctionName('add_numbers'), 10, 0)
+    code_id_b = CodeId(Filename('f.py'), FunctionName('greet'), 20, 0)
+
+    # After ResolvingT, Callable types have actual args and retain their code_ids
+    samples: list[tuple[TypeInfo, ...]] = [
+        (ti('Callable', args=(TypeInfo.list([ti('int'), ti('int')]), ti('int')), code_id=code_id_a),),
+        (ti('Callable', args=(TypeInfo.list([ti('str')]), ti('str')), code_id=code_id_b),),
+    ]
+    result = generalize(samples)
+    assert result is not None
+    assert len(result) == 1
+    # Should produce a union of complete Callable types, not merge their internals
+    assert result == ['Callable[[int, int], int]|Callable[[str], str]']
+
+
 def test_generalize_generic_with_string():
     samples: Any = [
         (ti('int'), ti('X', args=(ti('int'), 'foo'))),

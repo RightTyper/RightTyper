@@ -150,6 +150,9 @@ class Observations:
         # Set of test modules
         self.test_modules: set[str] = set()
 
+        # CodeIds of wrapper functions (with __wrapped__) — skip annotation
+        self.wrapper_code_ids: set[CodeId] = set()
+
 
     def transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
@@ -212,6 +215,7 @@ class Observations:
 
         self.source_to_module_name |= obs2.source_to_module_name
         self.test_modules |= obs2.test_modules
+        self.wrapper_code_ids |= obs2.wrapper_code_ids
 
 
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars]]:
@@ -403,6 +407,7 @@ class Observations:
                 variables=[(var[0], finalize(var[1])) for var in annotation.variables]
             )
             for func_info in self.func_info.values()
+            if func_info.code_id not in self.wrapper_code_ids
             if (annotation := mk_annotation(func_info)) is not None
         }
 

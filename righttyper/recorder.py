@@ -250,6 +250,9 @@ class ObservationsRecorder:
         if not wrapped or not (wrapped_code := getattr(wrapped, '__code__', None)):
             return
 
+        # Mark this wrapper function to skip annotation
+        self._obs.wrapper_code_ids.add(CodeId.from_code(code))
+
         # Register the wrapped function's module
         filename = wrapped_code.co_filename
         if filename and filename not in self._obs.source_to_module_name:

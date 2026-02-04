@@ -460,6 +460,7 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
             and all(
                 t.module == first.module and
                 t.name == first.name and
+                t.code_id == first.code_id and
                 len(t.args) == len(first.args) and
                 all((a is Ellipsis) == (first.args[i] is Ellipsis) for i, a in enumerate(t.args))
                 for t in types[1:]
