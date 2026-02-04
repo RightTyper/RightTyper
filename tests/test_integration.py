@@ -5961,6 +5961,10 @@ def test_wrapped_decorator_multiple_signatures():
         @functools.wraps(fn)
         def wrapper(*args, **kwargs): ...
     """)
+    # Decorator should not have spurious typevars from resolved Callables
+    assert get_function(code, 'my_decorator') == textwrap.dedent("""\
+        def my_decorator[T1: (Callable[[float|int, float|int], float|int], Callable[[str], str])](fn: T1) -> T1: ...
+    """)
 
 
 def test_wrapped_fewer_args_than_declared():

@@ -498,7 +498,15 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
 
             return types[0].replace(args=args)
 
-        combined = TypeInfo.from_set(set(types))
+        # Clear typevar_index from non-homogeneous types: they're being combined
+        # into a union and are no longer participating in the generalization pattern.
+        def clear_typevar_index(t: TypeInfo) -> TypeInfo:
+            class T(TypeInfo.Transformer):
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    return super().visit(node.replace(typevar_index=0))
+            return T().visit(t)
+
+        combined = TypeInfo.from_set({clear_typevar_index(t) for t in types})
 
         # replace type sequence with a variable
         if occurrences[types] > 1 and combined.is_union():

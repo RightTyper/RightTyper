@@ -191,6 +191,30 @@ def test_generalize_callable_different_code_ids():
     assert result == ['Callable[[int, int], int]|Callable[[str], str]']
 
 
+def test_generalize_clears_nested_typevar_index():
+    """When forming a union, nested typevar_index should be cleared.
+
+    Types from resolved functions may have typevar_index set. When these types
+    become part of a union (non-homogeneous), their typevar_index should be
+    cleared to avoid spurious typevars in the output.
+    """
+    from righttyper.righttyper_types import CodeId, Filename, FunctionName
+
+    code_id_a = CodeId(Filename('f.py'), FunctionName('add_numbers'), 10, 0)
+    code_id_b = CodeId(Filename('f.py'), FunctionName('greet'), 20, 0)
+
+    # Simulate resolved Callables where int|float has typevar_index=1 from add_numbers
+    int_or_float = ti('int|float', typevar_index=1)
+    samples: list[tuple[TypeInfo, ...]] = [
+        (ti('Callable', args=(TypeInfo.list([int_or_float, int_or_float]), int_or_float), code_id=code_id_a),),
+        (ti('Callable', args=(TypeInfo.list([ti('str')]), ti('str')), code_id=code_id_b),),
+    ]
+    result = generalize(samples)
+    assert result is not None
+    # The nested typevar_index should NOT produce a T1 in the output
+    assert result == ['Callable[[int|float, int|float], int|float]|Callable[[str], str]']
+
+
 def test_generalize_generic_with_string():
     samples: Any = [
         (ti('int'), ti('X', args=(ti('int'), 'foo'))),
