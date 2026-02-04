@@ -2398,6 +2398,25 @@ def test_callable_kwargs():
     # or KwArg(int) from mypy_extensions, or Unpack + TypedDict
 
 
+def test_callable_defaults():
+    """Callable with default arguments should use ... since Callable[...] can't express defaults."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, y, z=10):
+            return x + y + z
+
+        def bar(f):
+            return f(1, 2)
+
+        bar(foo)
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    assert 'def foo(x: int, y: int, z: int=10) -> int:' in output
+    assert 'def bar(f: Callable[..., int]) -> int:' in output
+
+
 def test_callable_with_self():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
@@ -5942,7 +5961,6 @@ def test_wrapped_decorator_multiple_signatures():
     """)
 
 
-@pytest.mark.mypy_args('--disable-error-code=attr-defined', '--disable-error-code=call-arg')
 def test_wrapped_fewer_args_than_declared():
     """Propagation must not crash when caller passes fewer args than declared (defaults)."""
     Path("t.py").write_text(textwrap.dedent("""\

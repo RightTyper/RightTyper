@@ -332,7 +332,9 @@ class Observations:
                                     old if not is_unknown(old := get_old_param(i)) else clone(a[1])
                                     for i, a in enumerate(ann.args[int(node.is_bound):])
                                 ])
-                                if not (func_info.varargs or func_info.kwargs) else
+                                if not (func_info.varargs or func_info.kwargs
+                                       or any(a.default is not None for a in func_info.args))
+                                else
                                 ...,
                                 old_retval if not is_unknown(old_retval) else clone(ann.retval)
                             ))
