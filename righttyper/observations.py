@@ -245,12 +245,14 @@ class Observations:
                             f"{[tuple(str(t) for t in s) for s in traces]}")
                 return None
 
+            n_sig_args = len(signature) - 1  # last element is the return type
+
             ann = FuncAnnotation(
                 args=[
                     (
                         arg.arg_name,
                         merged_types({
-                            signature[i],
+                            signature[i] if i < n_sig_args else UnknownTypeInfo,
                             *((arg.default,) if arg.default is not None else ()),
                             # by building sets with the parent's types, we prevent arg. type narrowing
                             *((parents_arg_types[i],) if (

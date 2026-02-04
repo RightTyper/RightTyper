@@ -825,6 +825,16 @@ def add_output_options(group=None):
     help="Generalize homogenous fixed-length tuples to tuple[T, ...] if length ≥ N.  N=0 disables generalization."
 )
 @click.option(
+    "--propagate-wrapped-types/--no-propagate-wrapped-types",
+    default=run_options.propagate_wrapped_types,
+    help="Whether to propagate types to wrapped functions (via __wrapped__) that never execute directly.",
+)
+@click.option(
+    "--infer-wrapped-return-type/--no-infer-wrapped-return-type",
+    default=run_options.infer_wrapped_return_type,
+    help="When propagating types to wrapped functions, whether to infer return type from the wrapper's return value.",
+)
+@click.option(
     "--debug",
     is_flag=True,
     help="Include diagnostic information in log file.",

@@ -27,14 +27,33 @@ events = sys.monitoring.events
 
 def _call_handler(code: CodeType, offset: int, callable: object, arg0: object) -> Any:
     callee_code = getattr(callable, "__code__", None)
+
+    # Check __dict__ directly to avoid triggering __getattr__ (e.g., on MagicMock)
+    wrapped = (
+        unwrap(callable)
+        if "__wrapped__" in getattr(callable, "__dict__", ())
+        else None
+    )
+
+    # Record wrapper->wrapped relationship for type propagation
+    if (
+        wrapped
+        and (wrapped_code := getattr(wrapped, "__code__", None))
+        and wrapped_code in setup_code
+    ):
+        # For class instances, the executing code is __call__'s code
+        wrapper_code = callee_code or getattr(
+            getattr(type(callable), "__call__", None), "__code__", None
+        )
+        if wrapper_code and wrapper_code is not wrapped_code:
+            wrapped_by[wrapper_code] = wrapped
+
     if callee_code in code_to_callable:
         call_mapping[(code, offset)] = callable
     elif (
         callee_code in setup_code
         or (
-            # Check __dict__ directly to avoid triggering __getattr__ (e.g., on MagicMock)
-            "__wrapped__" in getattr(callable, "__dict__", ())
-            and (callable := unwrap(callable))
+            (callable := wrapped)
             and (callee_code := getattr(callable, "__code__", None)) in setup_code
         )
     ):
@@ -85,6 +104,9 @@ enabled_code: set[CodeType] = set()
 
 call_mapping: dict[tuple[CodeType, int], object] = {}
 code_to_callable: dict[CodeType, object] = {}
+
+# Maps wrapper code -> wrapped function for type propagation
+wrapped_by: dict[CodeType, object] = {}
 
 
 def setup_monitoring_for_code(code: CodeType) -> None:

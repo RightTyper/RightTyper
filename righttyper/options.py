@@ -78,6 +78,8 @@ class RunOptions:
     save_profiling: str|None = None
     allow_runtime_exceptions: bool = False
     generalize_tuples: int = 3
+    propagate_wrapped_types: bool = True
+    infer_wrapped_return_type: bool = True
 
 
     def process_args(self, kwargs: dict[str, Any]) -> None:
