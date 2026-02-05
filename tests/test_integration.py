@@ -6059,6 +6059,38 @@ def test_wrapped_param_named_self():
     """)
 
 
+def test_wrapped_keyword_only_args():
+    """Wrapper keyword-only args should be forwarded to the wrapped function."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, key=None):
+                items = args[0]
+                if key:
+                    return sorted(items, key=key)[0]
+                return sorted(items)[0]
+            return wrapper
+
+        @decorator
+        def search(items, *, key=None):
+            if key:
+                return sorted(items, key=key)[0]
+            return sorted(items)[0]
+
+        result = search([3, 1, 2], key=lambda x: -x)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'search') == textwrap.dedent("""\
+        @decorator
+        def search(items: list[int], *, key: Callable[[int], int]|None=None) -> int: ...
+    """)
+
+
 @pytest.mark.skipif(not importlib.util.find_spec('numba'), reason='numba not installed')
 @pytest.mark.xfail(reason='numba copies __code__ from the original, so wrapper_code == wrapped_code and propagation cannot distinguish them')
 def test_wrapped_numba_jit():

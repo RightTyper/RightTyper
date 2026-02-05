@@ -296,6 +296,12 @@ class ObservationsRecorder:
         else:
             actual_keywords = {}
 
+        # Capture keyword-only wrapper args (in f_locals but not in *args or **kwargs)
+        if arg_info.varargs:
+            for name in arg_info.args:
+                if name not in actual_keywords and name in f_locals:
+                    actual_keywords[name] = f_locals[name]
+
         # Get default values for the wrapped function's parameters
         default_values: dict[str, Any] = {}
         if defs := getattr(wrapped, '__defaults__', None):
