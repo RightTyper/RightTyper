@@ -315,6 +315,9 @@ class ObservationsRecorder:
                 synthetic_locals[param] = actual_keywords.pop(param)
             elif param in default_values:
                 synthetic_locals[param] = default_values[param]
+            else:
+                logger.debug(f"wrapped function {wrapped_code.co_qualname}: "
+                             f"no value for parameter '{param}'")
 
         if wrapped_args.varargs:
             synthetic_locals[wrapped_args.varargs] = actual_positional[len(wrapped_args.args):]
