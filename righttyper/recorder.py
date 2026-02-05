@@ -162,21 +162,23 @@ class ObservationsRecorder:
         return False
 
 
+    def _register_module(self, filename: str, modname: str | None) -> None:
+        """Registers a module's filename-to-name mapping if not already known."""
+        if filename and filename not in self._obs.source_to_module_name:
+            if modname == "__main__":
+                modname = get_main_module_fqn()
+            if not modname:
+                modname = source_to_module_fqn(Path(filename))
+            if modname:
+                self._obs.source_to_module_name[Filename(filename)] = modname
+
     def record_module(
         self,
         code: CodeType,
         frame: FrameType
     ) -> None:
         # TODO handle cases where modules are loaded more than once, e.g. through pytest
-        if code.co_filename and code.co_filename not in self._obs.source_to_module_name:
-            if (modname := frame.f_globals.get('__name__', None)):
-                if modname == "__main__":
-                    modname = get_main_module_fqn()
-            else:
-                modname = source_to_module_fqn(Path(code.co_filename))
-
-            assert modname
-            self._obs.source_to_module_name[Filename(code.co_filename)] = modname
+        self._register_module(code.co_filename, frame.f_globals.get('__name__', None))
 
 
     def _register_function(
@@ -259,15 +261,7 @@ class ObservationsRecorder:
         self._obs.wrapper_code_ids.add(CodeId.from_code(code))
 
         # Register the wrapped function's module
-        filename = wrapped_code.co_filename
-        if filename and filename not in self._obs.source_to_module_name:
-            modname = getattr(wrapped, '__module__', None)
-            if modname == "__main__":
-                modname = get_main_module_fqn()
-            if not modname:
-                modname = source_to_module_fqn(Path(filename))
-            if modname:
-                self._obs.source_to_module_name[Filename(filename)] = modname
+        self._register_module(wrapped_code.co_filename, getattr(wrapped, '__module__', None))
 
         # Build arg info for the wrapped function
         wrapped_args = inspect.getargs(wrapped_code)
