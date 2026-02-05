@@ -297,7 +297,7 @@ class Observations:
             return ann
 
         # In the code below, clone (rather than link to) types from Callable, Generator, etc.,
-        # clearing is_self and typevar_index, as these may not apply in the new context.
+        # clearing is_self, as it may not apply in the new context.
         def clone(node: TypeInfo) -> TypeInfo:
             class T(TypeInfo.Transformer):
                 """Clones the given TypeInfo tree, clearing 'is_self',

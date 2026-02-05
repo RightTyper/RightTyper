@@ -197,11 +197,14 @@ class ObservationsRecorder:
                 *((arg_info.keywords,) if arg_info.keywords else ())
             )
 
-            defaults = {
-                param_name: get_value_type(param.default)
-                for param_name, param in inspect.signature(function).parameters.items()
-                if param.default is not param.empty
-            } if function else {}
+            defaults: dict[str, TypeInfo] = {}
+            if function:
+                try:
+                    for param_name, param in inspect.signature(function).parameters.items():
+                        if param.default is not param.empty:
+                            defaults[param_name] = get_value_type(param.default)
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"Unable to get signature for {code.co_qualname}: {e}")
 
             self._code2func_info[code] = func_info = FuncInfo(
                 CodeId.from_code(code),

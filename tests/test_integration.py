@@ -5988,8 +5988,11 @@ def test_wrapped_fewer_args_than_declared():
     rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
-    func = get_function(code, 'foo')
-    assert func is not None and 'def foo(' in func  # at minimum, should not crash
+    # x and y should be typed as int; z has default so may or may not be typed
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x: int, y: int, z: int=10) -> int: ...
+    """)
 
 
 def test_wrapped_callable_class():

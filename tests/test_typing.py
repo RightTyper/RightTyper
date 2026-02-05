@@ -830,8 +830,8 @@ def test_merged_types_for_variable_different_arity():
         },
         for_variable=True
     ))
-    assert "tuple[int, str]" in result
-    assert "tuple[int]" in result
+    # Check both types are present as separate union members
+    assert result == "tuple[int]|tuple[int, str]" or result == "tuple[int, str]|tuple[int]"
 
 
 # =============================================================================
