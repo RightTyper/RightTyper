@@ -179,14 +179,14 @@ class ObservationsRecorder:
             self._obs.source_to_module_name[Filename(code.co_filename)] = modname
 
 
-    def record_function(
+    def _register_function(
         self,
         code: CodeType,
-        frame: FrameType,
+        function: FunctionType|None,
         arg_info: inspect.ArgInfo,
         overrides: OverriddenFunction|None
     ) -> None:
-        """Records that a function was visited."""
+        """Registers a function if not already known."""
 
         if code not in self._code2func_info:
             arg_names = (
@@ -195,7 +195,11 @@ class ObservationsRecorder:
                 *((arg_info.keywords,) if arg_info.keywords else ())
             )
 
-            defaults = get_defaults(code, frame)
+            defaults = {
+                param_name: get_value_type(param.default)
+                for param_name, param in inspect.signature(function).parameters.items()
+                if param.default is not param.empty
+            } if function else {}
 
             self._code2func_info[code] = func_info = FuncInfo(
                 CodeId.from_code(code),
@@ -227,7 +231,7 @@ class ObservationsRecorder:
         # call, as the new dictionary is created for the new scope.
         if (code.co_flags & inspect.CO_NEWLOCALS):
             self_type, self_replacement, overrides = get_self_type(code, arg_info)
-            self.record_function(code, frame, arg_info, overrides)
+            self._register_function(code, find_function(frame, code), arg_info, overrides)
 
             self._pending_traces[code][id(frame)] = PendingCallTrace(
                 arg_info, code.co_flags, self_type, self_replacement
@@ -264,43 +268,16 @@ class ObservationsRecorder:
             if modname:
                 self._obs.source_to_module_name[Filename(filename)] = modname
 
-        # Register the wrapped function if not already known
-        if wrapped_code not in self._code2func_info:
-            wrapped_args = inspect.getargs(wrapped_code)
-
-            # Get defaults from the wrapped function object
-            defaults: dict[str, TypeInfo] = {}
-            if defs := getattr(wrapped, '__defaults__', None):
-                n = len(defs)
-                for i, val in enumerate(defs):
-                    param = wrapped_args.args[len(wrapped_args.args) - n + i]
-                    defaults[param] = get_value_type(val)
-            if kwdefs := getattr(wrapped, '__kwdefaults__', None):
-                for name, val in kwdefs.items():
-                    defaults[name] = get_value_type(val)
-
-            arg_names = (
-                *(a for a in wrapped_args.args),
-                *((wrapped_args.varargs,) if wrapped_args.varargs else ()),
-                *((wrapped_args.varkw,) if wrapped_args.varkw else ())
-            )
-
-            func_info = FuncInfo(
-                CodeId.from_code(wrapped_code),
-                tuple(
-                    ArgInfo(ArgumentName(name), defaults.get(name))
-                    for name in arg_names
-                ),
-                ArgumentName(wrapped_args.varargs) if wrapped_args.varargs else None,
-                ArgumentName(wrapped_args.varkw) if wrapped_args.varkw else None,
-                None
-            )
-            self._code2func_info[wrapped_code] = func_info
-            self._obs.func_info[func_info.code_id] = func_info
-
-        # Build a synthetic ArgInfo mapping the wrapper's actual args to the
-        # wrapped function's declared parameters
+        # Build arg info for the wrapped function
         wrapped_args = inspect.getargs(wrapped_code)
+        wrapped_arg_info = inspect.ArgInfo(
+            wrapped_args.args, wrapped_args.varargs, wrapped_args.varkw, {}
+        )
+
+        # Register the wrapped function if not already known
+        self._register_function(
+            wrapped_code, cast(FunctionType, wrapped), wrapped_arg_info, None
+        )
 
         # Get actual positional and keyword args from the wrapper's frame
         f_locals = frame.f_locals
@@ -724,16 +701,6 @@ def get_self_type(
 
     return None, None, None
 
-
-def get_defaults(code, frame) -> dict[str, TypeInfo]:
-    if (function := find_function(frame, code)):
-        return {
-            param_name: get_value_type(param.default)
-            for param_name, param in inspect.signature(function).parameters.items()
-            if param.default is not param.empty
-        }
-
-    return {}
 
 
 def get_parent_arg_types(
