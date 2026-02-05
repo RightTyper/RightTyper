@@ -5992,6 +5992,73 @@ def test_wrapped_fewer_args_than_declared():
     assert 'def foo(' in func  # at minimum, should not crash
 
 
+def test_wrapped_callable_class():
+    """Wrapper is a callable class (__call__ method) with non-standard first param name.
+
+    The first param (named 'this' here, not 'self') should be skipped - it's the
+    decorator instance, not an argument to pass to the wrapped function.
+    This tests that method detection works by inspecting the type hierarchy,
+    not by checking for the name 'self' or 'cls'.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class CachingDecorator:
+            def __init__(this, fn):
+                this.fn = fn
+                this.__wrapped__ = fn
+
+            def __call__(this, x, y):
+                # 'this' is the decorator instance, not an arg to pass
+                return x + y
+
+        @CachingDecorator
+        def add(a, b):
+            return a + b
+
+        result = add(1, 2)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # The wrapped function should get correct types (not including CachingDecorator as first arg)
+    assert get_function(code, 'add') == textwrap.dedent("""\
+        @CachingDecorator
+        def add(a: int, b: int) -> int: ...
+    """)
+
+
+def test_wrapped_param_named_self():
+    """A non-method function with a parameter named 'self' should pass it through.
+
+    The name 'self' doesn't make it a method - it's just a parameter name.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                return fn(*args, **kwargs)
+            return wrapper
+
+        @decorator
+        def process(self, data):
+            # 'self' here is just a bad parameter name, not a method
+            return self + data
+
+        result = process("hello", " world")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # 'self' should be typed as str, not skipped
+    assert get_function(code, 'process') == textwrap.dedent("""\
+        @decorator
+        def process(self: str, data: str) -> str: ...
+    """)
+
+
 @pytest.mark.skipif(not importlib.util.find_spec('numba'), reason='numba not installed')
 @pytest.mark.xfail(reason='numba copies __code__ from the original, so wrapper_code == wrapped_code and propagation cannot distinguish them')
 def test_wrapped_numba_jit():

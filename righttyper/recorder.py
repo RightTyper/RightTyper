@@ -307,9 +307,16 @@ class ObservationsRecorder:
         if arg_info.varargs and arg_info.varargs in f_locals:
             actual_positional = tuple(f_locals[arg_info.varargs])
         else:
+            # Determine if the wrapper is a method by checking if its code object
+            # is defined in the first argument's type hierarchy.
+            skip_first = (
+                arg_info.args
+                and arg_info.args[0] in f_locals
+                and is_method_of(code, f_locals[arg_info.args[0]])
+            )
+            args_to_use = arg_info.args[1:] if skip_first else arg_info.args
             actual_positional = tuple(
-                f_locals[a] for a in arg_info.args
-                if a in f_locals and a != 'self' and a != 'cls'
+                f_locals[a] for a in args_to_use if a in f_locals
             )
 
         if arg_info.keywords and arg_info.keywords in f_locals:
@@ -619,46 +626,74 @@ class ObservationsRecorder:
         return obs
 
 
+@dataclass
+class MethodInfo:
+    """Information about a method's definition in a class hierarchy."""
+    first_arg_class: type       # The type of the first argument (or the type itself for classmethod)
+    defining_class: type        # The class where this method is defined
+    next_index: int             # Index into MRO for finding overridden methods
+    name: str                   # The method name (possibly mangled for private methods)
+    is_property: bool           # Whether this is a property
+
+
+def find_method_info(code: CodeType, first_arg: object) -> MethodInfo | None:
+    """Finds method information for 'code' in the type hierarchy of 'first_arg'.
+
+    Returns MethodInfo if 'code' is a method defined on first_arg's type, None otherwise.
+    """
+    name = code.co_name
+    if (
+        name.startswith("__")
+        and not name.endswith("__")
+        and len(parts := code.co_qualname.split(".")) > 1
+    ):
+        # parts[-2] may be "<locals>"... that's ok, as we then have
+        # a local function and there is no 'Self' to find.
+        name = f"_{parts[-2]}{name}"    # private attribute/method
+
+    # if type(first_arg) is type, we may have a @classmethod
+    first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
+
+    # @property?
+    is_property = isinstance(getattr(type(first_arg), name, None), property)
+
+    # find class that defines that name, in case it's inherited
+    result = next(
+        (
+            (ancestor, i+1)
+            for i, ancestor in enumerate(first_arg_class.__mro__)
+            if (
+                (is_property and name in ancestor.__dict__)
+                or (
+                    (f := unwrap(ancestor.__dict__.get(name, None)))
+                    and getattr(f, "__code__", None) is code
+                )
+            )
+        ),
+        None
+    )
+
+    if result is None:
+        return None
+
+    defining_class, next_index = result
+    return MethodInfo(first_arg_class, defining_class, next_index, name, is_property)
+
+
+def is_method_of(code: CodeType, first_arg: object) -> bool:
+    """Returns True if 'code' is a method defined on the type of 'first_arg'."""
+    return find_method_info(code, first_arg) is not None
+
+
 def get_self_type(
-    code,
+    code: CodeType,
     arg_info: inspect.ArgInfo
 ) -> tuple[TypeInfo|None, TypeInfo|None, OverriddenFunction|None]:
     if arg_info.args:
         first_arg = arg_info.locals[arg_info.args[0]]
 
-        name = code.co_name
-        if (
-            name.startswith("__")
-            and not name.endswith("__")
-            and len(parts := code.co_qualname.split(".")) > 1
-        ):
-            # parts[-2] may be "<locals>"... that's ok, as we then have
-            # a local function and there is no 'Self' to find.
-            name = f"_{parts[-2]}{name}"    # private attribute/method
-
-        # if type(first_arg) is type, we may have a @classmethod
-        first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
-
-        # @property?
-        is_property = isinstance(getattr(type(first_arg), name, None), property)
-
-        # find class that defines that name, in case it's inherited
-        defining_class, next_index = next(
-            (
-                (ancestor, i+1)
-                for i, ancestor in enumerate(first_arg_class.__mro__)
-                if (
-                    (is_property and name in ancestor.__dict__)
-                    or (
-                        (f := unwrap(ancestor.__dict__.get(name, None)))
-                        and getattr(f, "__code__", None) is code
-                    )
-                )
-            ),
-            (None, None)
-        )
-
-        if not defining_class:
+        info = find_method_info(code, first_arg)
+        if not info:
             return None, None, None
 
         # The first argument is 'Self' and the type of 'Self', in the context of
@@ -666,8 +701,8 @@ def get_self_type(
         # overrides another
         overrides = None
         if not (
-            is_property
-            or name in ('__init__', '__new__')  # irrelevant for Liskov
+            info.is_property
+            or info.name in ('__init__', '__new__')  # irrelevant for Liskov
         ):
             overrides = next(
                 (
@@ -678,14 +713,14 @@ def get_self_type(
                         CodeId.from_code(f.__code__) if hasattr(f, "__code__") else None,
                         get_parent_arg_types(f, arg_info)
                     )
-                    for ancestor in first_arg_class.__mro__[next_index:]
-                    if (f := unwrap(ancestor.__dict__.get(name, None)))
+                    for ancestor in info.first_arg_class.__mro__[info.next_index:]
+                    if (f := unwrap(ancestor.__dict__.get(info.name, None)))
                     if getattr(f, "__code__", None) is not code
                 ),
                 None
             )
 
-        return get_type_name(first_arg_class), get_type_name(defining_class), overrides
+        return get_type_name(info.first_arg_class), get_type_name(info.defining_class), overrides
 
     return None, None, None
 
