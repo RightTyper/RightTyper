@@ -3636,10 +3636,15 @@ def test_self_classmethod(python_version):
 
 
 @pytest.mark.parametrize("python_version", [
-    pytest.param("3.10", marks=pytest.mark.xfail(reason="needs typevar, see comment")),
+    pytest.param("3.10", marks=pytest.mark.xfail(reason="needs TypeVar for classmethod returning cls()")),
     "3.11"
 ])
 def test_self_inherited_classmethod(python_version):
+    """Test that classmethods returning cls() use proper type for inheritance.
+
+    For 3.11+, Self handles this. For 3.10, a TypeVar with bound is needed
+    to express that B.static_initializer() returns B, not A.
+    """
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             @classmethod
@@ -3657,14 +3662,14 @@ def test_self_inherited_classmethod(python_version):
     code = cst.parse_module(output)
 
     if python_version == '3.10':
-        # FIXME this doesn't work: it really needs to be
-        # T = TypeVar("T", bound="A")
-        # class A:
-        #     @classmethod
-        #     def static_initializer(cls: type[T]) -> T: ...
-        assert get_function(code, 'A.static_initializer') == textwrap.dedent("""\
+        # TypeVar needed: B.static_initializer() returns B, not A
+        import re
+        m = re.search(r'(\w+) = TypeVar\("\1", bound="A"\)', output)
+        assert m, f"Expected TypeVar with bound='A' in output:\n{output}"
+        T = m.group(1)
+        assert get_function(code, 'A.static_initializer') == textwrap.dedent(f"""\
             @classmethod
-            def static_initializer(cls: "type[A]") -> "A": ...
+            def static_initializer(cls: type[{T}]) -> {T}: ...
         """)
     else:
         assert get_function(code, 'A.static_initializer') == textwrap.dedent("""\
