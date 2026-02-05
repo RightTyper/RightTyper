@@ -5915,10 +5915,11 @@ def test_wrapped_return_type_changed():
     """)
 
 
-def test_wrapped_decorator_multiple_signatures():
-    """Decorator applied to functions with different signatures.
+def test_wrapped_passthrough_decorator_union_callable():
+    """Passthrough decorator (calls original) applied to functions with different signatures.
 
-    The decorator gets union Callable types compatible with all decorated functions.
+    The decorated functions get types from direct observation (not propagation).
+    The decorator parameter gets a union Callable type from all decorated functions.
     The inner wrapper function is not annotated to avoid signature conflicts.
     """
     Path("t.py").write_text(textwrap.dedent("""\
@@ -5964,6 +5965,49 @@ def test_wrapped_decorator_multiple_signatures():
     # Decorator should not have spurious typevars from resolved Callables
     assert get_function(code, 'my_decorator') == textwrap.dedent("""\
         def my_decorator[T1: (Callable[[float|int, float|int], float|int], Callable[[str], str])](fn: T1) -> T1: ...
+    """)
+
+
+def test_wrapped_propagation_multiple_signatures():
+    """Wrapped propagation with multiple decorated functions that never execute.
+
+    Types are propagated from wrapper calls to wrapped functions via __wrapped__.
+    Each decorated function gets its own observed types.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class CompiledFunc:
+            def __init__(self, fn):
+                self.__wrapped__ = fn
+            def __call__(self, *args, **kwargs):
+                return sum(args) if args and isinstance(args[0], (int, float)) else str(args)
+
+        def compiler(fn):
+            return CompiledFunc(fn)
+
+        @compiler
+        def add_numbers(x, y):
+            return x + y
+
+        @compiler
+        def greet(name):
+            return f"Hello, {name}!"
+
+        add_numbers(1, 2)
+        add_numbers(3.14, 2.71)
+        greet("Alice")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # Both functions get types from propagation (originals never execute)
+    assert get_function(code, 'add_numbers') == textwrap.dedent("""\
+        @compiler
+        def add_numbers[T1: (float, int)](x: T1, y: T1) -> T1: ...
+    """)
+    assert get_function(code, 'greet') == textwrap.dedent("""\
+        @compiler
+        def greet(name: str) -> str: ...
     """)
 
 

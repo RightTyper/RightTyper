@@ -412,12 +412,6 @@ class ObservationsRecorder:
 
         if (per_frame := self._pending_wrapped_traces.get(wrapped_code)):
             if (tr := per_frame.pop(frame_id, None)):
-                # If the wrapped function was called directly (has its own traces),
-                # skip propagation — direct observation is more accurate.
-                func_info = self._code2func_info.get(wrapped_code)
-                if func_info and func_info.traces:
-                    return
-
                 retval_type = (
                     get_value_type(return_value)
                     if run_options.infer_wrapped_return_type
