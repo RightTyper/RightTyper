@@ -269,11 +269,6 @@ class ObservationsRecorder:
             wrapped_args.args, wrapped_args.varargs, wrapped_args.varkw, {}
         )
 
-        # Register the wrapped function if not already known
-        self._register_function(
-            wrapped_code, wrapped, wrapped_arg_info, None
-        )
-
         # Get actual positional and keyword args from the wrapper's frame
         f_locals = frame.f_locals
         if arg_info.varargs and arg_info.varargs in f_locals:
@@ -335,7 +330,12 @@ class ObservationsRecorder:
             synthetic_locals
         )
 
-        pending = PendingCallTrace(synthetic_arg_info, wrapped_code.co_flags, None, None)
+        self_type, self_replacement, overrides = get_self_type(wrapped_code, synthetic_arg_info)
+
+        # Register the wrapped function if not already known
+        self._register_function(wrapped_code, wrapped, wrapped_arg_info, overrides)
+
+        pending = PendingCallTrace(synthetic_arg_info, wrapped_code.co_flags, self_type, self_replacement)
         self._pending_wrapped_traces[wrapped_code][id(frame)] = pending
 
 

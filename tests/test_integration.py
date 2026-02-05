@@ -6091,6 +6091,36 @@ def test_wrapped_keyword_only_args():
     """)
 
 
+def test_wrapped_method_self_type():
+    """Wrapped method should get Self-type handling: self should not be annotated."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def caching(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                return args[1] * 2
+            return wrapper
+
+        class MyClass:
+            @caching
+            def double(self, x):
+                return x * 2
+
+        obj = MyClass()
+        result = obj.double(5)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # self should get Self-type handling, not "MyClass"
+    assert get_function(code, 'MyClass.double') == textwrap.dedent("""\
+        @caching
+        def double(self: Self, x: int) -> int: ...
+    """)
+
+
 @pytest.mark.skipif(not importlib.util.find_spec('numba'), reason='numba not installed')
 @pytest.mark.xfail(reason='numba copies __code__ from the original, so wrapper_code == wrapped_code and propagation cannot distinguish them')
 def test_wrapped_numba_jit():
