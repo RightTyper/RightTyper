@@ -129,9 +129,12 @@ def stop_events(code: CodeType) -> None:
 
 
 def restart_events() -> None:
+    # Called from timer thread. set() and set.update() are atomic under GIL.
+    # Snapshot setup_code to avoid RuntimeError during set difference iteration.
     if USE_LOCAL_EVENTS:
-        disabled = setup_code - enabled_code
-        enabled_code.update(setup_code)
+        setup_snapshot = set(setup_code)
+        disabled = setup_snapshot - enabled_code
+        enabled_code.update(setup_snapshot)
         for code in disabled:
             sys.monitoring.set_local_events(TOOL_ID, code, events.PY_START|events.PY_YIELD|events.PY_RETURN)
     else:
