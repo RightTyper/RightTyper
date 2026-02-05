@@ -31,7 +31,7 @@ import typing
 
 from righttyper.random_dict import RandomDict
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
-from righttyper.righttyper_types import Filename, FunctionName, CodeId
+from righttyper.righttyper_types import Filename, FunctionName, CodeId, CallableWithCode, has_code
 from righttyper.righttyper_utils import is_test_module, normalize_module_name, unwrap
 from righttyper.options import run_options, output_options
 from righttyper.logger import logger
@@ -319,16 +319,17 @@ def get_type_name(t: type, depth: int = 0) -> TypeInfo:
 def find_function(
     caller_frame: FrameType,
     code: CodeType
-) -> abc.Callable|None:
+) -> CallableWithCode|None:
     """Attempts to map back from a code object to the function that uses it."""
 
     # Try CALL event mappings first
     if caller_frame and (back := caller_frame.f_back):
         func = call_mapping.get((back.f_code, back.f_lasti))
-        if func and getattr(func, "__code__", None) is code:
+        if has_code(func) and func.__code__ is code:
             return func
 
-    if (func := code_to_callable.get(code)):
+    func = code_to_callable.get(code)
+    if has_code(func):
         return func
 
     # gc.get_referrers is expensive; disabled for now

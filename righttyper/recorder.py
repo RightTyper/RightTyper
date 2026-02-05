@@ -1,13 +1,13 @@
 import inspect
 import builtins
 from dataclasses import dataclass, field
-from types import CodeType, FrameType, FunctionType, GeneratorType
+from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType
 from collections import defaultdict
 import collections.abc as abc
 from pathlib import Path
 import logging
 from righttyper.logger import logger
-from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, cast_not_None
+from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, CallableWithCode, cast_not_None
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, UnknownTypeInfo, CallTrace
 from typing import Final, Any, NewType, overload, cast
 import typing
@@ -182,7 +182,7 @@ class ObservationsRecorder:
     def _register_function(
         self,
         code: CodeType,
-        function: FunctionType|None,
+        function: CallableWithCode|None,
         arg_info: inspect.ArgInfo,
         overrides: OverriddenFunction|None
     ) -> None:
@@ -251,8 +251,9 @@ class ObservationsRecorder:
         from righttyper.righttyper_tool import wrapped_by
 
         wrapped = wrapped_by.get(code)
-        if not wrapped or not (wrapped_code := getattr(wrapped, '__code__', None)):
+        if not wrapped:
             return
+        wrapped_code = wrapped.__code__
 
         # Mark this wrapper function to skip annotation
         self._obs.wrapper_code_ids.add(CodeId.from_code(code))
@@ -276,7 +277,7 @@ class ObservationsRecorder:
 
         # Register the wrapped function if not already known
         self._register_function(
-            wrapped_code, cast(FunctionType, wrapped), wrapped_arg_info, None
+            wrapped_code, wrapped, wrapped_arg_info, None
         )
 
         # Get actual positional and keyword args from the wrapper's frame
@@ -422,8 +423,9 @@ class ObservationsRecorder:
         from righttyper.righttyper_tool import wrapped_by
 
         wrapped = wrapped_by.get(code)
-        if not wrapped or not (wrapped_code := getattr(wrapped, '__code__', None)):
+        if not wrapped:
             return
+        wrapped_code = wrapped.__code__
 
         if (per_frame := self._pending_wrapped_traces.get(wrapped_code)):
             if (tr := per_frame.pop(frame_id, None)):
@@ -481,10 +483,10 @@ class ObservationsRecorder:
         from righttyper.righttyper_tool import wrapped_by
 
         wrapped = wrapped_by.get(code)
-        if not wrapped or not (wrapped_code := getattr(wrapped, '__code__', None)):
+        if not wrapped:
             return
 
-        if (per_frame := self._pending_wrapped_traces.get(wrapped_code)):
+        if (per_frame := self._pending_wrapped_traces.get(wrapped.__code__)):
             per_frame.pop(frame_id, None)
 
 
@@ -494,8 +496,8 @@ class ObservationsRecorder:
         # Also clear any wrapped traces triggered by this wrapper
         from righttyper.righttyper_tool import wrapped_by
         wrapped = wrapped_by.get(code)
-        if wrapped and (wrapped_code := getattr(wrapped, '__code__', None)):
-            self._pending_wrapped_traces[wrapped_code].clear()
+        if wrapped:
+            self._pending_wrapped_traces[wrapped.__code__].clear()
 
 
     def try_close_generators(self) -> None:

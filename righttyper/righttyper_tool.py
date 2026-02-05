@@ -4,6 +4,7 @@ from typing import Any, Final
 from collections.abc import Callable
 import functools
 
+from righttyper.righttyper_types import CallableWithCode, has_code
 from righttyper.righttyper_utils import unwrap
 
 TOOL_NAME: Final[str] = "righttyper"
@@ -25,7 +26,7 @@ USE_LOCAL_EVENTS = True
 events = sys.monitoring.events
 
 
-def _call_handler(code: CodeType, offset: int, callable: object, arg0: object) -> Any:
+def _call_handler(code: CodeType, offset: int, callable: Callable, arg0: object) -> Any:
     callee_code = getattr(callable, "__code__", None)
 
     # Check __dict__ directly to avoid triggering __getattr__ (e.g., on MagicMock)
@@ -37,9 +38,8 @@ def _call_handler(code: CodeType, offset: int, callable: object, arg0: object) -
 
     # Record wrapper->wrapped relationship for type propagation
     if (
-        wrapped
-        and (wrapped_code := getattr(wrapped, "__code__", None))
-        and wrapped_code in setup_code
+        has_code(wrapped)
+        and (wrapped_code := wrapped.__code__) in setup_code
     ):
         # For class instances, the executing code is __call__'s code
         wrapper_code = callee_code or getattr(
@@ -53,8 +53,8 @@ def _call_handler(code: CodeType, offset: int, callable: object, arg0: object) -
     elif (
         callee_code in setup_code
         or (
-            (callable := wrapped)
-            and (callee_code := getattr(callable, "__code__", None)) in setup_code
+            wrapped is not None
+            and (callee_code := getattr(callable := wrapped, "__code__", None)) in setup_code
         )
     ):
         call_mapping[(code, offset)] = callable
@@ -102,11 +102,11 @@ def shutdown_monitoring() -> None:
 setup_code: set[CodeType] = set()
 enabled_code: set[CodeType] = set()
 
-call_mapping: dict[tuple[CodeType, int], object] = {}
-code_to_callable: dict[CodeType, object] = {}
+call_mapping: dict[tuple[CodeType, int], Callable] = {}
+code_to_callable: dict[CodeType, Callable] = {}
 
-# Maps wrapper code -> wrapped function for type propagation
-wrapped_by: dict[CodeType, object] = {}
+# Maps wrapper code -> wrapped callable (must have __code__)
+wrapped_by: dict[CodeType, CallableWithCode] = {}
 
 
 def setup_monitoring_for_code(code: CodeType) -> None:

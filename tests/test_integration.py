@@ -5989,7 +5989,7 @@ def test_wrapped_fewer_args_than_declared():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
     func = get_function(code, 'foo')
-    assert 'def foo(' in func  # at minimum, should not crash
+    assert func is not None and 'def foo(' in func  # at minimum, should not crash
 
 
 def test_wrapped_callable_class():

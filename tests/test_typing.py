@@ -942,7 +942,7 @@ def test_container_sliding_window_detects_changes(monkeypatch):
     _cache._cache.clear()
 
     # First observation: list of ints (must be large enough to trigger sampling)
-    data = list(range(100))
+    data: list[Any] = list(range(100))
     assert len(data) > run_options.container_small_threshold  # Test precondition
     t1 = get_value_type(data)
     assert 'int' in t1
@@ -1002,7 +1002,7 @@ def test_container_full_history_preserved():
 
     _cache._cache.clear()
 
-    data = list(range(100))
+    data: list[Any] = list(range(100))
     assert len(data) > run_options.container_small_threshold  # Test precondition
 
     # First: ints
@@ -1057,7 +1057,7 @@ def test_hybrid_spot_check_new_type_triggers_resample(monkeypatch):
     _cache._cache.clear()
 
     # First observation with ints
-    data = list(range(100))
+    data: list[Any] = list(range(100))
     assert len(data) > run_options.container_small_threshold
     get_value_type(data)
 
@@ -1084,7 +1084,7 @@ def test_hybrid_spot_check_sample_preserved(monkeypatch):
     _cache._cache.clear()
 
     # First: all ints
-    data = list(range(100))
+    data: list[Any] = list(range(100))
     assert len(data) > run_options.container_small_threshold
     t1 = get_value_type(data)
     assert 'int' in t1
