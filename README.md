@@ -182,6 +182,16 @@ Options:
   --generalize-tuples N           Generalize homogenous fixed-length tuples to
                                   tuple[T, ...] if length ≥ N.  N=0 disables
                                   generalization.  [default: 3; x>=0]
+  --propagate-wrapped-types / --no-propagate-wrapped-types
+                                  Whether to propagate types to wrapped
+                                  functions (via __wrapped__) that never
+                                  execute directly.  [default: propagate-
+                                  wrapped-types]
+  --infer-wrapped-return-type / --no-infer-wrapped-return-type
+                                  When propagating types to wrapped functions,
+                                  whether to infer return type from the
+                                  wrapper's return value.  [default: infer-
+                                  wrapped-return-type]
   --debug                         Include diagnostic information in log file.
   Output options: 
     --overwrite / --no-overwrite  Overwrite ".py" files with type information.
@@ -225,6 +235,10 @@ Options:
                                   Whether to exclude or replace with
                                   "typing.Any" types defined in test modules.
                                   [default: exclude-test-types]
+    --detect-test-modules-by-name / --no-detect-test-modules-by-name
+                                  Heuristically detect test modules by naming
+                                  convention (test_, _test, .tests.).
+                                  [default: no-detect-test-modules-by-name]
     --always-quote-annotations / --no-always-quote-annotations
                                   Place all annotations in quotes. This is
                                   normally not necessary, but can help avoid
