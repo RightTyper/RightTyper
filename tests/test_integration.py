@@ -296,15 +296,22 @@ def test_builtins():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     assert "import slice" not in output
-    assert "def func(s: slice) -> range" in output
+    assert get_function(code, 'func') == textwrap.dedent("""\
+        def func(s: slice) -> range: ...
+    """)
 
     assert "import type" not in output
-    assert "def func2(t: type[str]) -> str" in output
+    assert get_function(code, 'func2') == textwrap.dedent("""\
+        def func2(t: type[str]) -> str: ...
+    """)
 
     assert "import super" not in output
-    assert "def func3(t: super) -> None" in output
+    assert get_function(code, 'func3') == textwrap.dedent("""\
+        def func3(t: super) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
@@ -407,8 +414,11 @@ def test_callable_from_annotation_generic_alias(future):
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g() -> Callable[[], list[int]]:" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g() -> Callable[[], list[int]]: ...
+    """)
 
 
 @pytest.mark.dont_run_mypy # fails because of SomethingUnknown
@@ -429,8 +439,11 @@ def test_callable_annotation_errors():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g() -> Callable:" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g() -> Callable: ...
+    """)
 
 
 def test_callable_from_annotation_none_return():
@@ -449,8 +462,11 @@ def test_callable_from_annotation_none_return():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g() -> Callable[[], None]:" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g() -> Callable[[], None]: ...
+    """)
 
 
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
@@ -471,9 +487,12 @@ def test_numpy_type_name():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     assert "import bfloat16" not in output
-    assert "def f(t: np.dtype[ml_dtypes.bfloat16]) -> None" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(t: np.dtype[ml_dtypes.bfloat16]) -> None: ...
+    """)
 
 
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
@@ -524,8 +543,11 @@ def test_annotation_with_numpy_dtype_name():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g() -> Callable[[], np.ndarray[Any, np.dtype[bf16]]]:" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g() -> Callable[[], np.ndarray[Any, np.dtype[bf16]]]: ...
+    """)
 
 
 @pytest.mark.dont_run_mypy # it lacks definitions for checking
@@ -633,10 +655,15 @@ def test_default_arg():
 
     rt_run('--debug', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def func(n: int|None=None) -> int" in output
+    assert get_function(code, 'func') == textwrap.dedent("""\
+        def func(n: int|None=None) -> int: ...
+    """)
 
-    assert """def func2(n: float|str="5") -> int""" in output
+    assert get_function(code, 'func2') == textwrap.dedent("""\
+        def func2(n: float|str="5") -> int: ...
+    """)
 
 
 def test_default_in_private_method():
@@ -655,8 +682,11 @@ def test_default_in_private_method():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def __f(self: Self, x: int|None=None) -> int" in output
+    assert get_function(code, 'C.__f') == textwrap.dedent("""\
+        def __f(self: Self, x: int|None=None) -> int: ...
+    """)
 
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module')
@@ -696,8 +726,11 @@ def test_inner_function():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g(y: int) -> int" in output
+    assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\
+        def g(y: int) -> int: ...
+    """)
 
 
 def test_inner_function_json():
@@ -761,11 +794,16 @@ def test_method():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def f(self: Self, n: int) -> int" in output
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self, n: int) -> int: ...
+    """)
     assert "\nimport Self" not in output
 
-    assert "def h(self: Self, x: int) -> float" in output
+    assert get_function(code, 'g.<locals>.gC.h') == textwrap.dedent("""\
+        def h(self: Self, x: int) -> float: ...
+    """)
 
 
 def test_method_imported():
@@ -792,14 +830,21 @@ def test_method_imported():
 
     rt_run('t.py')
     output = Path("m.py").read_text()
+    code = cst.parse_module(output)
 
     assert "\nimport Self" not in output
 
-    assert "def f(self: Self, n: int) -> int" in output
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self, n: int) -> int: ...
+    """)
     assert "import C" not in output
 
-    assert "def g(x: int) -> float" in output
-    assert "def h(self: Self, x: int) -> float" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(x: int) -> float: ...
+    """)
+    assert get_function(code, 'g.<locals>.gC.h') == textwrap.dedent("""\
+        def h(self: Self, x: int) -> float: ...
+    """)
     assert "import gC" not in output
 
 
@@ -1329,8 +1374,11 @@ def test_class_name_imported():
 
     rt_run('t.py')
     output = Path("m.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def f(x: C) -> None" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: C) -> None: ...
+    """)
     assert "import C" not in output
 
 
@@ -1352,8 +1400,11 @@ def test_class_name_in_test(tmp_cwd):
     rt_run('--no-exclude-test-files', '--no-exclude-test-types',
            '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "test_foo.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def f(x: C) -> None" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: C) -> None: ...
+    """)
     assert "import test_foo" not in output
 
 
@@ -1376,8 +1427,11 @@ def test_class_name_in_test_subdir(tmp_cwd):
     rt_run('--no-exclude-test-files', '--no-exclude-test-types',
            '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "sub" / "test_foo.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def f(x: C) -> None" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: C) -> None: ...
+    """)
     assert "import test_foo" not in output
 
 
@@ -1699,8 +1753,11 @@ def test_default_inner_function():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g(y: int|str='0') -> int" in output
+    assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\
+        def g(y: int|str='0') -> int: ...
+    """)
 
 
 def test_default_method():
@@ -1724,9 +1781,14 @@ def test_default_method():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def f(self: Self, n: int=5) -> int" in output
-    assert "def h(self: Self, x: int=1) -> float" in output
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self, n: int=5) -> int: ...
+    """)
+    assert get_function(code, 'g.<locals>.gC.h') == textwrap.dedent("""\
+        def h(self: Self, x: int=1) -> float: ...
+    """)
 
 
 @pytest.mark.parametrize("ann", ["", " -> Generator[MyType, None, None]"])
@@ -1898,9 +1960,14 @@ def test_generator_with_return():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> Generator[int, None, str]:" in output
-    assert "def g(f: Generator[int, None, str]) -> None" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        def gen() -> Generator[int, None, str]: ...
+    """)
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(f: Generator[int, None, str]) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize("no_simplify", [(), ('--no-simplify-types',)])
@@ -1963,8 +2030,14 @@ def test_generator_with_self():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(self: Self) -> Iterator[Self]" in output
-    assert "def f(g: Iterator[C]) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self) -> Iterator[Self]: ...
+    """)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(g: Iterator[C]) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize('as_module', [False, True])
@@ -1991,11 +2064,16 @@ def test_send_generator(as_module):
     Path("t.py").write_text(t)
 
     stdout = rt_run(*(('-m', 't') if as_module else ('t.py',)), capture=True)
-    assert '[10.0, 15.0]' in stdout
+    assert stdout is not None and '[10.0, 15.0]' in stdout
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> Generator[float, int, None]:" in output
-    assert "def f(g: Generator[float, int, None]) -> list[float]" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        def gen() -> Generator[float, int, None]: ...
+    """)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(g: Generator[float, int, None]) -> list[float]: ...
+    """)
 
 
 @pytest.mark.parametrize('as_module', [False, True])
@@ -2027,11 +2105,16 @@ def test_send_async_generator(as_module):
     Path("t.py").write_text(t)
 
     stdout = rt_run(*(('-m', 't') if as_module else ('t.py',)), capture=True)
-    assert '[10.0, 15.0]' in stdout
+    assert stdout is not None and '[10.0, 15.0]' in stdout
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> AsyncGenerator[float, int]:" in output
-    assert "def f(g: AsyncGenerator[float, int]) -> list[float]" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        async def gen() -> AsyncGenerator[float, int]: ...
+    """)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        async def f(g: AsyncGenerator[float, int]) -> list[float]: ...
+    """)
 
 
 def test_send_not_generator():
@@ -2052,11 +2135,16 @@ def test_send_not_generator():
     Path("t.py").write_text(t)
 
     stdout = rt_run('t.py', capture=True)
-    assert "[10.0, 10]" in stdout
+    assert stdout is not None and "[10.0, 10]" in stdout
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def send(self: Self, x: int) -> float:" in output
-    assert "def asend(self: Self, x: float) -> int:" in output
+    assert get_function(code, 'C.send') == textwrap.dedent("""\
+        def send(self: Self, x: int) -> float: ...
+    """)
+    assert get_function(code, 'C.asend') == textwrap.dedent("""\
+        def asend(self: Self, x: float) -> int: ...
+    """)
 
 
 def test_send_bound():
@@ -2082,12 +2170,17 @@ def test_send_bound():
     Path("t.py").write_text(t)
 
     stdout = rt_run('t.py', capture=True)
-    assert '[10.0, 15.0]' in stdout
+    assert stdout is not None and '[10.0, 15.0]' in stdout
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> Generator[float, int, None]:" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        def gen() -> Generator[float, int, None]: ...
+    """)
     # TODO the Callable here is our wrapper for the 'g.send' method... can we do better?
-    assert "def f(s: Callable) -> list[float]" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(s: Callable) -> list[float]: ...
+    """)
 
 
 def test_generator_exit_exception():
@@ -2109,7 +2202,11 @@ def test_generator_exit_exception():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f() -> Generator[int, int, None]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f() -> Generator[int, int, None]: ...
+    """)
 
 
 @pytest.mark.parametrize("ignore", [(), ('--ignore-annotations',)])
@@ -2271,7 +2368,11 @@ def test_module_type():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def foo(m: \"types.ModuleType\") -> None:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(m: "types.ModuleType") -> None: ...
+    """)
     assert "import types" in output
 
 
@@ -2297,8 +2398,13 @@ def test_function_type():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def bar(f: Callable[[int], float], g: "Callable[[C, int], float]", x: int) -> float:' in output
-    assert 'def baz(h: Callable[[int], float], x: int) -> float:' in output # bound method
+    code = cst.parse_module(output)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[[int], float], g: "Callable[[C, int], float]", x: int) -> float: ...
+    """)
+    assert get_function(code, 'baz') == textwrap.dedent("""\
+        def baz(h: Callable[[int], float], x: int) -> float: ...
+    """)  # bound method
 
 
 def test_function_type_future_annotations():
@@ -2325,8 +2431,14 @@ def test_function_type_future_annotations():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def bar(f: Callable[[int], float], g: Callable[[C, int], int], x: int) -> float:" in output
-    assert 'def baz(h: Callable[[int], int], x: int) -> int:' in output # bound method
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[[int], float], g: Callable[[C, int], int], x: int) -> float: ...
+    """)
+    assert get_function(code, 'baz') == textwrap.dedent("""\
+        def baz(h: Callable[[int], int], x: int) -> int: ...
+    """)
 
 
 # TODO this leads to an error: FunctionType IS-A Callable, so typing baz's g as
@@ -2374,8 +2486,13 @@ def test_callable_varargs():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(*args: int) -> float:' in output
-    assert 'def bar(f: Callable[..., float]) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(*args: int) -> float: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[..., float]) -> None: ...
+    """)
     # or VarArg(int) from mypy_extensions
 
 
@@ -2393,8 +2510,13 @@ def test_callable_kwargs():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(**kwargs: int) -> float:' in output
-    assert 'def bar(f: Callable[..., float]) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(**kwargs: int) -> float: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[..., float]) -> None: ...
+    """)
     # or KwArg(int) from mypy_extensions, or Unpack + TypedDict
 
 
@@ -2413,8 +2535,13 @@ def test_callable_defaults():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: int, y: int, z: int=10) -> int:' in output
-    assert 'def bar(f: Callable[..., int]) -> int:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int, y: int, z: int=10) -> int: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[..., int]) -> int: ...
+    """)
 
 
 def test_callable_with_self():
@@ -2432,8 +2559,13 @@ def test_callable_with_self():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def f(self: Self) -> None:' in output
-    assert 'def g(f: Callable[[C], None]) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self) -> None: ...
+    """)
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(f: Callable[[C], None]) -> None: ...
+    """)
 
 
 def test_discovered_function_type_in_args():
@@ -2450,8 +2582,14 @@ def test_discovered_function_type_in_args():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def foo(x: int) -> float:" in output
-    assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int) -> float: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[[int], float], x: int) -> float: ...
+    """)
 
 
 def test_discovered_function_type_in_return():
@@ -2468,8 +2606,14 @@ def test_discovered_function_type_in_return():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def foo(x: int) -> float:" in output
-    assert "def bar(f: Callable[[int], float]) -> Callable[[int], float]:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int) -> float: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[[int], float]) -> Callable[[int], float]: ...
+    """)
 
 
 def test_discovered_function_type_in_yield():
@@ -2486,8 +2630,14 @@ def test_discovered_function_type_in_yield():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def foo(x: int) -> float:" in output
-    assert "def bar() -> Iterator[Callable[[int], float]]:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int) -> float: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar() -> Iterator[Callable[[int], float]]: ...
+    """)
 
 
 @pytest.mark.parametrize('ignore_ann', [False, True])
@@ -2505,11 +2655,16 @@ def test_discovered_function_annotated(ignore_ann):
 
     rt_run(*(('--ignore-annotations',) if ignore_ann else()), 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     if ignore_ann:
-        assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
+        assert get_function(code, 'bar') == textwrap.dedent("""\
+            def bar(f: Callable[[int], float], x: int) -> float: ...
+        """)
     else:
-        assert "def bar(f: Callable[[float|int], float], x: int) -> float:" in output
+        assert get_function(code, 'bar') == textwrap.dedent("""\
+            def bar(f: Callable[[float|int], float], x: int) -> float: ...
+        """)
 
 
 def test_discovered_generator():
@@ -2527,7 +2682,11 @@ def test_discovered_generator():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: Iterator[int]) -> None:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: Iterator[int]) -> None: ...
+    """)
 
 
 def test_discovered_genexpr():
@@ -2542,7 +2701,11 @@ def test_discovered_genexpr():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: Iterator[int]) -> None:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: Iterator[int]) -> None: ...
+    """)
 
 
 def test_discovered_genexpr_two_in_same_line():
@@ -2562,8 +2725,14 @@ def test_discovered_genexpr_two_in_same_line():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: Iterator[int]) -> int:" in output
-    assert "def g(x: Iterator[str]) -> int:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: Iterator[int]) -> int: ...
+    """)
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(x: Iterator[str]) -> int: ...
+    """)
 
 
 def test_module_list_not_lost_with_multiprocessing():
@@ -2578,7 +2747,10 @@ def test_module_list_not_lost_with_multiprocessing():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(t: "xml.dom.minidom.Element") -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(t: "xml.dom.minidom.Element") -> None: ...
+    """)
 
     assert 'import xml.dom.minidom\n' in output
 
@@ -2594,7 +2766,10 @@ def test_posonly_and_kwonly():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: int, /, *, y: float) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int, /, *, y: float) -> None: ...
+    """)
 
 
 def test_varargs():
@@ -2608,7 +2783,10 @@ def test_varargs():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: bool, *args: float|int|str) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: bool, *args: float|int|str) -> None: ...
+    """)
 
 
 def test_varargs_empty():
@@ -2622,7 +2800,10 @@ def test_varargs_empty():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: bool, *args: None) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: bool, *args: None) -> None: ...
+    """)
 
 
 def test_varargs_json():
@@ -2655,7 +2836,10 @@ def test_kwargs():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: bool, **kwargs: float|int|str) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: bool, **kwargs: float|int|str) -> None: ...
+    """)
 
 
 def test_kwargs_empty():
@@ -2669,7 +2853,10 @@ def test_kwargs_empty():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: bool, **kwargs: None) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: bool, **kwargs: None) -> None: ...
+    """)
 
 
 def test_kwargs_json():
@@ -2702,7 +2889,10 @@ def test_none_arg():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: None) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: None) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.10", "3.11"])
@@ -2784,7 +2974,11 @@ def test_cached_function():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: int|None=None) -> float:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @functools.cache
+        def foo(x: int|None=None) -> float: ...
+    """)
 
 
 def test_self_with_cached_method():
@@ -2801,7 +2995,11 @@ def test_self_with_cached_method():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(self: Self, x: int) -> Self:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'C.foo') == textwrap.dedent("""\
+        @functools.cache
+        def foo(self: Self, x: int) -> Self: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.10", "3.11"])
@@ -2970,9 +3168,11 @@ def test_union_superclass(as_module):
 
     rt_run(*(('-m', 't') if as_module else ('t.py',)))
     output = Path("t.py").read_text()
-    print(output)
+    code = cst.parse_module(output)
 
-    assert "def foo(x: A) -> None:" in output
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: A) -> None: ...
+    """)
 
 
 def test_sampling_overlaps():
@@ -2998,8 +3198,11 @@ def test_sampling_overlaps():
 
     rt_run('--sampling', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen(more: bool) -> Iterator[int]:" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        def gen(more: bool) -> Iterator[int]: ...
+    """)
 
 
 def test_no_return():
@@ -3018,8 +3221,11 @@ def test_no_return():
 
     rt_run('--sampling', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> Iterator[int]:" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        def gen() -> Iterator[int]: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.9", "3.11", "3.12"])
@@ -3036,13 +3242,18 @@ def test_generic_simple(python_version):
 
     rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     if python_version != "3.12":
         assert re.search('from typing import.*TypeVar', output)
         assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
-        assert "def add(a: rt_T1, b: rt_T1) -> rt_T1" in output
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add(a: rt_T1, b: rt_T1) -> rt_T1: ...
+        """)
     else:
-        assert "def add[T1: (int, str)](a: T1, b: T1) -> T1" in output
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add[T1: (int, str)](a: T1, b: T1) -> T1: ...
+        """)
 
 
 def test_generic_name_conflict():
@@ -3062,9 +3273,12 @@ def test_generic_name_conflict():
 
     rt_run('--python-version=3.11', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     assert 'rt_T3 = TypeVar("rt_T3", int, str)' in output
-    assert "def add(a: rt_T3, b: rt_T3) -> rt_T3" in output
+    assert get_function(code, 'add') == textwrap.dedent("""\
+        def add(a: rt_T3, b: rt_T3) -> rt_T3: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.11", "3.12"])
@@ -3084,12 +3298,17 @@ def test_generic_yield(python_version):
 
     rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     if python_version == '3.11':
         assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
-        assert "def y(a: rt_T1) -> Iterator[rt_T1]" in output
+        assert get_function(code, 'y') == textwrap.dedent("""\
+            def y(a: rt_T1) -> Iterator[rt_T1]: ...
+        """)
     else:
-        assert "def y[T1: (int, str)](a: T1) -> Iterator[T1]" in output
+        assert get_function(code, 'y') == textwrap.dedent("""\
+            def y[T1: (int, str)](a: T1) -> Iterator[T1]: ...
+        """)
 
 
 @pytest.mark.parametrize("python_version", ["3.11", "3.12"])
@@ -3110,14 +3329,19 @@ def test_generic_yield_generator(python_version):
 
     rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     if python_version == '3.11':
         assert re.search('from typing import.*TypeVar', output)
         assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
         assert 'rt_T2 = TypeVar("rt_T2", int, str)' in output
-        assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, None, rt_T2]" in output
+        assert get_function(code, 'y') == textwrap.dedent("""\
+            def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, None, rt_T2]: ...
+        """)
     else:
-        assert "def y[T1: (int, str), T2: (int, str)](a: T1, b: T2) -> Generator[T1, None, T2]" in output
+        assert get_function(code, 'y') == textwrap.dedent("""\
+            def y[T1: (int, str), T2: (int, str)](a: T1, b: T2) -> Generator[T1, None, T2]: ...
+        """)
 
 
 def test_generic_typevar_location():
@@ -3157,9 +3381,12 @@ def test_generic_and_defaults():
 
     rt_run('--python-version=3.12', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     assert not re.search('from typing import.*TypeVar', output)
-    assert "def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None: ...
+    """)
 
 
 def test_inline_generics_no_variables():
@@ -3175,7 +3402,11 @@ def test_inline_generics_no_variables():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: list[int|str]) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: list[int|str]) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize('superclass', [
@@ -3197,7 +3428,11 @@ def test_custom_collection_typing(superclass):
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
-    assert "def foo(x: MyContainer) -> None:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: MyContainer) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize('init, expected', [
@@ -3225,7 +3460,8 @@ def test_collection_typing(init, expected):
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
-    assert f"def foo(x: {expected}) -> None:" in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == f"def foo(x: {expected}) -> None: ...\n"
 
 
 @pytest.mark.parametrize('pattern, matching, notmatching, expected', [
@@ -3246,7 +3482,8 @@ def test_pattern_match(pattern, matching, notmatching, expected):
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert f"def foo(p: re.Pattern[{expected}], data: {expected}) -> re.Match[{expected}]|None:" in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == f"def foo(p: re.Pattern[{expected}], data: {expected}) -> re.Match[{expected}]|None: ...\n"
 
 
 def test_namedtuple():
@@ -3298,8 +3535,11 @@ def test_class_properties():
     rt_run('-m', 't')
     output = Path("t.py").read_text()
     print(output)
+    code = cst.parse_module(output)
 
-    assert "def __init__(self: Self) -> None:" in output
+    assert get_function(code, 'C.__init__') == textwrap.dedent("""\
+        def __init__(self: Self) -> None: ...
+    """)
 
     # TODO parse functions out so that the annotation is included
     assert "def x(self: Self) -> str:" in output                # getter
@@ -3336,8 +3576,11 @@ def test_class_properties_private():
     rt_run('-m', 't')
     output = Path("t.py").read_text()
     print(output)
+    code = cst.parse_module(output)
 
-    assert "def __init__(self: Self) -> None:" in output
+    assert get_function(code, 'C.__init__') == textwrap.dedent("""\
+        def __init__(self: Self) -> None: ...
+    """)
 
     # TODO parse functions out so that the annotation is included
     assert "def __x(self: Self) -> str:" in output                # getter
@@ -3367,8 +3610,11 @@ def test_class_properties_no_setter():
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def __init__(self: Self) -> None:" in output
+    assert get_function(code, 'C.__init__') == textwrap.dedent("""\
+        def __init__(self: Self) -> None: ...
+    """)
 
     # TODO parse functions out so that the annotation is included
     assert "def x(self: Self) -> str:" in output                # getter
@@ -3404,8 +3650,11 @@ def test_class_properties_inner_functions():
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def __init__(self: Self) -> None:" in output
+    assert get_function(code, 'C.__init__') == textwrap.dedent("""\
+        def __init__(self: Self) -> None: ...
+    """)
 
     # TODO parse functions out so that the annotation is included
     assert "def foo() -> str:" in output            # getter's
@@ -3446,8 +3695,11 @@ def test_class_properties_inherited():
     rt_run('-m', 't')
     output = Path("t.py").read_text()
     print(output)
+    code = cst.parse_module(output)
 
-    assert "def __init__(self: Self) -> None:" in output
+    assert get_function(code, 'C.__init__') == textwrap.dedent("""\
+        def __init__(self: Self) -> None: ...
+    """)
 
     # TODO parse functions out so that the annotation is included
     assert "def x(self: Self) -> str:" in output                # getter
@@ -3549,8 +3801,14 @@ def test_self_bound_method():
     rt_run('t.py')
 
     output = Path("t.py").read_text()
-    assert 'def f(self: Self) -> None:' in output
-    assert 'def g(cls: type[Self]) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self) -> None: ...
+    """)
+    assert get_function(code, 'C.g') == textwrap.dedent("""\
+        @classmethod
+        def g(cls: type[Self]) -> None: ...
+    """)
 
 
 def test_self_inherited_method():
@@ -3707,9 +3965,11 @@ def test_self_yield_generator():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    print(output)
-    assert "def foo(self: Self) -> Generator[Self, None, Self]" in output
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self) -> Generator[Self, None, Self]: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.10", "3.11"])
@@ -3848,9 +4108,12 @@ def test_returns_or_yields_generator():
     Path("t.py").write_text(t)
 
     rt_run('t.py')
-
     output = Path("t.py").read_text()
-    assert "def test(a: int) -> Generator[int|None, None, str|None]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'test') == textwrap.dedent("""\
+        def test(a: int) -> Generator[int|None, None, str|None]: ...
+    """)
 
 
 def test_generators_merge_into_iterator():
@@ -3868,9 +4131,12 @@ def test_generators_merge_into_iterator():
     Path("t.py").write_text(t)
 
     rt_run('t.py')
-
     output = Path("t.py").read_text()
-    assert "def test(a: int) -> Iterator[int|str]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'test') == textwrap.dedent("""\
+        def test(a: int) -> Iterator[int|str]: ...
+    """)
 
 
 @pytest.mark.parametrize('replace_dict', [False, True])
@@ -3890,7 +4156,11 @@ def test_random_dict(replace_dict):
 
     rt_run(*(('--replace-dict',) if replace_dict else ('--no-replace-dict',)), 't.py')
     output = Path("t.py").read_text()
-    assert "def f(x: dict[str, dict[str, int]]) -> int" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: dict[str, dict[str, int]]) -> int: ...
+    """)
 
 
 @pytest.mark.skip(reason="Support temporarily removed")
@@ -3911,7 +4181,11 @@ def test_instrument_pytest():
 
     rt_run('--no-exclude-test-files', '-m' 'pytest', 't.py')
     output = Path("t.py").read_text()
-    assert "def f() -> Generator[int, int, None]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f() -> Generator[int, int, None]: ...
+    """)
 
 
 @pytest.mark.dont_run_mypy  # mypy fails, but it's not quite clear why
@@ -3932,8 +4206,14 @@ def test_higher_order_functions():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def foo[T1: (int, str)](x: T1) -> T1" in output
-    assert "def runner[T1: (int, str)](f: Callable[[T1], T1]) -> Callable[[T1], T1]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo[T1: (int, str)](x: T1) -> T1: ...
+    """)
+    assert get_function(code, 'runner') == textwrap.dedent("""\
+        def runner[T1: (int, str)](f: Callable[[T1], T1]) -> Callable[[T1], T1]: ...
+    """)
 
 
 def test_generalize_union_arg_typevar():
@@ -3949,7 +4229,11 @@ def test_generalize_union_arg_typevar():
 
     rt_run('--python-version=3.12', 't.py')
     output = Path("t.py").read_text()
-    assert "def f[T1: (int, str)](x: list[T1]) -> T1" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f[T1: (int, str)](x: list[T1]) -> T1: ...
+    """)
 
 
 def test_generalize_union_arg_not_typevar():
@@ -3965,7 +4249,11 @@ def test_generalize_union_arg_not_typevar():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: list[int|str]) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: list[int|str]) -> None: ...
+    """)
 
 
 def test_generalize_union_return_typevar():
@@ -3981,7 +4269,11 @@ def test_generalize_union_return_typevar():
 
     rt_run('--python-version=3.12', 't.py')
     output = Path("t.py").read_text()
-    assert "def f[T1: (int, str)](x: T1) -> list[T1]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f[T1: (int, str)](x: T1) -> list[T1]: ...
+    """)
 
 
 def test_generalize_union_return_not_typevar():
@@ -3997,10 +4289,14 @@ def test_generalize_union_return_not_typevar():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: bool) -> list[int|str]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: bool) -> list[int|str]: ...
+    """)
 
 
-@pytest.mark.dont_run_mypy # unnecessary 
+@pytest.mark.dont_run_mypy # unnecessary
 def test_object_overridden_getattr():
     # Sometimes dynamic attribute lookups have side effects or, as in the case of
     # tqdm and rich tests, lead to infinite recursions as their __getattr__ call getattr()
@@ -4021,10 +4317,14 @@ def test_object_overridden_getattr():
     rt_run('t.py')
     # mostly we are checking that it doesn't fail (raises fatal exception)
     output = Path("t.py").read_text()
-    assert "def f(t: Thing) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(t: Thing) -> None: ...
+    """)
 
 
-@pytest.mark.dont_run_mypy # unnecessary 
+@pytest.mark.dont_run_mypy # unnecessary
 def test_object_with_empty_dir():
     # Derived from 'rich' test case "Issue #1838 - Edge case with Faiss library - object with empty dir()"
     # This leads to an AttributeError if we do any isinstance(obj, X) where X is from collections.abc
@@ -4048,7 +4348,11 @@ def test_object_with_empty_dir():
     rt_run('t.py')
     # mostly we are checking that it doesn't fail (raises fatal exception)
     output = Path("t.py").read_text()
-    assert "def f(self: Self) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'Thing.f') == textwrap.dedent("""\
+        def f(self: Self) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.10", "3.11"])
@@ -4120,7 +4424,11 @@ def test_container_is_modified():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: list[int]) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: list[int]) -> None: ...
+    """)
 
 
 def test_argument_variable_deleted():
@@ -4491,7 +4799,7 @@ def test_numeric_subtypes(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             print(x)
-        
+
         foo(1)
         foo(0.5)
         """
@@ -4499,8 +4807,11 @@ def test_numeric_subtypes(tmp_cwd):
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def foo(x: float) -> None:" in output
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: float) -> None: ...
+    """)
 
 
 def test_numeric_hierarchy(tmp_cwd):
@@ -4513,7 +4824,7 @@ def test_numeric_hierarchy(tmp_cwd):
 
         def foo(x):
             print(x)
-        
+
         foo(A())
         foo(B())
 
@@ -4525,8 +4836,11 @@ def test_numeric_hierarchy(tmp_cwd):
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def foo(x: float) -> None:" in output
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: float) -> None: ...
+    """)
 
     
 def test_enum_class():
