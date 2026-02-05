@@ -263,27 +263,23 @@ class ObservationsRecorder:
         # Register the wrapped function's module
         self._register_module(wrapped_code.co_filename, getattr(wrapped, '__module__', None))
 
-        # Build arg info for the wrapped function
-        wrapped_args = inspect.getargs(wrapped_code)
-        wrapped_arg_info = inspect.ArgInfo(
-            wrapped_args.args, wrapped_args.varargs, wrapped_args.varkw, {}
-        )
-
-        # Get actual positional and keyword args from the wrapper's frame
+        # Extract actual positional and keyword args from the wrapper's frame
         f_locals = frame.f_locals
+
+        # Determine if the wrapper is a method by checking if its code object
+        # is defined in the first argument's type hierarchy.
+        skip_first = (
+            arg_info.args
+            and arg_info.args[0] in f_locals
+            and is_method_of(code, f_locals[arg_info.args[0]])
+        )
+        wrapper_args = arg_info.args[1:] if skip_first else arg_info.args
+
         if arg_info.varargs and arg_info.varargs in f_locals:
             actual_positional = tuple(f_locals[arg_info.varargs])
         else:
-            # Determine if the wrapper is a method by checking if its code object
-            # is defined in the first argument's type hierarchy.
-            skip_first = (
-                arg_info.args
-                and arg_info.args[0] in f_locals
-                and is_method_of(code, f_locals[arg_info.args[0]])
-            )
-            args_to_use = arg_info.args[1:] if skip_first else arg_info.args
             actual_positional = tuple(
-                f_locals[a] for a in args_to_use if a in f_locals
+                f_locals[a] for a in wrapper_args if a in f_locals
             )
 
         if arg_info.keywords and arg_info.keywords in f_locals:
@@ -293,40 +289,21 @@ class ObservationsRecorder:
 
         # Capture keyword-only wrapper args (in f_locals but not in *args or **kwargs)
         if arg_info.varargs:
-            for name in arg_info.args:
+            for name in wrapper_args:
                 if name not in actual_keywords and name in f_locals:
                     actual_keywords[name] = f_locals[name]
 
-        # Get default values for the wrapped function's parameters
-        default_values: dict[str, Any] = {}
-        if defs := getattr(wrapped, '__defaults__', None):
-            n = len(defs)
-            for i, val in enumerate(defs):
-                default_values[wrapped_args.args[len(wrapped_args.args) - n + i]] = val
-        if kwdefs := getattr(wrapped, '__kwdefaults__', None):
-            default_values.update(kwdefs)
+        # Map wrapper args to the wrapped function's parameters
+        try:
+            bound = inspect.signature(wrapped).bind_partial(*actual_positional, **actual_keywords)
+            bound.apply_defaults()
+            synthetic_locals = dict(bound.arguments)
+        except (TypeError, ValueError) as e:
+            logger.debug(f"wrapped function {wrapped_code.co_qualname}: "
+                         f"failed to bind args: {e}")
+            return
 
-        # Map to the wrapped function's parameters
-        synthetic_locals: dict[str, Any] = {}
-        for i, param in enumerate(wrapped_args.args):
-            if i < len(actual_positional):
-                synthetic_locals[param] = actual_positional[i]
-            elif param in actual_keywords:
-                synthetic_locals[param] = actual_keywords.pop(param)
-            elif param in default_values:
-                synthetic_locals[param] = default_values[param]
-            else:
-                logger.debug(f"wrapped function {wrapped_code.co_qualname}: "
-                             f"no value for parameter '{param}'")
-
-        if wrapped_args.varargs:
-            synthetic_locals[wrapped_args.varargs] = actual_positional[len(wrapped_args.args):]
-
-        if wrapped_args.varkw:
-            used = set(wrapped_args.args)
-            synthetic_locals[wrapped_args.varkw] = {
-                k: v for k, v in actual_keywords.items() if k not in used
-            }
+        wrapped_args = inspect.getargs(wrapped_code)
 
         synthetic_arg_info = inspect.ArgInfo(
             wrapped_args.args, wrapped_args.varargs, wrapped_args.varkw,
@@ -336,7 +313,7 @@ class ObservationsRecorder:
         self_type, self_replacement, overrides = get_self_type(wrapped_code, synthetic_arg_info)
 
         # Register the wrapped function if not already known
-        self._register_function(wrapped_code, wrapped, wrapped_arg_info, overrides)
+        self._register_function(wrapped_code, wrapped, synthetic_arg_info, overrides)
 
         pending = PendingCallTrace(synthetic_arg_info, wrapped_code.co_flags, self_type, self_replacement)
         self._pending_wrapped_traces[wrapped_code][id(frame)] = pending
