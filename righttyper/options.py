@@ -24,6 +24,7 @@ class OutputOptions:
     use_top_pct: int = 100
     simplify_types: bool = True
     exclude_test_types: bool = True
+    detect_test_modules_by_name: bool = False
     always_quote_annotations: bool = False
 
 

@@ -651,6 +651,12 @@ def add_output_options(group=None):
                 help="""Whether to exclude or replace with "typing.Any" types defined in test modules."""
             ),
             base.option(
+                "--detect-test-modules-by-name/--no-detect-test-modules-by-name",
+                is_flag=True,
+                default=output_options.detect_test_modules_by_name,
+                help="""Heuristically detect test modules by naming convention (test_, _test, .tests.)."""
+            ),
+            base.option(
                 "--always-quote-annotations/--no-always-quote-annotations",
                 is_flag=True,
                 default=output_options.always_quote_annotations,

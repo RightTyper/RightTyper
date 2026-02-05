@@ -66,3 +66,41 @@ def test_exclude_test_types_partial_name_no_match():
     tr = ExcludeTestTypesT({'pytest'})
     t = tr.visit(TypeInfo('pytestfoo', 'Bar'))  # not pytest.foo
     assert t.module == 'pytestfoo'
+
+
+# --- heuristic test module detection (detect_by_name=True) ---
+
+def test_heuristic_test_prefix():
+    """Module starting with test_ should be detected."""
+    tr = ExcludeTestTypesT(set(), detect_by_name=True)
+    assert tr.visit(TypeInfo('test_foo', 'Bar')) == AnyTypeInfo
+    assert tr.visit(TypeInfo('test_foo.helpers', 'Baz')) == AnyTypeInfo
+
+def test_heuristic_test_component():
+    """Module with .test. or .tests. component should be detected."""
+    tr = ExcludeTestTypesT(set(), detect_by_name=True)
+    assert tr.visit(TypeInfo('myapp.test.fixtures', 'F')) == AnyTypeInfo
+    assert tr.visit(TypeInfo('myapp.tests.helpers', 'H')) == AnyTypeInfo
+
+def test_heuristic_test_suffix():
+    """Module ending with _test should be detected."""
+    tr = ExcludeTestTypesT(set(), detect_by_name=True)
+    assert tr.visit(TypeInfo('myapp.foo_test', 'Bar')) == AnyTypeInfo
+
+def test_heuristic_no_false_positive():
+    """Regular modules should not be matched by heuristic."""
+    tr = ExcludeTestTypesT(set(), detect_by_name=True)
+    t = tr.visit(TypeInfo('myapp.models', 'User'))
+    assert t.module == 'myapp.models'
+    # 'contest' contains 'test' but isn't a test module
+    t = tr.visit(TypeInfo('contest.main', 'Entry'))
+    assert t.module == 'contest.main'
+    # 'attest' ends with 'test' but isn't a component boundary
+    t = tr.visit(TypeInfo('attest', 'Verifier'))
+    assert t.module == 'attest'
+
+def test_heuristic_disabled_by_default():
+    """Without detect_by_name, heuristic patterns should not match."""
+    tr = ExcludeTestTypesT(set())
+    t = tr.visit(TypeInfo('test_foo', 'Bar'))
+    assert t.module == 'test_foo'

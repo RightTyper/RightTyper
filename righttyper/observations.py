@@ -364,7 +364,10 @@ class Observations:
             self.transform_types(SelfT())
 
         if output_options.exclude_test_types:
-            self.transform_types(ExcludeTestTypesT(self.test_modules))
+            self.transform_types(ExcludeTestTypesT(
+                self.test_modules,
+                detect_by_name=output_options.detect_test_modules_by_name
+            ))
 
 
         finalizers: list[TypeInfo.Transformer] = []

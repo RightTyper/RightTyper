@@ -1,3 +1,4 @@
+import re
 import typing
 import types
 import collections.abc as abc
@@ -40,16 +41,35 @@ class NoReturnToNeverT(TypeInfo.Transformer):
 class ExcludeTestTypesT(TypeInfo.Transformer):
     """Removes types from test modules."""
 
-    def __init__(self, test_modules: set[str]) -> None:
+    # Detects test modules by naming convention:
+    #   test_foo, foo.test.bar, foo.tests.bar, foo_test
+    _TEST_NAME_PATTERN = re.compile(
+        r'(?:^|\.)'          # start or after a dot
+        r'(?:'
+        r'test_'             # test_ prefix (e.g., test_foo)
+        r'|tests?(?:\.|$)'   # test or tests as a component
+        r'|[^.]+_test'       # _test suffix (e.g., foo_test)
+        r')'
+    )
+
+    def __init__(self, test_modules: set[str], *, detect_by_name: bool = False) -> None:
         self._test_modules = test_modules
+        self._detect_by_name = detect_by_name
 
     def _is_test_module(self, module: str) -> bool:
-        while module:
-            if module in self._test_modules:
+        # Check explicit test modules (including submodules)
+        m = module
+        while m:
+            if m in self._test_modules:
                 return True
-            if '.' not in module:
+            if '.' not in m:
                 break
-            module = module.rsplit('.', 1)[0]
+            m = m.rsplit('.', 1)[0]
+
+        # Heuristic: detect test modules by naming convention
+        if self._detect_by_name and self._TEST_NAME_PATTERN.search(module):
+            return True
+
         return False
 
     def visit(self, node: TypeInfo) -> TypeInfo:
