@@ -1,6 +1,18 @@
 from dataclasses import dataclass
-from typing import NewType
-import types
+from typing import Any, NewType, Protocol, TypeGuard
+from types import CodeType
+
+
+class CallableWithCode(Protocol):
+    """A callable that has a __code__ attribute."""
+    @property
+    def __code__(self) -> CodeType: ...
+    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
+
+
+def has_code(obj: object) -> TypeGuard[CallableWithCode]:
+    """TypeGuard that narrows to CallableWithCode."""
+    return hasattr(obj, '__code__')
 
 
 Filename = NewType("Filename", str)
@@ -19,7 +31,7 @@ class CodeId:
 
 
     @staticmethod
-    def from_code(code: types.CodeType) -> "CodeId":
+    def from_code(code: CodeType) -> "CodeId":
         return CodeId(
             Filename(code.co_filename),
             FunctionName(code.co_qualname),

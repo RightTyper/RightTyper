@@ -1,6 +1,7 @@
 import os
 import sys
 import fnmatch
+import collections.abc as abc
 
 from functools import cache
 from pathlib import Path
@@ -8,6 +9,21 @@ from types import CodeType
 
 from righttyper.logger import logger
 from righttyper.options import run_options
+
+
+def unwrap(method: abc.Callable|None) -> abc.Callable|None:
+    """Follows a chain of `__wrapped__` attributes to find the original function."""
+
+    # Remember objects by id to work around unhashable items, but point to object so
+    # that the object can't go away (possibly reusing the id)
+    visited = {}
+    while hasattr(method, "__wrapped__"):
+        if id(method) in visited: return None
+        visited[id(method)] = method
+
+        method = getattr(method, "__wrapped__")
+
+    return method
 
 
 _SAMPLING_INTERVAL = 0.01
@@ -48,13 +64,15 @@ def set_test_files_and_modules(files: set[str], modules: set[str]) -> None:
 
 @cache
 def is_test_module(m: str) -> bool:
-    return bool(
-        m in detected_test_modules
-        or (
-            (opt_test_modules := run_options.test_modules_re)
-            and opt_test_modules.match(m)
-        )
-    )
+    if m in detected_test_modules:
+        return True
+    while m:
+        if m in run_options.test_modules:
+            return True
+        if '.' not in m:
+            break
+        m = m.rsplit('.', 1)[0]
+    return False
 
 
 def skip_this_code(code: CodeType) -> bool:

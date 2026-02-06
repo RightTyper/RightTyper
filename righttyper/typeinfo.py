@@ -21,8 +21,10 @@ class TypeInfo:
     name: str
     args: tuple[TypeInfoArg, ...] = tuple()    # arguments within []
 
-    # These fields are included for convenience, but don't affect what type is meant
-    code_id: CodeId | None = field(default=None, compare=False) # if a callable, generator or coroutine, the CodeId
+    # code_id participates in comparison so that Callable types with different code_ids
+    # are stored as separate traces, enabling proper union formation after resolution.
+    # ResolvingT clears code_id after filling in the actual types.
+    code_id: CodeId | None = field(default=None) # if a callable, generator or coroutine, the CodeId
     is_bound: bool = field(default=False, compare=False)        # if a callable, whether bound
     type_obj: type|SpecialForms|None = field(default=None, compare=False)
     is_unknown: bool = field(default=False, compare=False)  # for UnknownTypeInfo; indicates we don't know the type.
@@ -120,6 +122,25 @@ class TypeInfo:
         not_never = {t for t in s if t.type_obj not in (typing.Never, typing.NoReturn)}
         if not_never:
             s = not_never
+
+        # Remove "Never generics" (e.g., dict[Never, Never]) when a non-Never version
+        # of the same container also exists (e.g., dict[str, str]).
+        # We exclude immutable containers since an empty one cannot become non-empty.
+        import collections.abc as abc
+        never_generics = {
+            t for t in s
+            if t.args
+            and t.type_obj not in (tuple, abc.Sequence, abc.Set, abc.Mapping)
+            and isinstance(t.args[0], TypeInfo)
+            and t.args[0].type_obj is typing.Never
+        }
+        if never_generics:
+            # Keep Never generic only if no non-Never version of that container exists
+            s -= never_generics
+            s |= {
+                t for t in never_generics
+                if not any(t2.type_obj is t.type_obj for t2 in s)
+            }
 
         if len(s) == 1:
             return next(iter(s))

@@ -150,6 +150,9 @@ class Observations:
         # Set of test modules
         self.test_modules: set[str] = set()
 
+        # CodeIds of wrapper functions (with __wrapped__) — skip annotation
+        self.wrapper_code_ids: set[CodeId] = set()
+
 
     def transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
@@ -167,12 +170,34 @@ class Observations:
 
         for func_id, func_info2 in obs2.func_info.items():
             if (func_info := self.func_info.get(func_id)):
-                for attr in ('args', 'varargs', 'kwargs', 'overrides'):
+                for attr in ('varargs', 'kwargs', 'overrides'):
                     if getattr(func_info, attr) != getattr(func_info2, attr):
-                        raise ValueError("Incompatible {attr} for {func_id.func_name}:\n" +\
-                                        f"    {getattr(func_info, attr)}\n" +\
-                                        f"    {getattr(func_info2, attr)}"
+                        raise ValueError(f"Incompatible {attr} for {func_id.func_name}:\n" +\
+                                         f"    {getattr(func_info, attr)}\n" +\
+                                         f"    {getattr(func_info2, attr)}"
                         )
+
+                # Merge args, unioning default types if they differ
+                args1, args2 = func_info.args, func_info2.args
+                if len(args1) != len(args2):
+                    raise ValueError(f"Incompatible args length for {func_id.func_name}:\n" +\
+                                     f"    {args1}\n" +\
+                                     f"    {args2}"
+                    )
+                for a1, a2 in zip(args1, args2):
+                    if a1.arg_name != a2.arg_name:
+                        raise ValueError(f"Incompatible arg names for {func_id.func_name}:\n" +\
+                                         f"    {a1.arg_name}\n" +\
+                                         f"    {a2.arg_name}"
+                        )
+                if args1 != args2:
+                    func_info.args = tuple(
+                        ArgInfo(
+                            a1.arg_name,
+                            TypeInfo.from_set({d for d in (a1.default, a2.default) if d is not None}, empty_is_none=True)
+                        )
+                        for a1, a2 in zip(args1, args2)
+                    )
 
                 func_info.traces.update(func_info2.traces)
 
@@ -190,6 +215,7 @@ class Observations:
 
         self.source_to_module_name |= obs2.source_to_module_name
         self.test_modules |= obs2.test_modules
+        self.wrapper_code_ids |= obs2.wrapper_code_ids
 
 
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars]]:
@@ -223,18 +249,14 @@ class Observations:
                             f"{[tuple(str(t) for t in s) for s in traces]}")
                 return None
 
-            # signature has n argument types + 1 return type, so len(signature) - 1 = number of arg types
-            num_sig_args = len(signature) - 1
-            if num_sig_args < len(func_info.args):
-                logger.info(f"Unable to annotate {func_info.code_id}: signature has {num_sig_args} args, expected {len(func_info.args)}")
-                return None
+            n_sig_args = len(signature) - 1  # last element is the return type
 
             ann = FuncAnnotation(
                 args=[
                     (
                         arg.arg_name,
                         merged_types({
-                            signature[i],
+                            signature[i] if i < n_sig_args else UnknownTypeInfo,
                             *((arg.default,) if arg.default is not None else ()),
                             # by building sets with the parent's types, we prevent arg. type narrowing
                             *((parents_arg_types[i],) if (
@@ -251,7 +273,7 @@ class Observations:
                 varargs=func_info.varargs,
                 kwargs=func_info.kwargs,
                 variables=[
-                    (var_name, merged_types(var_types))
+                    (var_name, merged_types(var_types, for_variable=True))
                     for var_name, var_types in func_info.variables.items()
                 ]
             )
@@ -275,11 +297,11 @@ class Observations:
             return ann
 
         # In the code below, clone (rather than link to) types from Callable, Generator, etc.,
-        # clearing is_self, as these types may be later replaced with typing.Self.
+        # clearing is_self, as it may not apply in the new context.
         def clone(node: TypeInfo) -> TypeInfo:
             class T(TypeInfo.Transformer):
-                """Clones the given TypeInfo tree, clearing all 'is_self' flags,
-                   as the type information may not be equivalent to typing.Self in the new context.
+                """Clones the given TypeInfo tree, clearing 'is_self',
+                   as the type information may not be equivalent in the new context.
                 """
                 def visit(vself, node: TypeInfo) -> TypeInfo:
                     return super().visit(node.replace(is_self=False))
@@ -314,7 +336,9 @@ class Observations:
                                     old if not is_unknown(old := get_old_param(i)) else clone(a[1])
                                     for i, a in enumerate(ann.args[int(node.is_bound):])
                                 ])
-                                if not (func_info.varargs or func_info.kwargs) else
+                                if not (func_info.varargs or func_info.kwargs
+                                       or any(a.default is not None for a in func_info.args))
+                                else
                                 ...,
                                 old_retval if not is_unknown(old_retval) else clone(ann.retval)
                             ))
@@ -339,13 +363,11 @@ class Observations:
         if output_options.use_typing_self:
             self.transform_types(SelfT())
 
-        if not output_options.use_typing_never:
-            self.transform_types(NeverSayNeverT())
-        else:
-            self.transform_types(NoReturnToNeverT())
-
         if output_options.exclude_test_types:
-            self.transform_types(ExcludeTestTypesT(self.test_modules))
+            self.transform_types(ExcludeTestTypesT(
+                self.test_modules,
+                detect_by_name=output_options.detect_test_modules_by_name
+            ))
 
 
         finalizers: list[TypeInfo.Transformer] = []
@@ -371,6 +393,12 @@ class Observations:
         if output_options.simplify_types:
             finalizers.append(GeneratorToIteratorT())
 
+        # Only rename away from typing.Never now so that list[X]|list[Never] can be simplified
+        if not output_options.use_typing_never:
+            finalizers.append(NeverSayNeverT())
+        else:
+            finalizers.append(NoReturnToNeverT())
+
         finalizers.append(MakePickleableT())
 
         annotations = {
@@ -382,12 +410,13 @@ class Observations:
                 variables=[(var[0], finalize(var[1])) for var in annotation.variables]
             )
             for func_info in self.func_info.values()
+            if func_info.code_id not in self.wrapper_code_ids
             if (annotation := mk_annotation(func_info)) is not None
         }
 
         module_vars = {
             filename: ModuleVars([
-                (var_name, finalize(merged_types(var_types)))
+                (var_name, finalize(merged_types(var_types, for_variable=True)))
                 for var_name, var_types in var_dict.items()
             ])
             for filename, var_dict in self.module_variables.items()

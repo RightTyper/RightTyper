@@ -13,4 +13,11 @@ def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config
         if (path := getattr(item, "fspath", None)):
             files.add(path)
 
+    # Auto-detect pytest plugin packages
+    for plugin in config.pluginmanager.get_plugins():
+        if (mod := getattr(plugin, '__module__', None)):
+            top_level = mod.split('.')[0]
+            if top_level not in ('pytest', '_pytest'):
+                modules.add(top_level)
+
     set_test_files_and_modules(files, modules)

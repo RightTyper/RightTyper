@@ -14,8 +14,11 @@ class CodeVars:
     # that code object
     scope_code: types.CodeType | None = None
 
-    # maps name in f_locals to name in scope
-    variables: dict[str, str] = field(default_factory=dict)
+    # prefix for qualified variable names (e.g., "C." for class C, "" for functions)
+    var_prefix: str = ""
+
+    # local variable names: var_name -> initial constant type (or None if not a constant)
+    variables: dict[str, type | None] = field(default_factory=dict)
 
     # qualified name of this code object's class, if it's a method
     class_name: str | None = None
@@ -26,8 +29,14 @@ class CodeVars:
     # name of 'self' for this object, if any
     self: str | None = None
 
-    # the 'self' attributes
-    attributes: set[str]|None = None
+    # name of 'cls' for this object (classmethods), if any
+    cls: str | None = None
+
+    # the 'self' attributes: attr_name -> initial constant type (or None if not a constant)
+    attributes: dict[str, type | None] | None = None
+
+    # class-level attributes (cls.x or class body assignments): attr_name -> initial constant type
+    class_attributes: dict[str, type | None] | None = None
 
 
 """Maps code objects to the variables assigned/bound within each object."""
@@ -86,7 +95,10 @@ def _from_pattern(p: ast.pattern) -> abc.Iterator[str]:
 @dataclass
 class ClassInfo:
     name: str
-    attributes: set[str] = field(default_factory=set)
+    # Instance attributes (self.x): attr_name -> initial constant type (or None if not a constant)
+    attributes: dict[str, type | None] = field(default_factory=dict)
+    # Class-level attributes (cls.x or class body assignments): attr_name -> initial constant type
+    class_attributes: dict[str, type | None] = field(default_factory=dict)
 
 
 class VariableFinder(ast.NodeVisitor):
@@ -112,6 +124,9 @@ class VariableFinder(ast.NodeVisitor):
         # Holds the current name of 'self', or None if none
         self._self_stack: list[str|None] = [None]
 
+        # Holds the current name of 'cls' (for classmethods), or None if none
+        self._cls_stack: list[str|None] = [None]
+
         # Holds the set of names that aren't local variables;
         # currently only includes arguments
         self._not_locals_stack: list[set[str]] = [set()]
@@ -119,7 +134,7 @@ class VariableFinder(ast.NodeVisitor):
         # Resulting map of executing code object to their CodeVars
         self.code_vars: dict[str, CodeVars] = dict()
 
-    def _record_variable(self, name: str) -> None:
+    def _record_variable(self, name: str, value: ast.expr | None = None) -> None:
         if name in self._not_locals_stack[-1]:
             return
 
@@ -127,17 +142,39 @@ class VariableFinder(ast.NodeVisitor):
         codevars = self.code_vars.setdefault(self._code_stack[-1],
             CodeVars('.'.join(scope[:-1]) if scope else '<module>') # -1 to omit "<locals>"
         )
-        codevars.variables[name] = '.'.join(self._qualname_stack[len(scope):] + [name])
 
-    def _record_target(self, t: ast.AST) -> None:
+        # Compute var_prefix once (for class bodies, this is "C." or "C.D.", for functions it's "")
+        if not codevars.var_prefix:
+            prefix_parts = self._qualname_stack[len(scope):]
+            if prefix_parts:
+                codevars.var_prefix = '.'.join(prefix_parts) + "."
+
+        # Only record if this is the first assignment (variable definition)
+        if name not in codevars.variables:
+            const_type = type(value.value) if (value is not None and isinstance(value, ast.Constant)) else None
+            codevars.variables[name] = const_type
+
+    def _record_target(self, t: ast.AST, value: ast.expr | None = None) -> None:
         if isinstance(t, ast.Name):
-            self._record_variable(t.id)
+            self._record_variable(t.id, value)
             if t.id == self._self_stack[-1]:
                 self._self_stack[-1] = None # a new assignment masked 'self'
+            if t.id == self._cls_stack[-1]:
+                self._cls_stack[-1] = None # a new assignment masked 'cls'
         elif (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)):
             if t.value.id == self._self_stack[-1]:
                 class_info = self._class_stack[-1]
-                class_info.attributes.add(t.attr)
+                # Only record first assignment; capture initial constant type if applicable
+                if t.attr not in class_info.attributes:
+                    const_type = type(value.value) if (value is not None and isinstance(value, ast.Constant)) else None
+                    class_info.attributes[t.attr] = const_type
+            # cls.x tracking for classmethods
+            elif self._cls_stack[-1] and t.value.id == self._cls_stack[-1]:
+                class_info = self._class_stack[-1]
+                # Only record first assignment; capture initial constant type if applicable
+                if t.attr not in class_info.class_attributes:
+                    const_type = type(value.value) if (value is not None and isinstance(value, ast.Constant)) else None
+                    class_info.class_attributes[t.attr] = const_type
 
     def _qualname(self) -> str:
         return '.'.join(self._qualname_stack)
@@ -149,12 +186,13 @@ class VariableFinder(ast.NodeVisitor):
             if isinstance(n, ast.Name)
         ]
 
-        is_method = (
+        is_in_class = (
             bool(self._qualname_stack)
             and self._qualname_stack[-1] != '<locals>'
-            and 'staticmethod' not in decorator_names
-            and 'classmethod' not in decorator_names
         )
+        is_staticmethod = 'staticmethod' in decorator_names
+        is_classmethod = 'classmethod' in decorator_names
+        is_method = is_in_class and not is_staticmethod and not is_classmethod
 
         arguments = [
             n.arg
@@ -171,16 +209,37 @@ class VariableFinder(ast.NodeVisitor):
             )
         )
 
+        cls_visible = (
+            bool(self._cls_stack[-1])
+            and not any(
+                # 'cls' masked by an inner function's argument
+                arg == self._cls_stack[-1]
+                for arg in arguments
+            )
+        )
+
         self._qualname_stack.append(node.name)
         self._code_stack.append(self._qualname())
         self._qualname_stack.append('<locals>')
         self._scope_stack.append([*self._qualname_stack])
+
+        # Handle self/cls stack for different method types
         if is_method:
             self._self_stack.append(arguments[0] if arguments else None)
+            self._cls_stack.append(None)
+        elif is_classmethod:
+            self._self_stack.append(None)
+            self._cls_stack.append(arguments[0] if arguments else None)
         elif self_visible:
             self._self_stack.append(self._self_stack[-1])
+            self._cls_stack.append(self._cls_stack[-1] if cls_visible else None)
+        elif cls_visible:
+            self._self_stack.append(None)
+            self._cls_stack.append(self._cls_stack[-1])
         else:
             self._self_stack.append(None)
+            self._cls_stack.append(None)
+
         self._not_locals_stack.append(set(arguments))
 
         if self._class_stack:
@@ -189,13 +248,16 @@ class VariableFinder(ast.NodeVisitor):
                 '.'.join(self._qualname_stack[:-1]),    # -1 to omit "<locals>"
                 class_name=class_info.name,
                 self=self._self_stack[-1],
-                attributes=class_info.attributes if self._self_stack[-1] else None
+                cls=self._cls_stack[-1],
+                attributes=class_info.attributes if self._self_stack[-1] else None,
+                class_attributes=class_info.class_attributes,
             )
 
         self.generic_visit(node)
 
         self._not_locals_stack.pop()
         self._self_stack.pop()
+        self._cls_stack.pop()
         self._qualname_stack.pop()
         self._code_stack.pop()
         self._scope_stack.pop()
@@ -208,9 +270,24 @@ class VariableFinder(ast.NodeVisitor):
         self._record_variable(node.name)
         self._qualname_stack.append(node.name)
         self._code_stack.append(self._qualname())
-        self._class_stack.append(ClassInfo(self._code_stack[-1]))
+        class_info = ClassInfo(self._code_stack[-1])
+        self._class_stack.append(class_info)
 
         self.generic_visit(node)
+
+        # Update existing CodeVars (created during class body processing) with class_attributes,
+        # or create one if it doesn't exist yet
+        class_qualname = self._code_stack[-1]
+        if class_qualname in self.code_vars:
+            existing = self.code_vars[class_qualname]
+            existing.class_name = class_info.name
+            existing.class_attributes = class_info.class_attributes
+        else:
+            self.code_vars[class_qualname] = CodeVars(
+                class_qualname,  # scope is the class itself
+                class_name=class_info.name,
+                class_attributes=class_info.class_attributes,
+            )
 
         self._class_stack.pop()
         self._code_stack.pop()
@@ -221,16 +298,35 @@ class VariableFinder(ast.NodeVisitor):
         pass
 
     def visit_Assign(self, node: ast.Assign) -> None:
+        # Only pass value for simple single-target assignments like "x = None"
+        # or "self.x = None". We skip multi-target (x = y = 1) and tuple
+        # unpacking (a, b = 0, 1) to keep the implementation simple.
+        value = node.value if (len(node.targets) == 1
+                               and isinstance(node.targets[0], (ast.Name, ast.Attribute))) else None
+
+        # Check if we're in a class body (not in a function)
+        in_class_body = (
+            self._class_stack
+            and self._code_stack[-1] == self._class_stack[-1].name
+        )
+
         for tgt in node.targets:
             for t in _iter_target_atoms(tgt):
-                self._record_target(t)
+                # Capture class-body assignments like `monitor = None`
+                if in_class_body and isinstance(t, ast.Name):
+                    class_info = self._class_stack[-1]
+                    # Only record first assignment; capture initial constant type if applicable
+                    if t.id not in class_info.class_attributes:
+                        const_type = type(value.value) if (value is not None and isinstance(value, ast.Constant)) else None
+                        class_info.class_attributes[t.id] = const_type
+                self._record_target(t, value)
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         # require value to filter out pure type declarations
         if node.value is not None and node.target is not None:
             for t in _iter_target_atoms(node.target):
-                self._record_target(t)
+                self._record_target(t, node.value)
         self.generic_visit(node)
 
     def visit_TypeAlias(self, node: ast.TypeAlias) -> None:

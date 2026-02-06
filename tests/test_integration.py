@@ -133,7 +133,7 @@ def test_builtin_iterator_of_empty(init, expected):
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run('--use-typing-never', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -296,15 +296,22 @@ def test_builtins():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     assert "import slice" not in output
-    assert "def func(s: slice) -> range" in output
+    assert get_function(code, 'func') == textwrap.dedent("""\
+        def func(s: slice) -> range: ...
+    """)
 
     assert "import type" not in output
-    assert "def func2(t: type[str]) -> str" in output
+    assert get_function(code, 'func2') == textwrap.dedent("""\
+        def func2(t: type[str]) -> str: ...
+    """)
 
     assert "import super" not in output
-    assert "def func3(t: super) -> None" in output
+    assert get_function(code, 'func3') == textwrap.dedent("""\
+        def func3(t: super) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
@@ -355,7 +362,8 @@ def test_callable_from_annotations(future, cache, ignore):
 
 
 @pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
-def test_callable_from_annotations_typing_special(future):
+@pytest.mark.parametrize("use_never", ["--no-use-typing-never", "--use-typing-never"])
+def test_callable_from_annotations_typing_special(future, use_never):
     t = textwrap.dedent(f"""\
         {future}
         import typing
@@ -373,14 +381,19 @@ def test_callable_from_annotations_typing_special(future):
 
     Path("t.py").write_text(t)
 
-    rt_run('t.py')
+    rt_run(use_never, 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    # note that for Python >= 3.11, we convert NoReturn to Never
-    assert get_function(code, 'C.g') == textwrap.dedent("""\
-        def g(self: Self) -> Callable[[int, Any], Never]: ...
-    """)
+    if use_never == '--use-typing-never':
+        # note that for Python >= 3.11, we convert NoReturn to Never
+        assert get_function(code, 'C.g') == textwrap.dedent("""\
+            def g(self: Self) -> Callable[[int, Any], Never]: ...
+        """)
+    else:
+        assert get_function(code, 'C.g') == textwrap.dedent("""\
+            def g(self: Self) -> Callable[[int, Any], NoReturn]: ...
+        """)
 
 
 @pytest.mark.parametrize("future", ["", "from __future__ import annotations"])
@@ -401,8 +414,11 @@ def test_callable_from_annotation_generic_alias(future):
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g() -> Callable[[], list[int]]:" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g() -> Callable[[], list[int]]: ...
+    """)
 
 
 @pytest.mark.dont_run_mypy # fails because of SomethingUnknown
@@ -423,8 +439,11 @@ def test_callable_annotation_errors():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g() -> Callable:" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g() -> Callable: ...
+    """)
 
 
 def test_callable_from_annotation_none_return():
@@ -443,8 +462,11 @@ def test_callable_from_annotation_none_return():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g() -> Callable[[], None]:" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g() -> Callable[[], None]: ...
+    """)
 
 
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
@@ -465,9 +487,12 @@ def test_numpy_type_name():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     assert "import bfloat16" not in output
-    assert "def f(t: np.dtype[ml_dtypes.bfloat16]) -> None" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(t: np.dtype[ml_dtypes.bfloat16]) -> None: ...
+    """)
 
 
 @pytest.mark.skipif((importlib.util.find_spec('ml_dtypes') is None or
@@ -518,8 +543,11 @@ def test_annotation_with_numpy_dtype_name():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g() -> Callable[[], np.ndarray[Any, np.dtype[bf16]]]:" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g() -> Callable[[], np.ndarray[Any, np.dtype[bf16]]]: ...
+    """)
 
 
 @pytest.mark.dont_run_mypy # it lacks definitions for checking
@@ -627,10 +655,15 @@ def test_default_arg():
 
     rt_run('--debug', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def func(n: int|None=None) -> int" in output
+    assert get_function(code, 'func') == textwrap.dedent("""\
+        def func(n: int|None=None) -> int: ...
+    """)
 
-    assert """def func2(n: float|str="5") -> int""" in output
+    assert get_function(code, 'func2') == textwrap.dedent("""\
+        def func2(n: float|str="5") -> int: ...
+    """)
 
 
 def test_default_in_private_method():
@@ -649,8 +682,11 @@ def test_default_in_private_method():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def __f(self: Self, x: int|None=None) -> int" in output
+    assert get_function(code, 'C.__f') == textwrap.dedent("""\
+        def __f(self: Self, x: int|None=None) -> int: ...
+    """)
 
 
 @pytest.mark.skipif(importlib.util.find_spec('numpy') is None, reason='missing module')
@@ -690,8 +726,11 @@ def test_inner_function():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g(y: int) -> int" in output
+    assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\
+        def g(y: int) -> int: ...
+    """)
 
 
 def test_inner_function_json():
@@ -755,11 +794,16 @@ def test_method():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def f(self: Self, n: int) -> int" in output
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self, n: int) -> int: ...
+    """)
     assert "\nimport Self" not in output
 
-    assert "def h(self: Self, x: int) -> float" in output
+    assert get_function(code, 'g.<locals>.gC.h') == textwrap.dedent("""\
+        def h(self: Self, x: int) -> float: ...
+    """)
 
 
 def test_method_imported():
@@ -786,14 +830,21 @@ def test_method_imported():
 
     rt_run('t.py')
     output = Path("m.py").read_text()
+    code = cst.parse_module(output)
 
     assert "\nimport Self" not in output
 
-    assert "def f(self: Self, n: int) -> int" in output
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self, n: int) -> int: ...
+    """)
     assert "import C" not in output
 
-    assert "def g(x: int) -> float" in output
-    assert "def h(self: Self, x: int) -> float" in output
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(x: int) -> float: ...
+    """)
+    assert get_function(code, 'g.<locals>.gC.h') == textwrap.dedent("""\
+        def h(self: Self, x: int) -> float: ...
+    """)
     assert "import gC" not in output
 
 
@@ -1323,8 +1374,11 @@ def test_class_name_imported():
 
     rt_run('t.py')
     output = Path("m.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def f(x: C) -> None" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: C) -> None: ...
+    """)
     assert "import C" not in output
 
 
@@ -1346,8 +1400,11 @@ def test_class_name_in_test(tmp_cwd):
     rt_run('--no-exclude-test-files', '--no-exclude-test-types',
            '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "test_foo.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def f(x: C) -> None" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: C) -> None: ...
+    """)
     assert "import test_foo" not in output
 
 
@@ -1370,8 +1427,11 @@ def test_class_name_in_test_subdir(tmp_cwd):
     rt_run('--no-exclude-test-files', '--no-exclude-test-types',
            '--no-resolve-mocks', '-m', 'pytest', '-s', 'tests')
     output = (tmp_cwd / "tests" / "sub" / "test_foo.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def f(x: C) -> None" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: C) -> None: ...
+    """)
     assert "import test_foo" not in output
 
 
@@ -1693,8 +1753,11 @@ def test_default_inner_function():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def g(y: int|str='0') -> int" in output
+    assert get_function(code, 'f.<locals>.g') == textwrap.dedent("""\
+        def g(y: int|str='0') -> int: ...
+    """)
 
 
 def test_default_method():
@@ -1718,9 +1781,14 @@ def test_default_method():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def f(self: Self, n: int=5) -> int" in output
-    assert "def h(self: Self, x: int=1) -> float" in output
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self, n: int=5) -> int: ...
+    """)
+    assert get_function(code, 'g.<locals>.gC.h') == textwrap.dedent("""\
+        def h(self: Self, x: int=1) -> float: ...
+    """)
 
 
 @pytest.mark.parametrize("ann", ["", " -> Generator[MyType, None, None]"])
@@ -1781,6 +1849,67 @@ def test_generator(ann, ignore, no_simplify):
             """)
 
 
+@pytest.mark.parametrize("ann", ["", " -> Generator[MyType, None, None]"])
+@pytest.mark.parametrize("ignore", [(), ('--ignore-annotations',)])
+@pytest.mark.parametrize("no_simplify", [(), ('--no-simplify-types',)])
+def test_generator_from_function(ann, ignore, no_simplify):
+    t = textwrap.dedent(f"""\
+        from collections.abc import Generator
+        type MyType = float
+
+        def f():
+            def gen(){ann}:
+                yield 10
+                yield 1.2
+
+            return gen()
+
+        def main():
+            for _ in f():
+                pass
+
+        def g(f):
+            pass
+
+        main()
+        g(f())
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run(*ignore, *no_simplify, 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    if ann and not ignore:
+        assert get_function(code, 'f.<locals>.gen') == textwrap.dedent("""\
+            def gen() -> Generator[MyType, None, None]: ...
+        """)
+        if no_simplify:
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Generator[MyType, None, None]) -> None: ...
+            """)
+        else:
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Iterator[MyType]) -> None: ...
+            """)
+    else:
+        if no_simplify:
+            assert get_function(code, 'f.<locals>.gen') == textwrap.dedent("""\
+                def gen() -> Generator[float|int, None, None]: ...
+            """)
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Generator[float|int, None, None]) -> None: ...
+            """)
+        else:
+            assert get_function(code, 'f.<locals>.gen') == textwrap.dedent("""\
+                def gen() -> Iterator[float]: ...
+            """)
+            assert get_function(code, 'g') == textwrap.dedent("""\
+                def g(f: Iterator[float]) -> None: ...
+            """)
+
+
 @pytest.mark.dont_run_mypy # fails because of SomethingUnknown
 def test_generator_annotation_errors():
     t = textwrap.dedent("""\
@@ -1831,9 +1960,14 @@ def test_generator_with_return():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> Generator[int, None, str]:" in output
-    assert "def g(f: Generator[int, None, str]) -> None" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        def gen() -> Generator[int, None, str]: ...
+    """)
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(f: Generator[int, None, str]) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize("no_simplify", [(), ('--no-simplify-types',)])
@@ -1896,8 +2030,14 @@ def test_generator_with_self():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(self: Self) -> Iterator[Self]" in output
-    assert "def f(g: Iterator[C]) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self) -> Iterator[Self]: ...
+    """)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(g: Iterator[C]) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize('as_module', [False, True])
@@ -1924,11 +2064,16 @@ def test_send_generator(as_module):
     Path("t.py").write_text(t)
 
     stdout = rt_run(*(('-m', 't') if as_module else ('t.py',)), capture=True)
-    assert '[10.0, 15.0]' in stdout
+    assert stdout is not None and '[10.0, 15.0]' in stdout
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> Generator[float, int, None]:" in output
-    assert "def f(g: Generator[float, int, None]) -> list[float]" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        def gen() -> Generator[float, int, None]: ...
+    """)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(g: Generator[float, int, None]) -> list[float]: ...
+    """)
 
 
 @pytest.mark.parametrize('as_module', [False, True])
@@ -1960,11 +2105,16 @@ def test_send_async_generator(as_module):
     Path("t.py").write_text(t)
 
     stdout = rt_run(*(('-m', 't') if as_module else ('t.py',)), capture=True)
-    assert '[10.0, 15.0]' in stdout
+    assert stdout is not None and '[10.0, 15.0]' in stdout
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> AsyncGenerator[float, int]:" in output
-    assert "def f(g: AsyncGenerator[float, int]) -> list[float]" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        async def gen() -> AsyncGenerator[float, int]: ...
+    """)
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        async def f(g: AsyncGenerator[float, int]) -> list[float]: ...
+    """)
 
 
 def test_send_not_generator():
@@ -1985,11 +2135,16 @@ def test_send_not_generator():
     Path("t.py").write_text(t)
 
     stdout = rt_run('t.py', capture=True)
-    assert "[10.0, 10]" in stdout
+    assert stdout is not None and "[10.0, 10]" in stdout
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def send(self: Self, x: int) -> float:" in output
-    assert "def asend(self: Self, x: float) -> int:" in output
+    assert get_function(code, 'C.send') == textwrap.dedent("""\
+        def send(self: Self, x: int) -> float: ...
+    """)
+    assert get_function(code, 'C.asend') == textwrap.dedent("""\
+        def asend(self: Self, x: float) -> int: ...
+    """)
 
 
 def test_send_bound():
@@ -2015,12 +2170,17 @@ def test_send_bound():
     Path("t.py").write_text(t)
 
     stdout = rt_run('t.py', capture=True)
-    assert '[10.0, 15.0]' in stdout
+    assert stdout is not None and '[10.0, 15.0]' in stdout
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> Generator[float, int, None]:" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        def gen() -> Generator[float, int, None]: ...
+    """)
     # TODO the Callable here is our wrapper for the 'g.send' method... can we do better?
-    assert "def f(s: Callable) -> list[float]" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(s: Callable) -> list[float]: ...
+    """)
 
 
 def test_generator_exit_exception():
@@ -2042,7 +2202,11 @@ def test_generator_exit_exception():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f() -> Generator[int, int, None]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f() -> Generator[int, int, None]: ...
+    """)
 
 
 @pytest.mark.parametrize("ignore", [(), ('--ignore-annotations',)])
@@ -2204,7 +2368,11 @@ def test_module_type():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def foo(m: \"types.ModuleType\") -> None:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(m: "types.ModuleType") -> None: ...
+    """)
     assert "import types" in output
 
 
@@ -2230,8 +2398,13 @@ def test_function_type():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def bar(f: Callable[[int], float], g: "Callable[[C, int], float]", x: int) -> float:' in output
-    assert 'def baz(h: Callable[[int], float], x: int) -> float:' in output # bound method
+    code = cst.parse_module(output)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[[int], float], g: "Callable[[C, int], float]", x: int) -> float: ...
+    """)
+    assert get_function(code, 'baz') == textwrap.dedent("""\
+        def baz(h: Callable[[int], float], x: int) -> float: ...
+    """)  # bound method
 
 
 def test_function_type_future_annotations():
@@ -2258,8 +2431,14 @@ def test_function_type_future_annotations():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def bar(f: Callable[[int], float], g: Callable[[C, int], int], x: int) -> float:" in output
-    assert 'def baz(h: Callable[[int], int], x: int) -> int:' in output # bound method
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[[int], float], g: Callable[[C, int], int], x: int) -> float: ...
+    """)
+    assert get_function(code, 'baz') == textwrap.dedent("""\
+        def baz(h: Callable[[int], int], x: int) -> int: ...
+    """)
 
 
 # TODO this leads to an error: FunctionType IS-A Callable, so typing baz's g as
@@ -2307,8 +2486,13 @@ def test_callable_varargs():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(*args: int) -> float:' in output
-    assert 'def bar(f: Callable[..., float]) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(*args: int) -> float: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[..., float]) -> None: ...
+    """)
     # or VarArg(int) from mypy_extensions
 
 
@@ -2326,9 +2510,38 @@ def test_callable_kwargs():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(**kwargs: int) -> float:' in output
-    assert 'def bar(f: Callable[..., float]) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(**kwargs: int) -> float: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[..., float]) -> None: ...
+    """)
     # or KwArg(int) from mypy_extensions, or Unpack + TypedDict
+
+
+def test_callable_defaults():
+    """Callable with default arguments should use ... since Callable[...] can't express defaults."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        def foo(x, y, z=10):
+            return x + y + z
+
+        def bar(f):
+            return f(1, 2)
+
+        bar(foo)
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int, y: int, z: int=10) -> int: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[..., int]) -> int: ...
+    """)
 
 
 def test_callable_with_self():
@@ -2346,8 +2559,13 @@ def test_callable_with_self():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def f(self: Self) -> None:' in output
-    assert 'def g(f: Callable[[C], None]) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self) -> None: ...
+    """)
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(f: Callable[[C], None]) -> None: ...
+    """)
 
 
 def test_discovered_function_type_in_args():
@@ -2364,8 +2582,14 @@ def test_discovered_function_type_in_args():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def foo(x: int) -> float:" in output
-    assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int) -> float: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[[int], float], x: int) -> float: ...
+    """)
 
 
 def test_discovered_function_type_in_return():
@@ -2382,8 +2606,14 @@ def test_discovered_function_type_in_return():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def foo(x: int) -> float:" in output
-    assert "def bar(f: Callable[[int], float]) -> Callable[[int], float]:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int) -> float: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(f: Callable[[int], float]) -> Callable[[int], float]: ...
+    """)
 
 
 def test_discovered_function_type_in_yield():
@@ -2400,8 +2630,14 @@ def test_discovered_function_type_in_yield():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def foo(x: int) -> float:" in output
-    assert "def bar() -> Iterator[Callable[[int], float]]:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int) -> float: ...
+    """)
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar() -> Iterator[Callable[[int], float]]: ...
+    """)
 
 
 @pytest.mark.parametrize('ignore_ann', [False, True])
@@ -2419,11 +2655,16 @@ def test_discovered_function_annotated(ignore_ann):
 
     rt_run(*(('--ignore-annotations',) if ignore_ann else()), 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     if ignore_ann:
-        assert "def bar(f: Callable[[int], float], x: int) -> float:" in output
+        assert get_function(code, 'bar') == textwrap.dedent("""\
+            def bar(f: Callable[[int], float], x: int) -> float: ...
+        """)
     else:
-        assert "def bar(f: Callable[[float|int], float], x: int) -> float:" in output
+        assert get_function(code, 'bar') == textwrap.dedent("""\
+            def bar(f: Callable[[float|int], float], x: int) -> float: ...
+        """)
 
 
 def test_discovered_generator():
@@ -2441,7 +2682,11 @@ def test_discovered_generator():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: Iterator[int]) -> None:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: Iterator[int]) -> None: ...
+    """)
 
 
 def test_discovered_genexpr():
@@ -2456,7 +2701,11 @@ def test_discovered_genexpr():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: Iterator[int]) -> None:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: Iterator[int]) -> None: ...
+    """)
 
 
 def test_discovered_genexpr_two_in_same_line():
@@ -2476,8 +2725,14 @@ def test_discovered_genexpr_two_in_same_line():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: Iterator[int]) -> int:" in output
-    assert "def g(x: Iterator[str]) -> int:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: Iterator[int]) -> int: ...
+    """)
+    assert get_function(code, 'g') == textwrap.dedent("""\
+        def g(x: Iterator[str]) -> int: ...
+    """)
 
 
 def test_module_list_not_lost_with_multiprocessing():
@@ -2492,7 +2747,10 @@ def test_module_list_not_lost_with_multiprocessing():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(t: "xml.dom.minidom.Element") -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(t: "xml.dom.minidom.Element") -> None: ...
+    """)
 
     assert 'import xml.dom.minidom\n' in output
 
@@ -2508,7 +2766,10 @@ def test_posonly_and_kwonly():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: int, /, *, y: float) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: int, /, *, y: float) -> None: ...
+    """)
 
 
 def test_varargs():
@@ -2522,7 +2783,10 @@ def test_varargs():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: bool, *args: float|int|str) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: bool, *args: float|int|str) -> None: ...
+    """)
 
 
 def test_varargs_empty():
@@ -2536,7 +2800,10 @@ def test_varargs_empty():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: bool, *args: None) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: bool, *args: None) -> None: ...
+    """)
 
 
 def test_varargs_json():
@@ -2569,7 +2836,10 @@ def test_kwargs():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: bool, **kwargs: float|int|str) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: bool, **kwargs: float|int|str) -> None: ...
+    """)
 
 
 def test_kwargs_empty():
@@ -2583,7 +2853,10 @@ def test_kwargs_empty():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: bool, **kwargs: None) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: bool, **kwargs: None) -> None: ...
+    """)
 
 
 def test_kwargs_json():
@@ -2616,7 +2889,10 @@ def test_none_arg():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: None) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: None) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.10", "3.11"])
@@ -2698,7 +2974,11 @@ def test_cached_function():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(x: int|None=None) -> float:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @functools.cache
+        def foo(x: int|None=None) -> float: ...
+    """)
 
 
 def test_self_with_cached_method():
@@ -2715,7 +2995,11 @@ def test_self_with_cached_method():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert 'def foo(self: Self, x: int) -> Self:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'C.foo') == textwrap.dedent("""\
+        @functools.cache
+        def foo(self: Self, x: int) -> Self: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.10", "3.11"])
@@ -2884,9 +3168,11 @@ def test_union_superclass(as_module):
 
     rt_run(*(('-m', 't') if as_module else ('t.py',)))
     output = Path("t.py").read_text()
-    print(output)
+    code = cst.parse_module(output)
 
-    assert "def foo(x: A) -> None:" in output
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: A) -> None: ...
+    """)
 
 
 def test_sampling_overlaps():
@@ -2912,8 +3198,11 @@ def test_sampling_overlaps():
 
     rt_run('--sampling', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen(more: bool) -> Iterator[int]:" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        def gen(more: bool) -> Iterator[int]: ...
+    """)
 
 
 def test_no_return():
@@ -2932,8 +3221,11 @@ def test_no_return():
 
     rt_run('--sampling', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def gen() -> Iterator[int]:" in output
+    assert get_function(code, 'gen') == textwrap.dedent("""\
+        def gen() -> Iterator[int]: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.9", "3.11", "3.12"])
@@ -2950,13 +3242,18 @@ def test_generic_simple(python_version):
 
     rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     if python_version != "3.12":
         assert re.search('from typing import.*TypeVar', output)
         assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
-        assert "def add(a: rt_T1, b: rt_T1) -> rt_T1" in output
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add(a: rt_T1, b: rt_T1) -> rt_T1: ...
+        """)
     else:
-        assert "def add[T1: (int, str)](a: T1, b: T1) -> T1" in output
+        assert get_function(code, 'add') == textwrap.dedent("""\
+            def add[T1: (int, str)](a: T1, b: T1) -> T1: ...
+        """)
 
 
 def test_generic_name_conflict():
@@ -2976,9 +3273,12 @@ def test_generic_name_conflict():
 
     rt_run('--python-version=3.11', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     assert 'rt_T3 = TypeVar("rt_T3", int, str)' in output
-    assert "def add(a: rt_T3, b: rt_T3) -> rt_T3" in output
+    assert get_function(code, 'add') == textwrap.dedent("""\
+        def add(a: rt_T3, b: rt_T3) -> rt_T3: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.11", "3.12"])
@@ -2998,12 +3298,17 @@ def test_generic_yield(python_version):
 
     rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     if python_version == '3.11':
         assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
-        assert "def y(a: rt_T1) -> Iterator[rt_T1]" in output
+        assert get_function(code, 'y') == textwrap.dedent("""\
+            def y(a: rt_T1) -> Iterator[rt_T1]: ...
+        """)
     else:
-        assert "def y[T1: (int, str)](a: T1) -> Iterator[T1]" in output
+        assert get_function(code, 'y') == textwrap.dedent("""\
+            def y[T1: (int, str)](a: T1) -> Iterator[T1]: ...
+        """)
 
 
 @pytest.mark.parametrize("python_version", ["3.11", "3.12"])
@@ -3024,14 +3329,19 @@ def test_generic_yield_generator(python_version):
 
     rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     if python_version == '3.11':
         assert re.search('from typing import.*TypeVar', output)
         assert 'rt_T1 = TypeVar("rt_T1", int, str)' in output
         assert 'rt_T2 = TypeVar("rt_T2", int, str)' in output
-        assert "def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, None, rt_T2]" in output
+        assert get_function(code, 'y') == textwrap.dedent("""\
+            def y(a: rt_T1, b: rt_T2) -> Generator[rt_T1, None, rt_T2]: ...
+        """)
     else:
-        assert "def y[T1: (int, str), T2: (int, str)](a: T1, b: T2) -> Generator[T1, None, T2]" in output
+        assert get_function(code, 'y') == textwrap.dedent("""\
+            def y[T1: (int, str), T2: (int, str)](a: T1, b: T2) -> Generator[T1, None, T2]: ...
+        """)
 
 
 def test_generic_typevar_location():
@@ -3071,9 +3381,12 @@ def test_generic_and_defaults():
 
     rt_run('--python-version=3.12', 't.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
     assert not re.search('from typing import.*TypeVar', output)
-    assert "def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None" in output
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None: ...
+    """)
 
 
 def test_inline_generics_no_variables():
@@ -3089,7 +3402,11 @@ def test_inline_generics_no_variables():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: list[int|str]) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: list[int|str]) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize('superclass', [
@@ -3111,7 +3428,11 @@ def test_custom_collection_typing(superclass):
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
-    assert "def foo(x: MyContainer) -> None:" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: MyContainer) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize('init, expected', [
@@ -3139,7 +3460,8 @@ def test_collection_typing(init, expected):
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
-    assert f"def foo(x: {expected}) -> None:" in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == f"def foo(x: {expected}) -> None: ...\n"
 
 
 @pytest.mark.parametrize('pattern, matching, notmatching, expected', [
@@ -3160,7 +3482,8 @@ def test_pattern_match(pattern, matching, notmatching, expected):
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert f"def foo(p: re.Pattern[{expected}], data: {expected}) -> re.Match[{expected}]|None:" in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == f"def foo(p: re.Pattern[{expected}], data: {expected}) -> re.Match[{expected}]|None: ...\n"
 
 
 def test_namedtuple():
@@ -3212,8 +3535,11 @@ def test_class_properties():
     rt_run('-m', 't')
     output = Path("t.py").read_text()
     print(output)
+    code = cst.parse_module(output)
 
-    assert "def __init__(self: Self) -> None:" in output
+    assert get_function(code, 'C.__init__') == textwrap.dedent("""\
+        def __init__(self: Self) -> None: ...
+    """)
 
     # TODO parse functions out so that the annotation is included
     assert "def x(self: Self) -> str:" in output                # getter
@@ -3250,8 +3576,11 @@ def test_class_properties_private():
     rt_run('-m', 't')
     output = Path("t.py").read_text()
     print(output)
+    code = cst.parse_module(output)
 
-    assert "def __init__(self: Self) -> None:" in output
+    assert get_function(code, 'C.__init__') == textwrap.dedent("""\
+        def __init__(self: Self) -> None: ...
+    """)
 
     # TODO parse functions out so that the annotation is included
     assert "def __x(self: Self) -> str:" in output                # getter
@@ -3281,8 +3610,11 @@ def test_class_properties_no_setter():
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def __init__(self: Self) -> None:" in output
+    assert get_function(code, 'C.__init__') == textwrap.dedent("""\
+        def __init__(self: Self) -> None: ...
+    """)
 
     # TODO parse functions out so that the annotation is included
     assert "def x(self: Self) -> str:" in output                # getter
@@ -3318,8 +3650,11 @@ def test_class_properties_inner_functions():
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def __init__(self: Self) -> None:" in output
+    assert get_function(code, 'C.__init__') == textwrap.dedent("""\
+        def __init__(self: Self) -> None: ...
+    """)
 
     # TODO parse functions out so that the annotation is included
     assert "def foo() -> str:" in output            # getter's
@@ -3360,8 +3695,11 @@ def test_class_properties_inherited():
     rt_run('-m', 't')
     output = Path("t.py").read_text()
     print(output)
+    code = cst.parse_module(output)
 
-    assert "def __init__(self: Self) -> None:" in output
+    assert get_function(code, 'C.__init__') == textwrap.dedent("""\
+        def __init__(self: Self) -> None: ...
+    """)
 
     # TODO parse functions out so that the annotation is included
     assert "def x(self: Self) -> str:" in output                # getter
@@ -3463,8 +3801,14 @@ def test_self_bound_method():
     rt_run('t.py')
 
     output = Path("t.py").read_text()
-    assert 'def f(self: Self) -> None:' in output
-    assert 'def g(cls: type[Self]) -> None:' in output
+    code = cst.parse_module(output)
+    assert get_function(code, 'C.f') == textwrap.dedent("""\
+        def f(self: Self) -> None: ...
+    """)
+    assert get_function(code, 'C.g') == textwrap.dedent("""\
+        @classmethod
+        def g(cls: type[Self]) -> None: ...
+    """)
 
 
 def test_self_inherited_method():
@@ -3550,10 +3894,15 @@ def test_self_classmethod(python_version):
 
 
 @pytest.mark.parametrize("python_version", [
-    pytest.param("3.10", marks=pytest.mark.xfail(reason="needs typevar, see comment")),
+    pytest.param("3.10", marks=pytest.mark.xfail(reason="needs TypeVar for classmethod returning cls()")),
     "3.11"
 ])
 def test_self_inherited_classmethod(python_version):
+    """Test that classmethods returning cls() use proper type for inheritance.
+
+    For 3.11+, Self handles this. For 3.10, a TypeVar with bound is needed
+    to express that B.static_initializer() returns B, not A.
+    """
     Path("t.py").write_text(textwrap.dedent("""\
         class A:
             @classmethod
@@ -3571,14 +3920,14 @@ def test_self_inherited_classmethod(python_version):
     code = cst.parse_module(output)
 
     if python_version == '3.10':
-        # FIXME this doesn't work: it really needs to be
-        # T = TypeVar("T", bound="A")
-        # class A:
-        #     @classmethod
-        #     def static_initializer(cls: type[T]) -> T: ...
-        assert get_function(code, 'A.static_initializer') == textwrap.dedent("""\
+        # TypeVar needed: B.static_initializer() returns B, not A
+        import re
+        m = re.search(r'(\w+) = TypeVar\("\1", bound="A"\)', output)
+        assert m, f"Expected TypeVar with bound='A' in output:\n{output}"
+        T = m.group(1)
+        assert get_function(code, 'A.static_initializer') == textwrap.dedent(f"""\
             @classmethod
-            def static_initializer(cls: "type[A]") -> "A": ...
+            def static_initializer(cls: type[{T}]) -> {T}: ...
         """)
     else:
         assert get_function(code, 'A.static_initializer') == textwrap.dedent("""\
@@ -3616,9 +3965,11 @@ def test_self_yield_generator():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    print(output)
-    assert "def foo(self: Self) -> Generator[Self, None, Self]" in output
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self) -> Generator[Self, None, Self]: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.10", "3.11"])
@@ -3757,9 +4108,12 @@ def test_returns_or_yields_generator():
     Path("t.py").write_text(t)
 
     rt_run('t.py')
-
     output = Path("t.py").read_text()
-    assert "def test(a: int) -> Generator[int|None, None, str|None]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'test') == textwrap.dedent("""\
+        def test(a: int) -> Generator[int|None, None, str|None]: ...
+    """)
 
 
 def test_generators_merge_into_iterator():
@@ -3777,9 +4131,12 @@ def test_generators_merge_into_iterator():
     Path("t.py").write_text(t)
 
     rt_run('t.py')
-
     output = Path("t.py").read_text()
-    assert "def test(a: int) -> Iterator[int|str]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'test') == textwrap.dedent("""\
+        def test(a: int) -> Iterator[int|str]: ...
+    """)
 
 
 @pytest.mark.parametrize('replace_dict', [False, True])
@@ -3799,7 +4156,11 @@ def test_random_dict(replace_dict):
 
     rt_run(*(('--replace-dict',) if replace_dict else ('--no-replace-dict',)), 't.py')
     output = Path("t.py").read_text()
-    assert "def f(x: dict[str, dict[str, int]]) -> int" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: dict[str, dict[str, int]]) -> int: ...
+    """)
 
 
 @pytest.mark.skip(reason="Support temporarily removed")
@@ -3820,7 +4181,11 @@ def test_instrument_pytest():
 
     rt_run('--no-exclude-test-files', '-m' 'pytest', 't.py')
     output = Path("t.py").read_text()
-    assert "def f() -> Generator[int, int, None]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f() -> Generator[int, int, None]: ...
+    """)
 
 
 @pytest.mark.dont_run_mypy  # mypy fails, but it's not quite clear why
@@ -3841,8 +4206,14 @@ def test_higher_order_functions():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def foo[T1: (int, str)](x: T1) -> T1" in output
-    assert "def runner[T1: (int, str)](f: Callable[[T1], T1]) -> Callable[[T1], T1]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo[T1: (int, str)](x: T1) -> T1: ...
+    """)
+    assert get_function(code, 'runner') == textwrap.dedent("""\
+        def runner[T1: (int, str)](f: Callable[[T1], T1]) -> Callable[[T1], T1]: ...
+    """)
 
 
 def test_generalize_union_arg_typevar():
@@ -3858,7 +4229,11 @@ def test_generalize_union_arg_typevar():
 
     rt_run('--python-version=3.12', 't.py')
     output = Path("t.py").read_text()
-    assert "def f[T1: (int, str)](x: list[T1]) -> T1" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f[T1: (int, str)](x: list[T1]) -> T1: ...
+    """)
 
 
 def test_generalize_union_arg_not_typevar():
@@ -3874,7 +4249,11 @@ def test_generalize_union_arg_not_typevar():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: list[int|str]) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: list[int|str]) -> None: ...
+    """)
 
 
 def test_generalize_union_return_typevar():
@@ -3890,7 +4269,11 @@ def test_generalize_union_return_typevar():
 
     rt_run('--python-version=3.12', 't.py')
     output = Path("t.py").read_text()
-    assert "def f[T1: (int, str)](x: T1) -> list[T1]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f[T1: (int, str)](x: T1) -> list[T1]: ...
+    """)
 
 
 def test_generalize_union_return_not_typevar():
@@ -3906,10 +4289,14 @@ def test_generalize_union_return_not_typevar():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: bool) -> list[int|str]" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: bool) -> list[int|str]: ...
+    """)
 
 
-@pytest.mark.dont_run_mypy # unnecessary 
+@pytest.mark.dont_run_mypy # unnecessary
 def test_object_overridden_getattr():
     # Sometimes dynamic attribute lookups have side effects or, as in the case of
     # tqdm and rich tests, lead to infinite recursions as their __getattr__ call getattr()
@@ -3930,10 +4317,14 @@ def test_object_overridden_getattr():
     rt_run('t.py')
     # mostly we are checking that it doesn't fail (raises fatal exception)
     output = Path("t.py").read_text()
-    assert "def f(t: Thing) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(t: Thing) -> None: ...
+    """)
 
 
-@pytest.mark.dont_run_mypy # unnecessary 
+@pytest.mark.dont_run_mypy # unnecessary
 def test_object_with_empty_dir():
     # Derived from 'rich' test case "Issue #1838 - Edge case with Faiss library - object with empty dir()"
     # This leads to an AttributeError if we do any isinstance(obj, X) where X is from collections.abc
@@ -3957,7 +4348,11 @@ def test_object_with_empty_dir():
     rt_run('t.py')
     # mostly we are checking that it doesn't fail (raises fatal exception)
     output = Path("t.py").read_text()
-    assert "def f(self: Self) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'Thing.f') == textwrap.dedent("""\
+        def f(self: Self) -> None: ...
+    """)
 
 
 @pytest.mark.parametrize("python_version", ["3.10", "3.11"])
@@ -4029,7 +4424,11 @@ def test_container_is_modified():
 
     rt_run('t.py')
     output = Path("t.py").read_text()
-    assert "def f(x: list[int]) -> None" in output
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: list[int]) -> None: ...
+    """)
 
 
 def test_argument_variable_deleted():
@@ -4400,7 +4799,7 @@ def test_numeric_subtypes(tmp_cwd):
     Path("t.py").write_text(textwrap.dedent("""\
         def foo(x):
             print(x)
-        
+
         foo(1)
         foo(0.5)
         """
@@ -4408,8 +4807,11 @@ def test_numeric_subtypes(tmp_cwd):
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def foo(x: float) -> None:" in output
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: float) -> None: ...
+    """)
 
 
 def test_numeric_hierarchy(tmp_cwd):
@@ -4422,7 +4824,7 @@ def test_numeric_hierarchy(tmp_cwd):
 
         def foo(x):
             print(x)
-        
+
         foo(A())
         foo(B())
 
@@ -4434,8 +4836,11 @@ def test_numeric_hierarchy(tmp_cwd):
 
     rt_run('-m', 't')
     output = Path("t.py").read_text()
+    code = cst.parse_module(output)
 
-    assert "def foo(x: float) -> None:" in output
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: float) -> None: ...
+    """)
 
     
 def test_enum_class():
@@ -4868,7 +5273,7 @@ def test_function_raises(python_version):
     Path("t.py").write_text(t)
 
     with pytest.raises(subprocess.CalledProcessError):
-        rt_run(f"--python-version={python_version}", "t.py")
+        rt_run("--use-typing-never", f"--python-version={python_version}", "t.py")
 
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
@@ -4907,13 +5312,13 @@ def test_run_exits_with_exception(tmp_cwd):
     ))
 
     with pytest.raises(subprocess.CalledProcessError):
-        rt_run('t.py')
+        rt_run('--no-use-typing-never', 't.py')
 
     output = (tmp_cwd / "m.py").read_text()
     code = cst.parse_module(output)
 
     assert get_function(code, 'f') == textwrap.dedent(f"""\
-        def f(x: \"t.C\") -> Never: ...
+        def f(x: \"t.C\") -> NoReturn: ...
     """)
 
 
@@ -5418,13 +5823,13 @@ def test_variables_slots():
     output = Path("t.py").read_text()
 
     assert output == textwrap.dedent("""\
-        from typing import Never, Self
+        from typing import Any, Self
         class C:
             __slots__ = ('x', 'y', 'z')
 
             def __init__(self: Self, x: str) -> None:
                 self.x: str = x
-                self.y: dict[Never, Never] = {}
+                self.y: dict[Any, Any] = {}
 
         c: C = C('tada')
         """
@@ -5628,219 +6033,52 @@ def test_generalize_tuples(generalize):
     """)
 
 
-def test_compiling_decorator_baseline():
-    """Test decorator that compiles a function instead of calling it - baseline.
+def test_class_attributes_via_classmethod():
+    """Test that class attributes assigned via cls.x in classmethods are captured."""
+    t = textwrap.dedent("""\
+        class C:
+            monitor = None
 
-    This tests a pattern where:
-    1. A wrapper function takes an original function
-    2. The wrapper "compiles" the original and returns a compiled object (HLOThing)
-    3. The decorated function `foo` never actually runs - only the compiled version does
+            @classmethod
+            def setup(cls):
+                cls.monitor = "initialized"
 
-    Since RightTyper uses sys.monitoring to observe types at runtime, it will only
-    see types for functions that actually execute.
-    """
+        C.setup()
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    # The monitor attribute should have type str | None (from both assignments)
+    assert output == textwrap.dedent("""\
+        from typing import Self
+        class C:
+            monitor: str|None = None
+
+            @classmethod
+            def setup(cls: type[Self]) -> None:
+                cls.monitor = "initialized"
+
+        C.setup()
+    """)
+
+
+def test_wrapped_replaces_but_no_wrapped_attr():
+    """A decorator that replaces a function: the original never executes, so no types inferred."""
     Path("t.py").write_text(textwrap.dedent("""\
-        class HLOThing:
-            def __init__(self, filename):
-                self.filename = filename
-
+        class CompiledFunc:
+            def __init__(self, fn):
+                self.original = fn
             def __call__(self, *args, **kwargs):
-                # Simulate calling the compiled function
                 return sum(args)
 
-        def compile_func(original, name):
-            # Simulate compilation - returns filename
-            return f"{name}_compiled.hlo"
-
-        def wrapper(original):
-            filename = compile_func(original, original.__name__)
-            return HLOThing(filename)
+        def wrapper(fn):
+            return CompiledFunc(fn)
 
         @wrapper
         def foo(x, y):
             return x + y
 
-        # foo is now an HLOThing, not the original function
-        result = foo(1, 2)
-        print(result)
-    """))
-
-    rt_run('t.py')
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-    # foo should NOT be annotated since it never executes
-    assert get_function(code, 'foo') == textwrap.dedent("""\
-        @wrapper
-        def foo(x, y): ...
-    """)
-
-
-def test_compiling_decorator_with_probe_call():
-    """Test if calling the original function once during decoration captures types."""
-    Path("t.py").write_text(textwrap.dedent("""\
-        class HLOThing:
-            def __init__(self, filename, original):
-                self.filename = filename
-                self.original = original
-
-            def __call__(self, *args, **kwargs):
-                # Simulate calling the compiled function
-                return sum(args)
-
-        def compile_func(original, name):
-            return f"{name}_compiled.hlo"
-
-        def wrapper(original):
-            filename = compile_func(original, original.__name__)
-            return HLOThing(filename, original)
-
-        @wrapper
-        def foo(x, y):
-            return x + y
-
-        # Call both the compiled version AND the original once
-        result = foo(1, 2)
-        # Probe call to capture types for the original function
-        foo.original(10, 20)
-    """))
-
-    rt_run('t.py')
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-    # Now foo SHOULD be annotated since we called original
-    assert get_function(code, 'foo') == textwrap.dedent("""\
-        @wrapper
-        def foo(x: int, y: int) -> int: ...
-    """)
-
-
-def test_compiling_decorator_with_functools_wraps():
-    """Test if functools.wraps helps RightTyper track the original function."""
-    Path("t.py").write_text(textwrap.dedent("""\
-        import functools
-
-        class HLOThing:
-            def __init__(self, filename, original):
-                self.filename = filename
-                self.original = original
-                # Copy attributes from original
-                functools.update_wrapper(self, original)
-
-            def __call__(self, *args, **kwargs):
-                # Simulate calling the compiled function
-                return sum(args)
-
-        def compile_func(original, name):
-            return f"{name}_compiled.hlo"
-
-        def wrapper(original):
-            filename = compile_func(original, original.__name__)
-            return HLOThing(filename, original)
-
-        @wrapper
-        def foo(x, y):
-            return x + y
-
-        result = foo(1, 2)
-    """))
-
-    rt_run('t.py')
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-    # functools.update_wrapper sets __wrapped__, enabling type propagation
-    # foo(1, 2) -> HLOThing.__call__(1, 2) -> sum([1, 2]) = 3
-    # RightTyper propagates: foo(x: int, y: int) -> int
-    assert get_function(code, 'foo') == textwrap.dedent("""\
-        @wrapper
-        def foo(x: int, y: int) -> int: ...
-    """)
-
-
-def test_compiling_decorator_with_decoration_time_probe():
-    """Test if probing during decoration time captures types."""
-    Path("t.py").write_text(textwrap.dedent("""\
-        import inspect
-
-        class HLOThing:
-            def __init__(self, filename, original):
-                self.filename = filename
-                self.original = original
-
-            def __call__(self, *args, **kwargs):
-                return sum(args)
-
-        def compile_func(original, name):
-            return f"{name}_compiled.hlo"
-
-        def wrapper(original):
-            # Probe call during decoration with dummy args based on signature
-            sig = inspect.signature(original)
-            dummy_args = [0] * len(sig.parameters)
-            try:
-                original(*dummy_args)  # This runs foo once during decoration!
-            except:
-                pass  # Ignore any errors from the probe
-
-            filename = compile_func(original, original.__name__)
-            return HLOThing(filename, original)
-
-        @wrapper
-        def foo(x, y):
-            return x + y
-
-        result = foo(1, 2)
-    """))
-
-    rt_run('t.py')
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-    # Decoration-time probe calls original(0, 0) which RightTyper observes
-    assert get_function(code, 'foo') == textwrap.dedent("""\
-        @wrapper
-        def foo(x: int, y: int) -> int: ...
-    """)
-
-
-@pytest.mark.dont_run_mypy  # DSL code with intentionally undefined functions
-def test_compiling_decorator_unrunnable_code():
-    """Test decorator where the original function body CANNOT be executed.
-
-    This represents cases like JAX/XLA where the function body is a DSL
-    that gets compiled, not interpreted as Python. The function never runs.
-
-    RightTyper detects __wrapped__ on callable objects and propagates arg types
-    from __call__ to the wrapped function, even though it never actually executes.
-    """
-    Path("t.py").write_text(textwrap.dedent("""\
-        import functools
-
-        class HLOThing:
-            def __init__(self, compiled_repr, original):
-                self.compiled_repr = compiled_repr
-                self.original = original
-                functools.update_wrapper(self, original)
-
-            def __call__(self, *args, **kwargs):
-                # In reality, this would execute the compiled code
-                # For testing, just return a dummy value
-                return 42
-
-        def compile_to_hlo(original):
-            # Parse AST, compile to HLO IR, etc.
-            return f"<compiled:{original.__name__}>"
-
-        def jit(original):
-            compiled = compile_to_hlo(original)
-            return HLOThing(compiled, original)
-
-        @jit
-        def foo(x, y):
-            # This is DSL code that CANNOT run as Python
-            # It would raise an error if called directly
-            return magic_gpu_operation(x, y)  # noqa: F821
-
-        # foo is called, but foo's body never executes
-        # Only HLOThing.__call__ runs
         result = foo(1, 2)
         result2 = foo(3.14, 2.71)
     """))
@@ -5848,34 +6086,168 @@ def test_compiling_decorator_unrunnable_code():
     rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
-    # foo IS annotated even though it never executes, via __wrapped__ propagation
-    # Called with (1, 2) and (3.14, 2.71) -> RightTyper infers TypeVar constraint
-    # since both params have same type in each call
+    # foo never executes, so without wrapped function propagation it stays unannotated
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        @jit
-        def foo[T1: (float, int)](x: T1, y: T1) -> int: ...
+        @wrapper
+        def foo(x, y): ...
     """)
 
 
-@pytest.mark.dont_run_mypy  # Wrapper intercepts calls, causing return type mismatch
-def test_functools_wraps_decorator():
-    """Test decorator using functools.wraps where original function never runs.
+def test_wrapped_original_called():
+    """Decorator using functools.wraps where original function IS called.
 
-    This tests the common pattern where functools.wraps is used but the wrapper
-    doesn't call the original function (e.g., mocking, caching shortcuts).
-    The wrapper must reference 'func' in its body for type propagation to work
-    with multiple decorated functions (to distinguish which one is being called).
+    Since the wrapper calls fn(*args, **kwargs), the original function executes
+    and RightTyper captures types via direct traces. No propagation needed.
     """
     Path("t.py").write_text(textwrap.dedent("""\
         import functools
-        from typing import Callable
 
-        def my_decorator(func: Callable) -> Callable:
-            @functools.wraps(func)
+        def my_decorator(fn):
+            @functools.wraps(fn)
             def wrapper(*args, **kwargs):
-                # Log the call (this keeps 'func' in the closure)
-                print(f"Calling {func.__name__}")
-                return "intercepted"
+                return fn(*args, **kwargs)
+            return wrapper
+
+        @my_decorator
+        def add_numbers(x, y):
+            return x + y
+
+        r1 = add_numbers(1, 2)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # Direct traces: original function executes via fn(*args, **kwargs)
+    assert get_function(code, 'add_numbers') == textwrap.dedent("""\
+        @my_decorator
+        def add_numbers(x: int, y: int) -> int: ...
+    """)
+
+
+def test_wrapped_function():
+    """__wrapped__ on a plain function wrapper enables type propagation."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        def wrapper(fn):
+            def replacement(*args, **kwargs):
+                return sum(args)
+            replacement.__wrapped__ = fn # type: ignore[attr-defined]
+            return replacement
+
+        @wrapper
+        def foo(x, y):
+            return x + y
+
+        result = foo(1, 2)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x: int, y: int) -> int: ...
+    """)
+
+
+def test_wrapped_function_functools():
+    """@functools.wraps on a plain function wrapper enables type propagation."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def wrapper(fn):
+            @functools.wraps(fn)
+            def replacement(*args, **kwargs):
+                return sum(args)
+            return replacement
+
+        @wrapper
+        def foo(x, y):
+            return x + y
+
+        result = foo(1, 2)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x: int, y: int) -> int: ...
+    """)
+
+
+def test_wrapped_class():
+    """__wrapped__ on callable object enables type propagation, even though original is not called."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class CompiledFunc:
+            def __init__(self, fn):
+                self.__wrapped__ = fn
+            def __call__(self, *args, **kwargs):
+                return sum(args)
+
+        def wrapper(fn):
+            return CompiledFunc(fn)
+
+        @wrapper
+        def foo(x, y):
+            return x + y
+
+        result = foo(1, 2)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x: int, y: int) -> int: ...
+    """)
+
+
+def test_wrapped_return_type_changed():
+    """Wrapper changes the return type (str(sum(args)) instead of sum(args)).
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def wrapper(fn):
+            @functools.wraps(fn)
+            def replacement(*args, **kwargs):
+                return str(sum(args))
+            replacement.__wrapped__ = fn
+            return replacement
+
+        @wrapper
+        def foo(x, y):
+            return x + y
+
+        foo(1, 2)
+    """))
+
+    rt_run('--no-infer-wrapped-return-type', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x: int, y: int): ...
+    """)
+
+
+def test_wrapped_passthrough_decorator_union_callable():
+    """Passthrough decorator (calls original) applied to functions with different signatures.
+
+    The decorated functions get types from direct observation (not propagation).
+    The decorator parameter gets a union Callable type from all decorated functions.
+    The inner wrapper function is not annotated to avoid signature conflicts.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def my_decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                return fn(*args, **kwargs)
             return wrapper
 
         @my_decorator
@@ -5886,7 +6258,7 @@ def test_functools_wraps_decorator():
         def greet(name):
             return f"Hello, {name}!"
 
-        # Call the decorated functions
+        # Call the functions (don't annotate results to avoid return type mismatch)
         add_numbers(1, 2)
         add_numbers(3.14, 2.71)
         greet("Alice")
@@ -5895,99 +6267,260 @@ def test_functools_wraps_decorator():
     rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
-    # Both wrapped functions should be annotated via __wrapped__ propagation
-    # add_numbers called with (1, 2) and (3.14, 2.71) -> TypeVar constraint
-    # since both params have same type in each call
+    # Direct traces work correctly for the decorated functions themselves
     assert get_function(code, 'add_numbers') == textwrap.dedent("""\
         @my_decorator
-        def add_numbers[T1: (float, int)](x: T1, y: T1) -> str: ...
+        def add_numbers[T1: (float, int)](x: T1, y: T1) -> T1: ...
     """)
-    # greet called with ("Alice",) -> str for name, wrapper returns str
     assert get_function(code, 'greet') == textwrap.dedent("""\
         @my_decorator
         def greet(name: str) -> str: ...
     """)
+    # The inner wrapper function should NOT be annotated
+    assert get_function(code, 'my_decorator.<locals>.wrapper') == textwrap.dedent("""\
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs): ...
+    """)
+    # Decorator should not have spurious typevars from resolved Callables
+    assert get_function(code, 'my_decorator') == textwrap.dedent("""\
+        def my_decorator[T1: (Callable[[float|int, float|int], float|int], Callable[[str], str])](fn: T1) -> T1: ...
+    """)
 
 
-@pytest.mark.dont_run_mypy  # DSL code with intentionally undefined functions
-def test_compiling_decorator_info_available():
-    """Demonstrate what information IS available to potentially annotate foo.
+def test_wrapped_propagation_multiple_signatures():
+    """Wrapped propagation with multiple decorated functions that never execute.
 
-    When HLOThing.__call__ is invoked:
-    - self.__wrapped__ points to original foo function
-    - self.__wrapped__.__code__ has foo's CodeType (filename, line, name)
-    - self.__wrapped__.__code__.co_varnames has ('x', 'y') - the param names!
-    - *args has the actual values (1, 2) or (3.14, 2.71)
+    Types are propagated from wrapper calls to wrapped functions via __wrapped__.
+    Each decorated function gets its own observed types.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class CompiledFunc:
+            def __init__(self, fn):
+                self.__wrapped__ = fn
+            def __call__(self, *args, **kwargs):
+                return sum(args) if args and isinstance(args[0], (int, float)) else str(args)
 
-    This test shows the information chain that COULD be used to annotate foo.
+        def compiler(fn):
+            return CompiledFunc(fn)
+
+        @compiler
+        def add_numbers(x, y):
+            return x + y
+
+        @compiler
+        def greet(name):
+            return f"Hello, {name}!"
+
+        add_numbers(1, 2)
+        add_numbers(3.14, 2.71)
+        greet("Alice")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # Both functions get types from propagation (originals never execute)
+    assert get_function(code, 'add_numbers') == textwrap.dedent("""\
+        @compiler
+        def add_numbers[T1: (float, int)](x: T1, y: T1) -> T1: ...
+    """)
+    assert get_function(code, 'greet') == textwrap.dedent("""\
+        @compiler
+        def greet(name: str) -> str: ...
+    """)
+
+
+def test_wrapped_fewer_args_than_declared():
+    """Propagation must not crash when caller passes fewer args than declared (defaults)."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def wrapper(fn):
+            @functools.wraps(fn)
+            def replacement(*args, **kwargs):
+                return sum(args)
+            return replacement
+
+        @wrapper
+        def foo(x, y, z=10):
+            return x + y + z
+
+        result = foo(1, 2)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # x and y should be typed as int; z has default so may or may not be typed
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        @wrapper
+        def foo(x: int, y: int, z: int=10) -> int: ...
+    """)
+
+
+def test_wrapped_callable_class():
+    """Wrapper is a callable class (__call__ method) with non-standard first param name.
+
+    The first param (named 'this' here, not 'self') should be skipped - it's the
+    decorator instance, not an argument to pass to the wrapped function.
+    This tests that method detection works by inspecting the type hierarchy,
+    not by checking for the name 'self' or 'cls'.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class CachingDecorator:
+            def __init__(this, fn):
+                this.fn = fn
+                this.__wrapped__ = fn
+
+            def __call__(this, x, y):
+                # 'this' is the decorator instance, not an arg to pass
+                return x + y
+
+        @CachingDecorator
+        def add(a, b):
+            return a + b
+
+        result = add(1, 2)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # The wrapped function should get correct types (not including CachingDecorator as first arg)
+    assert get_function(code, 'add') == textwrap.dedent("""\
+        @CachingDecorator
+        def add(a: int, b: int) -> int: ...
+    """)
+
+
+def test_wrapped_param_named_self():
+    """A non-method function with a parameter named 'self' should pass it through.
+
+    The name 'self' doesn't make it a method - it's just a parameter name.
     """
     Path("t.py").write_text(textwrap.dedent("""\
         import functools
-        import inspect
 
-        class HLOThing:
-            def __init__(self, compiled_repr, original):
-                self.compiled_repr = compiled_repr
-                functools.update_wrapper(self, original)
+        def decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                return fn(*args, **kwargs)
+            return wrapper
 
-            def __call__(self, *args, **kwargs):
-                # Debug: show what info we have access to
-                wrapped = getattr(self, '__wrapped__', None)
-                if wrapped:
-                    code = wrapped.__code__
-                    print(f"WRAPPED: {wrapped.__name__}")
-                    print(f"  file: {code.co_filename}")
-                    print(f"  line: {code.co_firstlineno}")
-                    print(f"  params: {code.co_varnames[:code.co_argcount]}")
-                    print(f"  args received: {args}")
-                    print(f"  kwargs received: {kwargs}")
+        @decorator
+        def process(self, data):
+            # 'self' here is just a bad parameter name, not a method
+            return self + data
 
-                    # Map positional args to param names
-                    sig = inspect.signature(wrapped)
-                    params = list(sig.parameters.keys())
-                    for i, (param, val) in enumerate(zip(params, args)):
-                        print(f"    {param} = {val!r} (type: {type(val).__name__})")
-
-                return 42
-
-        def jit(original):
-            return HLOThing(f"<compiled:{original.__name__}>", original)
-
-        @jit
-        def foo(x, y):
-            return magic_gpu_operation(x, y)  # noqa: F821
-
-        result = foo(1, 2)
-        result2 = foo(3.14, 2.71)
+        result = process("hello", " world")
     """))
 
-    output = rt_run('t.py', capture=True)
-    print("=== DEBUG OUTPUT ===")
-    print(output)
-    # Verify the info chain works
-    assert "WRAPPED: foo" in output
-    assert "params: ('x', 'y')" in output
-    assert "x = 1 (type: int)" in output or "x = 3.14 (type: float)" in output
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # 'self' should be typed as str, not skipped
+    assert get_function(code, 'process') == textwrap.dedent("""\
+        @decorator
+        def process(self: str, data: str) -> str: ...
+    """)
 
-    # Verify RightTyper actually annotated foo via __wrapped__ propagation
-    annotated = Path("t.py").read_text()
-    code = cst.parse_module(annotated)
-    assert get_function(code, 'foo') == textwrap.dedent("""\
-        @jit
-        def foo[T1: (float, int)](x: T1, y: T1) -> int: ...
+
+def test_wrapped_keyword_only_args():
+    """Wrapper keyword-only args should be forwarded to the wrapped function."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, key=None):
+                items = args[0]
+                if key:
+                    return sorted(items, key=key)[0]
+                return sorted(items)[0]
+            return wrapper
+
+        @decorator
+        def search(items, *, key=None):
+            if key:
+                return sorted(items, key=key)[0]
+            return sorted(items)[0]
+
+        result = search([3, 1, 2], key=lambda x: -x)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'search') == textwrap.dedent("""\
+        @decorator
+        def search(items: list[int], *, key: Callable[[int], int]|None=None) -> int: ...
+    """)
+
+
+def test_wrapped_method_self_type():
+    """Wrapped method should get Self-type handling: self should not be annotated."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import functools
+
+        def caching(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                return args[1] * 2
+            return wrapper
+
+        class MyClass:
+            @caching
+            def double(self, x):
+                return x * 2
+
+        obj = MyClass()
+        result = obj.double(5)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    # self should get Self-type handling, not "MyClass"
+    assert get_function(code, 'MyClass.double') == textwrap.dedent("""\
+        @caching
+        def double(self: Self, x: int) -> int: ...
+    """)
+
+
+@pytest.mark.skipif(not importlib.util.find_spec('numba'), reason='numba not installed')
+@pytest.mark.xfail(reason='numba copies __code__ from the original, so wrapper_code == wrapped_code and propagation cannot distinguish them')
+def test_wrapped_numba_jit():
+    """Integration test with actual numba @jit decorator."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import numba
+
+        @numba.jit
+        def add(x, y):
+            return x + y
+
+        result = add(1, 2)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'add') == textwrap.dedent("""\
+        @numba.jit
+        def add(x: int, y: int) -> int: ...
     """)
 
 
 @pytest.mark.skipif(importlib.util.find_spec('jax') is None, reason='JAX not installed')
-@pytest.mark.dont_run_mypy  # JAX-compiled code has different runtime behavior
-def test_jax_jit_integration():
+@pytest.mark.xfail(reason='RightTyper annotates with internal DynamicJaxprTracer instead of jax.Array')
+def test_wrapped_jax_jit():
     """Integration test with actual JAX @jit decorator.
 
-    This validates that RightTyper works correctly with real JIT compilation
-    frameworks, not just simulated ones. JAX's @jit uses functools.wraps
-    internally, so the __wrapped__ propagation mechanism should work.
-
-    This test is optional and only runs when JAX is installed.
+    JAX traces the function internally, so sys.monitoring observes the tracer
+    types directly.  RightTyper currently annotates with the specific runtime type
+    (jax.interpreters.partial_eval.DynamicJaxprTracer) rather than the public
+    parent type (jax.Array).  This causes a mypy mismatch: DynamicJaxprTracer.__add__
+    returns Array per JAX's stubs, but the annotation says -> DynamicJaxprTracer.
+    Ideally, RightTyper should prefer public types over internal subtypes.
     """
     Path("t.py").write_text(textwrap.dedent("""\
         import jax
@@ -5997,39 +6530,15 @@ def test_jax_jit_integration():
         def add_vectors(x, y):
             return x + y
 
-        @jax.jit
-        def scale_vector(x, factor):
-            return x * factor
-
-        # Call with JAX arrays
         result1 = add_vectors(jnp.array([1, 2, 3]), jnp.array([4, 5, 6]))
         result2 = add_vectors(jnp.array([1.0, 2.0]), jnp.array([3.0, 4.0]))
-
-        result3 = scale_vector(jnp.array([1, 2, 3]), 2)
-        result4 = scale_vector(jnp.array([1.5, 2.5]), 3.0)
     """))
 
     rt_run('t.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    # JAX @jit uses functools.wraps, so __wrapped__ propagation should work
-    # Both functions should be annotated with JAX array types
-    add_func = get_function(code, 'add_vectors')
-    scale_func = get_function(code, 'scale_vector')
-
-    # Verify functions got annotated (exact type depends on JAX version/behavior)
-    # At minimum, check that:
-    # 1. Decorators are preserved
-    assert '@jax.jit' in add_func
-    assert '@jax.jit' in scale_func
-
-    # 2. Functions have type annotations (the __wrapped__ propagation worked)
-    # We expect jax.Array or similar types for parameters
-    assert 'def add_vectors(' in add_func
-    assert 'def scale_vector(' in scale_func
-
-    # 3. The presence of annotations indicates successful type propagation
-    # (JAX wraps functions so they don't execute, but __wrapped__ lets us infer types)
-    has_annotations = (':' in add_func and ':' in scale_func)
-    assert has_annotations, f"Expected type annotations in JAX functions.\nadd_vectors:\n{add_func}\nscale_vector:\n{scale_func}"
+    assert get_function(code, 'add_vectors') == textwrap.dedent("""\
+        @jax.jit
+        def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array: ...
+    """)
