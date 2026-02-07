@@ -662,6 +662,18 @@ def add_output_options(group=None):
                 default=output_options.always_quote_annotations,
                 help="""Place all annotations in quotes. This is normally not necessary, but can help avoid undefined symbol errors."""
             ),
+            base.option(
+                "--no-type-checking/--use-type-checking",
+                is_flag=True,
+                default=output_options.no_type_checking,
+                help="""Do not wrap imports in 'if TYPE_CHECKING:'. Use this when code calls typing.get_type_hints() at runtime."""
+            ),
+            base.option(
+                "--no-generalize-typevars/--generalize-typevars",
+                is_flag=True,
+                default=output_options.no_generalize_typevars,
+                help="""Do not infer type variables from common patterns. Use this when code has runtime type validation that cannot handle TypeVars."""
+            ),
         ]):
             func = opt(func)
         return func

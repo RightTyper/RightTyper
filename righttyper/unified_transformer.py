@@ -184,6 +184,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         only_update_annotations: bool = False,
         inline_generics: bool = True,
         always_quote_annotations: bool = False,
+        no_type_checking: bool = False,
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
@@ -198,6 +199,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.only_update_annotations = only_update_annotations
         self.inline_generics = inline_generics
         self.always_quote_annotations = always_quote_annotations
+        self.no_type_checking = no_type_checking
         self.has_future_annotations = False
         self.change_list: list[Change] = []
 
@@ -1154,40 +1156,156 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         # Add additional type checking imports if needed
         if missing_modules or self.new_if_checking_aliases:
-            existing_body = [*(typing.cast(cst.If, new_body[if_type_checking_position]).body.body
-                               if if_type_checking_position is not None
-                               else ())]
+            if self.no_type_checking:
+                # Use lazy imports via module-level __getattr__ (PEP 562)
+                # This avoids circular import issues at module load time while still
+                # making imports available for typing.get_type_hints() at runtime.
 
-            # TODO delete modules already imported
+                # Add `from __future__ import annotations` if not already present
+                if not self.has_future_annotations:
+                    future_annotations_import = cst.SimpleStatementLine([
+                        cst.ImportFrom(
+                            module=cst.Name("__future__"),
+                            names=[cst.ImportAlias(name=cst.Name("annotations"))]
+                        )
+                    ])
+                    future_imports.insert(0, future_annotations_import)
 
-            new_stmt: cst.BaseStatement = cst.If(
-                test=cst.Name("TYPE_CHECKING"),
-                body=cst.IndentedBlock(
-                    body=existing_body + [
-                        cst.SimpleStatementLine([
-                            cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
-                        ])
-                        for m in sorted(missing_modules)
-                    ] + [
-                        cst.SimpleStatementLine([
-                            cst.Import([cst.ImportAlias(
-                                name=_dotted_name_to_nodes(m),
-                                asname=cst.AsName(cst.Name(a))
-                            )])
-                        ])
-                        for m, a in sorted(self.new_if_checking_aliases)
-                    ]
+                # Keep TYPE_CHECKING imports for static analysis
+                existing_body = [*(typing.cast(cst.If, new_body[if_type_checking_position]).body.body
+                                   if if_type_checking_position is not None
+                                   else ())]
+
+                new_stmt: cst.BaseStatement = cst.If(
+                    test=cst.Name("TYPE_CHECKING"),
+                    body=cst.IndentedBlock(
+                        body=existing_body + [
+                            cst.SimpleStatementLine([
+                                cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
+                            ])
+                            for m in sorted(missing_modules)
+                        ] + [
+                            cst.SimpleStatementLine([
+                                cst.Import([cst.ImportAlias(
+                                    name=_dotted_name_to_nodes(m),
+                                    asname=cst.AsName(cst.Name(a))
+                                )])
+                            ])
+                            for m, a in sorted(self.new_if_checking_aliases)
+                        ]
+                    )
                 )
-            )
 
-            if if_type_checking_position is not None:
-                new_body[if_type_checking_position] = new_stmt
+                if if_type_checking_position is not None:
+                    new_body[if_type_checking_position] = new_stmt
+                else:
+                    if_type_checking_position = find_beginning(new_body)
+                    new_body.insert(if_type_checking_position, new_stmt)
+
+                if 'TYPE_CHECKING' not in self.known_names[-1]:
+                    self.unknown_types.add('TYPE_CHECKING')
+
+                # Build the lazy import mapping: top-level name -> full module path
+                lazy_import_map: dict[str, set[str]] = {}
+                for m in missing_modules:
+                    top_level = m.split('.')[0]
+                    if top_level not in lazy_import_map:
+                        lazy_import_map[top_level] = set()
+                    lazy_import_map[top_level].add(m)
+
+                for m, a in self.new_if_checking_aliases:
+                    # For aliases, we need to import the module and bind the alias
+                    if a not in lazy_import_map:
+                        lazy_import_map[a] = set()
+                    lazy_import_map[a].add(m)
+
+                # Generate lazy module proxies for typing.get_type_hints() support
+                # Unlike __getattr__, proxies are placed directly in globals() where
+                # get_type_hints() can find them during annotation string evaluation.
+                if lazy_import_map:
+                    # Generate the _LazyModule class once
+                    lazy_module_class = cst.parse_statement('''
+class _LazyModule:
+    """Proxy that lazily imports a module for typing.get_type_hints() support."""
+    __slots__ = ("_rt_top_name", "_rt_full_path", "_rt_mod")
+    def __init__(self, top_name, full_path):
+        object.__setattr__(self, "_rt_top_name", top_name)
+        object.__setattr__(self, "_rt_full_path", full_path)
+        object.__setattr__(self, "_rt_mod", None)
+    def _rt_load(self):
+        mod = object.__getattribute__(self, "_rt_mod")
+        if mod is None:
+            import importlib
+            import sys
+            full_path = object.__getattribute__(self, "_rt_full_path")
+            top_name = object.__getattribute__(self, "_rt_top_name")
+            importlib.import_module(full_path)
+            mod = sys.modules[top_name]
+            object.__setattr__(self, "_rt_mod", mod)
+        return mod
+    def __getattr__(self, name):
+        return getattr(self._rt_load(), name)
+    def __repr__(self):
+        return f"<lazy module {object.__getattribute__(self, '_rt_top_name')!r}>"
+'''.strip())
+                    new_body.append(lazy_module_class)
+
+                    # Generate a lazy proxy instance for each top-level module
+                    for name, modules in sorted(lazy_import_map.items()):
+                        # Use the deepest module path to ensure all intermediate modules are populated
+                        deepest = max(modules, key=lambda x: x.count('.'))
+                        proxy_assignment = cst.parse_statement(
+                            f'{name} = _LazyModule({name!r}, {deepest!r})'
+                        )
+                        new_body.append(proxy_assignment)
             else:
-                if_type_checking_position = find_beginning(new_body)
-                new_body.insert(if_type_checking_position, new_stmt)
+                # Add `from __future__ import annotations` if not already present
+                # This is needed to defer annotation evaluation, allowing TYPE_CHECKING
+                # imports to work correctly at runtime
+                if not self.has_future_annotations:
+                    future_annotations_import = cst.SimpleStatementLine([
+                        cst.ImportFrom(
+                            module=cst.Name("__future__"),
+                            names=[cst.ImportAlias(name=cst.Name("annotations"))]
+                        )
+                    ])
+                    # Insert at the beginning of future imports
+                    future_imports.insert(0, future_annotations_import)
 
-            if 'TYPE_CHECKING' not in self.known_names[-1]:
-                self.unknown_types.add('TYPE_CHECKING')
+                existing_body = [*(typing.cast(cst.If, new_body[if_type_checking_position]).body.body
+                                   if if_type_checking_position is not None
+                                   else ())]
+
+                # TODO delete modules already imported
+
+                new_stmt: cst.BaseStatement = cst.If(
+                    test=cst.Name("TYPE_CHECKING"),
+                    body=cst.IndentedBlock(
+                        body=existing_body + [
+                            cst.SimpleStatementLine([
+                                cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
+                            ])
+                            for m in sorted(missing_modules)
+                        ] + [
+                            cst.SimpleStatementLine([
+                                cst.Import([cst.ImportAlias(
+                                    name=_dotted_name_to_nodes(m),
+                                    asname=cst.AsName(cst.Name(a))
+                                )])
+                            ])
+                            for m, a in sorted(self.new_if_checking_aliases)
+                        ]
+                    )
+                )
+
+                if if_type_checking_position is not None:
+                    new_body[if_type_checking_position] = new_stmt
+                else:
+                    if_type_checking_position = find_beginning(new_body)
+                    new_body.insert(if_type_checking_position, new_stmt)
+
+                if 'TYPE_CHECKING' not in self.known_names[-1]:
+                    self.unknown_types.add('TYPE_CHECKING')
 
         # Emit "from typing import ..."
         if (typing_types := (self.unknown_types & _TYPING_TYPES)):
