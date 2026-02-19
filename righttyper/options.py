@@ -26,6 +26,7 @@ class OutputOptions:
     exclude_test_types: bool = True
     detect_test_modules_by_name: bool = False
     always_quote_annotations: bool = False
+    type_distribution_comments: bool = False
 
 
     def process_args(self, kwargs: dict[str, Any]) -> None:
