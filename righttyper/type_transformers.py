@@ -1,7 +1,7 @@
+import re
 import typing
 import types
 import collections.abc as abc
-import re
 from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo
 from righttyper.generalize import merged_types
 from functools import cache
@@ -41,28 +41,35 @@ class NoReturnToNeverT(TypeInfo.Transformer):
 class ExcludeTestTypesT(TypeInfo.Transformer):
     """Removes types from test modules."""
 
-    # Pattern to detect test modules by name (e.g., test_foo, foo.test.bar, foo_test)
-    _TEST_MODULE_PATTERN = re.compile(
-        r'(?:^|\.)'      # start of string or after a dot
+    # Detects test modules by naming convention:
+    #   test_foo, foo.test.bar, foo.tests.bar, foo_test
+    _TEST_NAME_PATTERN = re.compile(
+        r'(?:^|\.)'          # start or after a dot
         r'(?:'
-        r'test_'         # test_ prefix
-        r'|tests?(?:\.|$)'  # test or tests as a component
-        r'|[^.]+_test'   # _test suffix
+        r'test_'             # test_ prefix (e.g., test_foo)
+        r'|tests?(?:\.|$)'   # test or tests as a component
+        r'|[^.]+_test'       # _test suffix (e.g., foo_test)
         r')'
     )
 
-    def __init__(self, test_modules: set[str]) -> None:
+    def __init__(self, test_modules: set[str], *, detect_by_name: bool = False) -> None:
         self._test_modules = test_modules
+        self._detect_by_name = detect_by_name
 
     def _is_test_module(self, module: str) -> bool:
-        """Check if module is a test module or a submodule of one."""
         # Check explicit test modules (including submodules)
-        for test_mod in self._test_modules:
-            if module == test_mod or module.startswith(test_mod + '.'):
+        m = module
+        while m:
+            if m in self._test_modules:
                 return True
-        # Heuristic: detect test modules by naming pattern
-        if self._TEST_MODULE_PATTERN.search(module):
+            if '.' not in m:
+                break
+            m = m.rsplit('.', 1)[0]
+
+        # Heuristic: detect test modules by naming convention
+        if self._detect_by_name and self._TEST_NAME_PATTERN.search(module):
             return True
+
         return False
 
     def visit(self, node: TypeInfo) -> TypeInfo:

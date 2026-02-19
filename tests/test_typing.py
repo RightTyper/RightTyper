@@ -466,13 +466,16 @@ def test_merged_types_generics_never():
         }
     ))
 
-    assert "tuple[int, ...]|tuple[typing.Never, ...]" == str(merged_types({
+    # tuple is covariant, so tuple[Never, ...] | tuple[int, ...] merges to
+    # tuple[int, ...] (Never is subsumed, and tuple[int, ...] includes empty tuples)
+    assert "tuple[int, ...]" == str(merged_types({
             TypeInfo.from_type(tuple, args=(TypeInfo.from_type(typing.Never), ...)),
             TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), ...))
         }
     ))
 
-    assert "tuple[()]|tuple[int, ...]" == str(merged_types({
+    # Empty tuple is subsumed by variable-length tuple (zero or more ints)
+    assert "tuple[int, ...]" == str(merged_types({
             TypeInfo.from_type(tuple, args=((),)),
             TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), ...))
         }
@@ -742,3 +745,355 @@ def test_from_set_with_any():
     assert not t.is_union()
     assert t.fullname() == "typing.Any"
     assert t.args == ()
+
+
+def test_merged_types_for_variable_simple():
+    """Test that for_variable=True merges similar generics."""
+    # Without for_variable, should keep separate
+    assert "list[bool]|list[int]" == str(merged_types({
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(bool),))
+        }
+    ))
+
+    # With for_variable=True, should merge type arguments.
+    # bool is a subtype of int, so simplify() further reduces to list[int]
+    assert "list[int]" == str(merged_types({
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(bool),))
+        },
+        for_variable=True
+    ))
+
+
+def test_merged_types_for_variable_with_none():
+    """Test for_variable with None in the union."""
+    # list[int] | list[bool] | None -> list[int] | None (bool simplified to int)
+    assert "list[int]|None" == str(merged_types({
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(bool),)),
+            TypeInfo.from_type(type(None))
+        },
+        for_variable=True
+    ))
+
+
+def test_merged_types_for_variable_dict():
+    """Test for_variable with dict types."""
+    # dict[str, int] | dict[str, float] -> dict[str, float] (int simplified to float via numeric tower)
+    assert "dict[str, float]" == str(merged_types({
+            TypeInfo.from_type(dict, args=(TypeInfo.from_type(str), TypeInfo.from_type(int))),
+            TypeInfo.from_type(dict, args=(TypeInfo.from_type(str), TypeInfo.from_type(float)))
+        },
+        for_variable=True
+    ))
+
+
+def test_merged_types_for_variable_nested():
+    """Test for_variable with nested generics."""
+    # list[tuple[int, float]] | list[tuple[bool, float]] -> list[tuple[int, float]] (bool simplified to int)
+    assert "list[tuple[int, float]]" == str(merged_types({
+            TypeInfo.from_type(list, args=(
+                TypeInfo.from_type(tuple, args=(
+                    TypeInfo.from_type(bool),
+                    TypeInfo.from_type(float),
+                )),
+            )),
+            TypeInfo.from_type(list, args=(
+                TypeInfo.from_type(tuple, args=(
+                    TypeInfo.from_type(int),
+                    TypeInfo.from_type(float),
+                )),
+            )),
+        },
+        for_variable=True
+    ))
+
+
+def test_merged_types_for_variable_different_containers():
+    """Test that different container types are not merged."""
+    # list[int] | set[int] should stay separate even with for_variable=True
+    assert "list[int]|set[int]" == str(merged_types({
+            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
+            TypeInfo.from_type(set, args=(TypeInfo.from_type(int),))
+        },
+        for_variable=True
+    ))
+
+
+def test_merged_types_for_variable_different_arity():
+    """Test that generics with different number of args are not merged."""
+    # tuple[int] | tuple[int, str] should stay separate
+    result = str(merged_types({
+            TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int),)),
+            TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), TypeInfo.from_type(str)))
+        },
+        for_variable=True
+    ))
+    # Check both types are present as separate union members
+    assert result == "tuple[int]|tuple[int, str]" or result == "tuple[int, str]|tuple[int]"
+
+
+# =============================================================================
+# Container sampling tests
+# =============================================================================
+
+from collections import Counter
+
+
+def test_container_cache_same_object():
+    """Cache returns same entry for same container object."""
+    from righttyper.type_id import ContainerTypeCache
+
+    cache = ContainerTypeCache(100)
+    data = [1, 2, 3]
+
+    entry1 = cache.get(data, 1)
+    entry2 = cache.get(data, 1)
+    assert entry1 is entry2
+
+
+def test_container_cache_different_objects():
+    """Cache returns different entries for different objects."""
+    from righttyper.type_id import ContainerTypeCache
+
+    cache = ContainerTypeCache(100)
+    data1 = [1, 2, 3]
+    data2 = [1, 2, 3]  # Same content, different object
+
+    entry1 = cache.get(data1, 1)
+    entry2 = cache.get(data2, 1)
+    assert entry1 is not entry2
+
+
+def test_container_cache_lru_eviction():
+    """Cache evicts least recently used entries."""
+    from righttyper.type_id import ContainerTypeCache
+
+    cache = ContainerTypeCache(2)  # Small capacity
+    data1, data2, data3 = [1], [2], [3]
+
+    cache.get(data1, 1)
+    cache.get(data2, 1)
+    cache.get(data3, 1)  # Should evict data1
+
+    assert len(cache._cache) == 2
+
+
+def test_large_container_is_sampled():
+    """Containers larger than the small threshold are sampled, not fully scanned."""
+    from righttyper.type_id import _cache
+
+    _cache._cache.clear()
+
+    # Create large list
+    data = list(range(1000))
+    assert len(data) > run_options.container_small_threshold  # Test precondition
+    t = get_value_type(data)
+
+    assert 'int' in t
+    # Verify we didn't scan all 1000 elements
+    entry = _cache.get(data, 1)
+    assert entry.all_samples[0].total() <= run_options.container_max_samples
+
+
+def test_small_container_is_fully_scanned():
+    """Containers at or below the small threshold are fully scanned."""
+    from righttyper.type_id import _cache
+
+    _cache._cache.clear()
+
+    # Small list
+    data = [1, 'a', 2.0]
+    assert len(data) <= run_options.container_small_threshold  # Test precondition
+    t = get_value_type(data)
+
+    # Should see all types
+    assert 'int' in t
+    assert 'str' in t
+    assert 'float' in t
+
+
+def test_dict_samples_keys_and_values():
+    """Dict sampling tracks both key and value types."""
+    from righttyper.type_id import _cache
+
+    _cache._cache.clear()
+
+    data = {i: str(i) for i in range(100)}
+    assert len(data) > run_options.container_small_threshold  # Test precondition
+    t = get_value_type(data)
+
+    assert t == 'dict[int, str]'
+
+
+# =============================================================================
+# Sliding window container sampling tests (new behavior)
+# =============================================================================
+
+from collections import deque
+
+
+def test_container_sliding_window_detects_changes(monkeypatch):
+    """Container that changes types should be resampled and include all types."""
+    from righttyper.type_id import _cache
+
+    monkeypatch.setattr(run_options, 'container_check_probability', 1.0)
+    _cache._cache.clear()
+
+    # First observation: list of ints (must be large enough to trigger sampling)
+    data: list[Any] = list(range(100))
+    assert len(data) > run_options.container_small_threshold  # Test precondition
+    t1 = get_value_type(data)
+    assert 'int' in t1
+
+    # Mutate to strings
+    data.clear()
+    data.extend(['a'] * 100)
+
+    # Second observation should detect the change and resample
+    t2 = get_value_type(data)
+    # Should include both int and str from full history
+    assert 'int' in t2 and 'str' in t2
+
+
+def test_sample_until_stable_uniform_types():
+    """Sampling stops quickly when all samples have the same type."""
+    from righttyper.type_id import ContainerSamples
+
+    # Container with uniform type
+    data = [42] * 100
+    samples = ContainerSamples(o=data, n_counters=1)
+    sampler = lambda: (data[0],)  # Always returns an int
+
+    samples.sample_until_stable(sampler, depth=0)
+
+    # Should have stopped near the minimum samples (all same type = low singleton ratio)
+    total_samples = samples.all_samples[0].total()
+    assert total_samples <= run_options.container_min_samples + 5
+
+
+def test_sample_until_stable_diverse_types():
+    """Sampling continues longer when types are highly diverse."""
+    from righttyper.type_id import ContainerSamples
+
+    # Create 30 distinct types dynamically - each sample will have a unique type
+    distinct_types = [type(f'Type{i}', (), {}) for i in range(30)]
+    distinct_values = [t() for t in distinct_types]
+    idx = [0]
+    samples = ContainerSamples(o=None, n_counters=1)
+
+    def counting_sampler() -> tuple[Any, ...]:
+        val = distinct_values[idx[0] % len(distinct_values)]
+        idx[0] += 1
+        return (val,)
+
+    samples.sample_until_stable(counting_sampler, depth=0)
+
+    # With 30 distinct types and min_samples=25, singleton ratio stays high
+    # (each type seen only ~once), so sampling should continue beyond min_samples.
+    total_samples = samples.all_samples[0].total()
+    assert total_samples > run_options.container_min_samples
+
+
+def test_container_full_history_preserved():
+    """All types ever seen appear in annotation, even if evicted from window."""
+    from righttyper.type_id import _cache
+
+    _cache._cache.clear()
+
+    data: list[Any] = list(range(100))
+    assert len(data) > run_options.container_small_threshold  # Test precondition
+
+    # First: ints
+    get_value_type(data)
+
+    # Mutate and observe many times to push ints out of window
+    for _ in range(run_options.container_min_samples + 10):
+        data.clear()
+        data.extend(['a'] * 100)
+        get_value_type(data)
+
+    # Final type should still include int from history
+    t = get_value_type(data)
+    assert 'int' in t
+
+
+# Hybrid sampling tests: Good-Turing for stopping, spot-check for change detection
+# =============================================================================
+
+
+def test_hybrid_spot_check_no_new_type_no_resample(monkeypatch):
+    """When spot-check finds an existing type, no full resampling should occur."""
+    from righttyper.type_id import _cache
+
+    monkeypatch.setattr(run_options, 'container_check_probability', 1.0)
+    _cache._cache.clear()
+
+    # Create a uniform list (all ints) large enough to trigger sampling
+    data = list(range(100))
+    assert len(data) > run_options.container_small_threshold
+
+    # First observation: triggers Good-Turing sampling until stable
+    get_value_type(data)
+    entry = _cache.get(data, 1)
+    initial_sample_count = entry.all_samples[0].total()
+
+    # Second observation: spot-check should find int (existing type)
+    # With hybrid approach: should NOT trigger full resampling
+    get_value_type(data)
+
+    # Sample count should increase by at most 1 (the spot-check sample)
+    new_sample_count = entry.all_samples[0].total()
+    samples_added = new_sample_count - initial_sample_count
+    assert samples_added <= 1, f"Expected at most 1 sample (spot-check), got {samples_added}"
+
+
+def test_hybrid_spot_check_new_type_triggers_resample(monkeypatch):
+    """When spot-check finds a new type, full Good-Turing resampling should occur."""
+    from righttyper.type_id import _cache
+
+    monkeypatch.setattr(run_options, 'container_check_probability', 1.0)
+    _cache._cache.clear()
+
+    # First observation with ints
+    data: list[Any] = list(range(100))
+    assert len(data) > run_options.container_small_threshold
+    get_value_type(data)
+
+    entry = _cache.get(data, 1)
+    initial_sample_count = entry.all_samples[0].total()
+
+    # Mutate to all strings - spot-check will find new type
+    data.clear()
+    data.extend(['a'] * 100)
+
+    get_value_type(data)
+
+    # Should have triggered full resampling (many more samples)
+    new_sample_count = entry.all_samples[0].total()
+    samples_added = new_sample_count - initial_sample_count
+    assert samples_added > 1, f"Expected full resampling (>1 sample), got {samples_added}"
+
+
+def test_hybrid_spot_check_sample_preserved(monkeypatch):
+    """The spot-check sample that triggers resampling should be included in results."""
+    from righttyper.type_id import _cache
+
+    monkeypatch.setattr(run_options, 'container_check_probability', 1.0)
+    _cache._cache.clear()
+
+    # First: all ints
+    data: list[Any] = list(range(100))
+    assert len(data) > run_options.container_small_threshold
+    t1 = get_value_type(data)
+    assert 'int' in t1
+
+    # Mutate to all strings
+    data.clear()
+    data.extend(['hello'] * 100)
+
+    t2 = get_value_type(data)
+
+    # Both types should be in the result (int from history, str from new sampling)
+    assert 'int' in t2 and 'str' in t2

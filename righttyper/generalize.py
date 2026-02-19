@@ -1,46 +1,225 @@
-import typing
 from typing import cast, Sequence, Iterator
 import collections.abc as abc
 from collections import defaultdict, Counter
 from types import EllipsisType
+import itertools
 from righttyper.typeinfo import TypeInfo, CallTrace
 from righttyper.type_id import get_type_name
 from righttyper.righttyper_types import cast_not_None
 from righttyper.options import output_options
 
 
-def delete_never(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
-    # When we encounter empty containers, we type them with "typing.Never" arguments, such
-    # as in "list[Never]" (leaving their types incomplete (e.g., "list") would be equivalent
-    # to typing "list[Any]").  So here, we delete any "never" generics if a non-"never" version
-    # is also in the set.  Leaving both in would yield errors, as "never" generics cannot
-    # contain anything, so we need to do this even if 'simplify_types' is false.
-    if (never_types := set(
-        t
-        for t in typeinfoset
-        if t.args
-        # we don't need this for immutable containers
-        and t.type_obj not in (tuple, abc.Sequence, abc.Set, abc.Mapping)
-        and isinstance(t.args[0], TypeInfo)
-        and t.args[0].type_obj is typing.Never
-    )):
-        typeinfoset -= never_types
-        typeinfoset |= set(
-            t
-            for t in never_types
-            if not any(t2.type_obj is t.type_obj for t2 in typeinfoset)
-        )
+# Types that are covariant (immutable), so merging their type arguments
+# is safe even for function parameters and return types.
+_COVARIANT_TYPES = (tuple, frozenset)
+
+
+def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
+    """Merge generics with same container but different type args.
+
+    E.g., list[int] | list[bool] → list[int] (bool is subtype of int)
+         dict[str, int] | dict[str, str] → dict[str, int | str]
+         tuple[int, ...] | tuple[str, ...] → tuple[int | str, ...]
+
+    For invariant types (list, dict, set, etc.) this is only safe for variable
+    annotations.  For covariant types (tuple, frozenset) this is safe everywhere;
+    see merged_types() for where that distinction is enforced.
+    """
+    if not any(t.args for t in typeinfoset):
+        return typeinfoset
+
+    typeinfoset = set(typeinfoset)  # avoid modifying argument
+
+    # Group by (module, name, per-position TypeInfo pattern, nargs).
+    # This ensures e.g. tuple[int, str] and tuple[int, ...] end up in
+    # different groups (different TypeInfo/Ellipsis patterns).
+    def group_key(t: TypeInfo) -> tuple[str, str, tuple[bool, ...], int]:
+        return (t.module, t.name,
+                tuple(isinstance(arg, TypeInfo) for arg in t.args),
+                len(t.args))
+
+    for (_mod, _name, is_info_per_arg, nargs), group in itertools.groupby(
+        sorted(typeinfoset, key=group_key),
+        group_key
+    ):
+        group_set = set(group)
+        if len(group_set) <= 1:
+            continue
+
+        first = next(iter(group_set))
+
+        # Only merge when every non-TypeInfo arg is Ellipsis
+        if not all(is_info or first.args[i] is Ellipsis
+                   for i, is_info in enumerate(is_info_per_arg)):
+            continue
+
+        typeinfoset -= group_set
+        # Recursively merge and simplify inner type arguments.
+        # This allows bool|int -> int, and handles nested generics.
+        # Ellipsis positions are preserved as-is.
+        typeinfoset.add(first.replace(args=tuple(
+            merged_types({
+                cast(TypeInfo, member.args[i]) for member in group_set
+            }, for_variable=True)
+            if is_info_per_arg[i] else first.args[i]
+            for i in range(nargs)
+        )))
 
     return typeinfoset
 
 
-def merged_types(typeinfoset: set[TypeInfo]) -> TypeInfo:
-    """Attempts to merge types in a set before forming their union."""
+def _subsume_fixed_by_varlen_tuples(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
+    """Remove fixed-length tuples subsumed by a variable-length tuple.
 
-    delete_never(typeinfoset)
+    tuple[int, int] | tuple[int, ...] → tuple[int, ...]
+    because tuple[int, int] is a subtype of tuple[int, ...] (all elements are ints).
 
+    Also removes tuple[()] (empty tuple) since it is a subtype of any tuple[T, ...].
+    """
+    varlen = {
+        t for t in typeinfoset
+        if t.type_obj is tuple
+        and len(t.args) == 2
+        and t.args[1] is Ellipsis
+        and isinstance(t.args[0], TypeInfo)
+    }
+    if not varlen:
+        return typeinfoset
+
+    # Empty tuples (tuple[()]) are subtypes of any tuple[T, ...]
+    empty = {t for t in typeinfoset if t.type_obj is tuple and t.args == ((),)}
+
+    fixed = {
+        t for t in typeinfoset - varlen - empty
+        if t.type_obj is tuple
+        and t.args
+        and all(isinstance(a, TypeInfo) for a in t.args)
+    }
+
+    to_remove = set(empty)
+    for f in fixed:
+        for v in varlen:
+            elem = cast(TypeInfo, v.args[0])
+            if all(type_contains(elem, cast(TypeInfo, a)) for a in f.args):
+                to_remove.add(f)
+                break
+
+    return typeinfoset - to_remove if to_remove else typeinfoset
+
+
+def type_contains(a: TypeInfo, b: TypeInfo) -> bool:
+    """Check if a contains b (i.e., b's types are a subset of a's).
+
+    This is recursive: for containers, all args of b must be contained by
+    corresponding args of a.
+    """
+    if a == b:
+        return True
+
+    a_set = a.to_set()
+    b_set = b.to_set()
+
+    # Direct subset: b's types are all in a's types
+    if b_set <= a_set:
+        return True
+
+    # Container containment: same generic, each arg of b contained by corresponding arg of a
+    if (a.module == b.module and
+        a.name == b.name and
+        len(a.args) == len(b.args) and
+        a.args and
+        all(isinstance(arg, TypeInfo) for arg in a.args) and
+        all(isinstance(arg, TypeInfo) for arg in b.args)):
+        return all(
+            type_contains(cast(TypeInfo, aa), cast(TypeInfo, ba))
+            for aa, ba in zip(a.args, b.args)
+        )
+
+    return False
+
+
+def merge_container_supersets(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
+    """Remove containers whose element types are subsets of another container's.
+
+    E.g., list[int] | list[int|str] → list[int|str]
+          list[int] | list[str] → list[int] | list[str]  (no subset relationship)
+
+    This is safe for Container types because a subset observation represents
+    an earlier/partial view of the same container accumulating elements.
+    """
+    # Only consider Container types (list, set, dict, etc.)
+    container_types = {
+        t for t in typeinfoset
+        if t.args and
+        type(t.type_obj) is type and
+        issubclass(t.type_obj, abc.Container)
+    }
+
+    if not container_types:
+        return typeinfoset
+
+    typeinfoset = set(typeinfoset)  # avoid modifying argument
+
+    def group_key(t: TypeInfo) -> tuple[str, str, int]:
+        return t.module, t.name, len(t.args)
+
+    for (_mod, _name, nargs), group in itertools.groupby(
+        sorted(container_types, key=group_key),
+        group_key
+    ):
+        group_list = list(group)
+        if len(group_list) <= 1:
+            continue
+
+        # Check if all args are TypeInfo
+        if not all(all(isinstance(arg, TypeInfo) for arg in t.args) for t in group_list):
+            continue
+
+        # Find containers that are strict subsets of others
+        to_remove = set()
+        for t1 in group_list:
+            if t1 in to_remove:
+                continue
+            for t2 in group_list:
+                if t1 is t2 or t2 in to_remove:
+                    continue
+                # If t1 is contained by t2 (and they're not equal), remove t1
+                if t1 != t2 and type_contains(t2, t1):
+                    to_remove.add(t1)
+                    break
+
+        typeinfoset -= to_remove
+
+    return typeinfoset
+
+
+def merged_types(typeinfoset: set[TypeInfo], for_variable: bool = False) -> TypeInfo:
+    """Attempts to merge types in a set before forming their union.
+
+    Args:
+        typeinfoset: Set of types to merge
+        for_variable: If True, apply similar generics merging (safe for variables only)
+    """
     if len(typeinfoset) > 1 and output_options.simplify_types:
         typeinfoset = simplify(typeinfoset)
+
+    if len(typeinfoset) > 1:
+        if for_variable:
+            typeinfoset = merge_similar_generics(typeinfoset)
+        else:
+            typeinfoset = merge_container_supersets(typeinfoset)
+            # Covariant (immutable) types can safely have their type args
+            # merged even for params/returns, since there is no write path.
+            if len(typeinfoset) > 1:
+                covariant = {t for t in typeinfoset
+                             if t.args
+                             and isinstance(t.type_obj, type)
+                             and issubclass(t.type_obj, _COVARIANT_TYPES)}
+                if len(covariant) > 1:
+                    others = typeinfoset - covariant
+                    typeinfoset = merge_similar_generics(covariant) | others
+            if len(typeinfoset) > 1:
+                typeinfoset = _subsume_fixed_by_varlen_tuples(typeinfoset)
 
     return TypeInfo.from_set(typeinfoset)
 
@@ -281,6 +460,7 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
             and all(
                 t.module == first.module and
                 t.name == first.name and
+                t.code_id == first.code_id and
                 len(t.args) == len(first.args) and
                 all((a is Ellipsis) == (first.args[i] is Ellipsis) for i, a in enumerate(t.args))
                 for t in types[1:]
@@ -318,7 +498,15 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
 
             return types[0].replace(args=args)
 
-        combined = TypeInfo.from_set(set(types))
+        # Clear typevar_index from non-homogeneous types: they're being combined
+        # into a union and are no longer participating in the generalization pattern.
+        def clear_typevar_index(t: TypeInfo) -> TypeInfo:
+            class T(TypeInfo.Transformer):
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    return super().visit(node.replace(typevar_index=0))
+            return T().visit(t)
+
+        combined = TypeInfo.from_set({clear_typevar_index(t) for t in types})
 
         # replace type sequence with a variable
         if occurrences[types] > 1 and combined.is_union():

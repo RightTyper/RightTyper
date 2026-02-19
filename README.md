@@ -7,7 +7,7 @@
 ![tests](https://github.com/righttyper/righttyper/workflows/tests/badge.svg)
 
 RightTyper is a Python tool that generates types for your function arguments and return values.
-RightTyper lets your code run at nearly full speed (below 25% overhead) and little memory overhead.
+RightTyper lets your code run at nearly full speed (approx. 25% overhead) and little memory overhead.
 As a result, you won't experience slowdowns in your code or large memory consumption while using it,
 allowing you to integrate it with your standard tests and development process.
 By virtue of its design, and in a significant departure from previous approaches, RightTyper only captures the most commonly used types,
@@ -25,14 +25,11 @@ In addition to generating types, RightTyper has the following features:
 * It efficiently computes type annotation "coverage" for a file or directory of files
 * It infers shape annotations for NumPy/JAX/PyTorch tensors, compatible with [`jaxtyping`](https://docs.kidger.site/jaxtyping/) and [`beartype`](https://github.com/beartype/beartype) or [`typeguard`](https://typeguard.readthedocs.io/en/latest/).
 
-For details about how RightTyper works, please see the following paper: **[RightTyper: Effective and Efficient Type Annotation for Python](https://www.arxiv.org/abs/2507.16051)**.
-
-
 ## Performance Comparison
 The graph below presents the overhead of using RightTyper versus two previous tools, PyAnnotate and MonkeyType, across a range of benchmarks.
-On average, RightTyper imposes less than 25% overhead compared to running plain Python.
-On running the popular "black", RightTyper imposes only 30% overhead, while MonkeyType slows down execution by 35x.
-In extreme cases, MonkeyType runs over 270x slower than RightTyper.
+On average, RightTyper imposes approx. 25% overhead compared to running plain Python.
+On running the popular "black", RightTyper imposes only 46% overhead, while MonkeyType slows down execution by 41x.
+In extreme cases, MonkeyType runs over 240x slower than RightTyper.
 
 ![Overhead](docs/benchmark_comparison_execution_times.png)
 
@@ -128,23 +125,8 @@ Options:
                                   directory.  If omitted, the script's
                                   directory (or, for -m, the current
                                   directory) is used.
-  --restart-interval FLOAT RANGE  Interval (in seconds) at which previously
-                                  stopped instrumentation may be restarted.
-                                  [default: 0.5; x>=0.1]
-  --restart-max-instr INTEGER RANGE
-                                  Max. number of instrumentation events per
-                                  interval. If above this number, previously
-                                  stopped instrumentation isn't restarted.
-                                  [default: 0; x>=0]
-  --trace-min-samples INTEGER RANGE
-                                  Minimum number of call traces to sample
-                                  before stopping its instrumentation.
-                                  [default: 5; x>=1]
-  --trace-type-threshold FLOAT RANGE
-                                  Stop gathering traces for a function if the
-                                  estimated likelihood of finding a new type
-                                  falls below this threshold.  [default: 0.1;
-                                  x>=0.01]
+  --poisson-rate FLOAT RANGE      Expected sample captures per second (Poisson
+                                  process rate).  [default: 2.0; x>=0.1]
   --sampling / --no-sampling      Whether to sample calls or to use every one.
                                   [default: sampling]
   --no-sampling-for REGEX         Rather than sample, record every invocation
@@ -154,10 +136,28 @@ Options:
                                   Whether to replace 'dict' to enable
                                   efficient, statistically correct samples.
                                   [default: no-replace-dict]
-  --container-sample-limit [INTEGER|none]
-                                  Maximum number of container elements
-                                  considered when sampling; 'none' means
-                                  unlimited.  [default: 1000]
+  --container-small-threshold INTEGER RANGE
+                                  Containers at or below this size are fully
+                                  scanned instead of sampled.  [default: 32;
+                                  x>=1]
+  --container-max-samples INTEGER RANGE
+                                  Maximum number of entries to sample for a
+                                  container.  [default: 64; x>=1]
+  --container-type-threshold FLOAT RANGE
+                                  Stop sampling a container if the estimated
+                                  likelihood of finding a new type falls below
+                                  this threshold.  [default: 0.05; x>=0.01]
+  --container-sample-range [INTEGER|none]
+                                  Largest index from which to sample in a
+                                  container when direct access isn't
+                                  available; 'none' means unlimited.
+                                  [default: 1000]
+  --container-min-samples INTEGER RANGE
+                                  Minimum samples before checking Good-Turing
+                                  stopping criterion.  [default: 32; x>=1]
+  --container-check-probability FLOAT RANGE
+                                  Probability of spot-checking a container for
+                                  new types.  [default: 0.5; 0.0<=x<=1.0]
   --resolve-mocks / --no-resolve-mocks
                                   Whether to attempt to resolve test types,
                                   such as mocks, to non-test types.  [default:
@@ -179,26 +179,20 @@ Options:
                                   data, save it to "righttyper-N.rt". You can
                                   later process using RightTyper's "process"
                                   command.
-  --generalize-tuples N           Generalize homogenous fixed-length tuples
-                                  to tuple[T, ...] if length >= N. N=0
-                                  disables generalization.  [default: 3]
+  --generalize-tuples N           Generalize homogenous fixed-length tuples to
+                                  tuple[T, ...] if length ≥ N.  N=0 disables
+                                  generalization.  [default: 3; x>=0]
+  --propagate-wrapped-types / --no-propagate-wrapped-types
+                                  Whether to propagate types to wrapped
+                                  functions (via __wrapped__) that never
+                                  execute directly.  [default: propagate-
+                                  wrapped-types]
+  --infer-wrapped-return-type / --no-infer-wrapped-return-type
+                                  When propagating types to wrapped functions,
+                                  whether to infer return type from the
+                                  wrapper's return value.  [default: infer-
+                                  wrapped-return-type]
   --debug                         Include diagnostic information in log file.
-  Advanced options:
-    --signal-wakeup / --thread-wakeup
-                                  Whether to use signal-based wakeups or
-                                  thread-based wakeups.  [default: signal-
-                                  wakeup]
-    --save-profiling              Save record of self-profiling results in
-                                  "righttyper-profiling.json".
-    --allow-runtime-exceptions / --no-allow-runtime-exceptions
-                                  Allow exceptions in instrumentation to
-                                  propagate (for debugging).  [default: no-
-                                  allow-runtime-exceptions]
-    --infer-wrapped-return-type / --no-infer-wrapped-return-type
-                                  For wrapped functions that never execute,
-                                  infer return type from wrapper's return
-                                  value. If disabled, use None.  [default:
-                                  infer-wrapped-return-type]
   Output options: 
     --overwrite / --no-overwrite  Overwrite ".py" files with type information.
                                   If disabled, ".py.typed" files are written
@@ -229,7 +223,8 @@ Options:
     --use-top-pct PCT             Only use the PCT% most common call traces.
                                   [default: 100; 1<=x<=100]
     --use-typing-never / --no-use-typing-never
-                                  Whether to emit "typing.Never".  [default:
+                                  Whether to emit "typing.Never" (for Python
+                                  versions that support it).  [default: no-
                                   use-typing-never]
     --simplify-types / --no-simplify-types
                                   Whether to attempt to simplify types, such
@@ -240,6 +235,10 @@ Options:
                                   Whether to exclude or replace with
                                   "typing.Any" types defined in test modules.
                                   [default: exclude-test-types]
+    --detect-test-modules-by-name / --no-detect-test-modules-by-name
+                                  Heuristically detect test modules by naming
+                                  convention (test_, _test, .tests.).
+                                  [default: no-detect-test-modules-by-name]
     --always-quote-annotations / --no-always-quote-annotations
                                   Place all annotations in quotes. This is
                                   normally not necessary, but can help avoid
