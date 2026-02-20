@@ -382,10 +382,17 @@ def emit_json(
             func_entry['new_sig'] = changes[1]
 
         if type_distributions and (dist := type_distributions.get(funcid)):
-            func_entry['distributions'] = {
-                name: {t: pct for t, pct in type_pcts}
-                for name, type_pcts in dist.distributions.items()
-            }
+            if dist.traces:
+                func_entry['distributions'] = [
+                    {
+                        'args': td.args,
+                        'retval': td.retval,
+                        'pct': td.pct
+                    }
+                    for td in dist.traces
+                ]
+            if dist.variable_types:
+                func_entry['variable_distributions'] = dist.variable_types
 
     # fill in module vars
     for filename, mv in module_vars.items():

@@ -743,16 +743,13 @@ class UnifiedTransformer(cst.CSTTransformer):
                 var_qualname = ".".join(self.name_stack[func_scope_index:] + [var_qualname])
                 func_code_id = self.func_code_id_stack[-1]
                 if func_code_id and (dist := self.type_distributions.get(func_code_id)):
-                    var_key = f"var:{var_qualname}"
-                    if var_key in dist.distributions:
-                        var_dist = TypeDistributions(distributions={var_qualname: dist.distributions[var_key]})
-                        if (comment := self._format_distribution_comment(var_dist, is_variable=True)):
-                            self.var_distribution_comments[id(new_node)] = comment
+                    if (comment := self._format_distribution_comment(dist, variable_name=var_qualname)):
+                        self.var_distribution_comments[id(new_node)] = comment
             else:
                 # Module-scoped variable
                 mod_code_id = CodeId(Filename(self.filename), FunctionName(f"<module>.{var_qualname}"), 0, 0)
                 if (dist := self.type_distributions.get(mod_code_id)):
-                    if (comment := self._format_distribution_comment(dist, is_variable=True)):
+                    if (comment := self._format_distribution_comment(dist, variable_name=var_qualname)):
                         self.var_distribution_comments[id(new_node)] = comment
 
         return new_node
@@ -830,7 +827,13 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         # Add variable distribution comment as a leading line
         if comment_text:
-            leading_lines = updated_node.leading_lines
+            # Strip any existing # righttyper: comments to avoid duplication on re-runs
+            leading_lines = tuple(
+                el for el in updated_node.leading_lines
+                if not (isinstance(el, cst.EmptyLine)
+                        and el.comment is not None
+                        and el.comment.value.startswith("# righttyper:"))
+            )
             dist_line = cst.EmptyLine(
                 indent=True,
                 whitespace=cst.SimpleWhitespace(""),
@@ -932,34 +935,32 @@ class UnifiedTransformer(cst.CSTTransformer):
 
 
     @staticmethod
-    def _format_distribution_comment(dist: TypeDistributions, is_variable: bool = False) -> str | None:
+    def _format_distribution_comment(dist: TypeDistributions, variable_name: str | None = None) -> str | None:
         """Formats a TypeDistributions into a comment string.
 
-        For functions: "# righttyper: x: 85.0% int, 15.0% str; return: 60.0% int, 40.0% None"
-        For variables (percentage=0.0 means no frequency data): "# righttyper: int, str"
+        For functions with coordinated traces:
+          "# righttyper: 80.0% (x: int, y: float) -> int; 20.0% (x: str, y: float) -> str"
+        For variables (no frequency data):
+          "# righttyper: int, str"
         """
-        if not dist.distributions:
-            return None
-
-        if is_variable:
-            # For variables, just list types (no percentages)
-            parts = []
-            for name, type_pcts in dist.distributions.items():
-                types_str = ", ".join(t for t, _ in type_pcts)
-                parts.append(types_str)
-            if not parts:
+        if variable_name is not None:
+            # Variable mode: just list types
+            type_list = dist.variable_types.get(variable_name)
+            if not type_list or len(type_list) <= 1:
                 return None
-            return "# righttyper: " + "; ".join(parts)
+            return "# righttyper: " + ", ".join(type_list)
 
-        # For functions, include parameter names and percentages
-        parts = []
-        for name, type_pcts in dist.distributions.items():
-            if name.startswith("var:"):
-                continue  # skip variable distributions in function comments
-            types_str = ", ".join(f"{pct}% {t}" for t, pct in type_pcts)
-            parts.append(f"{name}: {types_str}")
-        if not parts:
+        if not dist.traces:
             return None
+
+        all_arg_names = list(dist.traces[0].args.keys())
+
+        parts = []
+        for td in dist.traces:
+            arg_parts = ", ".join(f"{name}: {td.args[name]}" for name in all_arg_names)
+            sig = f"({arg_parts}) -> {td.retval}"
+            parts.append(f"{td.pct}% {sig}")
+
         return "# righttyper: " + "; ".join(parts)
 
     def leave_FunctionDef(
@@ -1168,7 +1169,13 @@ class UnifiedTransformer(cst.CSTTransformer):
                 and (dist := self.type_distributions.get(func_code_id))
                 and (comment_text := self._format_distribution_comment(dist))
             ):
-                leading_lines = updated_node.leading_lines
+                # Strip any existing # righttyper: comments to avoid duplication on re-runs
+                leading_lines = tuple(
+                    el for el in updated_node.leading_lines
+                    if not (isinstance(el, cst.EmptyLine)
+                            and el.comment is not None
+                            and el.comment.value.startswith("# righttyper:"))
+                )
                 dist_line = cst.EmptyLine(
                     indent=True,
                     whitespace=cst.SimpleWhitespace(""),
@@ -1325,6 +1332,17 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         b = find_beginning(new_body)
         new_body[b:b] = future_imports
+
+        # Strip any stale # righttyper: comments from the module header
+        # (libcst places comments before the first statement in the header)
+        if self.type_distributions:
+            header = tuple(
+                el for el in updated_node.header
+                if not (isinstance(el, cst.EmptyLine)
+                        and el.comment is not None
+                        and el.comment.value.startswith("# righttyper:"))
+            )
+            return updated_node.with_changes(body=new_body, header=header)
 
         return updated_node.with_changes(body=new_body)
 

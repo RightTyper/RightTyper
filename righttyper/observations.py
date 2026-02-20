@@ -22,7 +22,7 @@ from righttyper.type_transformers import (
 )
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownTypeInfo, CallTrace
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, FunctionName, CodeId
-from righttyper.annotation import FuncAnnotation, ModuleVars, TypeDistributions
+from righttyper.annotation import FuncAnnotation, ModuleVars, TraceDistribution, TypeDistributions
 from righttyper.type_id import PostponedArg0
 from righttyper.typeshed import get_typeshed_func_params
 
@@ -76,49 +76,42 @@ class FuncInfo:
 
 
     def compute_type_distributions(self) -> TypeDistributions | None:
-        """Computes per-argument/return type frequency distributions from traces.
+        """Computes trace-level type frequency distributions.
 
-        Returns None if no argument or return value has more than one observed type.
+        Returns None if there is only one distinct trace (no polymorphism).
+        Each trace preserves the coordination between argument types and return type.
         """
         traces = self.most_common_traces()
         if not traces:
             return None
 
         n_args = len(self.args)
-        # Accumulate per-position type counts (positions 0..n_args-1 are args, n_args is return)
-        position_counts: list[Counter[str]] = [Counter() for _ in range(n_args + 1)]
 
+        # Group traces by their string signature and accumulate counts
+        sig_counts: Counter[tuple[tuple[str, str], ...]] = Counter()
         for trace in traces:
             count = self.traces[trace]
-            n_trace_args = len(trace) - 1  # last element is return type
-            for i in range(n_args):
-                if i < n_trace_args:
-                    position_counts[i][str(trace[i])] += count
-            # return type is always the last element
-            position_counts[n_args][str(trace[-1])] += count
+            n_trace_args = len(trace) - 1
+            sig = tuple(
+                (self.args[i].arg_name, str(trace[i]) if i < n_trace_args else "?")
+                for i in range(n_args)
+            ) + (("return", str(trace[-1])),)
+            sig_counts[sig] += count
 
-        distributions: dict[str, list[tuple[str, float]]] = {}
+        if len(sig_counts) <= 1:
+            return None
 
-        # Process arg positions
-        for i, arg in enumerate(self.args):
-            counts = position_counts[i]
-            if len(counts) > 1:
-                total = sum(counts.values())
-                distributions[arg.arg_name] = [
-                    (type_str, round(c / total * 100, 1))
-                    for type_str, c in counts.most_common()
-                ]
+        total = sum(sig_counts.values())
+        trace_dists = [
+            TraceDistribution(
+                args={name: typ for name, typ in sig[:-1]},
+                retval=sig[-1][1],
+                pct=round(count / total * 100, 1)
+            )
+            for sig, count in sig_counts.most_common()
+        ]
 
-        # Process return
-        ret_counts = position_counts[n_args]
-        if len(ret_counts) > 1:
-            total = sum(ret_counts.values())
-            distributions["return"] = [
-                (type_str, round(c / total * 100, 1))
-                for type_str, c in ret_counts.most_common()
-            ]
-
-        return TypeDistributions(distributions=distributions) if distributions else None
+        return TypeDistributions(traces=trace_dists)
 
 
     def transform_types(self, tr: TypeInfo.Transformer) -> None:
@@ -484,9 +477,8 @@ class Observations:
                         if len(var_types) > 1:
                             if func_info.code_id not in type_distributions:
                                 type_distributions[func_info.code_id] = TypeDistributions()
-                            type_distributions[func_info.code_id].distributions[f"var:{var_name}"] = [
-                                (str(t), 0.0) for t in sorted(var_types, key=str)
-                            ]
+                            type_distributions[func_info.code_id].variable_types[var_name] = \
+                                sorted(str(t) for t in var_types)
 
             for filename, var_dict in self.module_variables.items():
                 for var_name, var_types in var_dict.items():
@@ -494,7 +486,7 @@ class Observations:
                         # Use a synthetic CodeId for module-level variables
                         mod_code_id = CodeId(filename, FunctionName(f"<module>.{var_name}"), 0, 0)
                         type_distributions[mod_code_id] = TypeDistributions(
-                            distributions={var_name: [(str(t), 0.0) for t in sorted(var_types, key=str)]}
+                            variable_types={var_name: sorted(str(t) for t in var_types)}
                         )
 
         return annotations, module_vars, type_distributions
