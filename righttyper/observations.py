@@ -21,8 +21,8 @@ from righttyper.type_transformers import (
     LoadTypeObjT
 )
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownTypeInfo, CallTrace
-from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId
-from righttyper.annotation import FuncAnnotation, ModuleVars
+from righttyper.righttyper_types import ArgumentName, VariableName, Filename, FunctionName, CodeId
+from righttyper.annotation import FuncAnnotation, ModuleVars, TraceDistribution, TypeDistributions
 from righttyper.type_id import PostponedArg0
 from righttyper.typeshed import get_typeshed_func_params
 
@@ -73,6 +73,45 @@ class FuncInfo:
             traces.append(trace)
 
         return traces
+
+
+    def compute_type_distributions(self) -> TypeDistributions | None:
+        """Computes trace-level type frequency distributions.
+
+        Returns None if there is only one distinct trace (no polymorphism).
+        Each trace preserves the coordination between argument types and return type.
+        """
+        traces = self.most_common_traces()
+        if not traces:
+            return None
+
+        n_args = len(self.args)
+
+        # Group traces by their string signature and accumulate counts
+        sig_counts: Counter[tuple[tuple[str, str], ...]] = Counter()
+        for trace in traces:
+            count = self.traces[trace]
+            n_trace_args = len(trace) - 1
+            sig = tuple(
+                (self.args[i].arg_name, str(trace[i]) if i < n_trace_args else "?")
+                for i in range(n_args)
+            ) + (("return", str(trace[-1])),)
+            sig_counts[sig] += count
+
+        if len(sig_counts) <= 1:
+            return None
+
+        total = sum(sig_counts.values())
+        trace_dists = [
+            TraceDistribution(
+                args={name: typ for name, typ in sig[:-1]},
+                retval=sig[-1][1],
+                pct=round(count / total * 100, 1)
+            )
+            for sig, count in sig_counts.most_common()
+        ]
+
+        return TypeDistributions(traces=trace_dists)
 
 
     def transform_types(self, tr: TypeInfo.Transformer) -> None:
@@ -218,7 +257,7 @@ class Observations:
         self.wrapper_code_ids |= obs2.wrapper_code_ids
 
 
-    def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars]]:
+    def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars], dict[CodeId, TypeDistributions]]:
         """Collects function type annotations from the observed types."""
 
         def mk_annotation(func_info: FuncInfo) -> FuncAnnotation|None:
@@ -401,6 +440,14 @@ class Observations:
 
         finalizers.append(MakePickleableT())
 
+        # Compute type distributions before finalization (uses pre-transformation traces)
+        type_distributions: dict[CodeId, TypeDistributions] = {}
+        if output_options.type_distribution_comments:
+            for func_info in self.func_info.values():
+                if func_info.code_id not in self.wrapper_code_ids:
+                    if (dist := func_info.compute_type_distributions()):
+                        type_distributions[func_info.code_id] = dist
+
         annotations = {
             func_info.code_id: FuncAnnotation(
                 args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
@@ -422,7 +469,27 @@ class Observations:
             for filename, var_dict in self.module_variables.items()
         }
 
-        return annotations, module_vars
+        # Also compute variable distributions (no frequency data, just list of types)
+        if output_options.type_distribution_comments:
+            for func_info in self.func_info.values():
+                if func_info.code_id not in self.wrapper_code_ids:
+                    for var_name, var_types in func_info.variables.items():
+                        if len(var_types) > 1:
+                            if func_info.code_id not in type_distributions:
+                                type_distributions[func_info.code_id] = TypeDistributions()
+                            type_distributions[func_info.code_id].variable_types[var_name] = \
+                                sorted(str(t) for t in var_types)
+
+            for filename, var_dict in self.module_variables.items():
+                for var_name, var_types in var_dict.items():
+                    if len(var_types) > 1:
+                        # Use a synthetic CodeId for module-level variables
+                        mod_code_id = CodeId(filename, FunctionName(f"<module>.{var_name}"), 0, 0)
+                        type_distributions[mod_code_id] = TypeDistributions(
+                            variable_types={var_name: sorted(str(t) for t in var_types)}
+                        )
+
+        return annotations, module_vars, type_distributions
 
 
 class LoadAndCheckTypesT(LoadTypeObjT):

@@ -39,7 +39,7 @@ import righttyper.loader as loader
 from righttyper.righttyper_utils import detected_test_modules
 from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_types import CodeId, Filename, FunctionName
-from righttyper.annotation import FuncAnnotation, ModuleVars
+from righttyper.annotation import FuncAnnotation, ModuleVars, TypeDistributions
 from righttyper.observations import Observations
 from righttyper.recorder import ObservationsRecorder
 from righttyper.options import run_options, output_options
@@ -313,7 +313,8 @@ def emit_json(
     files: list[tuple[Filename, str]],
     type_annotations: dict[CodeId, FuncAnnotation],
     module_vars: dict[Filename, ModuleVars],
-    code_changes: list[CodeChanges]
+    code_changes: list[CodeChanges],
+    type_distributions: dict[CodeId, TypeDistributions] | None = None
 ) -> dict[str, Any]:
 
     file2module = {file: module for file, module in files}
@@ -380,6 +381,19 @@ def emit_json(
             func_entry['old_sig'] = changes[0]
             func_entry['new_sig'] = changes[1]
 
+        if type_distributions and (dist := type_distributions.get(funcid)):
+            if dist.traces:
+                func_entry['distributions'] = [
+                    {
+                        'args': td.args,
+                        'retval': td.retval,
+                        'pct': td.pct
+                    }
+                    for td in dist.traces
+                ]
+            if dist.variable_types:
+                func_entry['variable_distributions'] = dist.variable_types
+
     # fill in module vars
     for filename, mv in module_vars.items():
         data['files'][filename]['vars'] = {
@@ -392,13 +406,13 @@ def emit_json(
 
 def process_obs(obs: Observations):
     files = list(obs.source_to_module_name.items())
-    type_annotations, module_vars = obs.collect_annotations()
+    type_annotations, module_vars, type_distributions = obs.collect_annotations()
     logger.debug(f"generated {len(type_annotations)} annotation(s)")
 
-    code_changes: list[CodeChanges] = process_files(files, type_annotations, module_vars)
+    code_changes: list[CodeChanges] = process_files(files, type_annotations, module_vars, type_distributions)
 
     if output_options.json_output:
-        data = emit_json(files, type_annotations, module_vars, code_changes)
+        data = emit_json(files, type_annotations, module_vars, code_changes, type_distributions)
         with open(f"{TOOL_NAME}.json", "w") as f:
             json.dump(data, f, indent=2)
 
@@ -414,7 +428,8 @@ def process_file_wrapper(args) -> CodeChanges:
 def process_files(
     files: list[tuple[Filename, str]],
     type_annotations: dict[CodeId, FuncAnnotation],
-    module_vars: dict[Filename, ModuleVars]
+    module_vars: dict[Filename, ModuleVars],
+    type_distributions: dict[CodeId, TypeDistributions] | None = None
 ) -> list[CodeChanges]:
     if not files:
         return []
@@ -425,7 +440,8 @@ def process_files(
             file[1],    # module_name
             type_annotations,
             module_vars.get(file[0]),
-            output_options
+            output_options,
+            type_distributions
         )
         for file in files
     )
@@ -661,6 +677,12 @@ def add_output_options(group=None):
                 is_flag=True,
                 default=output_options.always_quote_annotations,
                 help="""Place all annotations in quotes. This is normally not necessary, but can help avoid undefined symbol errors."""
+            ),
+            base.option(
+                "--type-distribution-comments/--no-type-distribution-comments",
+                is_flag=True,
+                default=output_options.type_distribution_comments,
+                help="""Add comments showing the distribution of observed types next to annotations with multiple types."""
             ),
         ]):
             func = opt(func)

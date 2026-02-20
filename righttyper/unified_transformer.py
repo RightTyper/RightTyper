@@ -10,7 +10,7 @@ import re
 
 from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_types import Filename, CodeId, FunctionName
-from righttyper.annotation import FuncAnnotation, ModuleVars
+from righttyper.annotation import FuncAnnotation, ModuleVars, TypeDistributions
 
 
 ChangeStmtList: typing.TypeAlias = typing.Sequence[cst.SimpleStatementLine | cst.BaseCompoundStatement | cst.FunctionDef]
@@ -184,6 +184,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         only_update_annotations: bool = False,
         inline_generics: bool = True,
         always_quote_annotations: bool = False,
+        type_distributions: dict[CodeId, TypeDistributions] | None = None,
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
@@ -198,6 +199,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.only_update_annotations = only_update_annotations
         self.inline_generics = inline_generics
         self.always_quote_annotations = always_quote_annotations
+        self.type_distributions = type_distributions or {}
         self.has_future_annotations = False
         self.change_list: list[Change] = []
 
@@ -431,6 +433,9 @@ class UnifiedTransformer(cst.CSTTransformer):
         # The annotation for the current function, if any
         self.func_ann_stack: list[FuncAnnotation|None] = [None]
 
+        # The CodeId for the current function, if any
+        self.func_code_id_stack: list[CodeId|None] = [None]
+
         # Whether to annotate variables in this scope
         self.annotate_vars_stack: list[bool] = [True]
 
@@ -439,6 +444,9 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         # The set of variable assignments we're modifying
         self.modified_assignments: set[cst.CSTNode] = set()
+
+        # Variable assignments that need distribution comments (maps node id to comment text)
+        self.var_distribution_comments: dict[int, str] = {}
 
         self.in_if_type_checking: list[bool] = [False]
         return True
@@ -724,6 +732,26 @@ class UnifiedTransformer(cst.CSTTransformer):
             value=node.value
         )
         self._record_var_change(node, new_node)
+
+        # Check for variable distribution comment
+        if self.type_distributions:
+            var_qualname = _nodes_to_dotted_name(target)
+            func_scope_index = list_rindex(self.name_stack, '<locals>')
+            if func_scope_index:
+                # Function-scoped variable
+                func_scope_index = len(self.name_stack) + func_scope_index + 1
+                var_qualname = ".".join(self.name_stack[func_scope_index:] + [var_qualname])
+                func_code_id = self.func_code_id_stack[-1]
+                if func_code_id and (dist := self.type_distributions.get(func_code_id)):
+                    if (comment := self._format_distribution_comment(dist, variable_name=var_qualname)):
+                        self.var_distribution_comments[id(new_node)] = comment
+            else:
+                # Module-scoped variable
+                mod_code_id = CodeId(Filename(self.filename), FunctionName(f"<module>.{var_qualname}"), 0, 0)
+                if (dist := self.type_distributions.get(mod_code_id)):
+                    if (comment := self._format_distribution_comment(dist, variable_name=var_qualname)):
+                        self.var_distribution_comments[id(new_node)] = comment
+
         return new_node
 
 
@@ -788,11 +816,35 @@ class UnifiedTransformer(cst.CSTTransformer):
         node: cst.SimpleStatementLine,
         updated_node: cst.SimpleStatementLine
     ) -> cst.SimpleStatementLine:
-        return (
-            typing.cast(cst.SimpleStatementLine, updated_node.visit(TypeHintDeleter()))
-            if any(stmt in self.modified_assignments for stmt in updated_node.body)
-            else updated_node
-        )
+        # Check for variable distribution comment before TypeHintDeleter may replace nodes
+        comment_text = None
+        for stmt in updated_node.body:
+            if (comment_text := self.var_distribution_comments.get(id(stmt))):
+                break
+
+        if any(stmt in self.modified_assignments for stmt in updated_node.body):
+            updated_node = typing.cast(cst.SimpleStatementLine, updated_node.visit(TypeHintDeleter()))
+
+        # Add variable distribution comment as a leading line
+        if comment_text:
+            # Strip any existing # righttyper: comments to avoid duplication on re-runs
+            leading_lines = tuple(
+                el for el in updated_node.leading_lines
+                if not (isinstance(el, cst.EmptyLine)
+                        and el.comment is not None
+                        and el.comment.value.startswith("# righttyper:"))
+            )
+            dist_line = cst.EmptyLine(
+                indent=True,
+                whitespace=cst.SimpleWhitespace(""),
+                comment=cst.Comment(value=comment_text),
+                newline=cst.Newline(),
+            )
+            updated_node = updated_node.with_changes(
+                leading_lines=(*leading_lines, dist_line)
+            )
+
+        return updated_node
 
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
@@ -842,6 +894,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         )
         key = CodeId(Filename(self.filename), FunctionName(name), first_line, 0)
         self.func_ann_stack.append(self.type_annotations.get(key))
+        self.func_code_id_stack.append(key)
         self.annotate_vars_stack.append(True)
         return True
 
@@ -881,12 +934,42 @@ class UnifiedTransformer(cst.CSTTransformer):
         return annotation_expr
 
 
+    @staticmethod
+    def _format_distribution_comment(dist: TypeDistributions, variable_name: str | None = None) -> str | None:
+        """Formats a TypeDistributions into a comment string.
+
+        For functions with coordinated traces:
+          "# righttyper: 80.0% (x: int, y: float) -> int; 20.0% (x: str, y: float) -> str"
+        For variables (no frequency data):
+          "# righttyper: int, str"
+        """
+        if variable_name is not None:
+            # Variable mode: just list types
+            type_list = dist.variable_types.get(variable_name)
+            if not type_list or len(type_list) <= 1:
+                return None
+            return "# righttyper: " + ", ".join(type_list)
+
+        if not dist.traces:
+            return None
+
+        all_arg_names = list(dist.traces[0].args.keys())
+
+        parts = []
+        for td in dist.traces:
+            arg_parts = ", ".join(f"{name}: {td.args[name]}" for name in all_arg_names)
+            sig = f"({arg_parts}) -> {td.retval}"
+            parts.append(f"{td.pct}% {sig}")
+
+        return "# righttyper: " + "; ".join(parts)
+
     def leave_FunctionDef(
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef \
         | cst.FlattenSentinel[cst.FunctionDef|cst.SimpleStatementLine|cst.BaseCompoundStatement] \
         | cst.RemovalSentinel:
         func_name = ".".join(self.name_stack[:-1])
+        func_code_id = self.func_code_id_stack.pop()
         self.annotate_vars_stack.pop()
         self.name_stack.pop()
         self.name_stack.pop()
@@ -1080,12 +1163,35 @@ class UnifiedTransformer(cst.CSTTransformer):
                     pre_function[0] = pre_function[0].with_changes(leading_lines=leading_lines[:first_comment])
                     updated_node = updated_node.with_changes(leading_lines=leading_lines[first_comment:])
 
+            # Add type distribution comment if available
+            if (
+                func_code_id
+                and (dist := self.type_distributions.get(func_code_id))
+                and (comment_text := self._format_distribution_comment(dist))
+            ):
+                # Strip any existing # righttyper: comments to avoid duplication on re-runs
+                leading_lines = tuple(
+                    el for el in updated_node.leading_lines
+                    if not (isinstance(el, cst.EmptyLine)
+                            and el.comment is not None
+                            and el.comment.value.startswith("# righttyper:"))
+                )
+                dist_line = cst.EmptyLine(
+                    indent=True,
+                    whitespace=cst.SimpleWhitespace(""),
+                    comment=cst.Comment(value=comment_text),
+                    newline=cst.Newline(),
+                )
+                updated_node = updated_node.with_changes(
+                    leading_lines=(*leading_lines, dist_line)
+                )
+
             self.change_list.append(Change(
                 func_name,
                 original_overloads + [original_node],
                 pre_function + [updated_node]
             ))
-            
+
             return cst.FlattenSentinel([*pre_function, updated_node]) if pre_function else updated_node
 
         overloads = self.overload_stack[-1]
@@ -1226,6 +1332,17 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         b = find_beginning(new_body)
         new_body[b:b] = future_imports
+
+        # Strip any stale # righttyper: comments from the module header
+        # (libcst places comments before the first statement in the header)
+        if self.type_distributions:
+            header = tuple(
+                el for el in updated_node.header
+                if not (isinstance(el, cst.EmptyLine)
+                        and el.comment is not None
+                        and el.comment.value.startswith("# righttyper:"))
+            )
+            return updated_node.with_changes(body=new_body, header=header)
 
         return updated_node.with_changes(body=new_body)
 
