@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from righttyper.righttyper_types import ArgumentName, VariableName
 from righttyper.typeinfo import TypeInfo
 
@@ -23,15 +23,3 @@ class TraceDistribution:
     args: dict[str, str]  # arg_name -> type_string
     retval: str           # return type string
     pct: float            # percentage of total observations
-
-
-@dataclass
-class TypeDistributions:
-    """Observed type distributions for a function or variable."""
-    # Function traces, sorted descending by percentage. Only populated when >1 distinct trace.
-    traces: list[TraceDistribution] = field(default_factory=list)
-    # Variable type lists (no frequency data). Maps var name to list of type strings.
-    variable_types: dict[str, list[str]] = field(default_factory=dict)
-
-
-

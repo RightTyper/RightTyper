@@ -6542,3 +6542,76 @@ def test_wrapped_jax_jit():
         @jax.jit
         def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array: ...
     """)
+
+
+@pytest.mark.parametrize("json_output", [False, True], ids=["file", "json"])
+def test_type_distribution_comments(json_output):
+    """--type-distribution-comments produces correct distributions in file and JSON output."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        def add(x, y):
+            return x + y
+
+        for i in range(80):
+            add(1, 2)
+
+        for i in range(20):
+            add("a", "b")
+    """))
+
+    extra = ('--json-output',) if json_output else ()
+    rt_run('--no-sampling', '--type-distribution-comments', *extra, 't.py')
+
+    if json_output:
+        with Path("righttyper.json").open("r") as f:
+            data = json.load(f)
+
+        func = data['files'][str(Path('t.py').resolve())]['functions']['add']
+        dists = func['distributions']
+        assert len(dists) == 2
+        assert dists[0] == {'args': {'x': 'int', 'y': 'int'}, 'retval': 'int', 'pct': 80.0}
+        assert dists[1] == {'args': {'x': 'str', 'y': 'str'}, 'retval': 'str', 'pct': 20.0}
+    else:
+        output = Path("t.py").read_text()
+        lines = [l for l in output.splitlines() if l.strip().startswith('# righttyper:')]
+        assert len(lines) == 1
+        assert lines[0].strip() == \
+            '# righttyper: 80.0% (x: int, y: int) -> int; 20.0% (x: str, y: str) -> str'
+
+
+def test_type_distribution_comments_no_comment_for_monomorphic():
+    """Monomorphic functions should not get a distribution comment."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        def add(x, y):
+            return x + y
+
+        add(1, 2)
+        add(3, 4)
+    """))
+
+    rt_run('--no-sampling', '--type-distribution-comments', 't.py')
+    output = Path("t.py").read_text()
+
+    assert '# righttyper:' not in output
+
+
+def test_type_distribution_comments_rerun_no_duplication():
+    """Re-running with --type-distribution-comments should not duplicate the comment."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        def add(x, y):
+            return x + y
+
+        for i in range(80):
+            add(1, 2)
+
+        for i in range(20):
+            add("a", "b")
+    """))
+
+    rt_run('--no-sampling', '--type-distribution-comments', 't.py')
+    first_output = Path("t.py").read_text()
+    assert first_output.count('# righttyper:') == 1
+
+    # Run again on the already-annotated file
+    rt_run('--no-sampling', '--type-distribution-comments', '--ignore-annotations', 't.py')
+    second_output = Path("t.py").read_text()
+    assert second_output.count('# righttyper:') == 1

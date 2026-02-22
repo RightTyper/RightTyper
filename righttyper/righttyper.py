@@ -39,7 +39,7 @@ import righttyper.loader as loader
 from righttyper.righttyper_utils import detected_test_modules
 from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_types import CodeId, Filename, FunctionName
-from righttyper.annotation import FuncAnnotation, ModuleVars, TypeDistributions
+from righttyper.annotation import FuncAnnotation, ModuleVars, TraceDistribution
 from righttyper.observations import Observations
 from righttyper.recorder import ObservationsRecorder
 from righttyper.options import run_options, output_options
@@ -314,7 +314,7 @@ def emit_json(
     type_annotations: dict[CodeId, FuncAnnotation],
     module_vars: dict[Filename, ModuleVars],
     code_changes: list[CodeChanges],
-    type_distributions: dict[CodeId, TypeDistributions] | None = None
+    type_distributions: dict[CodeId, list[TraceDistribution]] | None = None
 ) -> dict[str, Any]:
 
     file2module = {file: module for file, module in files}
@@ -381,18 +381,15 @@ def emit_json(
             func_entry['old_sig'] = changes[0]
             func_entry['new_sig'] = changes[1]
 
-        if type_distributions and (dist := type_distributions.get(funcid)):
-            if dist.traces:
-                func_entry['distributions'] = [
-                    {
-                        'args': td.args,
-                        'retval': td.retval,
-                        'pct': td.pct
-                    }
-                    for td in dist.traces
-                ]
-            if dist.variable_types:
-                func_entry['variable_distributions'] = dist.variable_types
+        if type_distributions and (traces := type_distributions.get(funcid)):
+            func_entry['distributions'] = [
+                {
+                    'args': td.args,
+                    'retval': td.retval,
+                    'pct': td.pct
+                }
+                for td in traces
+            ]
 
     # fill in module vars
     for filename, mv in module_vars.items():
@@ -429,7 +426,7 @@ def process_files(
     files: list[tuple[Filename, str]],
     type_annotations: dict[CodeId, FuncAnnotation],
     module_vars: dict[Filename, ModuleVars],
-    type_distributions: dict[CodeId, TypeDistributions] | None = None
+    type_distributions: dict[CodeId, list[TraceDistribution]] | None = None
 ) -> list[CodeChanges]:
     if not files:
         return []
