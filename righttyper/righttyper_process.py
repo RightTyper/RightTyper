@@ -5,7 +5,7 @@ import libcst as cst
 
 from righttyper.generate_stubs import PyiTransformer
 from righttyper.righttyper_types import Filename, CodeId, FunctionName
-from righttyper.annotation import FuncAnnotation, ModuleVars, TypeDistributions
+from righttyper.annotation import FuncAnnotation, ModuleVars, TraceDistribution
 from righttyper.righttyper_utils import (
     source_to_module_fqn
 )
@@ -77,7 +77,7 @@ def process_file(
     type_annotations: dict[CodeId, FuncAnnotation],
     module_vars: ModuleVars,
     options: OutputOptions,
-    type_distributions: dict[CodeId, TypeDistributions] | None = None
+    type_distributions: dict[CodeId, list[TraceDistribution]] | None = None
 ) -> CodeChanges:
     logger.debug(f"process_file: {filename}")
     try:
