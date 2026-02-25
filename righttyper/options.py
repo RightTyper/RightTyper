@@ -77,6 +77,8 @@ class RunOptions:
     variables: bool = True
     save_profiling: str|None = None
     allow_runtime_exceptions: bool = False
+    eval_sampling: bool = False
+    log_sampling: bool = False
     generalize_tuples: int = 3
 
 
@@ -84,6 +86,9 @@ class RunOptions:
         for name, value in kwargs.items():
             if hasattr(self, name):
                 setattr(self, name, value)
+
+        if self.eval_sampling:
+            self.log_sampling = True
 
 
     @functools.cached_property

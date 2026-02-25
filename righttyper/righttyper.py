@@ -825,6 +825,18 @@ def add_output_options(group=None):
     help="Generalize homogenous fixed-length tuples to tuple[T, ...] if length ≥ N.  N=0 disables generalization."
 )
 @click.option(
+    "--eval-sampling",
+    is_flag=True,
+    default=run_options.eval_sampling,
+    help="Enable parallel exhaustive scanning to measure sampling accuracy. Significant performance overhead.",
+)
+@click.option(
+    "--log-sampling",
+    is_flag=True,
+    default=run_options.log_sampling,
+    help="Enable structured logging of container sampling decisions to righttyper-sampling.jsonl.",
+)
+@click.option(
     "--debug",
     is_flag=True,
     help="Include diagnostic information in log file.",
@@ -872,6 +884,10 @@ def run(
     run_options.process_args(kwargs)
     output_options.process_args(kwargs)
 
+    if run_options.log_sampling:
+        from righttyper.logger import init_sampling_log
+        init_sampling_log()
+
     if run_options.infer_shapes:
         packages_needed = {"jaxtyping"}
         packages_found = {
@@ -906,6 +922,10 @@ def run(
         rec.try_close_generators()
         shutdown_monitoring()
         stop_capture()
+
+        if run_options.log_sampling:
+            from righttyper.logger import finalize_sampling_log
+            finalize_sampling_log()
 
         try:
             obs = rec.finish_recording(main_globals)
