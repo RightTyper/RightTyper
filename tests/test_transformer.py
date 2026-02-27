@@ -2913,3 +2913,123 @@ def test_get_changes_variables_unchanged():
     code = t.transform_code(code)
     changes = t.get_changes()
     assert not changes
+
+
+def test_type_checking_import_quoted_without_future_annotations():
+    """TYPE_CHECKING-only imports must be quoted when ``from __future__ import annotations`` is absent."""
+    code = cst.parse_module(textwrap.dedent("""\
+        from typing import TYPE_CHECKING
+
+        if TYPE_CHECKING:
+            from some_module import SomeClass
+
+        def foo(x):
+            return x
+    """))
+
+    foo = get_code_id('foo.py', code, 'foo')
+    tr = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: _mkAnnotation(
+                    [
+                        (ArgumentName('x'), TypeInfo(module='some_module', name='SomeClass'))
+                    ],
+                    TypeInfo(module='', name='int'),
+                ),
+            },
+            module_variables = ModuleVars([]),
+            module_name = 'foo',
+            override_annotations=False,
+            only_update_annotations=False,
+            inline_generics=False
+        )
+
+    code = tr.transform_code(code)
+
+    # SomeClass is only available under TYPE_CHECKING; without
+    # ``from __future__ import annotations``, the annotation must be quoted
+    # to avoid a NameError at runtime.
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: "some_module.SomeClass") -> int:
+            return x
+    """)
+
+
+def test_attribute_type_checking_guard():
+    """``if t.TYPE_CHECKING:`` must be handled the same as ``if TYPE_CHECKING:``."""
+    code = cst.parse_module(textwrap.dedent("""\
+        import typing as t
+
+        if t.TYPE_CHECKING:
+            from some_module import SomeClass
+
+        def foo(x):
+            return x
+    """))
+
+    foo = get_code_id('foo.py', code, 'foo')
+    tr = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: _mkAnnotation(
+                    [
+                        (ArgumentName('x'), TypeInfo(module='some_module', name='SomeClass'))
+                    ],
+                    TypeInfo(module='', name='int'),
+                ),
+            },
+            module_variables = ModuleVars([]),
+            module_name = 'foo',
+            override_annotations=False,
+            only_update_annotations=False,
+            inline_generics=False
+        )
+
+    code = tr.transform_code(code)
+
+    # Same behavior as ``if TYPE_CHECKING:`` — the annotation must be quoted.
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: "some_module.SomeClass") -> int:
+            return x
+    """)
+
+
+def test_attribute_type_checking_guard_merges_imports():
+    """New TYPE_CHECKING imports merge into an existing ``if t.TYPE_CHECKING:`` block."""
+    code = cst.parse_module(textwrap.dedent("""\
+        import typing as t
+
+        if t.TYPE_CHECKING:
+            from some_module import SomeClass
+
+        def foo(x):
+            return x
+    """))
+
+    foo = get_code_id('foo.py', code, 'foo')
+    tr = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: _mkAnnotation(
+                    [
+                        (ArgumentName('x'), TypeInfo(module='some_module', name='SomeClass'))
+                    ],
+                    TypeInfo(module='other_module', name='Result'),
+                ),
+            },
+            module_variables = ModuleVars([]),
+            module_name = 'foo',
+            override_annotations=False,
+            only_update_annotations=False,
+            inline_generics=False
+        )
+
+    code = tr.transform_code(code)
+
+    # The new import (other_module) should be merged into the existing
+    # ``if t.TYPE_CHECKING:`` block, not create a duplicate ``if TYPE_CHECKING:`` block.
+    code_str = code.code
+    assert code_str.count("TYPE_CHECKING") == 1, (
+        f"Expected exactly one TYPE_CHECKING block, got:\n{code_str}"
+    )
