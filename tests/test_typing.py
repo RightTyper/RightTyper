@@ -1267,6 +1267,66 @@ def test_max_limit_has_no_calibration_fields(monkeypatch):
         assert 'singleton_ratios' not in record
 
 
+def test_from_set_union_size_limit(monkeypatch):
+    """Unions exceeding max_union_size collapse to Any."""
+    monkeypatch.setattr(run_options, 'max_union_size', 5)
+
+    # Under limit: 4 types → normal union
+    s = {TypeInfo.from_type(int), TypeInfo.from_type(str),
+         TypeInfo.from_type(float), TypeInfo.from_type(bool)}
+    t = TypeInfo.from_set(s)
+    assert t.is_union()
+    assert len(t.args) == 4
+
+    # At limit: 5 types → normal union
+    s.add(TypeInfo.from_type(bytes))
+    t = TypeInfo.from_set(s)
+    assert t.is_union()
+    assert len(t.args) == 5
+
+    # Over limit: 6 types → Any
+    s.add(TypeInfo(module='mod', name='Extra'))
+    t = TypeInfo.from_set(s)
+    assert t.type_obj is typing.Any
+    assert not t.is_union()
+
+
+def test_from_set_default_limit_allows_normal_unions():
+    """Default limit (32) doesn't affect normal-sized unions."""
+    s = {TypeInfo.from_type(t) for t in
+         [int, str, float, bool, bytes, list, dict, set, tuple]}
+    t = TypeInfo.from_set(s)
+    assert t.is_union()
+    assert len(t.args) == 9
+
+
+def test_sample_until_stable_stops_at_union_limit(monkeypatch):
+    """Sampling stops early when distinct types exceed max_union_size."""
+    from righttyper.type_id import ContainerSamples
+
+    monkeypatch.setattr(run_options, 'max_union_size', 5)
+    monkeypatch.setattr(run_options, 'container_min_samples', 2)
+    monkeypatch.setattr(run_options, 'container_max_samples', 200)
+
+    # Sampler returns a new unique type each call
+    distinct_types = [type(f'T{i}', (), {}) for i in range(50)]
+    distinct_values = [t() for t in distinct_types]
+    idx = [0]
+
+    def sampler():
+        v = distinct_values[idx[0] % len(distinct_values)]
+        idx[0] += 1
+        return (v,)
+
+    entry = ContainerSamples(o=distinct_values, n_counters=1)
+    reason = entry.sample_until_stable(sampler, depth=0)
+
+    assert reason == 'union_limit'
+    # Should stop much sooner than max_samples
+    total = entry.all_samples[0].total()
+    assert total < 50
+
+
 def test_eval_sampling_ground_truth_counts(monkeypatch):
     """Container with a rare type: ground truth should record correct type counts."""
     monkeypatch.setattr(run_options, 'container_max_samples', 5)

@@ -5662,3 +5662,24 @@ def test_class_attributes_via_classmethod():
 
         C.setup()
     """)
+
+
+@pytest.mark.dont_run_mypy
+def test_max_union_size():
+    """Unions exceeding --max-union-size collapse to Any in container elements."""
+    t = textwrap.dedent("""\
+        def f():
+            return [1, 'a', 2.0, b'x']
+
+        f()
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('--max-union-size', '3', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # 4 distinct element types (int, str, float, bytes) > limit 3 → Any
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f() -> list[Any]: ...
+    """)

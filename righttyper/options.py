@@ -80,6 +80,7 @@ class RunOptions:
     eval_sampling: bool = False
     log_sampling: bool = False
     generalize_tuples: int = 3
+    max_union_size: int = 32  # Unions exceeding this collapse to Any
 
 
     def process_args(self, kwargs: dict[str, Any]) -> None:

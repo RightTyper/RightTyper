@@ -775,6 +775,12 @@ def add_output_options(group=None):
     help="Probability of spot-checking a container for new types.",
 )
 @click.option(
+    "--max-union-size",
+    type=click.IntRange(1, None),
+    default=run_options.max_union_size,
+    help="Maximum distinct types in a union before collapsing to Any.",
+)
+@click.option(
     "--save-profiling",
     is_flag=True,
     hidden=True,

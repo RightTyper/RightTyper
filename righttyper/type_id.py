@@ -487,6 +487,11 @@ class ContainerSamples:
                 c[v] += 1
             n += 1
 
+            # Early-out: if cumulative types exceed max_union_size,
+            # further sampling is pointless — from_set() will collapse to Any
+            if any(len(c) > run_options.max_union_size for c in self.all_samples):
+                return 'union_limit'
+
             # Minimum samples before checking Good-Turing
             if n < run_options.container_min_samples:
                 continue
