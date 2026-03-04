@@ -5388,17 +5388,16 @@ def test_type_variables(scope, plain, python_version):
     )
 
 
-@pytest.mark.dont_run_mypy # annotations in source are wrong to test if they are corrected
 def test_variables_dataclass():
-    # TODO dataclasses are not yet supported
     Path("t.py").write_text(textwrap.dedent("""\
         from dataclasses import dataclass, field
+        from typing import Any
 
         @dataclass
         class C:
-            x: bool
-            y: str = 1
-            z: int = field(default_factory=set)
+            x: Any
+            y: Any = 1
+            z: Any = field(default_factory=set)
 
         c = C('tada')
         """
@@ -5409,28 +5408,111 @@ def test_variables_dataclass():
 
     assert output == textwrap.dedent("""\
         from dataclasses import dataclass, field
+        from typing import Any
 
         @dataclass
         class C:
-            x: bool
-            y: str = 1
-            z: int = field(default_factory=set)
+            x: str
+            y: int = 1
+            z: set[Any] = field(default_factory=set)
 
         c: C = C('tada')
         """
     )
-#    assert output == textwrap.dedent("""\
-#        from dataclasses import dataclass, field
-#
-#        @dataclass
-#        class C:
-#            x: str
-#            y: int = 1
-#            z: set = field(default_factory=set)
-#
-#        c: C = C('tada')
-#        """
-#    )
+
+
+def test_variables_dataclass_multi_type():
+    Path("t.py").write_text(textwrap.dedent("""\
+        from dataclasses import dataclass
+        from typing import Any
+
+        @dataclass
+        class C:
+            x: Any
+            y: Any = 1
+
+        c1 = C('hello')
+        c2 = C(42)
+        """
+    ))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from dataclasses import dataclass
+        from typing import Any
+
+        @dataclass
+        class C:
+            x: int|str
+            y: int = 1
+
+        c1: C = C('hello')
+        c2: C = C(42)
+        """
+    )
+
+
+@pytest.mark.skipif(not importlib.util.find_spec("attr"), reason="attrs not installed")
+def test_variables_attrs():
+    Path("t.py").write_text(textwrap.dedent("""\
+        import attr
+        from typing import Any
+
+        @attr.define
+        class C:
+            x: Any
+            y: Any = 1
+            z: Any = attr.Factory(set)
+
+        c = C('tada')
+        """
+    ))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        import attr
+        from typing import Any
+
+        @attr.define
+        class C:
+            x: str
+            y: int = 1
+            z: set[Any] = attr.Factory(set)
+
+        c: C = C('tada')
+        """
+    )
+
+
+def test_variables_namedtuple():
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import Any, NamedTuple
+
+        class C(NamedTuple):
+            x: Any
+            y: Any = 1
+
+        c = C('tada')
+        """
+    ))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import Any, NamedTuple
+
+        class C(NamedTuple):
+            x: str
+            y: int = 1
+
+        c: C = C('tada')
+        """
+    )
 
 
 def test_variables_dunder():

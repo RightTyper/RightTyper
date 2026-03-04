@@ -4,7 +4,7 @@ from typing import Any, Final
 from collections.abc import Callable
 import functools
 
-from righttyper.righttyper_utils import unwrap
+from righttyper.righttyper_utils import unwrap, skip_this_file
 
 TOOL_NAME: Final[str] = "righttyper"
 
@@ -40,6 +40,22 @@ def _call_handler(code: CodeType, offset: int, callable: object, arg0: object) -
     ):
         call_mapping[(code, offset)] = callable
         code_to_callable[callee_code] = callable
+    elif isinstance(callable, type) and (
+        hasattr(callable, '__dataclass_fields__')
+        or hasattr(callable, '__attrs_attrs__')
+        or (issubclass(callable, tuple) and hasattr(callable, '_fields'))
+    ):
+        # NamedTuple uses __new__; dataclass/attrs use __init__
+        if issubclass(callable, tuple) and hasattr(callable, '_fields'):
+            target = getattr(callable, '__new__', None)
+        else:
+            target = getattr(callable, '__init__', None)
+        target_code = getattr(target, '__code__', None)
+        mod = sys.modules.get(callable.__module__)
+        source_file = getattr(mod, '__file__', None)
+        if target_code and target_code not in setup_code and source_file and not skip_this_file(source_file):
+            setup_monitoring_for_code(target_code)
+            field_class_init_codes[target_code] = (callable, source_file)
     return sys.monitoring.DISABLE
 
 
@@ -85,6 +101,7 @@ enabled_code: set[CodeType] = set()
 
 call_mapping: dict[tuple[CodeType, int], object] = {}
 code_to_callable: dict[CodeType, object] = {}
+field_class_init_codes: dict[CodeType, tuple[type, str]] = {}  # __init__/__new__ code → (class, source_filename)
 
 
 def setup_monitoring_for_code(code: CodeType) -> None:

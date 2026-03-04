@@ -20,11 +20,25 @@ from righttyper.righttyper_utils import (
     normalize_module_name, unwrap
 )
 from righttyper.type_id import find_function, get_value_type, get_type_name, hint2type, PostponedArg0
+from righttyper.righttyper_tool import field_class_init_codes
 from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
 
 
 # Singleton used to differentiate from None
 NO_OBJECT: Final = object()
+
+
+def _get_field_names(cls: type) -> tuple[str, ...]|None:
+    """Returns field names for dataclasses, attrs, and NamedTuple classes, or None."""
+    if hasattr(cls, '__dataclass_fields__'):
+        return tuple(cls.__dataclass_fields__)
+    if attrs := getattr(cls, '__attrs_attrs__', None):
+        return tuple(a.name for a in attrs)
+    if issubclass(cls, tuple) and hasattr(cls, '_fields'):
+        return cls._fields  # type: ignore[union-attr]
+    return None
+
+
 
 
 FrameId = NewType("FrameId", int)   # obtained from id(frame) where code is-a FrameType
@@ -141,6 +155,9 @@ class ObservationsRecorder:
         # Started, but not (yet) completed traces
         self._pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = defaultdict(dict)
 
+        # Field-class __init__/__new__ codes already seen; used to clear stale class-body types
+        self._field_classes_seen: set[CodeType] = set()
+
         # Object attributes: class_key -> attr_name -> set[TypeInfo]
         self._object_attributes: dict[object, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
 
@@ -248,6 +265,33 @@ class ObservationsRecorder:
     def _record_variables(self, code: CodeType, frame: FrameType) -> None:
         """Records variables."""
         # Uncomment for debugging: print(f"record_variables {code.co_qualname}")
+
+        # Field-class __init__/__new__: inspect instance to get field types.
+        if (cls_info := field_class_init_codes.get(code)) is not None:
+            cls, source_filename = cls_info
+            field_names = _get_field_names(cls)
+            if field_names is not None:
+                # NamedTuple uses __new__ with fields as local vars; others use __init__ with self
+                is_namedtuple = issubclass(cls, tuple)
+                f_locals = frame.f_locals
+                if is_namedtuple or f_locals.get("self") is not None:
+                    module_vars = self._obs.module_variables[Filename(source_filename)]
+                    qualname = cls.__qualname__
+                    # First call: clear stale types from class-body capture (e.g. Field descriptors)
+                    first_call = code not in self._field_classes_seen
+                    if first_call:
+                        self._field_classes_seen.add(code)
+                    for field_name in field_names:
+                        if is_namedtuple:
+                            value = f_locals.get(field_name, NO_OBJECT)
+                        else:
+                            value = getattr(f_locals["self"], field_name, NO_OBJECT)
+                        if value is not NO_OBJECT:
+                            key = VariableName(f"{qualname}.{field_name}")
+                            if first_call:
+                                module_vars[key] = {get_value_type(value)}
+                            else:
+                                module_vars[key].add(get_value_type(value))
 
         if not run_options.variables or not (codevars := code2variables.get(code)):
             return

@@ -822,7 +822,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         )
 
         self.class_is_enum[name] = is_enum
-        self.annotate_vars_stack.append(not (is_enum or is_dataclass))
+        self.annotate_vars_stack.append(not is_enum)
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
