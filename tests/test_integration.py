@@ -5807,7 +5807,114 @@ def test_class_attributes_via_classmethod():
     """)
 
 
-@pytest.mark.dont_run_mypy
+def test_dataclass_disambiguation():
+    """Different dataclasses with different fields must not collide during merge."""
+    t = textwrap.dedent("""\
+        from dataclasses import dataclass
+
+        @dataclass
+        class Cache:
+            mode: object
+            cache_file: object
+            file_data: object
+
+        @dataclass
+        class Report:
+            check: object
+            diff: object
+            quiet: object
+
+        c = Cache("fast", "/tmp/cache", {"a": 1})
+        r = Report(True, False, True)
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from dataclasses import dataclass
+
+        @dataclass
+        class Cache:
+            mode: str
+            cache_file: str
+            file_data: dict[str, int]
+
+        @dataclass
+        class Report:
+            check: bool
+            diff: bool
+            quiet: bool
+
+        c: Cache = Cache("fast", "/tmp/cache", {"a": 1})
+        r: Report = Report(True, False, True)
+        """
+    )
+
+
+def test_namedtuple_field_inference():
+    """NamedTuple fields get their types inferred from runtime values."""
+    t = textwrap.dedent("""\
+        from typing import NamedTuple
+
+        class Point(NamedTuple):
+            x: object
+            y: object
+            label: object
+
+        p = Point(1.5, 2.5, "origin")
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import NamedTuple
+
+        class Point(NamedTuple):
+            x: float
+            y: float
+            label: str
+
+        p: Point = Point(1.5, 2.5, "origin")
+        """
+    )
+
+
+def test_attrs_field_inference():
+    """attrs class fields get their types inferred from runtime values."""
+    t = textwrap.dedent("""\
+        import attr
+
+        @attr.s(auto_attribs=True)
+        class Config:
+            name: object
+            debug: object
+            retries: object
+
+        c = Config("prod", False, 3)
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        import attr
+
+        @attr.s(auto_attribs=True)
+        class Config:
+            name: str
+            debug: bool
+            retries: int
+
+        c: Config = Config("prod", False, 3)
+        """
+    )
+
+
 def test_max_union_size():
     """Unions exceeding --max-union-size collapse to Any in container elements."""
     t = textwrap.dedent("""\

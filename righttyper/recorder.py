@@ -209,8 +209,18 @@ class ObservationsRecorder:
 
             defaults = get_defaults(code, frame)
 
+            # Use resolved CodeId for dataclass/attrs/NamedTuple __init__
+            cls_info = field_class_init_codes.get(code)
+            if cls_info is not None:
+                cls, code_id = cls_info
+                # Register the real source file so process() finds it
+                if code_id.file_name not in self._obs.source_to_module_name:
+                    self._obs.source_to_module_name[code_id.file_name] = cls.__module__
+            else:
+                code_id = CodeId.from_code(code)
+
             self._code2func_info[code] = func_info = FuncInfo(
-                CodeId.from_code(code),
+                code_id,
                 tuple(
                     ArgInfo(ArgumentName(name), defaults.get(name))
                     for name in arg_names
@@ -268,14 +278,14 @@ class ObservationsRecorder:
 
         # Field-class __init__/__new__: inspect instance to get field types.
         if (cls_info := field_class_init_codes.get(code)) is not None:
-            cls, source_filename = cls_info
+            cls, code_id = cls_info
             field_names = _get_field_names(cls)
             if field_names is not None:
                 # NamedTuple uses __new__ with fields as local vars; others use __init__ with self
                 is_namedtuple = issubclass(cls, tuple)
                 f_locals = frame.f_locals
                 if is_namedtuple or f_locals.get("self") is not None:
-                    module_vars = self._obs.module_variables[Filename(source_filename)]
+                    module_vars = self._obs.module_variables[code_id.file_name]
                     qualname = cls.__qualname__
                     # First call: clear stale types from class-body capture (e.g. Field descriptors)
                     first_call = code not in self._field_classes_seen

@@ -5,6 +5,7 @@ from collections.abc import Callable
 import functools
 
 from righttyper.righttyper_utils import unwrap, skip_this_file
+from righttyper.righttyper_types import CodeId, Filename, FunctionName
 
 TOOL_NAME: Final[str] = "righttyper"
 
@@ -55,7 +56,13 @@ def _call_handler(code: CodeType, offset: int, callable: object, arg0: object) -
         source_file = getattr(mod, '__file__', None)
         if target_code and target_code not in setup_code and source_file and not skip_this_file(source_file):
             setup_monitoring_for_code(target_code)
-            field_class_init_codes[target_code] = (callable, source_file)
+            code_id = CodeId(
+                Filename(source_file),
+                FunctionName(f"{callable.__qualname__}.__init__"),
+                0,
+                0
+            )
+            field_class_init_codes[target_code] = (callable, code_id)
     return sys.monitoring.DISABLE
 
 
@@ -101,7 +108,7 @@ enabled_code: set[CodeType] = set()
 
 call_mapping: dict[tuple[CodeType, int], object] = {}
 code_to_callable: dict[CodeType, object] = {}
-field_class_init_codes: dict[CodeType, tuple[type, str]] = {}  # __init__/__new__ code → (class, source_filename)
+field_class_init_codes: dict[CodeType, tuple[type, CodeId]] = {}  # __init__/__new__ code → (class, resolved CodeId)
 
 
 def setup_monitoring_for_code(code: CodeType) -> None:
