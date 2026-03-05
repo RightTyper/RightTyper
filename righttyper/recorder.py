@@ -242,7 +242,11 @@ class ObservationsRecorder:
 
         # print(f"record_start {code.co_qualname} {arg_types}")
 
-        self.record_module(code, frame)
+        # Skip record_module for synthetic __init__/__new__ (dataclass, attrs,
+        # NamedTuple) whose co_filename is typically '<string>' — their real
+        # source file is registered in record_function.
+        if code not in field_class_init_codes:
+            self.record_module(code, frame)
 
         # CO_NEWLOCALS, when set within a CodeType's co_flags, indicates that
         # a new "locals" dictionary is created; it roughly indicates a function
