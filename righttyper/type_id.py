@@ -1,5 +1,6 @@
 import gc
 import inspect
+import json
 import random
 import re
 import sys
@@ -34,7 +35,7 @@ from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, AnyTypeInfo
 from righttyper.righttyper_types import Filename, FunctionName, CodeId, CallableWithCode, has_code
 from righttyper.righttyper_utils import is_test_module, normalize_module_name, unwrap
 from righttyper.options import run_options, output_options
-from righttyper.logger import logger
+from righttyper.logger import logger, sampling_logger, update_sampling_summary
 from righttyper.righttyper_tool import call_mapping, code_to_callable
 
 
@@ -402,6 +403,8 @@ class ContainerSamples:
         # Cumulative counters: all types ever seen (for final annotation)
         self.all_samples: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(n_counters))
         self.last_sampled_size = 0
+        # Set by sample_until_stable on Good-Turing convergence
+        self.last_singleton_ratios: list[float] = []
 
     def add_sample(self, sample: tuple[TypeInfo, ...]) -> None:
         """Add a sample to cumulative history."""
@@ -410,20 +413,18 @@ class ContainerSamples:
 
     def has_new_type(self, sample: tuple[TypeInfo, ...]) -> bool:
         """Check if sample contains a type not seen before."""
-        for v, counter in zip(sample, self.all_samples):
-            if v not in counter:
-                return True
-        return False
+        return any(v not in counter for v, counter in zip(sample, self.all_samples))
 
-    def sample_until_stable(self, sampler: abc.Callable[[], tuple[Any, ...]], depth: int) -> None:
+    def sample_until_stable(self, sampler: abc.Callable[[], tuple[Any, ...]], depth: int) -> str:
         """Sample until Good-Turing indicates stability.
 
         Uses cycle-local counters for the stopping criterion, ensuring accurate
         estimation of the current container's type distribution.
+
+        Returns the stopping reason: 'good_turing' or 'max_limit'.
         """
         cycle_counter: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(self.n_counters))
         n = 0
-        logged_max_warning = False
 
         while True:
             sample = tuple(get_value_type(v, depth+1) for v in sampler())
@@ -435,27 +436,31 @@ class ContainerSamples:
                 c[v] += 1
             n += 1
 
+            # Early-out: if cumulative types exceed max_union_size,
+            # further sampling is pointless — from_set() will collapse to Any
+            if any(len(c) > run_options.max_union_size for c in self.all_samples):
+                return 'union_limit'
+
             # Minimum samples before checking Good-Turing
             if n < run_options.container_min_samples:
                 continue
 
             # Per-cycle max limit
             if n >= run_options.container_max_samples:
-                if not logged_max_warning:
-                    logged_max_warning = True
-                    container_type = type(self.o).__name__
-                    container_len = len(self.o) if hasattr(self.o, '__len__') else '?'
-                    all_types = [set(c.keys()) for c in cycle_counter]
-                    ratios = [sum(c == 1 for c in counter.values()) / n for counter in cycle_counter]
-                    logger.info(f"Container sampling hit max limit ({n}): {container_type}[{container_len}], ratios={ratios}, types={all_types}")
-                break
+                container_type = type(self.o).__name__
+                container_len = len(self.o) if hasattr(self.o, '__len__') else '?'
+                all_types = [set(c.keys()) for c in cycle_counter]
+                ratios = [sum(c == 1 for c in counter.values()) / n for counter in cycle_counter]
+                logger.info(f"Container sampling hit max limit ({n}): {container_type}[{container_len}], ratios={ratios}, types={all_types}")
+                return 'max_limit'
 
             # Good-Turing: stop when singleton ratio is low for all counters
-            if all(
-                sum(c == 1 for c in counter.values()) / n <= run_options.container_type_threshold
-                for counter in cycle_counter
-            ):
-                break
+            ratios = [
+                sum(c == 1 for c in counter.values()) / n for counter in cycle_counter
+            ]
+            if max(ratios) <= run_options.container_type_threshold:
+                self.last_singleton_ratios = ratios
+                return 'good_turing'
 
     def full_scan(self, container: Any, depth: int) -> None:
         """Fully scan a small container."""
@@ -466,6 +471,18 @@ class ContainerSamples:
             for k, v in container.items():
                 self.add_sample((get_value_type(k, depth+1), get_value_type(v, depth+1)))
         self.last_sampled_size = len(container)
+
+    def compute_ground_truth(self, container: Any, depth: int) -> tuple[Counter[TypeInfo], ...]:
+        """Exhaustively scan container for evaluation. Does NOT modify all_samples."""
+        truth: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(self.n_counters))
+        if self.n_counters == 1:
+            for v in container:
+                truth[0][get_value_type(v, depth+1)] += 1
+        else:
+            for k, v in container.items():
+                truth[0][get_value_type(k, depth+1)] += 1
+                truth[1][get_value_type(v, depth+1)] += 1
+        return truth
 
 
 class ContainerTypeCache:
@@ -497,6 +514,13 @@ def _get_container_args(
 ) -> tuple[TypeInfo, ...]:
 
     entry = _cache.get(container, n_counters)
+    action = "skip"
+    stopping_reason: str | None = None
+    sample_trigger: str | None = None
+    n_samples_before = 0
+
+    if run_options.log_sampling:
+        n_samples_before = entry.all_samples[0].total()
 
     if container:
         current_size = len(container)
@@ -507,27 +531,77 @@ def _get_container_args(
             if current_size != entry.last_sampled_size:
                 # First visit or size changed: full scan
                 entry.full_scan(container, depth)
-                entry.last_sampled_size = current_size
+                action = "full_scan"
             elif random.random() < run_options.container_check_probability:
                 # Spot-check: take one sample, rescan if new type found
                 sample = tuple(get_value_type(v, depth+1) for v in sampler())
                 if entry.has_new_type(sample):
                     entry.full_scan(container, depth)
+                    action = "spot_check_hit"
+                else:
+                    action = "spot_check_miss"
         else:
             # Large container strategy: Good-Turing for stopping, spot-check for change detection
             if current_size != entry.last_sampled_size:
-                # Size changed (or first observation): resample
-                entry.sample_until_stable(sampler, depth)
+                stopping_reason = entry.sample_until_stable(sampler, depth)
+                sample_trigger = "first" if entry.last_sampled_size == 0 else "size_change"
                 entry.last_sampled_size = current_size
+                action = "sample"
             elif random.random() < run_options.container_check_probability:
                 # Spot-check: resample only if new type found
                 sample = tuple(get_value_type(v, depth+1) for v in sampler())
                 if entry.has_new_type(sample):
                     entry.add_sample(sample)
-                    entry.sample_until_stable(sampler, depth)
+                    stopping_reason = entry.sample_until_stable(sampler, depth)
                     entry.last_sampled_size = current_size
+                    action = "spot_check_hit"
+                    sample_trigger = "spot_check"
+                else:
+                    action = "spot_check_miss"
 
-    return tuple(TypeInfo.from_set(set(c)) for c in entry.all_samples)
+    result = tuple(TypeInfo.from_set(set(c)) for c in entry.all_samples)
+
+    if run_options.log_sampling and container:
+        n_samples_after = entry.all_samples[0].total()
+        record: dict[str, Any] = {
+            'container_id': id(container),
+            'container_type': type(container).__name__,
+            'size': current_size,
+            'is_small': is_small,
+            'action': action,
+            'samples_taken': n_samples_after - n_samples_before
+                            + (1 if (is_small and action.startswith("spot_check"))
+                                    or action == "spot_check_miss" else 0),
+            'types_found': [sorted(str(t) for t in c.keys()) for c in entry.all_samples],
+            'n_distinct_types': [len(c) for c in entry.all_samples],
+        }
+
+        if sample_trigger is not None:
+            record['sample_trigger'] = sample_trigger
+
+        if stopping_reason is not None:
+            record['stopping_reason'] = stopping_reason
+            if stopping_reason == 'good_turing':
+                record['singleton_ratios'] = entry.last_singleton_ratios
+
+        if run_options.eval_sampling:
+            ground_truth = entry.compute_ground_truth(container, depth)
+            sampled_types = tuple(set(c.keys()) for c in entry.all_samples)
+
+            per_counter_recall = []
+            for gt, st in zip(ground_truth, sampled_types):
+                gt_keys = set(gt.keys())
+                recall = len(st & gt_keys) / len(gt_keys) if gt_keys else 1.0
+                per_counter_recall.append(recall)
+
+            record['ground_truth'] = [{str(t): c for t, c in gt.items()} for gt in ground_truth]
+            record['recall'] = min(per_counter_recall) if per_counter_recall else 1.0
+            record['per_counter_recall'] = per_counter_recall
+
+        sampling_logger.info(json.dumps(record, default=str))
+        update_sampling_summary(record)
+
+    return result
 
 
 def _handle_tuple(value: Any, depth: int) -> TypeInfo:

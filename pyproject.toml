@@ -75,6 +75,7 @@ tests = [
     "jax",
     "jaxtyping",
     "torch; python_version < '3.13'",   # apparently not available for 3.13 yet
+    "attrs",
 ]
 shapes = [
     "jaxtyping"

@@ -142,6 +142,11 @@ class TypeInfo:
                 if not any(t2.type_obj is t.type_obj for t2 in s)
             }
 
+        # Cap oversized unions — too many distinct types means we don't really know
+        from righttyper.options import run_options
+        if len(s) > run_options.max_union_size:
+            return TypeInfo.from_type(typing.Any)
+
         if len(s) == 1:
             return next(iter(s))
 
