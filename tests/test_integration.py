@@ -5883,6 +5883,7 @@ def test_namedtuple_field_inference():
     )
 
 
+@pytest.mark.skipif(not importlib.util.find_spec("attr"), reason="attrs not installed")
 def test_attrs_field_inference():
     """attrs class fields get their types inferred from runtime values."""
     t = textwrap.dedent("""\
