@@ -142,7 +142,7 @@ Options:
                                   x>=1]
   --container-max-samples INTEGER RANGE
                                   Maximum number of entries to sample for a
-                                  container.  [default: 64; x>=1]
+                                  container.  [default: 128; x>=1]
   --container-type-threshold FLOAT RANGE
                                   Stop sampling a container if the estimated
                                   likelihood of finding a new type falls below
@@ -154,10 +154,12 @@ Options:
                                   [default: 1000]
   --container-min-samples INTEGER RANGE
                                   Minimum samples before checking Good-Turing
-                                  stopping criterion.  [default: 32; x>=1]
+                                  stopping criterion.  [default: 24; x>=1]
   --container-check-probability FLOAT RANGE
                                   Probability of spot-checking a container for
                                   new types.  [default: 0.5; 0.0<=x<=1.0]
+  --max-union-size INTEGER RANGE  Maximum distinct types in a union before
+                                  collapsing to Any.  [default: 32; x>=1]
   --resolve-mocks / --no-resolve-mocks
                                   Whether to attempt to resolve test types,
                                   such as mocks, to non-test types.  [default:
@@ -182,6 +184,12 @@ Options:
   --generalize-tuples N           Generalize homogenous fixed-length tuples to
                                   tuple[T, ...] if length ≥ N.  N=0 disables
                                   generalization.  [default: 3; x>=0]
+  --eval-sampling                 Enable parallel exhaustive scanning to
+                                  measure sampling accuracy. Significant
+                                  performance overhead.
+  --log-sampling                  Enable structured logging of container
+                                  sampling decisions to righttyper-
+                                  sampling.jsonl.
   --debug                         Include diagnostic information in log file.
   Output options: 
     --overwrite / --no-overwrite  Overwrite ".py" files with type information.
