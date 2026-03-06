@@ -5726,17 +5726,16 @@ def test_type_variables(scope, plain, python_version):
     )
 
 
-@pytest.mark.dont_run_mypy # annotations in source are wrong to test if they are corrected
 def test_variables_dataclass():
-    # TODO dataclasses are not yet supported
     Path("t.py").write_text(textwrap.dedent("""\
         from dataclasses import dataclass, field
+        from typing import Any
 
         @dataclass
         class C:
-            x: bool
-            y: str = 1
-            z: int = field(default_factory=set)
+            x: Any
+            y: Any = 1
+            z: Any = field(default_factory=set)
 
         c = C('tada')
         """
@@ -5747,28 +5746,111 @@ def test_variables_dataclass():
 
     assert output == textwrap.dedent("""\
         from dataclasses import dataclass, field
+        from typing import Any
 
         @dataclass
         class C:
-            x: bool
-            y: str = 1
-            z: int = field(default_factory=set)
+            x: str
+            y: int = 1
+            z: set[Any] = field(default_factory=set)
 
         c: C = C('tada')
         """
     )
-#    assert output == textwrap.dedent("""\
-#        from dataclasses import dataclass, field
-#
-#        @dataclass
-#        class C:
-#            x: str
-#            y: int = 1
-#            z: set = field(default_factory=set)
-#
-#        c: C = C('tada')
-#        """
-#    )
+
+
+def test_variables_dataclass_multi_type():
+    Path("t.py").write_text(textwrap.dedent("""\
+        from dataclasses import dataclass
+        from typing import Any
+
+        @dataclass
+        class C:
+            x: Any
+            y: Any = 1
+
+        c1 = C('hello')
+        c2 = C(42)
+        """
+    ))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from dataclasses import dataclass
+        from typing import Any
+
+        @dataclass
+        class C:
+            x: int|str
+            y: int = 1
+
+        c1: C = C('hello')
+        c2: C = C(42)
+        """
+    )
+
+
+@pytest.mark.skipif(not importlib.util.find_spec("attr"), reason="attrs not installed")
+def test_variables_attrs():
+    Path("t.py").write_text(textwrap.dedent("""\
+        import attr
+        from typing import Any
+
+        @attr.define
+        class C:
+            x: Any
+            y: Any = 1
+            z: Any = attr.Factory(set)
+
+        c = C('tada')
+        """
+    ))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        import attr
+        from typing import Any
+
+        @attr.define
+        class C:
+            x: str
+            y: int = 1
+            z: set[Any] = attr.Factory(set)
+
+        c: C = C('tada')
+        """
+    )
+
+
+def test_variables_namedtuple():
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import Any, NamedTuple
+
+        class C(NamedTuple):
+            x: Any
+            y: Any = 1
+
+        c = C('tada')
+        """
+    ))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import Any, NamedTuple
+
+        class C(NamedTuple):
+            x: str
+            y: int = 1
+
+        c: C = C('tada')
+        """
+    )
 
 
 def test_variables_dunder():
@@ -6061,6 +6143,7 @@ def test_class_attributes_via_classmethod():
 
         C.setup()
     """)
+
 
 
 def test_wrapped_replaces_but_no_wrapped_attr():
@@ -6615,3 +6698,132 @@ def test_type_distribution_comments_rerun_no_duplication():
     rt_run('--no-sampling', '--type-distribution-comments', '--ignore-annotations', 't.py')
     second_output = Path("t.py").read_text()
     assert second_output.count('# righttyper:') == 1
+
+
+def test_dataclass_disambiguation():
+    """Different dataclasses with different fields must not collide during merge."""
+    t = textwrap.dedent("""\
+        from dataclasses import dataclass
+
+        @dataclass
+        class Cache:
+            mode: object
+            cache_file: object
+            file_data: object
+
+        @dataclass
+        class Report:
+            check: object
+            diff: object
+            quiet: object
+
+        c = Cache("fast", "/tmp/cache", {"a": 1})
+        r = Report(True, False, True)
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from dataclasses import dataclass
+
+        @dataclass
+        class Cache:
+            mode: str
+            cache_file: str
+            file_data: dict[str, int]
+
+        @dataclass
+        class Report:
+            check: bool
+            diff: bool
+            quiet: bool
+
+        c: Cache = Cache("fast", "/tmp/cache", {"a": 1})
+        r: Report = Report(True, False, True)
+        """
+    )
+
+
+def test_namedtuple_field_inference():
+    """NamedTuple fields get their types inferred from runtime values."""
+    t = textwrap.dedent("""\
+        from typing import NamedTuple
+
+        class Point(NamedTuple):
+            x: object
+            y: object
+            label: object
+
+        p = Point(1.5, 2.5, "origin")
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from typing import NamedTuple
+
+        class Point(NamedTuple):
+            x: float
+            y: float
+            label: str
+
+        p: Point = Point(1.5, 2.5, "origin")
+        """
+    )
+
+
+@pytest.mark.skipif(not importlib.util.find_spec("attr"), reason="attrs not installed")
+def test_attrs_field_inference():
+    """attrs class fields get their types inferred from runtime values."""
+    t = textwrap.dedent("""\
+        import attr
+
+        @attr.s(auto_attribs=True)
+        class Config:
+            name: object
+            debug: object
+            retries: object
+
+        c = Config("prod", False, 3)
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        import attr
+
+        @attr.s(auto_attribs=True)
+        class Config:
+            name: str
+            debug: bool
+            retries: int
+
+        c: Config = Config("prod", False, 3)
+        """
+    )
+
+
+def test_max_union_size():
+    """Unions exceeding --max-union-size collapse to Any in container elements."""
+    t = textwrap.dedent("""\
+        def f():
+            return [1, 'a', 2.0, b'x']
+
+        f()
+        """)
+
+    Path("t.py").write_text(t)
+    rt_run('--max-union-size', '3', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # 4 distinct element types (int, str, float, bytes) > limit 3 → Any
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f() -> list[Any]: ...
+    """)

@@ -1097,3 +1097,250 @@ def test_hybrid_spot_check_sample_preserved(monkeypatch):
 
     # Both types should be in the result (int from history, str from new sampling)
     assert 'int' in t2 and 'str' in t2
+
+
+# =============================================================================
+# Sampling logging and evaluation tests
+# =============================================================================
+
+import json
+import os
+import tempfile
+
+
+def _with_sampling_log(monkeypatch, eval_sampling=False):
+    """Context manager that enables sampling logging and captures JSONL output."""
+    from righttyper.type_id import _cache
+    from righttyper.logger import sampling_logger
+    import logging
+
+    class SamplingLogCapture:
+        def __init__(self):
+            self.tmpdir = tempfile.TemporaryDirectory()
+            self.log_path = os.path.join(self.tmpdir.name, 'test-sampling.jsonl')
+            self.handler = logging.FileHandler(self.log_path, mode='w')
+            self.handler.setFormatter(logging.Formatter('%(message)s'))
+
+        def __enter__(self):
+            _cache._cache.clear()
+            monkeypatch.setattr(run_options, 'log_sampling', True)
+            monkeypatch.setattr(run_options, 'eval_sampling', eval_sampling)
+            sampling_logger.addHandler(self.handler)
+            return self
+
+        def __exit__(self, *args):
+            sampling_logger.removeHandler(self.handler)
+            self.handler.close()
+            monkeypatch.setattr(run_options, 'log_sampling', False)
+            monkeypatch.setattr(run_options, 'eval_sampling', False)
+            self.tmpdir.cleanup()
+
+        def records(self):
+            self.handler.flush()
+            with open(self.log_path) as f:
+                return [json.loads(line) for line in f if line.strip()]
+
+    return SamplingLogCapture()
+
+
+def test_log_sampling_produces_jsonl(monkeypatch):
+    """Sampling a container with logging enabled produces valid JSONL output."""
+    with _with_sampling_log(monkeypatch) as cap:
+        data = [1, 'a', 2.0]
+        get_value_type(data)
+
+        lines = cap.records()
+        assert len(lines) >= 1
+        record = lines[0]
+        assert record['container_type'] == 'list'
+        assert record['size'] == 3
+        assert record['is_small'] is True
+        assert record['action'] == 'full_scan'
+        assert 'types_found' in record
+        assert 'n_distinct_types' in record
+        # Should NOT have eval fields
+        assert 'recall' not in record
+
+
+def test_eval_sampling_small_container_perfect_recall(monkeypatch):
+    """Small containers are fully scanned, so eval recall should be 1.0."""
+    with _with_sampling_log(monkeypatch, eval_sampling=True) as cap:
+        data = [1, 'a', 2.0]
+        get_value_type(data)
+
+        lines = cap.records()
+        assert len(lines) >= 1
+        record = lines[0]
+        assert record['recall'] == 1.0
+        assert record['per_counter_recall'] == [1.0]
+
+
+def test_eval_sampling_large_uniform_container(monkeypatch):
+    """Large container with a single type should have perfect recall."""
+    with _with_sampling_log(monkeypatch, eval_sampling=True) as cap:
+        data = list(range(1000))
+        assert len(data) > run_options.container_small_threshold
+        get_value_type(data)
+
+        lines = cap.records()
+        assert len(lines) >= 1
+        record = lines[0]
+        assert record['recall'] == 1.0
+        assert record['ground_truth'] == [{'int': 1000}]
+        assert record['action'] == 'sample'
+        assert record['stopping_reason'] == 'good_turing'
+        assert record['sample_trigger'] == 'first'
+        # Calibration fields present on good_turing stops
+        assert isinstance(record['singleton_ratios'], list)
+        assert all(r <= run_options.container_type_threshold for r in record['singleton_ratios'])
+
+
+def test_log_sampling_records_actions(monkeypatch):
+    """Different code paths produce correct action values and metadata."""
+    monkeypatch.setattr(run_options, 'container_check_probability', 1.0)
+
+    with _with_sampling_log(monkeypatch) as cap:
+        from righttyper.type_id import _cache
+
+        # 1. Small container first visit -> full_scan
+        data = [1, 2, 3]
+        get_value_type(data)
+
+        # 2. Same small container, same size -> spot_check (hit or miss)
+        get_value_type(data)
+
+        # 3. Large container first visit -> sample
+        big = list(range(1000))
+        _cache._cache.clear()
+        get_value_type(big)
+
+        lines = cap.records()
+        actions = [r['action'] for r in lines]
+        assert 'full_scan' in actions
+        assert 'sample' in actions
+        assert any(a.startswith('spot_check') for a in actions)
+
+        # sample_trigger should be 'first' for the large container's first visit
+        sample_rec = next(r for r in lines if r['action'] == 'sample')
+        assert sample_rec['sample_trigger'] == 'first'
+
+        # spot_check_miss should have samples_taken == 1
+        spot_miss = [r for r in lines if r['action'] == 'spot_check_miss']
+        for r in spot_miss:
+            assert r['samples_taken'] == 1
+
+
+def test_sample_trigger_size_change(monkeypatch):
+    """Resizing a large container triggers re-sampling with sample_trigger='size_change'."""
+    with _with_sampling_log(monkeypatch) as cap:
+        data = list(range(100))
+        assert len(data) > run_options.container_small_threshold
+        get_value_type(data)
+
+        # Grow the container to trigger size_change
+        data.extend(range(100, 200))
+        get_value_type(data)
+
+        lines = cap.records()
+        sample_recs = [r for r in lines if r['action'] == 'sample']
+        assert len(sample_recs) == 2
+        assert sample_recs[0]['sample_trigger'] == 'first'
+        assert sample_recs[1]['sample_trigger'] == 'size_change'
+
+
+def test_max_limit_has_no_calibration_fields(monkeypatch):
+    """Records with stopping_reason='max_limit' should not have calibration fields."""
+    monkeypatch.setattr(run_options, 'container_max_samples', 5)
+    monkeypatch.setattr(run_options, 'container_min_samples', 3)
+
+    monkeypatch.setattr(run_options, 'container_type_threshold', -1.0)
+
+    with _with_sampling_log(monkeypatch) as cap:
+        # With threshold=-1, Good-Turing can never converge -> always hits max_limit
+        data: list = list(range(100)) + ['a'] * 50 + [1.0] * 50
+        assert len(data) > run_options.container_small_threshold
+        get_value_type(data)
+
+        lines = cap.records()
+        record = lines[0]
+        assert record['stopping_reason'] == 'max_limit'
+        assert 'singleton_ratios' not in record
+
+
+def test_from_set_union_size_limit(monkeypatch):
+    """Unions exceeding max_union_size collapse to Any."""
+    monkeypatch.setattr(run_options, 'max_union_size', 5)
+
+    # Under limit: 4 types → normal union
+    s = {TypeInfo.from_type(int), TypeInfo.from_type(str),
+         TypeInfo.from_type(float), TypeInfo.from_type(bool)}
+    t = TypeInfo.from_set(s)
+    assert t.is_union()
+    assert len(t.args) == 4
+
+    # At limit: 5 types → normal union
+    s.add(TypeInfo.from_type(bytes))
+    t = TypeInfo.from_set(s)
+    assert t.is_union()
+    assert len(t.args) == 5
+
+    # Over limit: 6 types → Any
+    s.add(TypeInfo(module='mod', name='Extra'))
+    t = TypeInfo.from_set(s)
+    assert t.type_obj is typing.Any
+    assert not t.is_union()
+
+
+def test_from_set_default_limit_allows_normal_unions():
+    """Default limit (32) doesn't affect normal-sized unions."""
+    s = {TypeInfo.from_type(t) for t in
+         [int, str, float, bool, bytes, list, dict, set, tuple]}
+    t = TypeInfo.from_set(s)
+    assert t.is_union()
+    assert len(t.args) == 9
+
+
+def test_sample_until_stable_stops_at_union_limit(monkeypatch):
+    """Sampling stops early when distinct types exceed max_union_size."""
+    from righttyper.type_id import ContainerSamples
+
+    monkeypatch.setattr(run_options, 'max_union_size', 5)
+    monkeypatch.setattr(run_options, 'container_min_samples', 2)
+    monkeypatch.setattr(run_options, 'container_max_samples', 200)
+
+    # Sampler returns a new unique type each call
+    distinct_types = [type(f'T{i}', (), {}) for i in range(50)]
+    distinct_values = [t() for t in distinct_types]
+    idx = [0]
+
+    def sampler():
+        v = distinct_values[idx[0] % len(distinct_values)]
+        idx[0] += 1
+        return (v,)
+
+    entry = ContainerSamples(o=distinct_values, n_counters=1)
+    reason = entry.sample_until_stable(sampler, depth=0)
+
+    assert reason == 'union_limit'
+    # Should stop much sooner than max_samples
+    total = entry.all_samples[0].total()
+    assert total < 50
+
+
+def test_eval_sampling_ground_truth_counts(monkeypatch):
+    """Container with a rare type: ground truth should record correct type counts."""
+    monkeypatch.setattr(run_options, 'container_max_samples', 5)
+    monkeypatch.setattr(run_options, 'container_min_samples', 3)
+
+    with _with_sampling_log(monkeypatch, eval_sampling=True) as cap:
+        # 999 ints and 1 string — very likely to miss the string with only 5 samples
+        data = [42] * 999 + ['rare']
+        assert len(data) > run_options.container_small_threshold
+        get_value_type(data)
+
+        lines = cap.records()
+        assert len(lines) >= 1
+        record = lines[0]
+        # Ground truth should have 2 types with correct counts
+        gt = record['ground_truth'][0]
+        assert gt == {'int': 999, 'str': 1}

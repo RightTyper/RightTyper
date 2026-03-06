@@ -462,14 +462,21 @@ class UnifiedTransformer(cst.CSTTransformer):
         return retval
 
 
+    def _is_type_checking_if(self, node: cst.If) -> bool:
+        """Detect ``if TYPE_CHECKING:`` regardless of how ``typing.TYPE_CHECKING`` is accessed."""
+        return any(
+            qn.name == "typing.TYPE_CHECKING"
+            for qn in self.get_metadata(QualifiedNameProvider, node.test, set())
+        )
+
     def visit_If(self, node: cst.If) -> bool:
-        if cstm.matches(node, cstm.If(test=cstm.Name("TYPE_CHECKING"))):
+        if self._is_type_checking_if(node):
             self.in_if_type_checking.append(True)
 
         return True
 
     def leave_If(self, node: cst.If, updated_node: cst.If) -> cst.If:
-        if cstm.matches(node, cstm.If(test=cstm.Name("TYPE_CHECKING"))):
+        if self._is_type_checking_if(node):
             self.in_if_type_checking.pop()
         return updated_node
 
@@ -820,7 +827,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         )
 
         self.class_is_enum[name] = is_enum
-        self.annotate_vars_stack.append(not (is_enum or is_dataclass))
+        self.annotate_vars_stack.append(not is_enum)
         return True
 
     def leave_ClassDef(self, orig_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
@@ -1196,11 +1203,18 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             return 0
 
-        if_type_checking_position = stmt_index(new_body, cstm.If(
-                test=cstm.Name('TYPE_CHECKING'),
-                body=cstm.IndentedBlock()
-            )
-        )
+        # Find existing if TYPE_CHECKING block (handles any form, e.g. t.TYPE_CHECKING)
+        if_type_checking_position = None
+        for orig_stmt in original_node.body:
+            if isinstance(orig_stmt, cst.If) and any(
+                qn.name == "typing.TYPE_CHECKING"
+                for qn in self.get_metadata(QualifiedNameProvider, orig_stmt.test, set())
+            ):
+                for i, stmt in enumerate(new_body):
+                    if isinstance(stmt, cst.If) and orig_stmt.test.deep_equals(stmt.test):
+                        if_type_checking_position = i
+                        break
+                break
 
         # Add additional type checking imports if needed
         if missing_modules or self.new_if_checking_aliases:
@@ -1210,33 +1224,42 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             # TODO delete modules already imported
 
-            new_stmt: cst.BaseStatement = cst.If(
-                test=cst.Name("TYPE_CHECKING"),
-                body=cst.IndentedBlock(
-                    body=existing_body + [
-                        cst.SimpleStatementLine([
-                            cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
-                        ])
-                        for m in sorted(missing_modules)
-                    ] + [
-                        cst.SimpleStatementLine([
-                            cst.Import([cst.ImportAlias(
-                                name=_dotted_name_to_nodes(m),
-                                asname=cst.AsName(cst.Name(a))
-                            )])
-                        ])
-                        for m, a in sorted(self.new_if_checking_aliases)
-                    ]
-                )
-            )
+            new_imports = [
+                cst.SimpleStatementLine([
+                    cst.Import([cst.ImportAlias(_dotted_name_to_nodes(m))])
+                ])
+                for m in sorted(missing_modules)
+            ] + [
+                cst.SimpleStatementLine([
+                    cst.Import([cst.ImportAlias(
+                        name=_dotted_name_to_nodes(m),
+                        asname=cst.AsName(cst.Name(a))
+                    )])
+                ])
+                for m, a in sorted(self.new_if_checking_aliases)
+            ]
 
             if if_type_checking_position is not None:
-                new_body[if_type_checking_position] = new_stmt
+                existing_if = typing.cast(cst.If, new_body[if_type_checking_position])
+                new_body[if_type_checking_position] = existing_if.with_changes(
+                    body=existing_if.body.with_changes(
+                        body=[*existing_if.body.body, *new_imports]
+                    )
+                )
             else:
+                new_stmt: cst.BaseStatement = cst.If(
+                    test=cst.Name("TYPE_CHECKING"),
+                    body=cst.IndentedBlock(body=new_imports)
+                )
                 if_type_checking_position = find_beginning(new_body)
                 new_body.insert(if_type_checking_position, new_stmt)
 
-            if 'TYPE_CHECKING' not in self.known_names[-1]:
+            # Only need to import TYPE_CHECKING when we created a new block
+            if (
+                isinstance(new_body[if_type_checking_position], cst.If)
+                and cstm.matches(new_body[if_type_checking_position].test, cstm.Name("TYPE_CHECKING"))
+                and 'TYPE_CHECKING' not in self.known_names[-1]
+            ):
                 self.unknown_types.add('TYPE_CHECKING')
 
         # Emit "from typing import ..."

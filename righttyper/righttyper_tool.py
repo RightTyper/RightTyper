@@ -4,8 +4,8 @@ from typing import Any, Final
 from collections.abc import Callable
 import functools
 
-from righttyper.righttyper_types import CallableWithCode, has_code
-from righttyper.righttyper_utils import unwrap
+from righttyper.righttyper_types import CallableWithCode, has_code, CodeId, Filename, FunctionName
+from righttyper.righttyper_utils import unwrap, skip_this_file
 
 TOOL_NAME: Final[str] = "righttyper"
 
@@ -59,7 +59,30 @@ def _call_handler(code: CodeType, offset: int, callable: Callable, arg0: object)
     ):
         call_mapping[(code, offset)] = callable
         code_to_callable[callee_code] = callable
+    elif isinstance(callable, type) and (
+        hasattr(callable, '__dataclass_fields__')
+        or hasattr(callable, '__attrs_attrs__')
+        or (issubclass(callable, tuple) and hasattr(callable, '_fields'))
+    ):
+        # NamedTuple uses __new__; dataclass/attrs use __init__
+        if issubclass(callable, tuple) and hasattr(callable, '_fields'):
+            target = getattr(callable, '__new__', None)
+        else:
+            target = getattr(callable, '__init__', None)
+        target_code = getattr(target, '__code__', None)
+        mod = sys.modules.get(callable.__module__)
+        source_file = getattr(mod, '__file__', None)
+        if target_code and target_code not in setup_code and source_file and not skip_this_file(source_file):
+            setup_monitoring_for_code(target_code)
+            code_id = CodeId(
+                Filename(source_file),
+                FunctionName(f"{callable.__qualname__}.__init__"),
+                0,
+                0
+            )
+            field_class_init_codes[target_code] = (callable, code_id)
     return sys.monitoring.DISABLE
+
 
 
 def setup_monitoring(
@@ -107,6 +130,8 @@ code_to_callable: dict[CodeType, Callable] = {}
 
 # Maps wrapper code -> wrapped callable (must have __code__)
 wrapped_by: dict[CodeType, CallableWithCode] = {}
+
+field_class_init_codes: dict[CodeType, tuple[type, CodeId]] = {}  # __init__/__new__ code → (class, resolved CodeId)
 
 
 def setup_monitoring_for_code(code: CodeType) -> None:
