@@ -81,7 +81,7 @@ slower than RightTyper.
 
 ## Language Support
 
-### Functions, variables, and fields
+### Functions, Variables, and Fields
 
 RightTyper annotates function arguments, return values, local
 variables, and attributes. It also infers field types for
@@ -93,12 +93,12 @@ annotations, RightTyper preserves `ClassVar` and `Final` wrappers,
 only updating the inner type. Variable annotation can be disabled
 with `--no-variables`.
 
-### Generators and async generators
+### Generators and Async Generators
 
 RightTyper properly infers `Generator[Y, S, R]` and
 `AsyncGenerator[Y, S]` types, including the send protocol.
 
-### Wrapped functions
+### Wrapped Functions
 
 Decorators like JIT compilers or `functools.wraps` can prevent the
 wrapped function from executing directly. RightTyper detects these
@@ -106,7 +106,7 @@ cases and propagates types from the wrapper to the wrapped function.
 Controlled with `--propagate-wrapped-types` and
 `--infer-wrapped-return-type` (both enabled by default).
 
-### Method overrides
+### Method Overrides
 
 When a method overrides one from a parent class, RightTyper merges
 the observed types with the parent's annotations (including from
@@ -115,7 +115,7 @@ violating the Liskov Substitution Principle.
 
 ## Features
 
-### Type pattern recognition
+### Type Pattern Recognition
 
 When a function is called with different types, rather than naively
 forming a union, RightTyper searches for recurring patterns across
@@ -140,7 +140,7 @@ def add[T1: (float, str)](a: T1, b: T1) -> T1:
 This is more precise than a simple `float | str` union, enabling
 `mypy` to catch invalid mixed-type calls like `add(1.0, "bar")`.
 
-### Tensor shape annotations
+### Tensor Shape Annotations
 
 With `--infer-shapes`, RightTyper generates
 [`jaxtyping`](https://docs.kidger.site/jaxtyping/)-compatible shape
@@ -150,7 +150,7 @@ annotations for NumPy, JAX, and PyTorch tensors, usable with
 RightTyper also identifies patterns across observed shapes, replacing
 repeated dimensions with symbolic variables.
 
-### Type simplification and supertype resolution
+### Type Simplification and Supertype Resolution
 
 RightTyper simplifies types for readability — `int | bool | float`
 becomes `float` (following Python's numeric tower), and `Generator[X,
@@ -159,26 +159,26 @@ share a common superclass, RightTyper can replace them with the
 supertype rather than forming a large union. Disable with
 `--no-simplify-types`.
 
-### Annotation control
+### Annotation Control
 
 By default, RightTyper adds annotations where none exist and leaves
 existing ones untouched. Use `--ignore-annotations` to overwrite all
 existing annotations with inferred types, or `--only-update-annotations`
 to update existing annotations without adding new ones.
 
-### Import management
+### Import Management
 
 When an annotation requires a new import, RightTyper adds it inside
 an `if TYPE_CHECKING:` block with string annotations, avoiding
 circular import issues and other runtime errors.
 
-### Test-borne type exclusion
+### Test-Borne Type Exclusion
 
 When tests drive execution, test-specific types like mocks can leak
 into annotations. RightTyper automatically detects test modules and
 excludes their types from inferred annotations.
 
-### Annotation coverage
+### Annotation Coverage
 
 Compute how much of your codebase already has type annotations:
 
@@ -186,10 +186,11 @@ Compute how much of your codebase already has type annotations:
 python3 -m righttyper coverage --type summary /your/project
 ```
 
-### Accumulating observations across runs
+### Accumulating Observations Across Runs
 
-For large projects or CI pipelines, you can accumulate type
-observations across multiple runs before emitting annotations:
+You can accumulate type observations across multiple runs before
+emitting annotations, useful when different test suites or scenarios
+exercise different parts of your code:
 
 ```bash
 python3 -m righttyper run --only-collect -m pytest tests/unit/
@@ -197,7 +198,7 @@ python3 -m righttyper run --only-collect -m pytest tests/integration/
 python3 -m righttyper process
 ```
 
-### Output formats
+### Output Formats
 
 - Annotated source files (default, with `.py.bak` backups)
 - `.pyi` stub files (`--generate-stubs`)
@@ -205,7 +206,7 @@ python3 -m righttyper process
 - `--type-distribution-comments` adds comments showing the observed
   frequency of each type next to polymorphic annotations
 
-### Type ergonomics
+### Type Ergonomics
 
 Inferred types can sometimes be verbose. RightTyper provides options
 to make them more readable:
@@ -217,7 +218,7 @@ to make them more readable:
 - `--max-union-size N` — collapses large unions:
   `int | float | str | bytes | list` → `Any` (with N=4)
 
-### Option overview
+### Option Overview
 
 Below is the full list of options:
 
