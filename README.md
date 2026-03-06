@@ -4,26 +4,65 @@
 [![pypi](https://img.shields.io/pypi/v/righttyper?color=blue)](https://pypi.org/project/righttyper/)
 ![Downloads](https://static.pepy.tech/badge/righttyper)
 [![Downloads](https://static.pepy.tech/badge/righttyper/month)](https://pepy.tech/project/righttyper)
-![tests](https://github.com/righttyper/righttyper/workflows/tests/badge.svg)
+![tests](https://github.com/RightTyper/RightTyper/workflows/tests/badge.svg)
 
-RightTyper is a Python tool that generates types for your function arguments and return values.
-RightTyper lets your code run at nearly full speed (approx. 25% overhead) and little memory overhead.
-As a result, you won't experience slowdowns in your code or large memory consumption while using it,
-allowing you to integrate it with your standard tests and development process.
-By virtue of its design, and in a significant departure from previous approaches, RightTyper only captures the most commonly used types,
-letting a type checker like `mypy` detect possibly incorrect type mismatches in your code.
+RightTyper is a Python tool that automatically generates type
+annotations for your code. It monitors your program as it runs and
+records the types of function arguments, return values, local
+variables, and class fields.
 
-You can run RightTyper with arbitrary Python programs and it will generate types for every function that gets executed.
+RightTyper builds on Python 3.12+'s `sys.monitoring` and uses
+adaptive sampling — Poisson-timed capture windows for function calls
+and Good–Turing estimation for container elements — to achieve high
+type recall with only about 25% runtime overhead. This makes it easy
+to integrate into your existing tests and development workflow, and
+lets a type checker like `mypy` catch type mismatches in your code.
+
+Although RightTyper requires Python 3.12+ to run, it can emit
+annotations compatible with older Python versions (down to 3.9) via
+the `--python-version` flag.
+
+## Installation
+
+```bash
+python3 -m pip install righttyper
+```
+
+## Quick Start
+
+You can run RightTyper with arbitrary Python programs and it will
+generate types for every function that gets executed:
+
+```bash
+python3 -m righttyper your_script.py [args...]
+```
+
 It works great in combination with [pytest](https://docs.pytest.org/):
 
 ```bash
-python3 -m righttyper run -m pytest --continue-on-collection-errors /your/test/dir
+python3 -m righttyper -m pytest [pytest-args...]
 ```
 
-In addition to generating types, RightTyper has the following features:
+By default, RightTyper annotates your source files in place (saving
+backups as `.py.bak`). To preview annotations without modifying files,
+use `--no-output-files` — annotations will only be written to
+`righttyper.out`.
 
-* It efficiently computes type annotation "coverage" for a file or directory of files
-* It infers shape annotations for NumPy/JAX/PyTorch tensors, compatible with [`jaxtyping`](https://docs.kidger.site/jaxtyping/) and [`beartype`](https://github.com/beartype/beartype) or [`typeguard`](https://typeguard.readthedocs.io/en/latest/).
+### Example
+
+Given this unannotated code:
+
+```python
+def greet(name, greeting="Hello"):
+    return f"{greeting}, {name}!"
+```
+
+After running RightTyper, you get:
+
+```python
+def greet(name: str, greeting: str = "Hello") -> str:
+    return f"{greeting}, {name}!"
+```
 
 ## Performance Comparison
 The graph below presents the overhead of using RightTyper versus two previous tools, PyAnnotate and MonkeyType, across a range of benchmarks.
@@ -33,63 +72,143 @@ In extreme cases, MonkeyType runs over 240x slower than RightTyper.
 
 ![Overhead](docs/benchmark_comparison_execution_times.png)
 
-## Usage
-Install RightTyper from `pip` as usual:
+## Language Support
+
+### Functions, variables, and fields
+
+RightTyper annotates function arguments, return values, local
+variables, and attributes. It also infers field types for
+[dataclasses](https://docs.python.org/3/library/dataclasses.html),
+[attrs](https://www.attrs.org/) classes, and
+[NamedTuples](https://docs.python.org/3/library/typing.html#typing.NamedTuple)
+by observing their `__init__` calls. When updating existing
+annotations, RightTyper preserves `ClassVar` and `Final` wrappers,
+only updating the inner type. Variable annotation can be disabled
+with `--no-variables`.
+
+### Generators and async generators
+
+RightTyper properly infers `Generator[Y, S, R]` and
+`AsyncGenerator[Y, S]` types, including the send protocol.
+
+### Wrapped functions
+
+Decorators like JIT compilers or `functools.wraps` can prevent the
+wrapped function from executing directly. RightTyper detects these
+cases and propagates types from the wrapper to the wrapped function.
+Controlled with `--propagate-wrapped-types` and
+`--infer-wrapped-return-type` (both enabled by default).
+
+### Method overrides
+
+When a method overrides one from a parent class, RightTyper merges
+the observed types with the parent's annotations (including from
+[typeshed](https://github.com/python/typeshed) stubs) to avoid
+violating the Liskov Substitution Principle.
+
+### Tensor shape annotations
+
+With `--infer-shapes`, RightTyper generates
+[`jaxtyping`](https://docs.kidger.site/jaxtyping/)-compatible shape
+annotations for NumPy, JAX, and PyTorch tensors, usable with
+[`beartype`](https://github.com/beartype/beartype) or
+[`typeguard`](https://typeguard.readthedocs.io/en/latest/).
+
+## Features
+
+### Type pattern recognition
+
+When a function is called with different types, rather than naively
+forming a union, RightTyper searches for recurring patterns across
+call traces. When it detects consistent variability, it introduces
+type variables to capture the relationship. For example, given:
+
+```python
+def add(a, b):
+    return a + b
+
+add(10.0, 20.0)
+add("foo", "bar")
+```
+
+RightTyper infers:
+
+```python
+def add[T1: (float, str)](a: T1, b: T1) -> T1:
+    return a + b
+```
+
+This is more precise than a simple `float | str` union, enabling
+`mypy` to catch invalid mixed-type calls like `add(1.0, "bar")`.
+
+### Type simplification and supertype resolution
+
+RightTyper simplifies types for readability — `int | bool | float`
+becomes `float` (following Python's numeric tower), and `Generator[X,
+None, None]` becomes `Iterator[X]`. When multiple concrete types
+share a common superclass, RightTyper can replace them with the
+supertype rather than forming a large union. Disable with
+`--no-simplify-types`.
+
+### Annotation control
+
+By default, RightTyper adds annotations where none exist and leaves
+existing ones untouched. Use `--ignore-annotations` to overwrite all
+existing annotations with inferred types, or `--only-update-annotations`
+to update existing annotations without adding new ones.
+
+### Import management
+
+When an annotation requires a new import, RightTyper adds it inside
+an `if TYPE_CHECKING:` block with string annotations, avoiding
+circular import issues and other runtime errors.
+
+### Test-borne type exclusion
+
+When tests drive execution, test-specific types like mocks can leak
+into annotations. RightTyper automatically detects test modules and
+excludes their types from inferred annotations.
+
+### Annotation coverage
+
+Compute how much of your codebase already has type annotations:
 
 ```bash
-python3 -m pip install righttyper
+python3 -m righttyper coverage --type summary /your/project
 ```
 
-To use RightTyper, simply run your script with `python3 -m righttyper run` instead of `python3`:
+### Accumulating observations across runs
+
+For large projects or CI pipelines, you can accumulate type
+observations across multiple runs before emitting annotations:
 
 ```bash
-python3 -m righttyper run your_script.py [args...]
+python3 -m righttyper run --only-collect -m pytest tests/unit/
+python3 -m righttyper run --only-collect -m pytest tests/integration/
+python3 -m righttyper process
 ```
 
-This will execute `your_script.py` with RightTyper's monitoring
-enabled. The type signatures of all functions will be recorded and
-output to a file named `righttyper.out`. The file contains, for every
-function, the signature, and a diff of the original function with the
-annotated version. It also optionally (with the `--infer-shapes` flag)
-generates `jaxtyping`-compatible shape
-annotations for NumPy/JAX/PyTorch tensors. Below is an example:
+### Output formats
 
-```diff
-test-hints.py:
-==============
-
-barnacle
-
-- def barnacle(x):
-+ def barnacle(x: jaxtyping.Float64[np.ndarray, "10 D1"]) -> jaxtyping.Float64[np.ndarray, "D1"]:
-
-fooq
-
-- def fooq(x: int, y) -> bool:
-+ def fooq(x: int, y: int) -> bool:
-?                   +++++
-```
-
-To add type hints directly to your code, use this command:
-
-```bash
-python3 -m righttyper run --output-files --overwrite your_script.py [args...]
-```
-
-To do the same with `pytest`:
-
-```bash
-python3 -m righttyper run --output-files --overwrite -m pytest [pytest-args...]
-```
+- Annotated source files (default, with `.py.bak` backups)
+- `.pyi` stub files (`--generate-stubs`)
+- JSON (`--json-output`) for CI/tooling integration
+- `--type-distribution-comments` adds comments showing the observed
+  frequency of each type next to polymorphic annotations
 
 ### Type ergonomics
-RightTyper may infer types that include deeply nested generics.
-While such precise types improve recall in type checking, they can be difficult for developers to read and understand.
-To improve the ergonomics of such annotations, RightTyper offers a `--type-depth-limit` option to specify the maximum
-number of levels to include in type.
-For example, with `--type-depth-limit=1`, a type inferred as `list[tuple[tuple[int, int]]]` would be emitted as `list[tuple]` instead.
+
+RightTyper offers several options to trade precision for readability:
+
+- `--type-depth-limit N` — caps generic nesting depth:
+  `list[tuple[tuple[int, int]]]` → `list[tuple]` (with N=1)
+- `--generalize-tuples N` — collapses homogeneous fixed-length tuples:
+  `tuple[int, int, int]` → `tuple[int, ...]` (with N=3)
+- `--max-union-size N` — collapses large unions:
+  `int | float | str | bytes | list` → `Any` (with N=4)
 
 ### Option overview
+
 Below is the full list of options:
 
 ```
@@ -201,7 +320,7 @@ Options:
                                   sampling decisions to righttyper-
                                   sampling.jsonl.
   --debug                         Include diagnostic information in log file.
-  Output options: 
+  Output options:
     --overwrite / --no-overwrite  Overwrite ".py" files with type information.
                                   If disabled, ".py.typed" files are written
                                   instead. The original files are saved as
