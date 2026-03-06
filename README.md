@@ -9,20 +9,17 @@
 RightTyper is a Python tool that automatically generates type
 annotations for your code. It monitors your program as it runs and
 records the types of function arguments, return values, local
-variables, and class fields.
+variables, and class fields — with only about 25% runtime overhead.
+This makes it easy to integrate into your existing tests and
+development workflow, and lets a type checker like `mypy` catch type
+mismatches in your code.
 
-RightTyper builds on Python 3.12+'s `sys.monitoring` and uses
-adaptive sampling — Poisson-timed capture windows for function calls
-and Good–Turing estimation for container elements — to achieve high
-type recall with only about 25% runtime overhead. This makes it easy
-to integrate into your existing tests and development workflow, and
-lets a type checker like `mypy` catch type mismatches in your code.
-
-Although RightTyper requires Python 3.12+ to run, it can emit
-annotations compatible with older Python versions (down to 3.9) via
-the `--python-version` flag.
-
-For more details on RightTyper's design and evaluation, see our
+Under the hood, RightTyper builds on Python 3.12+'s `sys.monitoring`
+and uses adaptive sampling techniques to achieve high type recall
+while keeping overhead low. Although it requires Python 3.12+ to run,
+it can emit annotations compatible with older Python versions (down
+to 3.9) via the `--python-version` flag. For more details on
+RightTyper's design and evaluation, see our
 [paper](https://arxiv.org/abs/2507.16051).
 
 ## Installation
@@ -111,7 +108,10 @@ Controlled with `--propagate-wrapped-types` and
 When a method overrides one from a parent class, RightTyper merges
 the observed types with the parent's annotations (including from
 [typeshed](https://github.com/python/typeshed) stubs) to avoid
-violating the Liskov Substitution Principle.
+violating the [Liskov Substitution
+Principle](https://en.wikipedia.org/wiki/Liskov_substitution_principle)
+— that is, an overriding method must accept at least the same
+argument types as the parent method it replaces.
 
 ## Features
 
@@ -137,8 +137,9 @@ def add[T1: (float, str)](a: T1, b: T1) -> T1:
     return a + b
 ```
 
-This is more precise than a simple `float | str` union, enabling
-`mypy` to catch invalid mixed-type calls like `add(1.0, "bar")`.
+This approach is more precise than a simple `float | str` union,
+enabling `mypy` to catch invalid mixed-type calls like
+`add(1.0, "bar")`.
 
 ### Tensor Shape Annotations
 
