@@ -65,10 +65,14 @@ def greet(name: str, greeting: str = "Hello") -> str:
 ```
 
 ## Performance Comparison
-The graph below presents the overhead of using RightTyper versus two previous tools, PyAnnotate and MonkeyType, across a range of benchmarks.
-On average, RightTyper imposes approx. 25% overhead compared to running plain Python.
-On running the popular "black", RightTyper imposes only 46% overhead, while MonkeyType slows down execution by 41x.
-In extreme cases, MonkeyType runs over 240x slower than RightTyper.
+
+The graph below presents the overhead of using RightTyper versus two
+previous tools, PyAnnotate and MonkeyType, across a range of
+benchmarks. On average, RightTyper imposes approx. 25% overhead
+compared to running plain Python. On the popular "black" formatter,
+RightTyper imposes only 50% overhead, while MonkeyType slows
+execution by 41x. In extreme cases, MonkeyType runs over 270x
+slower than RightTyper.
 
 ![Overhead](docs/benchmark_comparison_execution_times.png)
 
