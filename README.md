@@ -22,6 +22,9 @@ Although RightTyper requires Python 3.12+ to run, it can emit
 annotations compatible with older Python versions (down to 3.9) via
 the `--python-version` flag.
 
+For more details on RightTyper's design and evaluation, see our
+[paper](https://arxiv.org/abs/2507.16051).
+
 ## Installation
 
 ```bash
