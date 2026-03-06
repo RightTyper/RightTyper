@@ -110,14 +110,6 @@ the observed types with the parent's annotations (including from
 [typeshed](https://github.com/python/typeshed) stubs) to avoid
 violating the Liskov Substitution Principle.
 
-### Tensor shape annotations
-
-With `--infer-shapes`, RightTyper generates
-[`jaxtyping`](https://docs.kidger.site/jaxtyping/)-compatible shape
-annotations for NumPy, JAX, and PyTorch tensors, usable with
-[`beartype`](https://github.com/beartype/beartype) or
-[`typeguard`](https://typeguard.readthedocs.io/en/latest/).
-
 ## Features
 
 ### Type pattern recognition
@@ -144,6 +136,16 @@ def add[T1: (float, str)](a: T1, b: T1) -> T1:
 
 This is more precise than a simple `float | str` union, enabling
 `mypy` to catch invalid mixed-type calls like `add(1.0, "bar")`.
+
+### Tensor shape annotations
+
+With `--infer-shapes`, RightTyper generates
+[`jaxtyping`](https://docs.kidger.site/jaxtyping/)-compatible shape
+annotations for NumPy, JAX, and PyTorch tensors, usable with
+[`beartype`](https://github.com/beartype/beartype) or
+[`typeguard`](https://typeguard.readthedocs.io/en/latest/).
+RightTyper also identifies patterns across observed shapes, replacing
+repeated dimensions with symbolic variables.
 
 ### Type simplification and supertype resolution
 
@@ -202,7 +204,8 @@ python3 -m righttyper process
 
 ### Type ergonomics
 
-RightTyper offers several options to trade precision for readability:
+Inferred types can sometimes be verbose. RightTyper provides options
+to make them more readable:
 
 - `--type-depth-limit N` — caps generic nesting depth:
   `list[tuple[tuple[int, int]]]` → `list[tuple]` (with N=1)
