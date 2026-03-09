@@ -33,6 +33,8 @@ def init_sampling_log() -> None:
         'total_observations': 0,
         'eval_observations': 0,
         'perfect_recall': 0,
+        'pa_eval_observations': 0,
+        'pa_perfect_recall': 0,
     }
 
     # Write run-start marker
@@ -61,6 +63,10 @@ def update_sampling_summary(record: dict) -> None:
         _sampling_summary['eval_observations'] += 1
         if record['recall'] == 1.0:
             _sampling_summary['perfect_recall'] += 1
+    if 'pyannotate_recall' in record:
+        _sampling_summary['pa_eval_observations'] += 1
+        if record['pyannotate_recall'] == 1.0:
+            _sampling_summary['pa_perfect_recall'] += 1
 
 
 def finalize_sampling_log() -> None:

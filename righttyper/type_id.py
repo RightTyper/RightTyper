@@ -585,17 +585,45 @@ def _get_container_args(
 
         if run_options.eval_sampling:
             ground_truth = entry.compute_ground_truth(container, depth)
-            sampled_types = tuple(set(c.keys()) for c in entry.all_samples)
+
+            # Use immediate types (strip args) for hierarchical recall
+            gt_immediate = tuple({t.replace(args=()): c for t, c in gt.items()} for gt in ground_truth)
+            sampled_immediate = tuple({t.replace(args=()) for t in c.keys()} for c in entry.all_samples)
 
             per_counter_recall = []
-            for gt, st in zip(ground_truth, sampled_types):
+            for gt, st in zip(gt_immediate, sampled_immediate):
                 gt_keys = set(gt.keys())
                 recall = len(st & gt_keys) / len(gt_keys) if gt_keys else 1.0
                 per_counter_recall.append(recall)
 
-            record['ground_truth'] = [{str(t): c for t, c in gt.items()} for gt in ground_truth]
+            record['ground_truth'] = [{str(t): c for t, c in gt.items()} for gt in gt_immediate]
             record['recall'] = min(per_counter_recall) if per_counter_recall else 1.0
             record['per_counter_recall'] = per_counter_recall
+
+            # Simulate PyAnnotate sampling: first 4 elements (5 for dicts)
+            pa_limit = 5 if n_counters == 2 else 4
+            pa_types: tuple[set[TypeInfo], ...] = tuple(set() for _ in range(n_counters))
+            if n_counters == 1:
+                for i, v in enumerate(container):
+                    if i >= pa_limit:
+                        break
+                    pa_types[0].add(get_value_type(v, depth+1).replace(args=()))
+            else:
+                for i, (k, v) in enumerate(container.items()):
+                    if i >= pa_limit:
+                        break
+                    pa_types[0].add(get_value_type(k, depth+1).replace(args=()))
+                    pa_types[1].add(get_value_type(v, depth+1).replace(args=()))
+
+            pa_recall_per_counter = []
+            for gt, pt in zip(gt_immediate, pa_types):
+                gt_keys = set(gt.keys())
+                pa_recall = len(pt & gt_keys) / len(gt_keys) if gt_keys else 1.0
+                pa_recall_per_counter.append(pa_recall)
+
+            record['pyannotate_recall'] = min(pa_recall_per_counter) if pa_recall_per_counter else 1.0
+            record['pyannotate_per_counter_recall'] = pa_recall_per_counter
+            record['pyannotate_types'] = [sorted(str(t) for t in s) for s in pa_types]
 
         sampling_logger.info(json.dumps(record, default=str))
         update_sampling_summary(record)
