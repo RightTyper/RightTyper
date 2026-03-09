@@ -5454,6 +5454,48 @@ def test_variables_dataclass_multi_type():
     )
 
 
+def test_variables_dataclass_custom_init():
+    """Dataclass with user-defined __init__ should still get field inference."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from dataclasses import dataclass
+        from typing import Any
+
+        @dataclass
+        class Msg:
+            msg_id: Any
+            symbol: Any
+            line: Any
+
+            def __init__(self, msg_id, symbol="", line=0):
+                self.msg_id = msg_id
+                self.symbol = symbol
+                self.line = line
+
+        Msg("E0001", "syntax-error", 42)
+    """))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        from dataclasses import dataclass
+        from typing import Any, Self
+
+        @dataclass
+        class Msg:
+            msg_id: str
+            symbol: str
+            line: int
+
+            def __init__(self: Self, msg_id: str, symbol: str="", line: int=0) -> None:
+                self.msg_id: str = msg_id
+                self.symbol: str = symbol
+                self.line: int = line
+
+        Msg("E0001", "syntax-error", 42)
+    """)
+
+
 @pytest.mark.skipif(not importlib.util.find_spec("attr"), reason="attrs not installed")
 def test_variables_attrs():
     Path("t.py").write_text(textwrap.dedent("""\
@@ -5914,6 +5956,45 @@ def test_attrs_field_inference():
         c: Config = Config("prod", False, 3)
         """
     )
+
+
+@pytest.mark.skipif(not importlib.util.find_spec("attr"), reason="attrs not installed")
+def test_attrs_custom_init_field_inference():
+    """attrs class with init=False and user-defined __init__ should get field inference."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        import attr
+        from typing import Any
+
+        @attr.s(auto_attribs=True, init=False)
+        class Config:
+            name: Any
+            debug: Any
+
+            def __init__(self, name, debug=False):
+                self.name = name
+                self.debug = debug
+
+        Config("prod", True)
+    """))
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+
+    assert output == textwrap.dedent("""\
+        import attr
+        from typing import Any, Self
+
+        @attr.s(auto_attribs=True, init=False)
+        class Config:
+            name: str
+            debug: bool
+
+            def __init__(self: Self, name: str, debug: bool=False) -> None:
+                self.name: str = name
+                self.debug: bool = debug
+
+        Config("prod", True)
+    """)
 
 
 def test_max_union_size():

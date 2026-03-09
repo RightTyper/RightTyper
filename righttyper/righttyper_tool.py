@@ -54,14 +54,19 @@ def _call_handler(code: CodeType, offset: int, callable: object, arg0: object) -
         target_code = getattr(target, '__code__', None)
         mod = sys.modules.get(callable.__module__)
         source_file = getattr(mod, '__file__', None)
-        if target_code and target_code not in setup_code and source_file and not skip_this_file(source_file):
-            setup_monitoring_for_code(target_code)
-            code_id = CodeId(
-                Filename(source_file),
-                FunctionName(f"{callable.__qualname__}.__init__"),
-                0,
-                0
-            )
+        if target_code and source_file and not skip_this_file(source_file):
+            co_fn = target_code.co_filename
+            synthetic = co_fn.startswith('<') and co_fn.endswith('>')
+            if synthetic:
+                setup_monitoring_for_code(target_code)
+                code_id = CodeId(
+                    Filename(source_file),
+                    FunctionName(f"{callable.__qualname__}.__init__"),
+                    0,
+                    0
+                )
+            else:
+                code_id = CodeId.from_code(target_code)
             field_class_init_codes[target_code] = (callable, code_id)
     return sys.monitoring.DISABLE
 
