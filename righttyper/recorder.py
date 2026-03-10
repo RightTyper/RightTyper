@@ -257,9 +257,11 @@ class ObservationsRecorder:
         # print(f"record_start {code.co_qualname} {arg_types}")
 
         # Skip record_module for synthetic __init__/__new__ (dataclass, attrs,
-        # NamedTuple) whose co_filename is typically '<string>' — their real
-        # source file is registered in record_function.
-        if code not in field_class_init_codes:
+        # NamedTuple) whose co_filename is '<string>' or similar — their real
+        # source file is registered in record_function.  User-defined __init__
+        # has a real co_filename and needs record_module.
+        co_fn = code.co_filename
+        if code not in field_class_init_codes or not (co_fn.startswith('<') and co_fn.endswith('>')):
             self.record_module(code, frame)
 
         # CO_NEWLOCALS, when set within a CodeType's co_flags, indicates that
