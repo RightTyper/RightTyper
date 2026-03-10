@@ -598,6 +598,31 @@ def _get_container_args(
             record['recall'] = min(per_counter_recall) if per_counter_recall else 1.0
             record['per_counter_recall'] = per_counter_recall
 
+            # Simulate PyAnnotate sampling: first 4 elements (5 for dicts)
+            pa_limit = 5 if n_counters == 2 else 4
+            pa_types: tuple[set[TypeInfo], ...] = tuple(set() for _ in range(n_counters))
+            if n_counters == 1:
+                for i, v in enumerate(container):
+                    if i >= pa_limit:
+                        break
+                    pa_types[0].add(get_value_type(v, depth+1))
+            else:
+                for i, (k, v) in enumerate(container.items()):
+                    if i >= pa_limit:
+                        break
+                    pa_types[0].add(get_value_type(k, depth+1))
+                    pa_types[1].add(get_value_type(v, depth+1))
+
+            pa_recall_per_counter = []
+            for gt, pt in zip(ground_truth, pa_types):
+                gt_keys = set(gt.keys())
+                pa_recall = len(pt & gt_keys) / len(gt_keys) if gt_keys else 1.0
+                pa_recall_per_counter.append(pa_recall)
+
+            record['pyannotate_recall'] = min(pa_recall_per_counter) if pa_recall_per_counter else 1.0
+            record['pyannotate_per_counter_recall'] = pa_recall_per_counter
+            record['pyannotate_types'] = [sorted(str(t) for t in s) for s in pa_types]
+
         sampling_logger.info(json.dumps(record, default=str))
         update_sampling_summary(record)
 

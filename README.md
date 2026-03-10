@@ -332,7 +332,7 @@ Options:
                                   sampling decisions to righttyper-
                                   sampling.jsonl.
   --debug                         Include diagnostic information in log file.
-  Output options:
+  Output options: 
     --overwrite / --no-overwrite  Overwrite ".py" files with type information.
                                   If disabled, ".py.typed" files are written
                                   instead. The original files are saved as
