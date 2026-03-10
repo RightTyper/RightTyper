@@ -585,18 +585,15 @@ def _get_container_args(
 
         if run_options.eval_sampling:
             ground_truth = entry.compute_ground_truth(container, depth)
-
-            # Use immediate types (strip args) for hierarchical recall
-            gt_immediate = tuple({t.replace(args=()): c for t, c in gt.items()} for gt in ground_truth)
-            sampled_immediate = tuple({t.replace(args=()) for t in c.keys()} for c in entry.all_samples)
+            sampled_types = tuple(set(c.keys()) for c in entry.all_samples)
 
             per_counter_recall = []
-            for gt, st in zip(gt_immediate, sampled_immediate):
+            for gt, st in zip(ground_truth, sampled_types):
                 gt_keys = set(gt.keys())
                 recall = len(st & gt_keys) / len(gt_keys) if gt_keys else 1.0
                 per_counter_recall.append(recall)
 
-            record['ground_truth'] = [{str(t): c for t, c in gt.items()} for gt in gt_immediate]
+            record['ground_truth'] = [{str(t): c for t, c in gt.items()} for gt in ground_truth]
             record['recall'] = min(per_counter_recall) if per_counter_recall else 1.0
             record['per_counter_recall'] = per_counter_recall
 
@@ -607,16 +604,16 @@ def _get_container_args(
                 for i, v in enumerate(container):
                     if i >= pa_limit:
                         break
-                    pa_types[0].add(get_value_type(v, depth+1).replace(args=()))
+                    pa_types[0].add(get_value_type(v, depth+1))
             else:
                 for i, (k, v) in enumerate(container.items()):
                     if i >= pa_limit:
                         break
-                    pa_types[0].add(get_value_type(k, depth+1).replace(args=()))
-                    pa_types[1].add(get_value_type(v, depth+1).replace(args=()))
+                    pa_types[0].add(get_value_type(k, depth+1))
+                    pa_types[1].add(get_value_type(v, depth+1))
 
             pa_recall_per_counter = []
-            for gt, pt in zip(gt_immediate, pa_types):
+            for gt, pt in zip(ground_truth, pa_types):
                 gt_keys = set(gt.keys())
                 pa_recall = len(pt & gt_keys) / len(gt_keys) if gt_keys else 1.0
                 pa_recall_per_counter.append(pa_recall)
