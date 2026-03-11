@@ -3389,6 +3389,31 @@ def test_generic_and_defaults():
     """)
 
 
+def test_generic_inner_function():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def outer(x):
+            def inner(y):
+                return y
+            return inner(x)
+
+        outer(1)
+        outer("hello")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # Both functions are generic; they must have distinct type parameter names.
+    # Outer gets T1 (reserved at visit time); inner gets T2.
+    assert get_function(code, 'outer') == textwrap.dedent("""\
+        def outer[T1: (int, str)](x: T1) -> T1: ...
+    """)
+    assert get_function(code, 'outer.<locals>.inner') == textwrap.dedent("""\
+        def inner[T2: (int, str)](y: T2) -> T2: ...
+    """)
+
+
 def test_inline_generics_no_variables():
     t = textwrap.dedent("""\
         def f(x):

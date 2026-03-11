@@ -330,24 +330,43 @@ class UnifiedTransformer(cst.CSTTransformer):
         return Renamer(generics.keys()).visit(annotation)
 
 
+    @staticmethod
+    def _count_typevars(ann: FuncAnnotation) -> int:
+        """Count distinct TypeVar indices in a function annotation."""
+        indices: set[int] = set()
+        def collect(ti: TypeInfo) -> None:
+            if ti.typevar_index:
+                indices.add(ti.typevar_index)
+            for arg in ti.args:
+                if isinstance(arg, TypeInfo):
+                    collect(arg)
+        for _, atype in ann.args:
+            collect(atype)
+        collect(ann.retval)
+        return len(indices)
+
     def _process_generics(
         self,
         annmap: dict[str, TypeInfo],
-        used_inline_names: set[str]
+        used_inline_names: set[str],
+        reserved_names: list[str] | None = None,
     ) -> dict[TypeInfo, str]:
         """Transforms an annotation, defining type variables and using them."""
         used_inline_names = set(used_inline_names)
+        reserved_iter = iter(reserved_names) if reserved_names else None
 
         class GenericsNameAssigningTransformer(TypeInfo.Transformer):
             def __init__(vself) -> None:
                 vself.generics: dict[TypeInfo, str] = {}
-            
+
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 if node.typevar_index and node not in vself.generics:
                     if self.inline_generics:
-                        i = 1
-                        while (name := f"T{i}") in used_inline_names:
-                            i += 1
+                        name = next(reserved_iter, None) if reserved_iter else None
+                        if name is None or name in used_inline_names:
+                            i = 1
+                            while (name := f"T{i}") in used_inline_names:
+                                i += 1
                         used_inline_names.add(name)
                     else:
                         while self._is_defined(name := f"rt_T{self.module_generic_index}"):
@@ -361,7 +380,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         tr = GenericsNameAssigningTransformer()
         for k in list(annmap):
             annmap[k] = tr.visit(annmap[k])
-        
+
         return tr.generics
                     
     def _qualified_name_in(self, decorator: cst.CSTNode, names: set[str]) -> bool:
@@ -419,6 +438,15 @@ class UnifiedTransformer(cst.CSTTransformer):
         )
 
         self.module_generic_index = 1
+
+        # Stack of inline generic names (T1, T2, ...) reserved by each
+        # function scope and its enclosing scopes.  Names are reserved at
+        # visit time (outer first) so that outer functions get lower numbers
+        # and nested functions avoid shadowing them.  Sibling functions each
+        # see only the parent's names, so they independently start at T1.
+        self.inline_names_stack: list[set[str]] = [set()]
+        # Pre-assigned inline type-param names per function scope.
+        self.reserved_inline_names: list[list[str]] = [[]]
 
         # Since overloads must be consecutive, we don't need to keep track of
         # multiple concurrent overloaded functions within each namespace.
@@ -853,9 +881,30 @@ class UnifiedTransformer(cst.CSTTransformer):
             for node in (node, *node.decorators)
         )
         key = CodeId(Filename(self.filename), FunctionName(name), first_line, 0)
-        self.func_ann_stack.append(self.type_annotations.get(key))
+        ann = self.type_annotations.get(key)
+        self.func_ann_stack.append(ann)
         self.func_code_id_stack.append(key)
         self.annotate_vars_stack.append(True)
+
+        # Reserve inline type-param names for this function so that outer
+        # functions claim lower numbers (T1, T2, ...) before inner ones.
+        # TODO: check whether each type-param is actually needed (some may
+        # not be emitted if the corresponding parameter's annotation is
+        # retained), to avoid gaps in numbering.
+        if self.inline_generics and ann:
+            n = self._count_typevars(ann)
+            enclosing = self.inline_names_stack[-1]
+            reserved: list[str] = []
+            i = 1
+            while len(reserved) < n:
+                if (name := f"T{i}") not in enclosing:
+                    reserved.append(name)
+                i += 1
+            self.inline_names_stack.append(enclosing | set(reserved))
+        else:
+            reserved = []
+            self.inline_names_stack.append(self.inline_names_stack[-1])
+        self.reserved_inline_names.append(reserved)
         return True
 
     def _get_annotation_expr(self, annotation: TypeInfo, generics: dict[TypeInfo, str]) -> cst.BaseExpression | None:
@@ -927,6 +976,8 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.overload_stack.pop()
         self.overload_name_stack.pop()
         self.known_names.pop()
+        child_inline_names = self.inline_names_stack.pop()
+        reserved_names = self.reserved_inline_names.pop()
 
         # If we encounter a function whose name doesn't match the current
         # overload sequence, we discard the overload stack and update the
@@ -997,7 +1048,10 @@ class UnifiedTransformer(cst.CSTTransformer):
             # We don't yet support updating overloads; if they are present and not being removed, leave the function alone.
             if overloads == [] or self.override_annotations:
                 # Note: _process_generics doesn't yet update ann.variables
-                generics = self._process_generics(annmap, retained_annotation_names)
+                generics = self._process_generics(
+                    annmap, retained_annotation_names,
+                    reserved_names if self.inline_generics else None,
+                )
 
                 if self.inline_generics:
                     type_params = [
