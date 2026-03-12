@@ -246,6 +246,39 @@ class ObservationsRecorder:
             self._obs.func_info[func_info.code_id] = func_info
 
 
+    def _register_parent_function(self, parent_func: FunctionType, finder: 'OverrideFinder') -> None:
+        """Registers a parent function (and its ancestors) that may not have been directly observed.
+
+        Uses the OverrideFinder to walk up the MRO and register the full override
+        chain, allowing child→parent type propagation in collect_annotations.
+        """
+        while True:
+            parent_code = parent_func.__code__
+
+            if parent_code in self._code2func_info:
+                return  # already registered (with its own overrides)
+
+            if skip_this_file(parent_code.co_filename):
+                return
+
+            self._register_module(parent_code.co_filename, getattr(parent_func, '__module__', None))
+
+            parent_args = inspect.getargs(parent_code)
+            parent_arg_info = inspect.ArgInfo(parent_args.args, parent_args.varargs, parent_args.varkw, {})
+
+            result = finder.find_next(parent_code, parent_arg_info)
+            overrides = result[0] if result else None
+            grandparent_func = result[1] if result else None
+
+            self._register_function(parent_code, parent_func, parent_arg_info, overrides)
+            self._code2func_info[parent_code].is_abstract = getattr(parent_func, '__isabstractmethod__', False)
+
+            if not grandparent_func:
+                return
+
+            parent_func = grandparent_func
+
+
     def record_start(
         self,
         code: CodeType,
@@ -268,11 +301,14 @@ class ObservationsRecorder:
         # a new "locals" dictionary is created; it roughly indicates a function
         # call, as the new dictionary is created for the new scope.
         if (code.co_flags & inspect.CO_NEWLOCALS):
-            self_type, self_replacement, overrides = get_self_type(code, arg_info)
-            self._register_function(code, find_function(frame, code), arg_info, overrides)
+            sti = get_self_type(code, arg_info)
+            self._register_function(code, find_function(frame, code), arg_info, sti.overrides)
+
+            if sti.parent_func is not None and sti.override_finder is not None:
+                self._register_parent_function(sti.parent_func, sti.override_finder)
 
             self._pending_traces[code][id(frame)] = PendingCallTrace(
-                arg_info, code.co_flags, self_type, self_replacement
+                arg_info, code.co_flags, sti.self_type, sti.self_replacement
             )
 
             if run_options.propagate_wrapped_types:
@@ -346,12 +382,12 @@ class ObservationsRecorder:
             synthetic_locals
         )
 
-        self_type, self_replacement, overrides = get_self_type(wrapped_code, synthetic_arg_info)
+        sti = get_self_type(wrapped_code, synthetic_arg_info)
 
         # Register the wrapped function if not already known
-        self._register_function(wrapped_code, wrapped, synthetic_arg_info, overrides)
+        self._register_function(wrapped_code, wrapped, synthetic_arg_info, sti.overrides)
 
-        pending = PendingCallTrace(synthetic_arg_info, wrapped_code.co_flags, self_type, self_replacement)
+        pending = PendingCallTrace(synthetic_arg_info, wrapped_code.co_flags, sti.self_type, sti.self_replacement)
         self._pending_wrapped_traces[wrapped_code][id(frame)] = pending
 
 
@@ -701,44 +737,90 @@ def is_method_of(code: CodeType, first_arg: object) -> bool:
     return find_method_info(code, first_arg) is not None
 
 
+class OverrideFinder:
+    """Walks a class MRO to find method overrides.
+
+    Tracks the current position in the MRO so that successive calls to find_next()
+    walk further up the hierarchy (child → parent → grandparent → ...).
+    """
+
+    def __init__(self, mro: tuple[type, ...], method_name: str, start_index: int):
+        self._mro = mro
+        self._method_name = method_name
+        self._index = start_index
+
+    def find_next(
+        self, code: CodeType, child_arg_info: inspect.ArgInfo
+    ) -> tuple[OverriddenFunction, FunctionType | None] | None:
+        """Find the next override of the method in the MRO.
+
+        Returns (overrides, parent_func) or None.  parent_func is None for
+        native/builtin methods.
+        """
+        for idx, ancestor in enumerate(self._mro[self._index:]):
+            f = unwrap(ancestor.__dict__.get(self._method_name, None))
+            if f and getattr(f, "__code__", None) is not code:
+                self._index = self._index + idx + 1
+                return (
+                    OverriddenFunction(
+                        normalize_module_name(getattr(f, "__module__", ancestor.__module__)),
+                        f.__qualname__,
+                        CodeId.from_code(f.__code__) if hasattr(f, "__code__") else None,
+                        get_parent_arg_types(f, child_arg_info)
+                    ),
+                    f if isinstance(f, FunctionType) else None,
+                )
+        return None
+
+
+@dataclass
+class SelfTypeInfo:
+    """Result of get_self_type: information about a method's self/cls and override relationship."""
+    self_type: TypeInfo | None = None
+    self_replacement: TypeInfo | None = None
+    overrides: OverriddenFunction | None = None
+    parent_func: FunctionType | None = None
+    override_finder: OverrideFinder | None = None  # for walking the parent chain
+
+
+_NO_SELF_TYPE_INFO = SelfTypeInfo()
+
+
 def get_self_type(
     code: CodeType,
     arg_info: inspect.ArgInfo
-) -> tuple[TypeInfo|None, TypeInfo|None, OverriddenFunction|None]:
+) -> SelfTypeInfo:
     if arg_info.args:
         first_arg = arg_info.locals[arg_info.args[0]]
 
         info = find_method_info(code, first_arg)
         if not info:
-            return None, None, None
+            return _NO_SELF_TYPE_INFO
 
         # The first argument is 'Self' and the type of 'Self', in the context of
         # its definition, is "defining_class"; now let's see if this method
         # overrides another
         overrides = None
+        parent_func = None
+        finder: OverrideFinder | None = None
         if not (
             info.is_property
             or info.name in ('__init__', '__new__')  # irrelevant for Liskov
         ):
-            overrides = next(
-                (
-                    OverriddenFunction(
-                        # wrapper_descriptor and possibly other native objects may lack __module__
-                        normalize_module_name(getattr(f, "__module__", ancestor.__module__)),
-                        f.__qualname__,
-                        CodeId.from_code(f.__code__) if hasattr(f, "__code__") else None,
-                        get_parent_arg_types(f, arg_info)
-                    )
-                    for ancestor in info.first_arg_class.__mro__[info.next_index:]
-                    if (f := unwrap(ancestor.__dict__.get(info.name, None)))
-                    if getattr(f, "__code__", None) is not code
-                ),
-                None
-            )
+            finder = OverrideFinder(info.first_arg_class.__mro__, info.name, info.next_index)
+            result = finder.find_next(code, arg_info)
+            if result:
+                overrides, parent_func = result
 
-        return get_type_name(info.first_arg_class), get_type_name(info.defining_class), overrides
+        return SelfTypeInfo(
+            get_type_name(info.first_arg_class),
+            get_type_name(info.defining_class),
+            overrides,
+            parent_func,
+            override_finder=finder if parent_func else None,
+        )
 
-    return None, None, None
+    return _NO_SELF_TYPE_INFO
 
 
 

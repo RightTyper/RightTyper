@@ -848,36 +848,6 @@ def test_method_imported():
     assert "import gC" not in output
 
 
-def test_method_overriding():
-    t = textwrap.dedent("""\
-        class A:
-            def foo(self, x):
-                return x/2
-
-        class B(A):
-            def foo(self, x):
-                return int(x)//2
-
-        A().foo(1.0)
-        B().foo("10")
-        """)
-
-    Path("t.py").write_text(t)
-
-    rt_run('t.py')
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-
-    assert get_function(code, 'A.foo') == textwrap.dedent("""\
-        def foo(self: Self, x: float) -> float: ...
-    """)
-
-    # contravariant for parameters, covariant for return value;
-    # so that while 'x' must not be 'int', but the return value may be 'int'
-    assert get_function(code, 'B.foo') == textwrap.dedent("""\
-        def foo(self: Self, x: float|str) -> int: ...
-    """)
-
 
 def test_method_overriding_annotated():
     t = textwrap.dedent("""\
@@ -6932,4 +6902,236 @@ def test_max_union_size():
     # 4 distinct element types (int, str, float, bytes) > limit 3 → Any
     assert get_function(code, 'f') == textwrap.dedent("""\
         def f() -> list[Any]: ...
+    """)
+
+
+def test_parent_type_propagation_from_child():
+    """Parent never called, single child called — parent gets child's arg types.
+
+    Return type is NOT propagated to a concrete unobserved parent because
+    the propagated type could contradict the body (here A.foo returns x,
+    not str(x)).
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                return x
+
+        class B(A):
+            def foo(self, x):
+                return str(x)
+
+        B().foo(42)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int) -> str: ...
+    """)
+    # A gets arg types from B but not return type (concrete, unobserved)
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int): ...
+    """)
+
+
+def test_parent_type_propagation_multiple_children():
+    """Parent never called, two children with different types — parent gets union of arg types."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                return str(x)
+
+        class B(A):
+            def foo(self, x):
+                return str(x)
+
+        class C(A):
+            def foo(self, x):
+                return str(x)
+
+        B().foo(42)
+        C().foo("hello")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # A is concrete and unobserved — gets arg types but not return type
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int|str): ...
+    """)
+
+
+def test_parent_type_propagation_multilevel():
+    """A → B → C, only C called — all three get types."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                return x
+
+        class B(A):
+            def foo(self, x):
+                return x
+
+        class C(B):
+            def foo(self, x):
+                return x
+
+        C().foo(42)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'C.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int) -> int: ...
+    """)
+    # B and A are concrete, unobserved — get arg types but not return type
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int): ...
+    """)
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int): ...
+    """)
+
+
+def test_parent_type_propagation_abstract():
+    """Abstract parent, concrete children — abstract method gets annotated."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from abc import ABC, abstractmethod
+
+        class A(ABC):
+            @abstractmethod
+            def foo(self, x):
+                pass
+
+        class B(A):
+            def foo(self, x):
+                return str(x)
+
+        class C(A):
+            def foo(self, x):
+                return str(x)
+
+        B().foo(42)
+        C().foo("hello")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        @abstractmethod
+        def foo(self: Self, x: int|str) -> str: ...
+    """)
+
+
+def test_parent_type_propagation_parent_observed():
+    """Both parent and child observed — parent keeps its own arg types but
+    return type is widened (LSP covariance: parent return must be supertype
+    of child's).
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                return x
+
+        class B(A):
+            def foo(self, x):
+                return str(x)
+
+        A().foo(42)
+        B().foo("hello")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # A's args stay as observed; return type widened to include B's str
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int) -> int|str: ...
+    """)
+    # B's args widened to include A's (child must accept what parent accepts)
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int|str) -> str: ...
+    """)
+
+
+def test_parent_type_propagation_only_collect():
+    """Parent propagation works when observations are collected in separate runs.
+
+    Run 1 observes only the parent (A.foo with int), run 2 observes only the
+    child (B.foo with str).  The parent is registered by _register_parent_function
+    in run 2 (with overrides=None), while run 1 records it directly (possibly with
+    a real overrides value).  merge_observations must reconcile the two FuncInfo
+    entries.  Since A is observed, it keeps its own types; B is widened to include A's.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import sys
+
+        class A:
+            def foo(self, x):
+                return x
+
+        class B(A):
+            def foo(self, x):
+                return str(x)
+
+        if sys.argv[1] == 'parent':
+            A().foo(42)
+        else:
+            B().foo("hello")
+    """))
+
+    rt_run('--only-collect', 't.py', 'parent')
+    rt_run('--only-collect', 't.py', 'child')
+    rt_run('process')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # A is observed — keeps its own arg types; return widened for LSP covariance
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int) -> int|str: ...
+    """)
+    # B's args widened to include A's
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int|str) -> str: ...
+    """)
+
+
+def test_parent_type_propagation_classmethod():
+    """Unobserved parent classmethod gets arg types from child."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            @classmethod
+            def foo(cls, x):
+                return str(x)
+
+        class B(A):
+            @classmethod
+            def foo(cls, x):
+                return str(x)
+
+        B.foo(42)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        @classmethod
+        def foo(cls: type[Self], x: int) -> str: ...
+    """)
+    # A is concrete, unobserved — gets arg types but not return type
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        @classmethod
+        def foo(cls: type[Self], x: int): ...
     """)
