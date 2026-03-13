@@ -3,7 +3,7 @@ import collections.abc as abc
 from collections import defaultdict, Counter
 from types import EllipsisType
 import itertools
-from righttyper.typeinfo import TypeInfo, CallTrace
+from righttyper.typeinfo import TypeInfo, ListTypeInfo, CallTrace
 from righttyper.type_id import get_type_name
 from righttyper.righttyper_types import cast_not_None
 from righttyper.options import output_options
@@ -462,7 +462,13 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
                 t.name == first.name and
                 t.code_id == first.code_id and
                 len(t.args) == len(first.args) and
-                all((a is Ellipsis) == (first.args[i] is Ellipsis) for i, a in enumerate(t.args))
+                all((a is Ellipsis) == (first.args[i] is Ellipsis) for i, a in enumerate(t.args)) and
+                # ListTypeInfo args (e.g. Callable param lists) must have the same arity
+                all(
+                    len(cast(TypeInfo, t.args[i]).args) == len(cast(TypeInfo, first.args[i]).args)
+                    for i in range(len(first.args))
+                    if isinstance(first.args[i], ListTypeInfo)
+                )
                 for t in types[1:]
             )
         )
@@ -508,8 +514,9 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
 
         combined = TypeInfo.from_set({clear_typevar_index(t) for t in types})
 
-        # replace type sequence with a variable
-        if occurrences[types] > 1 and combined.is_union():
+        # replace type sequence with a variable (but never for parameter lists)
+        if (output_options.type_parameters and occurrences[types] > 1 and combined.is_union()
+                and not any(isinstance(t, ListTypeInfo) for t in types)):
             if types not in typevars:
                 typevars[types] = combined.replace(typevar_index = len(typevars)+1)
             return typevars[types]

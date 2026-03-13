@@ -50,6 +50,8 @@ class FuncInfo:
     kwargs: ArgumentName|None
     overrides: OverriddenFunction|None
 
+    is_abstract: bool = False
+
     traces: Counter[CallTrace] = field(default_factory=Counter)
 
     # TODO ideally the variables should be included in the trace, so that they can be filtered
@@ -197,11 +199,18 @@ class Observations:
         for func_id, func_info2 in obs2.func_info.items():
             if (func_info := self.func_info.get(func_id)):
                 for attr in ('varargs', 'kwargs', 'overrides'):
-                    if getattr(func_info, attr) != getattr(func_info2, attr):
-                        raise ValueError(f"Incompatible {attr} for {func_id.func_name}:\n" +\
-                                         f"    {getattr(func_info, attr)}\n" +\
-                                         f"    {getattr(func_info2, attr)}"
-                        )
+                    v1, v2 = getattr(func_info, attr), getattr(func_info2, attr)
+                    if v1 != v2:
+                        # For 'overrides', None means "not checked" (e.g., parent registered
+                        # without direct observation); prefer the non-None value.
+                        if attr == 'overrides' and (v1 is None or v2 is None):
+                            if v1 is None:
+                                func_info.overrides = v2
+                        else:
+                            raise ValueError(f"Incompatible {attr} for {func_id.func_name}:\n" +\
+                                             f"    {v1}\n" +\
+                                             f"    {v2}"
+                            )
 
                 # Merge args, unioning default types if they differ
                 args1, args2 = func_info.args, func_info2.args
@@ -242,6 +251,127 @@ class Observations:
         self.source_to_module_name |= obs2.source_to_module_name
         self.test_modules |= obs2.test_modules
         self.wrapper_code_ids |= obs2.wrapper_code_ids
+
+
+    def _propagate_to_parents(self, raw_annotations: dict[CodeId, FuncAnnotation]) -> None:
+        """Propagates types between parent and child methods for LSP compliance.
+
+        Each iteration:
+        - Upward: widens parent arg/return types from children's observations.
+        - Downward: widens children's arg types to match parent
+          (LSP contravariance — children must accept at least what the parent accepts).
+
+        Iterates until stable to handle multi-level hierarchies.
+        """
+
+        # Build reverse mapping: parent_code_id → [child_code_id, ...]
+        parent_to_children: dict[CodeId, list[CodeId]] = defaultdict(list)
+        for fi in self.func_info.values():
+            if (
+                fi.overrides
+                and fi.overrides.code_id
+                and fi.overrides.code_id.file_name in self.source_to_module_name
+            ):
+                parent_to_children[fi.overrides.code_id].append(fi.code_id)
+
+        if not parent_to_children:
+            return
+
+        def _widen_annotation(
+            target: FuncAnnotation | None,
+            target_arg_names: tuple[ArgumentName, ...],
+            sources: list[FuncAnnotation],
+            merge_args: bool = True,
+            merge_retval: bool = True,
+        ) -> FuncAnnotation | None:
+            """Widen target's types from sources.
+
+            merge_args/merge_retval control which parts are widened.
+            Returns a new FuncAnnotation if anything changed, None otherwise.
+            """
+            n_args = len(target_arg_names)
+            matching = [s for s in sources if len(s.args) == n_args]
+            if not matching:
+                return None
+
+            if merge_args:
+                new_args = []
+                for i in range(n_args):
+                    types: set[TypeInfo] = {s.args[i][1] for s in matching}
+                    if target is not None:
+                        types.add(target.args[i][1])
+                    new_args.append((target_arg_names[i], merged_types(types)))
+            else:
+                new_args = list(target.args) if target else [(n, UnknownTypeInfo) for n in target_arg_names]
+
+            if merge_retval:
+                ret_types: set[TypeInfo] = {s.retval for s in matching}
+                if target is not None:
+                    ret_types.add(target.retval)
+                retval = merged_types(ret_types)
+            else:
+                retval = target.retval if target else UnknownTypeInfo
+
+            new_ann = FuncAnnotation(
+                args=new_args,
+                retval=retval,
+                varargs=target.varargs if target else None,
+                kwargs=target.kwargs if target else None,
+                variables=target.variables if target else [],
+            )
+            return new_ann if new_ann != target else None
+
+        changed = True
+        while changed:
+            changed = False
+            for parent_id, child_ids in parent_to_children.items():
+                child_anns = [raw_annotations[cid] for cid in child_ids if cid in raw_annotations]
+                if not child_anns:
+                    continue
+
+                parent_fi = self.func_info.get(parent_id)
+                if parent_fi is None:
+                    continue
+
+                # Upward: propagate children's types to parent.
+                #   Args:    only for unobserved/abstract (child can widen without affecting parent)
+                #   Returns: only for observed/abstract (LSP covariance); not for unobserved
+                #            concrete (body could contradict)
+                parent_ann = raw_annotations.get(parent_id)
+                if parent_fi.is_abstract:
+                    merge_args, merge_retval = True, True
+                elif not parent_fi.traces:
+                    merge_args, merge_retval = True, False   # unobserved concrete
+                else:
+                    merge_args, merge_retval = False, True   # observed concrete
+
+                arg_names = tuple(a.arg_name for a in parent_fi.args)
+                new_parent = _widen_annotation(
+                    parent_ann, arg_names, child_anns,
+                    merge_args=merge_args, merge_retval=merge_retval,
+                )
+                if new_parent is not None:
+                    if parent_ann is None:
+                        new_parent = FuncAnnotation(
+                            args=new_parent.args, retval=new_parent.retval,
+                            varargs=parent_fi.varargs, kwargs=parent_fi.kwargs,
+                            variables=[],
+                        )
+                    raw_annotations[parent_id] = new_parent
+                    changed = True
+
+                # Downward: widen children's arg types to match parent (LSP contravariance)
+                parent_ann = raw_annotations.get(parent_id)
+                if parent_ann is not None:
+                    for cid in child_ids:
+                        child_ann = raw_annotations.get(cid)
+                        if child_ann is None:
+                            continue
+                        child_arg_names = tuple(name for name, _ in child_ann.args)
+                        new_child = _widen_annotation(child_ann, child_arg_names, [parent_ann], merge_args=True, merge_retval=False)
+                        if new_child is not None:
+                            raw_annotations[cid] = new_child
+                            changed = True
 
 
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars], dict[CodeId, list[TraceDistribution]]]:
@@ -382,6 +512,11 @@ class Observations:
                         else UnknownTypeInfo
                     )
 
+                # Clear code_id after resolution — it was only needed to look up
+                # the function's observations and should not affect type equality.
+                if node.code_id:
+                    node = node.replace(code_id=None)
+
                 return node
 
         self.transform_types(ResolvingT())
@@ -435,17 +570,29 @@ class Observations:
                     if (dist := func_info.compute_type_distributions()):
                         type_distributions[func_info.code_id] = dist
 
+        # Compute raw annotations (before finalization)
+        raw_annotations: dict[CodeId, FuncAnnotation] = {
+            func_info.code_id: annotation
+            for func_info in self.func_info.values()
+            if func_info.code_id not in self.wrapper_code_ids
+            if (annotation := mk_annotation(func_info)) is not None
+        }
+
+        # Propagate child method types up to parent methods
+        self._propagate_to_parents(raw_annotations)
+
+
+
+        # Apply finalization
         annotations = {
-            func_info.code_id: FuncAnnotation(
+            code_id: FuncAnnotation(
                 args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
                 retval=finalize(annotation.retval),
                 varargs=annotation.varargs,
                 kwargs=annotation.kwargs,
                 variables=[(var[0], finalize(var[1])) for var in annotation.variables]
             )
-            for func_info in self.func_info.values()
-            if func_info.code_id not in self.wrapper_code_ids
-            if (annotation := mk_annotation(func_info)) is not None
+            for code_id, annotation in raw_annotations.items()
         }
 
         module_vars = {

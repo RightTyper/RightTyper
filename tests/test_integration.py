@@ -848,36 +848,6 @@ def test_method_imported():
     assert "import gC" not in output
 
 
-def test_method_overriding():
-    t = textwrap.dedent("""\
-        class A:
-            def foo(self, x):
-                return x/2
-
-        class B(A):
-            def foo(self, x):
-                return int(x)//2
-
-        A().foo(1.0)
-        B().foo("10")
-        """)
-
-    Path("t.py").write_text(t)
-
-    rt_run('t.py')
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-
-    assert get_function(code, 'A.foo') == textwrap.dedent("""\
-        def foo(self: Self, x: float) -> float: ...
-    """)
-
-    # contravariant for parameters, covariant for return value;
-    # so that while 'x' must not be 'int', but the return value may be 'int'
-    assert get_function(code, 'B.foo') == textwrap.dedent("""\
-        def foo(self: Self, x: float|str) -> int: ...
-    """)
-
 
 def test_method_overriding_annotated():
     t = textwrap.dedent("""\
@@ -3386,6 +3356,31 @@ def test_generic_and_defaults():
     assert not re.search('from typing import.*TypeVar', output)
     assert get_function(code, 'f') == textwrap.dedent("""\
         def f[T1: (float, int)](a: T1, b: int|None=None, c: T1|None=None) -> None: ...
+    """)
+
+
+def test_generic_inner_function():
+    Path("t.py").write_text(textwrap.dedent("""\
+        def outer(x):
+            def inner(y):
+                return y
+            return inner(x)
+
+        outer(1)
+        outer("hello")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # Both functions are generic; they must have distinct type parameter names.
+    # Outer gets T1 (reserved at visit time); inner gets T2.
+    assert get_function(code, 'outer') == textwrap.dedent("""\
+        def outer[T1: (int, str)](x: T1) -> T1: ...
+    """)
+    assert get_function(code, 'outer.<locals>.inner') == textwrap.dedent("""\
+        def inner[T2: (int, str)](y: T2) -> T2: ...
     """)
 
 
@@ -6907,4 +6902,312 @@ def test_max_union_size():
     # 4 distinct element types (int, str, float, bytes) > limit 3 → Any
     assert get_function(code, 'f') == textwrap.dedent("""\
         def f() -> list[Any]: ...
+    """)
+
+
+def test_parent_type_propagation_from_child():
+    """Parent never called, single child called — parent gets child's arg types.
+
+    Return type is NOT propagated to a concrete unobserved parent because
+    the propagated type could contradict the body (here A.foo returns x,
+    not str(x)).
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                return x
+
+        class B(A):
+            def foo(self, x):
+                return str(x)
+
+        B().foo(42)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int) -> str: ...
+    """)
+    # A gets arg types from B but not return type (concrete, unobserved)
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int): ...
+    """)
+
+
+def test_parent_type_propagation_multiple_children():
+    """Parent never called, two children with different types — parent gets union of arg types."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                return str(x)
+
+        class B(A):
+            def foo(self, x):
+                return str(x)
+
+        class C(A):
+            def foo(self, x):
+                return str(x)
+
+        B().foo(42)
+        C().foo("hello")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # A is concrete and unobserved — gets arg types but not return type
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int|str): ...
+    """)
+
+
+def test_parent_type_propagation_multilevel():
+    """A → B → C, only C called — all three get types."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                return x
+
+        class B(A):
+            def foo(self, x):
+                return x
+
+        class C(B):
+            def foo(self, x):
+                return x
+
+        C().foo(42)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'C.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int) -> int: ...
+    """)
+    # B and A are concrete, unobserved — get arg types but not return type
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int): ...
+    """)
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int): ...
+    """)
+
+
+def test_parent_type_propagation_abstract():
+    """Abstract parent, concrete children — abstract method gets annotated."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from abc import ABC, abstractmethod
+
+        class A(ABC):
+            @abstractmethod
+            def foo(self, x):
+                pass
+
+        class B(A):
+            def foo(self, x):
+                return str(x)
+
+        class C(A):
+            def foo(self, x):
+                return str(x)
+
+        B().foo(42)
+        C().foo("hello")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        @abstractmethod
+        def foo(self: Self, x: int|str) -> str: ...
+    """)
+
+
+def test_parent_type_propagation_parent_observed():
+    """Both parent and child observed — parent keeps its own arg types but
+    return type is widened (LSP covariance: parent return must be supertype
+    of child's).
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def foo(self, x):
+                return x
+
+        class B(A):
+            def foo(self, x):
+                return str(x)
+
+        A().foo(42)
+        B().foo("hello")
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # A's args stay as observed; return type widened to include B's str
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int) -> int|str: ...
+    """)
+    # B's args widened to include A's (child must accept what parent accepts)
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int|str) -> str: ...
+    """)
+
+
+def test_parent_type_propagation_only_collect():
+    """Parent propagation works when observations are collected in separate runs.
+
+    Run 1 observes only the parent (A.foo with int), run 2 observes only the
+    child (B.foo with str).  The parent is registered by _register_parent_function
+    in run 2 (with overrides=None), while run 1 records it directly (possibly with
+    a real overrides value).  merge_observations must reconcile the two FuncInfo
+    entries.  Since A is observed, it keeps its own types; B is widened to include A's.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        import sys
+
+        class A:
+            def foo(self, x):
+                return x
+
+        class B(A):
+            def foo(self, x):
+                return str(x)
+
+        if sys.argv[1] == 'parent':
+            A().foo(42)
+        else:
+            B().foo("hello")
+    """))
+
+    rt_run('--only-collect', 't.py', 'parent')
+    rt_run('--only-collect', 't.py', 'child')
+    rt_run('process')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # A is observed — keeps its own arg types; return widened for LSP covariance
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int) -> int|str: ...
+    """)
+    # B's args widened to include A's
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int|str) -> str: ...
+    """)
+
+
+def test_parent_type_propagation_classmethod():
+    """Unobserved parent classmethod gets arg types from child."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            @classmethod
+            def foo(cls, x):
+                return str(x)
+
+        class B(A):
+            @classmethod
+            def foo(cls, x):
+                return str(x)
+
+        B.foo(42)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'B.foo') == textwrap.dedent("""\
+        @classmethod
+        def foo(cls: type[Self], x: int) -> str: ...
+    """)
+    # A is concrete, unobserved — gets arg types but not return type
+    assert get_function(code, 'A.foo') == textwrap.dedent("""\
+        @classmethod
+        def foo(cls: type[Self], x: int): ...
+    """)
+
+
+def test_no_duplicate_callable_types_after_resolution():
+    """Different functions resolving to the same Callable type shouldn't produce duplicates.
+
+    ResolvingT fills in Callable args from observations but must clear code_id afterward,
+    otherwise identical Callable signatures with different code_ids appear as distinct types.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        def a():
+            pass
+
+        def b():
+            pass
+
+        def foo(f, x):
+            f()
+            return x
+
+        foo(a, 1)
+        foo(b, "hello")
+    """))
+
+    rt_run('--python-version=3.12', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    func = get_function(code, 'foo')
+    # f should be a single Callable[[], None], not a union of duplicates
+    assert func is not None
+    assert func.count('Callable') == 1, f"Duplicate Callable in: {func}"
+
+
+def test_no_type_parameters():
+    """--no-type-parameters disables type variable inference, producing plain unions."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f(x):
+            return x[0]
+
+        f([10])
+        f(['10'])
+    """))
+
+    rt_run('--no-type-parameters', '--python-version=3.12', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    func = get_function(code, 'f')
+    assert 'T1' not in func
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: list[int|str]) -> int|str: ...
+    """)
+
+
+def test_no_inline_generics():
+    """--no-inline-generics uses module-level TypeVar declarations instead of PEP 695 syntax."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f(x):
+            return x[0]
+
+        f([10])
+        f(['10'])
+    """))
+
+    rt_run('--no-inline-generics', '--python-version=3.12', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # Should have module-level TypeVar declaration
+    m = re.search(r'(\w+) = TypeVar\("\1", int, str\)', output)
+    assert m, f"Expected TypeVar declaration in output:\n{output}"
+    T = m.group(1)
+    # Function should use the TypeVar, but NOT PEP 695 inline syntax
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(x: list[{T}]) -> {T}: ...
     """)

@@ -681,6 +681,18 @@ def add_output_options(group=None):
                 default=output_options.type_distribution_comments,
                 help="""Add comments showing the distribution of observed types next to annotations with multiple types."""
             ),
+            base.option(
+                "--type-parameters/--no-type-parameters",
+                is_flag=True,
+                default=output_options.type_parameters,
+                help="""Whether to infer type parameters (T1, T2, ...) for correlated argument types. Disable for plain union annotations."""
+            ),
+            base.option(
+                "--inline-generics/--no-inline-generics",
+                is_flag=True,
+                default=output_options.inline_generics,
+                help="""Whether to use PEP 695 inline type parameter syntax (Python 3.12+). Disable for module-level TypeVar declarations."""
+            ),
         ]):
             func = opt(func)
         return func

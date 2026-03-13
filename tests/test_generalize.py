@@ -215,6 +215,41 @@ def test_generalize_clears_nested_typevar_index():
     assert result == ['Callable[[int|float, int|float], int|float]|Callable[[str], str]']
 
 
+def test_generalize_callable_no_code_id_same_arity():
+    """Callables without code_ids and same param arity should decompose normally."""
+    samples: list[tuple[TypeInfo, ...]] = [
+        (ti('Callable', args=(TypeInfo.list([ti('int'), ti('int')]), ti('int'))),),
+        (ti('Callable', args=(TypeInfo.list([ti('str'), ti('str')]), ti('str'))),),
+    ]
+    # Same arity: valid decomposition into typevars
+    assert generalize(samples) == ['Callable[[T1, T1], T1]']
+
+
+def test_generalize_callable_no_code_id_different_arity():
+    """Callables without code_ids and different param arities should union, not decompose."""
+    samples: list[tuple[TypeInfo, ...]] = [
+        (ti('Callable', args=(TypeInfo.list([ti('int'), ti('int')]), ti('int'))),),
+        (ti('Callable', args=(TypeInfo.list([ti('str')]), ti('str'))),),
+    ]
+    # Different arity: should produce a union, not try to decompose
+    assert generalize(samples) == ['Callable[[int, int], int]|Callable[[str], str]']
+
+
+def test_generalize_callable_list_type_info_never_typevar():
+    """Parameter lists should never become typevars, even when the pattern repeats."""
+    samples: list[tuple[TypeInfo, ...]] = [
+        (ti('Callable', args=(TypeInfo.list([ti('int'), ti('int')]), ti('int'))),
+         ti('Callable', args=(TypeInfo.list([ti('int'), ti('int')]), ti('int')))),
+        (ti('Callable', args=(TypeInfo.list([ti('str')]), ti('str'))),
+         ti('Callable', args=(TypeInfo.list([ti('str')]), ti('str')))),
+    ]
+    result = generalize(samples)
+    assert result is not None
+    # The whole Callable union repeats across both positions, so it becomes a typevar.
+    # Crucially, the ListTypeInfo (param list) does NOT become its own typevar.
+    assert result == ['T1', 'T1']
+
+
 def test_generalize_generic_with_string():
     samples: Any = [
         (ti('int'), ti('X', args=(ti('int'), 'foo'))),
