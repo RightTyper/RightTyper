@@ -7135,3 +7135,79 @@ def test_parent_type_propagation_classmethod():
         @classmethod
         def foo(cls: type[Self], x: int): ...
     """)
+
+
+def test_no_duplicate_callable_types_after_resolution():
+    """Different functions resolving to the same Callable type shouldn't produce duplicates.
+
+    ResolvingT fills in Callable args from observations but must clear code_id afterward,
+    otherwise identical Callable signatures with different code_ids appear as distinct types.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        def a():
+            pass
+
+        def b():
+            pass
+
+        def foo(f, x):
+            f()
+            return x
+
+        foo(a, 1)
+        foo(b, "hello")
+    """))
+
+    rt_run('--python-version=3.12', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    func = get_function(code, 'foo')
+    # f should be a single Callable[[], None], not a union of duplicates
+    assert func is not None
+    assert func.count('Callable') == 1, f"Duplicate Callable in: {func}"
+
+
+def test_no_type_parameters():
+    """--no-type-parameters disables type variable inference, producing plain unions."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f(x):
+            return x[0]
+
+        f([10])
+        f(['10'])
+    """))
+
+    rt_run('--no-type-parameters', '--python-version=3.12', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    func = get_function(code, 'f')
+    assert 'T1' not in func
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: list[int|str]) -> int|str: ...
+    """)
+
+
+def test_no_inline_generics():
+    """--no-inline-generics uses module-level TypeVar declarations instead of PEP 695 syntax."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        def f(x):
+            return x[0]
+
+        f([10])
+        f(['10'])
+    """))
+
+    rt_run('--no-inline-generics', '--python-version=3.12', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # Should have module-level TypeVar declaration
+    m = re.search(r'(\w+) = TypeVar\("\1", int, str\)', output)
+    assert m, f"Expected TypeVar declaration in output:\n{output}"
+    T = m.group(1)
+    # Function should use the TypeVar, but NOT PEP 695 inline syntax
+    assert get_function(code, 'f') == textwrap.dedent(f"""\
+        def f(x: list[{T}]) -> {T}: ...
+    """)

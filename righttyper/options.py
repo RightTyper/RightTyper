@@ -20,7 +20,8 @@ class OutputOptions:
     use_typing_union: bool = False
     use_typing_self: bool = False
     use_typing_never: bool = False
-    inline_generics: bool = False
+    inline_generics: bool = True
+    type_parameters: bool = True
     use_top_pct: int = 100
     simplify_types: bool = True
     exclude_test_types: bool = True
@@ -39,11 +40,12 @@ class OutputOptions:
 
         python_version = kwargs['python_version']
         use_typing_never = kwargs['use_typing_never']
+        inline_generics = kwargs['inline_generics']
 
         self.use_typing_union = python_version < (3, 10)
         self.use_typing_self = python_version >= (3, 11)
         self.use_typing_never = python_version >= (3, 11) and use_typing_never
-        self.inline_generics = python_version >= (3, 12)
+        self.inline_generics = python_version >= (3, 12) and inline_generics
 
 
 def _merge_regexes(patterns: Sequence[str]) -> re.Pattern[str]|None:

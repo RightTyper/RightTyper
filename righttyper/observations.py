@@ -512,6 +512,11 @@ class Observations:
                         else UnknownTypeInfo
                     )
 
+                # Clear code_id after resolution — it was only needed to look up
+                # the function's observations and should not affect type equality.
+                if node.code_id:
+                    node = node.replace(code_id=None)
+
                 return node
 
         self.transform_types(ResolvingT())
