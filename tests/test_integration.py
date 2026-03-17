@@ -6679,7 +6679,7 @@ def test_type_distribution_comments(json_output):
     """))
 
     extra = ('--json-output',) if json_output else ()
-    rt_run('--no-sampling', '--type-distribution-comments', *extra, 't.py')
+    rt_run('--no-call-sampling', '--type-distribution-comments', *extra, 't.py')
 
     if json_output:
         with Path("righttyper.json").open("r") as f:
@@ -6708,7 +6708,7 @@ def test_type_distribution_comments_no_comment_for_monomorphic():
         add(3, 4)
     """))
 
-    rt_run('--no-sampling', '--type-distribution-comments', 't.py')
+    rt_run('--no-call-sampling', '--type-distribution-comments', 't.py')
     output = Path("t.py").read_text()
 
     assert '# righttyper:' not in output
@@ -6727,12 +6727,12 @@ def test_type_distribution_comments_rerun_no_duplication():
             add("a", "b")
     """))
 
-    rt_run('--no-sampling', '--type-distribution-comments', 't.py')
+    rt_run('--no-call-sampling', '--type-distribution-comments', 't.py')
     first_output = Path("t.py").read_text()
     assert first_output.count('# righttyper:') == 1
 
     # Run again on the already-annotated file
-    rt_run('--no-sampling', '--type-distribution-comments', '--ignore-annotations', 't.py')
+    rt_run('--no-call-sampling', '--type-distribution-comments', '--ignore-annotations', 't.py')
     second_output = Path("t.py").read_text()
     assert second_output.count('# righttyper:') == 1
 

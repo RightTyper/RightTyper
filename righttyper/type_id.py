@@ -528,7 +528,7 @@ def _get_container_args(
 
         if is_small:
             # Small container strategy: full scan, detect change via size or spot-check
-            if current_size != entry.last_sampled_size:
+            if current_size != entry.last_sampled_size or not run_options.container_caching:
                 # First visit or size changed: full scan
                 entry.full_scan(container, depth)
                 action = "full_scan"
@@ -542,7 +542,7 @@ def _get_container_args(
                     action = "spot_check_miss"
         else:
             # Large container strategy: Good-Turing for stopping, spot-check for change detection
-            if current_size != entry.last_sampled_size:
+            if current_size != entry.last_sampled_size or not run_options.container_caching:
                 stopping_reason = entry.sample_until_stable(sampler, depth)
                 sample_trigger = "first" if entry.last_sampled_size == 0 else "size_change"
                 entry.last_sampled_size = current_size
