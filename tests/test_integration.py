@@ -3166,7 +3166,7 @@ def test_sampling_overlaps():
 
     Path("t.py").write_text(t)
 
-    rt_run('--sampling', 't.py')
+    rt_run('--call-sampling', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3189,7 +3189,7 @@ def test_no_return():
 
     Path("t.py").write_text(t)
 
-    rt_run('--sampling', 't.py')
+    rt_run('--call-sampling', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
