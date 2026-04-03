@@ -48,7 +48,7 @@ class FuncInfo:
     args: tuple[ArgInfo, ...]
     varargs: ArgumentName|None
     kwargs: ArgumentName|None
-    overrides: OverriddenFunction|None
+    overrides: list[OverriddenFunction] = field(default_factory=list)
 
     is_abstract: bool = False
 
@@ -126,24 +126,25 @@ class FuncInfo:
                 )
             self.args = args_prime
 
-        if self.overrides and (inline_types := self.overrides.inline_arg_types):
-            inline_types_prime = tuple(
-                tr.visit(it) if it else None
-                for it in inline_types
-            )
+        for override in self.overrides:
+            if (inline_types := override.inline_arg_types):
+                inline_types_prime = tuple(
+                    tr.visit(it) if it else None
+                    for it in inline_types
+                )
 
-            if any(
-                old_it is not new_it
-                for old_it, new_it in zip(inline_types, inline_types_prime)
-            ):
-                if logger.level == logging.DEBUG:
-                    logger.debug(
-                        type(tr).__name__ + " " + self.code_id.func_name +
-                        str(tuple(str(it) for it in inline_types)) +
-                        " -> " +
-                        str(tuple(str(it) for it in inline_types_prime))
-                    )
-                self.overrides.inline_arg_types = inline_types_prime
+                if any(
+                    old_it is not new_it
+                    for old_it, new_it in zip(inline_types, inline_types_prime)
+                ):
+                    if logger.level == logging.DEBUG:
+                        logger.debug(
+                            type(tr).__name__ + " " + self.code_id.func_name +
+                            str(tuple(str(it) for it in inline_types)) +
+                            " -> " +
+                            str(tuple(str(it) for it in inline_types_prime))
+                        )
+                    override.inline_arg_types = inline_types_prime
 
 
         for trace, count in list(self.traces.items()):
@@ -201,10 +202,10 @@ class Observations:
                 for attr in ('varargs', 'kwargs', 'overrides'):
                     v1, v2 = getattr(func_info, attr), getattr(func_info2, attr)
                     if v1 != v2:
-                        # For 'overrides', None means "not checked" (e.g., parent registered
-                        # without direct observation); prefer the non-None value.
-                        if attr == 'overrides' and (v1 is None or v2 is None):
-                            if v1 is None:
+                        # For 'overrides', [] means "not checked" (e.g., parent registered
+                        # without direct observation); prefer the non-empty value.
+                        if attr == 'overrides' and (not v1 or not v2):
+                            if not v1:
                                 func_info.overrides = v2
                         else:
                             raise ValueError(f"Incompatible {attr} for {func_id.func_name}:\n" +\
@@ -267,12 +268,40 @@ class Observations:
         # Build reverse mapping: parent_code_id → [child_code_id, ...]
         parent_to_children: dict[CodeId, list[CodeId]] = defaultdict(list)
         for fi in self.func_info.values():
-            if (
-                fi.overrides
-                and fi.overrides.code_id
-                and fi.overrides.code_id.file_name in self.source_to_module_name
-            ):
-                parent_to_children[fi.overrides.code_id].append(fi.code_id)
+            for ov in fi.overrides:
+                if ov.code_id and ov.code_id.file_name in self.source_to_module_name:
+                    parent_to_children[ov.code_id].append(fi.code_id)
+
+        # Phase 1: Merge static arg types from inline annotations / typeshed.
+        # Handles all overrides including typeshed-only parents (no code_id).
+        # Static arg types are per-child because inline_arg_types is aligned to the
+        # child's parameter order (computed by get_parent_arg_types).
+        if not output_options.ignore_annotations:
+            for fi in self.func_info.values():
+                ann = raw_annotations.get(fi.code_id)
+                if ann is None:
+                    continue
+                arg_names = tuple(name for name, _ in ann.args)
+                for ov in fi.overrides:
+                    parent_fi = self.func_info.get(ov.code_id) if ov.code_id else None
+                    static_types = ov.inline_arg_types or get_typeshed_arg_types(ov, parent_fi.args if parent_fi else fi.args)
+                    if not static_types or len(static_types) != len(arg_names):
+                        continue
+                    new_args = list(ann.args)
+                    ann_changed = False
+                    for i, st in enumerate(static_types):
+                        if st is not None:
+                            m = merged_types({new_args[i][1], st})
+                            if m is not new_args[i][1]:
+                                new_args[i] = (arg_names[i], m)
+                                ann_changed = True
+                    if ann_changed:
+                        ann = FuncAnnotation(
+                            args=new_args, retval=ann.retval,
+                            varargs=ann.varargs, kwargs=ann.kwargs,
+                            variables=ann.variables,
+                        )
+                        raw_annotations[fi.code_id] = ann
 
         if not parent_to_children:
             return
@@ -321,57 +350,55 @@ class Observations:
             )
             return new_ann if new_ann != target else None
 
-        changed = True
-        while changed:
-            changed = False
-            for parent_id, child_ids in parent_to_children.items():
-                child_anns = [raw_annotations[cid] for cid in child_ids if cid in raw_annotations]
-                if not child_anns:
+        # Phase 2: Upward — propagate children's types to parents.
+        for parent_id, child_ids in parent_to_children.items():
+            child_anns = [raw_annotations[cid] for cid in child_ids if cid in raw_annotations]
+            if not child_anns:
+                continue
+
+            parent_fi = self.func_info.get(parent_id)
+            if parent_fi is None:
+                continue
+
+            #   Args:    only for unobserved/abstract (child can widen without affecting parent)
+            #   Returns: only for observed/abstract (LSP covariance); not for unobserved
+            #            concrete (body could contradict)
+            parent_ann = raw_annotations.get(parent_id)
+            if parent_fi.is_abstract:
+                merge_args, merge_retval = True, True
+            elif not parent_fi.traces:
+                merge_args, merge_retval = True, False   # unobserved concrete
+            else:
+                merge_args, merge_retval = False, True   # observed concrete
+
+            arg_names = tuple(a.arg_name for a in parent_fi.args)
+            new_parent = _widen_annotation(
+                parent_ann, arg_names, child_anns,
+                merge_args=merge_args, merge_retval=merge_retval,
+            )
+            if new_parent is not None:
+                if parent_ann is None:
+                    new_parent = FuncAnnotation(
+                        args=new_parent.args, retval=new_parent.retval,
+                        varargs=parent_fi.varargs, kwargs=parent_fi.kwargs,
+                        variables=[],
+                    )
+                raw_annotations[parent_id] = new_parent
+
+        # Phase 3: Downward — widen children's arg types from parent annotations.
+        # A single pass suffices because parent annotations are fixed after Phase 2.
+        for parent_id, child_ids in parent_to_children.items():
+            parent_ann = raw_annotations.get(parent_id)
+            if parent_ann is None:
+                continue
+            for cid in child_ids:
+                child_ann = raw_annotations.get(cid)
+                if child_ann is None:
                     continue
-
-                parent_fi = self.func_info.get(parent_id)
-                if parent_fi is None:
-                    continue
-
-                # Upward: propagate children's types to parent.
-                #   Args:    only for unobserved/abstract (child can widen without affecting parent)
-                #   Returns: only for observed/abstract (LSP covariance); not for unobserved
-                #            concrete (body could contradict)
-                parent_ann = raw_annotations.get(parent_id)
-                if parent_fi.is_abstract:
-                    merge_args, merge_retval = True, True
-                elif not parent_fi.traces:
-                    merge_args, merge_retval = True, False   # unobserved concrete
-                else:
-                    merge_args, merge_retval = False, True   # observed concrete
-
-                arg_names = tuple(a.arg_name for a in parent_fi.args)
-                new_parent = _widen_annotation(
-                    parent_ann, arg_names, child_anns,
-                    merge_args=merge_args, merge_retval=merge_retval,
-                )
-                if new_parent is not None:
-                    if parent_ann is None:
-                        new_parent = FuncAnnotation(
-                            args=new_parent.args, retval=new_parent.retval,
-                            varargs=parent_fi.varargs, kwargs=parent_fi.kwargs,
-                            variables=[],
-                        )
-                    raw_annotations[parent_id] = new_parent
-                    changed = True
-
-                # Downward: widen children's arg types to match parent (LSP contravariance)
-                parent_ann = raw_annotations.get(parent_id)
-                if parent_ann is not None:
-                    for cid in child_ids:
-                        child_ann = raw_annotations.get(cid)
-                        if child_ann is None:
-                            continue
-                        child_arg_names = tuple(name for name, _ in child_ann.args)
-                        new_child = _widen_annotation(child_ann, child_arg_names, [parent_ann], merge_args=True, merge_retval=False)
-                        if new_child is not None:
-                            raw_annotations[cid] = new_child
-                            changed = True
+                child_arg_names = tuple(name for name, _ in child_ann.args)
+                new_child = _widen_annotation(child_ann, child_arg_names, [parent_ann], merge_args=True, merge_retval=False)
+                if new_child is not None:
+                    raw_annotations[cid] = new_child
 
 
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars], dict[CodeId, list[TraceDistribution]]]:
@@ -381,24 +408,6 @@ class Observations:
             traces = func_info.most_common_traces()
             if not traces:
                 return None
-
-            parents_arg_types = None
-            if func_info.overrides:
-                parents_func = func_info.overrides
-
-                if (
-                    output_options.ignore_annotations
-                    or not (
-                        (parents_arg_types := parents_func.inline_arg_types)
-                        or (parents_arg_types := get_typeshed_arg_types(parents_func, func_info.args))
-                    )
-                ):
-                    if (
-                        (parent_code := parents_func.code_id)
-                        and parent_code in self.func_info
-                        and (ann := mk_annotation(self.func_info[parent_code]))
-                    ):
-                        parents_arg_types = tuple(arg[1] for arg in ann.args)
 
             if (signature := generalize(traces)) is None:
                 logger.info(f"Unable to generalize {func_info.code_id}: inconsistent traces.\n" +
@@ -414,13 +423,6 @@ class Observations:
                         merged_types({
                             signature[i] if i < n_sig_args else UnknownTypeInfo,
                             *((arg.default,) if arg.default is not None else ()),
-                            # by building sets with the parent's types, we prevent arg. type narrowing
-                            *((parents_arg_types[i],) if (
-                                  parents_arg_types
-                                  and len(parents_arg_types) == len(func_info.args)
-                                  and parents_arg_types[i] is not None
-                                ) else ()
-                             )
                         })
                     )
                     for i, arg in enumerate(func_info.args)

@@ -7137,6 +7137,83 @@ def test_parent_type_propagation_classmethod():
     """)
 
 
+def test_mro_two_parents_annotated():
+    """Two unrelated annotated parents — child should widen args from both."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import Self
+
+        class A:
+            def func(self: Self, x: int):
+                return str(x)
+
+        class B:
+            def func(self: Self, x: str):
+                return x.upper()
+
+        class C(A, B):
+            def func(self, x):
+                return str(x)
+
+        C().func(True)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # C.func should widen args from both A (int) and B (str);
+    # observed bool is subsumed by int
+    assert get_function(code, 'C.func') == textwrap.dedent("""\
+        def func(self: Self, x: int|str) -> str: ...
+    """)
+
+
+def test_mro_two_parents_method_defined():
+    """Two unrelated parents A and B, child C(A, B) overrides func.
+
+    All three classes are observed. LSP widening should apply per-hierarchy:
+    - A.func returns float, C overrides with str → A.func return: float|str
+    - B.func returns int, C overrides with str → B.func return: int|str
+    - B should NOT get float from A (A is not in B's override chain)
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def func(self):
+                return 42.5
+
+        class B:
+            def func(self):
+                return 42
+
+        class C(A, B):
+            def func(self):
+                return "Hello from func in class C"
+
+        c = C()
+        d = c.func()
+        A().func()
+        B().func()
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # C.func observed directly → str
+    assert get_function(code, 'C.func') == textwrap.dedent("""\
+        def func(self: Self) -> str: ...
+    """)
+    # A.func returns float; C (subclass of A) returns str → float|str
+    assert get_function(code, 'A.func') == textwrap.dedent("""\
+        def func(self: Self) -> float|str: ...
+    """)
+    # B.func returns int; C (subclass of B) returns str → int|str
+    # NOT int|float|str — A is not a subclass of B
+    assert get_function(code, 'B.func') == textwrap.dedent("""\
+        def func(self: Self) -> int|str: ...
+    """)
+
+
 def test_no_duplicate_callable_types_after_resolution():
     """Different functions resolving to the same Callable type shouldn't produce duplicates.
 
