@@ -1272,6 +1272,29 @@ def test_method_overriding_typeshed():
     assert "\nimport Self" not in output
 
 
+def test_method_overriding_typeshed_ignore_annotations():
+    """Typeshed arg types should be merged even with --ignore-annotations."""
+    t = textwrap.dedent("""\
+        class C:
+            def __eq__(self, other):
+                if not isinstance(other, C):
+                    return False
+                return self is other
+
+        C() == C()
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'C.__eq__') == textwrap.dedent("""\
+        def __eq__(self: Self, other: object|Self) -> bool: ...
+    """)
+
+
 def test_method_overriding_inherited_typeshed():
     Path("t.py").write_text(textwrap.dedent("""\
         class Comparable:

@@ -276,32 +276,34 @@ class Observations:
         # Handles all overrides including typeshed-only parents (no code_id).
         # Static arg types are per-child because inline_arg_types is aligned to the
         # child's parameter order (computed by get_parent_arg_types).
-        if not output_options.ignore_annotations:
-            for fi in self.func_info.values():
-                ann = raw_annotations.get(fi.code_id)
-                if ann is None:
+        for fi in self.func_info.values():
+            ann = raw_annotations.get(fi.code_id)
+            if ann is None:
+                continue
+            arg_names = tuple(name for name, _ in ann.args)
+            for ov in fi.overrides:
+                parent_fi = self.func_info.get(ov.code_id) if ov.code_id else None
+                static_types = (
+                    (ov.inline_arg_types if not output_options.ignore_annotations else None)
+                    or get_typeshed_arg_types(ov, parent_fi.args if parent_fi else fi.args)
+                )
+                if not static_types or len(static_types) != len(arg_names):
                     continue
-                arg_names = tuple(name for name, _ in ann.args)
-                for ov in fi.overrides:
-                    parent_fi = self.func_info.get(ov.code_id) if ov.code_id else None
-                    static_types = ov.inline_arg_types or get_typeshed_arg_types(ov, parent_fi.args if parent_fi else fi.args)
-                    if not static_types or len(static_types) != len(arg_names):
-                        continue
-                    new_args = list(ann.args)
-                    ann_changed = False
-                    for i, st in enumerate(static_types):
-                        if st is not None:
-                            m = merged_types({new_args[i][1], st})
-                            if m is not new_args[i][1]:
-                                new_args[i] = (arg_names[i], m)
-                                ann_changed = True
-                    if ann_changed:
-                        ann = FuncAnnotation(
-                            args=new_args, retval=ann.retval,
-                            varargs=ann.varargs, kwargs=ann.kwargs,
-                            variables=ann.variables,
-                        )
-                        raw_annotations[fi.code_id] = ann
+                new_args = list(ann.args)
+                ann_changed = False
+                for i, st in enumerate(static_types):
+                    if st is not None:
+                        m = merged_types({new_args[i][1], st})
+                        if m is not new_args[i][1]:
+                            new_args[i] = (arg_names[i], m)
+                            ann_changed = True
+                if ann_changed:
+                    ann = FuncAnnotation(
+                        args=new_args, retval=ann.retval,
+                        varargs=ann.varargs, kwargs=ann.kwargs,
+                        variables=ann.variables,
+                    )
+                    raw_annotations[fi.code_id] = ann
 
         if not parent_to_children:
             return
