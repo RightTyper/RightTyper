@@ -1272,6 +1272,29 @@ def test_method_overriding_typeshed():
     assert "\nimport Self" not in output
 
 
+def test_method_overriding_typeshed_ignore_annotations():
+    """Typeshed arg types should be merged even with --ignore-annotations."""
+    t = textwrap.dedent("""\
+        class C:
+            def __eq__(self, other):
+                if not isinstance(other, C):
+                    return False
+                return self is other
+
+        C() == C()
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--ignore-annotations', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    assert get_function(code, 'C.__eq__') == textwrap.dedent("""\
+        def __eq__(self: Self, other: object|Self) -> bool: ...
+    """)
+
+
 def test_method_overriding_inherited_typeshed():
     Path("t.py").write_text(textwrap.dedent("""\
         class Comparable:
@@ -3166,7 +3189,7 @@ def test_sampling_overlaps():
 
     Path("t.py").write_text(t)
 
-    rt_run('--sampling', 't.py')
+    rt_run('--call-sampling', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -3189,7 +3212,7 @@ def test_no_return():
 
     Path("t.py").write_text(t)
 
-    rt_run('--sampling', 't.py')
+    rt_run('--call-sampling', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
@@ -6679,7 +6702,7 @@ def test_type_distribution_comments(json_output):
     """))
 
     extra = ('--json-output',) if json_output else ()
-    rt_run('--no-sampling', '--type-distribution-comments', *extra, 't.py')
+    rt_run('--no-call-sampling', '--type-distribution-comments', *extra, 't.py')
 
     if json_output:
         with Path("righttyper.json").open("r") as f:
@@ -6708,7 +6731,7 @@ def test_type_distribution_comments_no_comment_for_monomorphic():
         add(3, 4)
     """))
 
-    rt_run('--no-sampling', '--type-distribution-comments', 't.py')
+    rt_run('--no-call-sampling', '--type-distribution-comments', 't.py')
     output = Path("t.py").read_text()
 
     assert '# righttyper:' not in output
@@ -6727,12 +6750,12 @@ def test_type_distribution_comments_rerun_no_duplication():
             add("a", "b")
     """))
 
-    rt_run('--no-sampling', '--type-distribution-comments', 't.py')
+    rt_run('--no-call-sampling', '--type-distribution-comments', 't.py')
     first_output = Path("t.py").read_text()
     assert first_output.count('# righttyper:') == 1
 
     # Run again on the already-annotated file
-    rt_run('--no-sampling', '--type-distribution-comments', '--ignore-annotations', 't.py')
+    rt_run('--no-call-sampling', '--type-distribution-comments', '--ignore-annotations', 't.py')
     second_output = Path("t.py").read_text()
     assert second_output.count('# righttyper:') == 1
 
@@ -7134,6 +7157,83 @@ def test_parent_type_propagation_classmethod():
     assert get_function(code, 'A.foo') == textwrap.dedent("""\
         @classmethod
         def foo(cls: type[Self], x: int): ...
+    """)
+
+
+def test_mro_two_parents_annotated():
+    """Two unrelated annotated parents — child should widen args from both."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import Self
+
+        class A:
+            def func(self: Self, x: int):
+                return str(x)
+
+        class B:
+            def func(self: Self, x: str):
+                return x.upper()
+
+        class C(A, B):
+            def func(self, x):
+                return str(x)
+
+        C().func(True)
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # C.func should widen args from both A (int) and B (str);
+    # observed bool is subsumed by int
+    assert get_function(code, 'C.func') == textwrap.dedent("""\
+        def func(self: Self, x: int|str) -> str: ...
+    """)
+
+
+def test_mro_two_parents_method_defined():
+    """Two unrelated parents A and B, child C(A, B) overrides func.
+
+    All three classes are observed. LSP widening should apply per-hierarchy:
+    - A.func returns float, C overrides with str → A.func return: float|str
+    - B.func returns int, C overrides with str → B.func return: int|str
+    - B should NOT get float from A (A is not in B's override chain)
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class A:
+            def func(self):
+                return 42.5
+
+        class B:
+            def func(self):
+                return 42
+
+        class C(A, B):
+            def func(self):
+                return "Hello from func in class C"
+
+        c = C()
+        d = c.func()
+        A().func()
+        B().func()
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # C.func observed directly → str
+    assert get_function(code, 'C.func') == textwrap.dedent("""\
+        def func(self: Self) -> str: ...
+    """)
+    # A.func returns float; C (subclass of A) returns str → float|str
+    assert get_function(code, 'A.func') == textwrap.dedent("""\
+        def func(self: Self) -> float|str: ...
+    """)
+    # B.func returns int; C (subclass of B) returns str → int|str
+    # NOT int|float|str — A is not a subclass of B
+    assert get_function(code, 'B.func') == textwrap.dedent("""\
+        def func(self: Self) -> int|str: ...
     """)
 
 

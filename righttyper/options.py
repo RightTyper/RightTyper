@@ -66,7 +66,7 @@ class RunOptions:
     poisson_sample_rate: float = 2.0  # Expected capture windows per second
     poisson_warmup_samples: int = 5   # Capture first N samples immediately before Poisson timing
     infer_shapes: bool = False
-    sampling: bool = True
+    call_sampling: bool = True
     no_sampling_for: tuple[str, ...] = ()
     replace_dict: bool = False
     container_small_threshold: int = 32  # Containers at or below this size are fully scanned
@@ -87,6 +87,7 @@ class RunOptions:
     propagate_wrapped_types: bool = True
     infer_wrapped_return_type: bool = True
     max_union_size: int = 32  # Unions exceeding this collapse to Any
+    container_caching: bool = True  # Cache container scans; --no-container-caching forces rescan every visit
 
 
     def process_args(self, kwargs: dict[str, Any]) -> None:

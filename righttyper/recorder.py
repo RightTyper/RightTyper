@@ -203,7 +203,7 @@ class ObservationsRecorder:
         code: CodeType,
         function: CallableWithCode|None,
         arg_info: inspect.ArgInfo,
-        overrides: OverriddenFunction|None
+        overrides: list[OverriddenFunction]
     ) -> None:
         """Registers a function if not already known."""
 
@@ -241,16 +241,20 @@ class ObservationsRecorder:
                 ),
                 ArgumentName(arg_info.varargs) if arg_info.varargs else None,
                 ArgumentName(arg_info.keywords) if arg_info.keywords else None,
-                overrides
+                overrides=overrides,
             )
             self._obs.func_info[func_info.code_id] = func_info
 
 
-    def _register_parent_function(self, parent_func: FunctionType, finder: 'OverrideFinder') -> None:
-        """Registers a parent function (and its ancestors) that may not have been directly observed.
+    def _register_parent_function(
+        self, child_fi: FuncInfo, parent_func: FunctionType, finder: 'OverrideFinder'
+    ) -> None:
+        """Registers all ancestor functions that the child overrides.
 
-        Uses the OverrideFinder to walk up the MRO and register the full override
-        chain, allowing child→parent type propagation in collect_annotations.
+        Walks the remaining MRO via the OverrideFinder.  Each ancestor is registered
+        independently and added to child_fi.overrides — no parent→grandparent chain
+        is created, which avoids cross-contamination between sibling parents in
+        multiple inheritance.
         """
         while True:
             parent_code = parent_func.__code__
@@ -266,17 +270,22 @@ class ObservationsRecorder:
             parent_args = inspect.getargs(parent_code)
             parent_arg_info = inspect.ArgInfo(parent_args.args, parent_args.varargs, parent_args.varkw, {})
 
-            result = finder.find_next(parent_code, parent_arg_info)
-            overrides = result[0] if result else None
-            grandparent_func = result[1] if result else None
-
-            self._register_function(parent_code, parent_func, parent_arg_info, overrides)
+            # Register this parent with no overrides of its own
+            self._register_function(parent_code, parent_func, parent_arg_info, [])
             self._code2func_info[parent_code].is_abstract = getattr(parent_func, '__isabstractmethod__', False)
 
-            if not grandparent_func:
+            # Find next ancestor in the child's MRO
+            result = finder.find_next(parent_code, parent_arg_info)
+            if not result:
                 return
 
-            parent_func = grandparent_func
+            override, next_func = result
+            child_fi.overrides.append(override)
+
+            if not next_func:
+                return
+
+            parent_func = next_func
 
 
     def record_start(
@@ -305,7 +314,8 @@ class ObservationsRecorder:
             self._register_function(code, find_function(frame, code), arg_info, sti.overrides)
 
             if sti.parent_func is not None and sti.override_finder is not None:
-                self._register_parent_function(sti.parent_func, sti.override_finder)
+                child_fi = self._code2func_info[code]
+                self._register_parent_function(child_fi, sti.parent_func, sti.override_finder)
 
             self._pending_traces[code][id(frame)] = PendingCallTrace(
                 arg_info, code.co_flags, sti.self_type, sti.self_replacement
@@ -778,7 +788,7 @@ class SelfTypeInfo:
     """Result of get_self_type: information about a method's self/cls and override relationship."""
     self_type: TypeInfo | None = None
     self_replacement: TypeInfo | None = None
-    overrides: OverriddenFunction | None = None
+    overrides: list[OverriddenFunction] = field(default_factory=list)
     parent_func: FunctionType | None = None
     override_finder: OverrideFinder | None = None  # for walking the parent chain
 
@@ -800,7 +810,7 @@ def get_self_type(
         # The first argument is 'Self' and the type of 'Self', in the context of
         # its definition, is "defining_class"; now let's see if this method
         # overrides another
-        overrides = None
+        overrides: list[OverriddenFunction] = []
         parent_func = None
         finder: OverrideFinder | None = None
         if not (
@@ -810,7 +820,8 @@ def get_self_type(
             finder = OverrideFinder(info.first_arg_class.__mro__, info.name, info.next_index)
             result = finder.find_next(code, arg_info)
             if result:
-                overrides, parent_func = result
+                overrides = [result[0]]
+                parent_func = result[1]
 
         return SelfTypeInfo(
             get_type_name(info.first_arg_class),

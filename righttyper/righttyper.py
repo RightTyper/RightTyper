@@ -170,7 +170,7 @@ def return_handler(
 
     if (
         found
-        and run_options.sampling
+        and run_options.call_sampling
         and not (
             (no_sampling_for := run_options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
@@ -200,7 +200,7 @@ def unwind_handler(
 
     if (
         found
-        and run_options.sampling
+        and run_options.call_sampling
         and not (
             (no_sampling_for := run_options.no_sampling_for_re)
             and no_sampling_for.search(code.co_qualname)
@@ -755,8 +755,8 @@ def add_output_options(group=None):
     help="Expected sample captures per second (Poisson process rate).",
 )
 @click.option(
-    "--sampling/--no-sampling",
-    default=run_options.sampling,
+    "--call-sampling/--no-call-sampling",
+    default=run_options.call_sampling,
     help=f"Whether to sample calls or to use every one.",
 )
 @click.option(
@@ -810,6 +810,11 @@ def add_output_options(group=None):
     type=click.FloatRange(0.0, 1.0),
     default=run_options.container_check_probability,
     help="Probability of spot-checking a container for new types.",
+)
+@click.option(
+    "--container-caching/--no-container-caching",
+    default=run_options.container_caching,
+    help="Cache container scan results; --no-container-caching forces rescan every visit.",
 )
 @click.option(
     "--max-union-size",
@@ -966,7 +971,7 @@ def run(
         unwind_handler,
     )
 
-    if run_options.sampling:
+    if run_options.call_sampling:
         schedule_next_capture()
 
     try:
