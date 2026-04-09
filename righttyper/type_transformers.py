@@ -2,12 +2,46 @@ import re
 import typing
 import types
 import collections.abc as abc
-from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo
+from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo, UnionTypeInfo
 from righttyper.generalize import merged_types
 from functools import cache
 
 import logging
 from righttyper.logger import logger
+
+
+class ClearCodeIdT(TypeInfo.Transformer):
+    """Clear code_id and deduplicate any unions that had code_id-inflated members.
+
+    code_id distinguishes different callables during tracing but should not
+    affect the final annotation. After clearing, previously-distinct Callable
+    members of a union become equal and are deduplicated via from_set().
+    """
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        node = super().visit(node)
+
+        if node.code_id:
+            node = node.replace(code_id=None)
+
+        if isinstance(node, UnionTypeInfo):
+            return TypeInfo.from_set(set(node.args), typevar_index=node.typevar_index)
+
+        return node
+
+
+class UnionSizeT(TypeInfo.Transformer):
+    """Enforce max_union_size on resolved unions.
+
+    Applied after resolution and code_id clearing, so the size limit
+    reflects true type diversity rather than pre-resolution inflation.
+    """
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        node = super().visit(node)
+        if isinstance(node, UnionTypeInfo):
+            from righttyper.options import run_options
+            if len(node.args) > run_options.max_union_size:
+                return TypeInfo.from_type(typing.Any)
+        return node
 
 
 class SelfT(TypeInfo.Transformer):

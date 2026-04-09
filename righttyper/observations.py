@@ -10,6 +10,8 @@ from righttyper.options import output_options
 from righttyper.logger import logger
 from righttyper.generalize import merged_types, generalize
 from righttyper.type_transformers import (
+    ClearCodeIdT,
+    UnionSizeT,
     SelfT,
     NeverSayNeverT,
     NoReturnToNeverT,
@@ -516,14 +518,15 @@ class Observations:
                         else UnknownTypeInfo
                     )
 
-                # Clear code_id after resolution — it was only needed to look up
-                # the function's observations and should not affect type equality.
-                if node.code_id:
-                    node = node.replace(code_id=None)
-
                 return node
 
         self.transform_types(ResolvingT())
+
+        # Clear code_id after resolution — it was only needed to look up
+        # the function's observations and should not affect type equality.
+        # This also deduplicates unions whose members became equal after clearing.
+        self.transform_types(ClearCodeIdT())
+        self.transform_types(UnionSizeT())
 
         if output_options.use_typing_self:
             self.transform_types(SelfT())
