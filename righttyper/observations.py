@@ -204,11 +204,27 @@ class Observations:
                 for attr in ('varargs', 'kwargs', 'overrides'):
                     v1, v2 = getattr(func_info, attr), getattr(func_info2, attr)
                     if v1 != v2:
-                        # For 'overrides', [] means "not checked" (e.g., parent registered
-                        # without direct observation); prefer the non-empty value.
-                        if attr == 'overrides' and (not v1 or not v2):
-                            if not v1:
-                                func_info.overrides = v2
+                        if attr == 'overrides':
+                            # 'overrides' is semantically a SET (the consumers in
+                            # _propagate_to_parents iterate it without depending
+                            # on order, and look up each entry by code_id), so it
+                            # should arguably be one — left as a list for now to
+                            # avoid touching every recording site.
+                            #
+                            # Two FuncInfo entries for the same code_id can have
+                            # different overrides because _register_parent_function
+                            # early-exits its MRO walk at the first ancestor that
+                            # is already registered, so the recorded chain depends
+                            # on observation order.  Both lists are valid partial
+                            # views of the same MRO; merging them as a union (deduped
+                            # by code_id) yields the most complete view available.
+                            seen: set[CodeId | None] = {ov.code_id for ov in v1}
+                            merged_overrides = list(v1)
+                            for ov in v2:
+                                if ov.code_id not in seen:
+                                    merged_overrides.append(ov)
+                                    seen.add(ov.code_id)
+                            func_info.overrides = merged_overrides
                         else:
                             raise ValueError(f"Incompatible {attr} for {func_id.func_name}:\n" +\
                                              f"    {v1}\n" +\

@@ -1350,6 +1350,75 @@ def test_clear_code_id_non_union():
     assert result.type_obj is collections.abc.Callable
 
 
+def test_merge_observations_unions_overrides_lists():
+    """merge_observations must reconcile FuncInfo entries whose overrides
+    lists differ in depth.
+
+    The recorded overrides list depends on the order in which children get
+    observed: _register_parent_function's MRO walk early-exits at the first
+    already-registered ancestor.  So the same function can have a partial
+    chain in one .rt file (because some intermediate parent was already
+    known) and the full chain in another.  Both views are valid partial
+    snapshots of the same MRO, and merging them must take their union (not
+    raise on inequality).
+
+    Regression test for the pylint failure where merging .rt files crashed
+    on _EnableAction.__call__: one trace had only [_XableAction.__call__]
+    while another had the full chain up to argparse.Action.__call__."""
+    from righttyper.observations import (
+        Observations, FuncInfo, OverriddenFunction, ArgInfo,
+    )
+    from righttyper.righttyper_types import (
+        ArgumentName, CodeId, Filename, FunctionName,
+    )
+
+    def cid(name: str, line: int) -> CodeId:
+        return CodeId(Filename("f.py"), FunctionName(name), line, 0)
+
+    def ov(qualname: str, line: int) -> OverriddenFunction:
+        return OverriddenFunction(
+            module="m", qualname=qualname, code_id=cid(qualname, line)
+        )
+
+    func_id = cid("Child.__call__", 100)
+
+    fi1 = FuncInfo(
+        code_id=func_id,
+        args=(ArgInfo(ArgumentName("self"), None),),
+        varargs=None,
+        kwargs=None,
+        overrides=[ov("Parent.__call__", 50)],
+    )
+    fi2 = FuncInfo(
+        code_id=func_id,
+        args=(ArgInfo(ArgumentName("self"), None),),
+        varargs=None,
+        kwargs=None,
+        overrides=[
+            ov("Parent.__call__", 50),
+            ov("Grandparent.__call__", 30),
+            ov("argparse.Action.__call__", 10),
+        ],
+    )
+
+    obs1 = Observations()
+    obs1.func_info[func_id] = fi1
+    obs2 = Observations()
+    obs2.func_info[func_id] = fi2
+
+    obs1.merge_observations(obs2)
+
+    merged = obs1.func_info[func_id].overrides
+    qualnames = {o.qualname for o in merged}
+    assert qualnames == {
+        "Parent.__call__",
+        "Grandparent.__call__",
+        "argparse.Action.__call__",
+    }
+    # Each parent should appear exactly once.
+    assert len(merged) == 3
+
+
 def test_normalize_unions_enforces_limit(monkeypatch):
     """UnionSizeT collapses oversized unions to Any."""
     from righttyper.type_transformers import UnionSizeT
