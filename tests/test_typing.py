@@ -1285,31 +1285,6 @@ def test_from_set_default_limit_allows_normal_unions():
     assert len(t.args) == 9
 
 
-def test_sample_until_stable_no_union_limit(monkeypatch):
-    """Sampling no longer stops early for union_limit; it hits max_limit or good_turing."""
-    from righttyper.type_id import ContainerSamples
-
-    monkeypatch.setattr(run_options, 'max_union_size', 5)
-    monkeypatch.setattr(run_options, 'container_min_samples', 2)
-    monkeypatch.setattr(run_options, 'container_max_samples', 20)
-
-    # Sampler returns a new unique type each call
-    distinct_types = [type(f'T{i}', (), {}) for i in range(50)]
-    distinct_values = [t() for t in distinct_types]
-    idx = [0]
-
-    def sampler():
-        v = distinct_values[idx[0] % len(distinct_values)]
-        idx[0] += 1
-        return (v,)
-
-    entry = ContainerSamples(o=distinct_values, n_counters=1)
-    reason = entry.sample_until_stable(sampler, depth=0)
-
-    # Should NOT be union_limit — that check was removed
-    assert reason in ('max_limit', 'good_turing')
-
-
 def test_clear_code_id_deduplicates_union():
     """ClearCodeIdT should clear code_id and deduplicate resulting unions."""
     from righttyper.type_transformers import ClearCodeIdT
@@ -1417,6 +1392,53 @@ def test_merge_observations_unions_overrides_lists():
     }
     # Each parent should appear exactly once.
     assert len(merged) == 3
+
+
+def test_sample_until_stable_lifetime_budget(monkeypatch):
+    """container_max_samples is a per-container lifetime budget, not a
+    per-call cap.  Once the cumulative samples for a container reach the
+    budget, further sample_until_stable calls return immediately without
+    drawing more samples.
+
+    Regression test for the httpx module-__dict__ slowdown where the same
+    polymorphic container was repeatedly fully re-sampled on every visit
+    because Good-Turing's per-cycle counter could not converge on its
+    highly diverse type distribution."""
+    from righttyper.type_id import ContainerSamples
+    import righttyper.type_id as t_id_mod
+
+    monkeypatch.setattr(run_options, 'container_min_samples', 4)
+    monkeypatch.setattr(run_options, 'container_max_samples', 12)
+
+    # Ten distinct user-defined classes cycled through the sampler — the
+    # cycle counter's singleton ratio stays well above container_type_threshold
+    # within the small budget, so Good-Turing never converges and the first
+    # call runs all the way to container_max_samples.
+    classes = [type(f'L{i}', (object,), {}) for i in range(10)]
+    sample_count = [0]
+
+    def fake_get_value_type(v, depth=0):
+        ti = TypeInfo.from_type(classes[sample_count[0] % len(classes)])
+        sample_count[0] += 1
+        return ti
+
+    monkeypatch.setattr(t_id_mod, 'get_value_type', fake_get_value_type)
+
+    samples = ContainerSamples(o=None, n_counters=1)
+
+    reason1 = samples.sample_until_stable(lambda: (None,), depth=0)
+    samples_after_first = sample_count[0]
+    assert reason1 == 'max_limit'
+    assert samples_after_first == run_options.container_max_samples
+
+    # Second call: budget already exhausted, should return immediately
+    # without taking any new samples.
+    reason2 = samples.sample_until_stable(lambda: (None,), depth=0)
+    assert reason2 == 'max_limit'
+    assert sample_count[0] == samples_after_first, (
+        f"second call took {sample_count[0] - samples_after_first} new samples; "
+        "expected 0 (budget already exhausted)"
+    )
 
 
 def test_normalize_unions_enforces_limit(monkeypatch):
