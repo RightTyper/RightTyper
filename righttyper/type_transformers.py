@@ -18,12 +18,16 @@ class ClearCodeIdT(TypeInfo.Transformer):
     members of a union become equal and are deduplicated via from_set().
     """
     def visit(self, node: TypeInfo) -> TypeInfo:
-        node = super().visit(node)
+        pre = node
+        node = super().visit(node)  # returns identical node iff no arg changed
 
         if node.code_id:
             node = node.replace(code_id=None)
 
-        if isinstance(node, UnionTypeInfo):
+        # Clearing code_ids on union members may collapse previously-distinct
+        # members into equal ones, so rebuild the union to let from_set() dedup
+        # them.
+        if pre is not node and isinstance(node, UnionTypeInfo):
             return TypeInfo.from_set(set(node.args), typevar_index=node.typevar_index)
 
         return node
