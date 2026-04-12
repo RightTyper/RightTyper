@@ -4,6 +4,7 @@ import builtins
 from collections import defaultdict, Counter
 import collections.abc as abc
 from dataclasses import dataclass, field
+from functools import cache
 import logging
 
 from righttyper.options import output_options
@@ -488,11 +489,16 @@ class Observations:
 
         class ResolvingT(TypeInfo.Transformer):
             """Resolves types that may not be fully known until observed at runtime."""
+
+            @cache
+            def _annotation(vself, cid: CodeId) -> FuncAnnotation | None:
+                return mk_annotation(self.func_info[cid])
+
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
 
                 if node.code_id and (func_info := self.func_info.get(node.code_id)):
-                    if (ann := mk_annotation(func_info)):
+                    if (ann := vself._annotation(node.code_id)):
                         # for Callable, we also merge arguments from annotations with observed ones.
                         if node.type_obj in (abc.Callable, typing.Callable):
                             old_params = (
