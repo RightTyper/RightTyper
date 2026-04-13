@@ -461,6 +461,7 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
                 t.module == first.module and
                 t.name == first.name and
                 t.code_id == first.code_id and
+                t.is_self == first.is_self and
                 len(t.args) == len(first.args) and
                 all((a is Ellipsis) == (first.args[i] is Ellipsis) for i, a in enumerate(t.args)) and
                 # ListTypeInfo args (e.g. Callable param lists) must have the same arity

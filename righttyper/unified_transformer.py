@@ -370,6 +370,12 @@ class UnifiedTransformer(cst.CSTTransformer):
 
                     vself.generics[node] = name
 
+                # Don't recurse into typevar nodes: any typevar_index inside
+                # a typevar's bound is from an inner function's generalization
+                # and shouldn't become a top-level type parameter.
+                if node.typevar_index:
+                    return node
+
                 return super().visit(node)
 
         tr = GenericsNameAssigningTransformer()

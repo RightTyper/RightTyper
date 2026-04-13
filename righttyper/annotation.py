@@ -3,7 +3,7 @@ from righttyper.righttyper_types import ArgumentName, VariableName
 from righttyper.typeinfo import TypeInfo
 
 
-@dataclass(eq=True, frozen=True)
+@dataclass(eq=True)
 class FuncAnnotation:
     args: dict[ArgumentName, TypeInfo]
     retval: TypeInfo

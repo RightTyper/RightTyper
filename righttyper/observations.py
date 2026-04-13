@@ -4,7 +4,6 @@ import builtins
 from collections import defaultdict, Counter
 import collections.abc as abc
 from dataclasses import dataclass, field
-from functools import cache
 import logging
 
 from righttyper.options import output_options
@@ -80,26 +79,33 @@ class FuncInfo:
         return traces
 
 
-    def compute_type_distributions(self) -> list[TraceDistribution] | None:
+    def compute_type_distributions(
+        self,
+        resolve: typing.Callable[[TypeInfo], TypeInfo] | None = None,
+    ) -> list[TraceDistribution] | None:
         """Computes trace-level type frequency distributions.
 
         Returns None if there is only one distinct trace (no polymorphism).
         Each trace preserves the coordination between argument types and return type.
         Percentages reflect proportions of all observed calls.
+        If resolve is given, it is applied to each TypeInfo before rendering.
         """
         traces = self.most_common_traces()
         if len(traces) <= 1:
             return None
+
+        def fmt(t: TypeInfo) -> str:
+            return str(resolve(t) if resolve else t)
 
         n_args = len(self.args)
         total = sum(self.traces.values())
         return [
             TraceDistribution(
                 args={
-                    self.args[i].arg_name: str(trace[i]) if i < len(trace) - 1 else "?"
+                    self.args[i].arg_name: fmt(trace[i]) if i < len(trace) - 1 else "?"
                     for i in range(n_args)
                 },
-                retval=str(trace[-1]),
+                retval=fmt(trace[-1]),
                 pct=round(self.traces[trace] / total * 100, 1)
             )
             for trace in traces
@@ -421,56 +427,79 @@ class Observations:
                     raw_annotations[cid] = new_child
 
 
+    @staticmethod
+    def mk_annotation(func_info: FuncInfo) -> FuncAnnotation|None:
+        traces = func_info.most_common_traces()
+        if not traces:
+            return None
+
+        if (signature := generalize(traces)) is None:
+            logger.info(f"Unable to generalize {func_info.code_id}: inconsistent traces.\n" +
+                        f"{[tuple(str(t) for t in s) for s in traces]}")
+            return None
+
+        n_sig_args = len(signature) - 1  # last element is the return type
+
+        ann = FuncAnnotation(
+            args={
+                arg.arg_name:
+                    merged_types({
+                        signature[i] if i < n_sig_args else UnknownTypeInfo,
+                        *((arg.default,) if arg.default is not None else ()),
+                    })
+                for i, arg in enumerate(func_info.args)
+            },
+            retval=signature[-1],
+            varargs=func_info.varargs,
+            kwargs=func_info.kwargs,
+            variables={
+                var_name: merged_types(var_types, for_variable=True)
+                for var_name, var_types in func_info.variables.items()
+            }
+        )
+
+        if logger.level == logging.DEBUG:
+            for trace, count in list(func_info.traces.items()):
+                logger.debug(
+                    "trace " + func_info.code_id.func_name +
+                    str(tuple(str(t) for t in trace)) +
+                    f" {count}x"
+                )
+            logger.debug(
+                "ann   " + func_info.code_id.func_name +
+                str((*(str(t) for t in ann.args.values()), str(ann.retval)))
+            )
+            for var_name, var_type in ann.variables.items():
+                logger.debug(
+                    f"var   {func_info.code_id.func_name} {var_name} {str(var_type)}"
+                )
+
+        return ann
+
+
+    def code_id_topo_sort(self) -> list[CodeId]:
+        """Topologically sort functions, so as to compute annotations in dependency order."""
+        visited = set()
+        result = []
+
+        def visit(code_id: CodeId):
+            if code_id not in visited:
+                visited.add(code_id)
+                if (func_info := self.func_info.get(code_id)):
+                    for tr in func_info.traces:
+                        for t in tr:
+                            if t.code_id:
+                                visit(t.code_id)
+                    result.append(code_id)
+
+        for code_id in self.func_info.keys():
+            visit(code_id)
+
+        return result
+
+
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars], dict[CodeId, list[TraceDistribution]]]:
         """Collects function type annotations from the observed types."""
-
-        def mk_annotation(func_info: FuncInfo) -> FuncAnnotation|None:
-            traces = func_info.most_common_traces()
-            if not traces:
-                return None
-
-            if (signature := generalize(traces)) is None:
-                logger.info(f"Unable to generalize {func_info.code_id}: inconsistent traces.\n" +
-                            f"{[tuple(str(t) for t in s) for s in traces]}")
-                return None
-
-            n_sig_args = len(signature) - 1  # last element is the return type
-
-            ann = FuncAnnotation(
-                args={
-                    arg.arg_name:
-                        merged_types({
-                            signature[i] if i < n_sig_args else UnknownTypeInfo,
-                            *((arg.default,) if arg.default is not None else ()),
-                        })
-                    for i, arg in enumerate(func_info.args)
-                },
-                retval=signature[-1],
-                varargs=func_info.varargs,
-                kwargs=func_info.kwargs,
-                variables={
-                    var_name: merged_types(var_types, for_variable=True)
-                    for var_name, var_types in func_info.variables.items()
-                }
-            )
-
-            if logger.level == logging.DEBUG:
-                for trace, count in list(func_info.traces.items()):
-                    logger.debug(
-                        "trace " + func_info.code_id.func_name +
-                        str(tuple(str(t) for t in trace)) +
-                        f" {count}x"
-                    )
-                logger.debug(
-                    "ann   " + func_info.code_id.func_name +
-                    str((*(str(t) for t in ann.args.values()), str(ann.retval)))
-                )
-                for var_name, var_type in ann.variables.items():
-                    logger.debug(
-                        f"var   {func_info.code_id.func_name} {var_name} {str(var_type)}"
-                    )
-
-            return ann
 
         # In the code below, clone (rather than link to) types from Callable, Generator, etc.,
         # clearing is_self, as it may not apply in the new context.
@@ -484,18 +513,35 @@ class Observations:
 
             return T().visit(node)
 
+        annotations: dict[CodeId, FuncAnnotation] = {
+            code_id: annotation
+            for code_id in self.code_id_topo_sort()
+            if (annotation := Observations.mk_annotation(self.func_info[code_id])) is not None
+        }
+
+        def transform_types(tr: TypeInfo.Transformer) -> None:
+            """Applies the 'tr' transformer to all TypeInfo objects in this class."""
+
+            for annotation in annotations.values():
+                for name, t in annotation.args.items():
+                    annotation.args[name] = tr.visit(t)
+                annotation.retval = tr.visit(annotation.retval)
+                for name, t in annotation.variables.items():
+                    annotation.variables[name] = tr.visit(t)
+
+            for var_dict in list(self.module_variables.values()):
+                for var_name, var_types in list(var_dict.items()):
+                    var_dict[var_name] = set(tr.visit(t) for t in var_types)
+
+
         class ResolvingT(TypeInfo.Transformer):
             """Resolves types that may not be fully known until observed at runtime."""
-
-            @cache
-            def _annotation(vself, cid: CodeId) -> FuncAnnotation | None:
-                return mk_annotation(self.func_info[cid])
 
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
 
                 if node.code_id and (func_info := self.func_info.get(node.code_id)):
-                    if (ann := vself._annotation(node.code_id)):
+                    if (ann := annotations.get(node.code_id)):
                         # for Callable, we also merge arguments from annotations with observed ones.
                         if node.type_obj in (abc.Callable, typing.Callable):
                             old_params = (
@@ -544,16 +590,15 @@ class Observations:
 
                 return node
 
-        self.transform_types(ResolvingT())
+        transform_types(ResolvingT())
 
         # Clear code_id after resolution — it was only needed to look up
         # the function's observations and should not affect type equality.
         # This also deduplicates unions whose members became equal after clearing.
-        self.transform_types(ClearCodeIdT())
+        transform_types(ClearCodeIdT())
 
         if output_options.use_typing_self:
-            self.transform_types(SelfT())
-
+            transform_types(SelfT())
 
         finalizers: list[TypeInfo.Transformer] = []
 
@@ -595,38 +640,32 @@ class Observations:
         finalizers.append(UnionSizeT())
         finalizers.append(MakePickleableT())
 
-        # Compute type distributions before finalization (uses pre-transformation traces)
+        # Compute type distributions from traces, resolving code_id references
+        # so that Callable/generator types render with their actual signatures.
         type_distributions: dict[CodeId, list[TraceDistribution]] = {}
         if output_options.type_distribution_comments:
+            resolving = ResolvingT()
+            clearing = ClearCodeIdT()
+            resolve = lambda t: clearing.visit(resolving.visit(t))
             for func_info in self.func_info.values():
                 if func_info.code_id not in self.wrapper_code_ids:
-                    if (dist := func_info.compute_type_distributions()):
+                    if (dist := func_info.compute_type_distributions(resolve)):
                         type_distributions[func_info.code_id] = dist
 
-        # Compute raw annotations (before finalization)
-        raw_annotations: dict[CodeId, FuncAnnotation] = {
-            func_info.code_id: annotation
-            for func_info in self.func_info.values()
-            if func_info.code_id not in self.wrapper_code_ids
-            if (annotation := mk_annotation(func_info)) is not None
-        }
+        # Drop wrapper annotations — they were only needed for ResolvingT lookups.
+        for cid in self.wrapper_code_ids:
+            annotations.pop(cid, None)
 
         # Propagate child method types up to parent methods
-        self._propagate_to_parents(raw_annotations)
-
-
+        self._propagate_to_parents(annotations)
 
         # Apply finalization
-        annotations = {
-            code_id: FuncAnnotation(
-                args={name: finalize(t) for name, t in annotation.args.items()},
-                retval=finalize(annotation.retval),
-                varargs=annotation.varargs,
-                kwargs=annotation.kwargs,
-                variables={name: finalize(t) for name, t in annotation.variables.items()}
-            )
-            for code_id, annotation in raw_annotations.items()
-        }
+        for annotation in annotations.values():
+            for name, t in annotation.args.items():
+                annotation.args[name] = finalize(t)
+            annotation.retval = finalize(annotation.retval)
+            for name, t in annotation.variables.items():
+                annotation.variables[name] = finalize(t)
 
         module_vars = {
             filename: ModuleVars({

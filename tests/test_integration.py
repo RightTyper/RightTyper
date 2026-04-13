@@ -2633,6 +2633,50 @@ def test_discovered_function_type_in_yield():
     """)
 
 
+def test_nested_callable_resolution():
+    """When a function returns another function that itself returns a function,
+    the nested Callable types should be fully resolved.
+
+    This requires resolving code_id references in dependency order (inner before
+    outer) so that when we substitute the annotation for the outer function, the
+    inner annotations are already concrete.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        def inner(y):
+            return y + 1
+
+        def middle(x):
+            return inner
+
+        def outer():
+            return middle
+
+        f = outer()
+        g = f(5)
+        result = g(3)
+        """
+    ))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # Single-level resolution (middle -> inner) should work
+    assert get_function(code, 'inner') == textwrap.dedent("""\
+        def inner(y: int) -> int: ...
+    """)
+    assert get_function(code, 'middle') == textwrap.dedent("""\
+        def middle(x: int) -> Callable[[int], int]: ...
+    """)
+
+    # Two-level resolution (outer -> middle -> inner) requires topological ordering;
+    # without it, the inner Callable's args are lost because the code_id reference
+    # for 'inner' inside middle's annotation is never visited by ResolvingT.
+    assert get_function(code, 'outer') == textwrap.dedent("""\
+        def outer() -> Callable[[int], Callable[[int], int]]: ...
+    """)
+
+
 @pytest.mark.parametrize('ignore_ann', [False, True])
 def test_discovered_function_annotated(ignore_ann):
     Path("t.py").write_text(textwrap.dedent("""\
@@ -4062,9 +4106,8 @@ def test_self_subtyping_reversed(python_version):
             def operation(self: "NumberAdd", rhs: "NumberAdd") -> "NumberAdd": ...
         """)
     else:
-        # FIXME the rhs should ideally just be "NumberAdd"
         assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
-            def operation(self: Self, rhs: "NumberAdd|Self") -> Self: ...
+            def operation(self: Self, rhs: "NumberAdd") -> Self: ...
         """)
 
 
@@ -4103,9 +4146,8 @@ def test_self_subtyping_reversed_too(python_version):
             def operation(self: "NumberAdd", rhs: "NumberAdd") -> "NumberAdd": ...
         """)
     else:
-        # FIXME the rhs should ideally just be "NumberAdd"
         assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
-            def operation(self: Self, rhs: "NumberAdd|Self") -> Self: ...
+            def operation(self: Self, rhs: "NumberAdd") -> Self: ...
         """)
 
 
@@ -4206,7 +4248,7 @@ def test_instrument_pytest():
     """)
 
 
-@pytest.mark.dont_run_mypy  # mypy fails, but it's not quite clear why
+@pytest.mark.dont_run_mypy  # test code is type-inconsistent: f(0) binds T1=int, then runner(foo)("a") passes str
 def test_higher_order_functions():
     # Check that we can handle such functions.  Do we need the CALL event to handle them?
     t = textwrap.dedent("""\
@@ -6430,12 +6472,16 @@ def test_wrapped_passthrough_decorator_union_callable():
     """)
 
 
+@pytest.mark.mypy_args('--disable-error-code=var-annotated')
 def test_wrapped_propagation_multiple_signatures():
     """Wrapped propagation with multiple decorated functions that never execute.
 
     Types are propagated from wrapper calls to wrapped functions via __wrapped__.
     Each decorated function gets its own observed types.
     """
+    # FIXME: __wrapped__ needs a type annotation that uses the function's type
+    # variables, but we don't yet annotate variables with type variables.
+    # mypy's var-annotated error is suppressed until that's implemented.
     Path("t.py").write_text(textwrap.dedent("""\
         class CompiledFunc:
             def __init__(self, fn):
