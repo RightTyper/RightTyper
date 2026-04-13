@@ -114,6 +114,21 @@ class ExcludeTestTypesT(TypeInfo.Transformer):
         if self._is_test_module(node.module):
             return AnyTypeInfo
 
+        # For unions: filter out test-module members rather than letting
+        # the recursive visit replace them with Any, which would poison
+        # the whole union (X | Any = Any).
+        if isinstance(node, UnionTypeInfo):
+            non_test = tuple(
+                a for a in node.args
+                if not (isinstance(a, TypeInfo) and self._is_test_module(a.module))
+            )
+            if len(non_test) < len(node.args):
+                if not non_test:
+                    return AnyTypeInfo
+                node = TypeInfo.from_set(
+                    set(non_test), typevar_index=node.typevar_index
+                )
+
         return super().visit(node)
 
 

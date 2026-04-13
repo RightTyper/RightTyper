@@ -548,16 +548,9 @@ class Observations:
         # the function's observations and should not affect type equality.
         # This also deduplicates unions whose members became equal after clearing.
         self.transform_types(ClearCodeIdT())
-        self.transform_types(UnionSizeT())
 
         if output_options.use_typing_self:
             self.transform_types(SelfT())
-
-        if output_options.exclude_test_types:
-            self.transform_types(ExcludeTestTypesT(
-                self.test_modules,
-                detect_by_name=output_options.detect_test_modules_by_name
-            ))
 
 
         finalizers: list[TypeInfo.Transformer] = []
@@ -589,6 +582,15 @@ class Observations:
         else:
             finalizers.append(NoReturnToNeverT())
 
+        # Exclude test types before capping union size: removing test-module
+        # members from unions can bring their size below max_union_size.
+        if output_options.exclude_test_types:
+            finalizers.append(ExcludeTestTypesT(
+                self.test_modules,
+                detect_by_name=output_options.detect_test_modules_by_name
+            ))
+
+        finalizers.append(UnionSizeT())
         finalizers.append(MakePickleableT())
 
         # Compute type distributions before finalization (uses pre-transformation traces)

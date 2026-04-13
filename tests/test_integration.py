@@ -7311,3 +7311,35 @@ def test_no_inline_generics():
     assert get_function(code, 'f') == textwrap.dedent(f"""\
         def f(x: list[{T}]) -> {T}: ...
     """)
+
+
+def test_exclude_test_types_preserves_union_members():
+    """Test types in a union should be removed (not replaced with Any),
+    and the removal should happen before UnionSizeT so that test-type
+    inflation doesn't push an otherwise-valid union over the cap."""
+    Path("test_helpers.py").write_text(textwrap.dedent("""\
+        class FakeX:
+            pass
+    """))
+
+    Path("t.py").write_text(textwrap.dedent("""\
+        from test_helpers import FakeX
+
+        def f(x):
+            return str(x)
+
+        f(42)
+        f("hello")
+        f(FakeX())  # type: ignore[arg-type]
+    """))
+
+    # max-union-size=2: the union int|str|FakeX has 3 members, so without
+    # the fix (exclude test types first, then check size) it collapses.
+    rt_run('--detect-test-modules-by-name', '--max-union-size', '2', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # f's arg x should be int|str (FakeX removed), not Any.
+    assert get_function(code, 'f') == textwrap.dedent("""\
+        def f(x: int|str) -> str: ...
+    """)
