@@ -299,22 +299,21 @@ class Observations:
             ann = raw_annotations.get(fi.code_id)
             if ann is None:
                 continue
-            arg_names = tuple(name for name, _ in ann.args)
             for ov in fi.overrides:
                 parent_fi = self.func_info.get(ov.code_id) if ov.code_id else None
                 static_types = (
                     (ov.inline_arg_types if not output_options.ignore_annotations else None)
                     or get_typeshed_arg_types(ov, parent_fi.args if parent_fi else fi.args)
                 )
-                if not static_types or len(static_types) != len(arg_names):
+                if not static_types or len(static_types) != len(ann.args):
                     continue
-                new_args = list(ann.args)
+                new_args = dict(ann.args)
                 ann_changed = False
-                for i, st in enumerate(static_types):
+                for (name, existing), st in zip(ann.args.items(), static_types):
                     if st is not None:
-                        m = merged_types({new_args[i][1], st})
-                        if m is not new_args[i][1]:
-                            new_args[i] = (arg_names[i], m)
+                        m = merged_types({existing, st})
+                        if m is not existing:
+                            new_args[name] = m
                             ann_changed = True
                 if ann_changed:
                     ann = FuncAnnotation(
@@ -345,14 +344,14 @@ class Observations:
                 return None
 
             if merge_args:
-                new_args = []
-                for i in range(n_args):
-                    types: set[TypeInfo] = {s.args[i][1] for s in matching}
+                new_args: dict[ArgumentName, TypeInfo] = {}
+                for i, name in enumerate(target_arg_names):
+                    types: set[TypeInfo] = {list(s.args.values())[i] for s in matching}
                     if target is not None:
-                        types.add(target.args[i][1])
-                    new_args.append((target_arg_names[i], merged_types(types)))
+                        types.add(target.args[name])
+                    new_args[name] = merged_types(types)
             else:
-                new_args = list(target.args) if target else [(n, UnknownTypeInfo) for n in target_arg_names]
+                new_args = dict(target.args) if target else {n: UnknownTypeInfo for n in target_arg_names}
 
             if merge_retval:
                 ret_types: set[TypeInfo] = {s.retval for s in matching}
@@ -367,7 +366,7 @@ class Observations:
                 retval=retval,
                 varargs=target.varargs if target else None,
                 kwargs=target.kwargs if target else None,
-                variables=target.variables if target else [],
+                variables=target.variables if target else {},
             )
             return new_ann if new_ann != target else None
 
@@ -402,7 +401,7 @@ class Observations:
                     new_parent = FuncAnnotation(
                         args=new_parent.args, retval=new_parent.retval,
                         varargs=parent_fi.varargs, kwargs=parent_fi.kwargs,
-                        variables=[],
+                        variables={},
                     )
                 raw_annotations[parent_id] = new_parent
 
@@ -416,7 +415,7 @@ class Observations:
                 child_ann = raw_annotations.get(cid)
                 if child_ann is None:
                     continue
-                child_arg_names = tuple(name for name, _ in child_ann.args)
+                child_arg_names = tuple(child_ann.args.keys())
                 new_child = _widen_annotation(child_ann, child_arg_names, [parent_ann], merge_args=True, merge_retval=False)
                 if new_child is not None:
                     raw_annotations[cid] = new_child
@@ -438,23 +437,21 @@ class Observations:
             n_sig_args = len(signature) - 1  # last element is the return type
 
             ann = FuncAnnotation(
-                args=[
-                    (
-                        arg.arg_name,
+                args={
+                    arg.arg_name:
                         merged_types({
                             signature[i] if i < n_sig_args else UnknownTypeInfo,
                             *((arg.default,) if arg.default is not None else ()),
                         })
-                    )
                     for i, arg in enumerate(func_info.args)
-                ],
+                },
                 retval=signature[-1],
                 varargs=func_info.varargs,
                 kwargs=func_info.kwargs,
-                variables=[
-                    (var_name, merged_types(var_types, for_variable=True))
+                variables={
+                    var_name: merged_types(var_types, for_variable=True)
                     for var_name, var_types in func_info.variables.items()
-                ]
+                }
             )
 
             if logger.level == logging.DEBUG:
@@ -466,9 +463,9 @@ class Observations:
                     )
                 logger.debug(
                     "ann   " + func_info.code_id.func_name +
-                    str((*(str(arg[1]) for arg in ann.args), str(ann.retval)))
+                    str((*(str(t) for t in ann.args.values()), str(ann.retval)))
                 )
-                for var_name, var_type in ann.variables:
+                for var_name, var_type in ann.variables.items():
                     logger.debug(
                         f"var   {func_info.code_id.func_name} {var_name} {str(var_type)}"
                     )
@@ -515,10 +512,15 @@ class Observations:
                             def is_unknown(t: TypeInfoArg) -> bool:
                                 return isinstance(t, TypeInfo) and t.is_unknown
 
+                            # FIXME skip 'self'/'cls' by name rather than assuming it's first
+                            ann_arg_types = list(ann.args.values())
+                            if node.is_bound:
+                                ann_arg_types = ann_arg_types[1:]
+
                             node = node.replace(args=(
                                 TypeInfo.list([
-                                    old if not is_unknown(old := get_old_param(i)) else clone(a[1])
-                                    for i, a in enumerate(ann.args[int(node.is_bound):])
+                                    old if not is_unknown(old := get_old_param(i)) else clone(t)
+                                    for i, t in enumerate(ann_arg_types)
                                 ])
                                 if not (func_info.varargs or func_info.kwargs
                                        or any(a.default is not None for a in func_info.args))
@@ -617,20 +619,20 @@ class Observations:
         # Apply finalization
         annotations = {
             code_id: FuncAnnotation(
-                args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
+                args={name: finalize(t) for name, t in annotation.args.items()},
                 retval=finalize(annotation.retval),
                 varargs=annotation.varargs,
                 kwargs=annotation.kwargs,
-                variables=[(var[0], finalize(var[1])) for var in annotation.variables]
+                variables={name: finalize(t) for name, t in annotation.variables.items()}
             )
             for code_id, annotation in raw_annotations.items()
         }
 
         module_vars = {
-            filename: ModuleVars([
-                (var_name, finalize(merged_types(var_types, for_variable=True)))
+            filename: ModuleVars({
+                var_name: finalize(merged_types(var_types, for_variable=True))
                 for var_name, var_types in var_dict.items()
-            ])
+            })
             for filename, var_dict in self.module_variables.items()
         }
 

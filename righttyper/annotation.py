@@ -5,16 +5,16 @@ from righttyper.typeinfo import TypeInfo
 
 @dataclass(eq=True, frozen=True)
 class FuncAnnotation:
-    args: list[tuple[ArgumentName, TypeInfo]]   # TODO: make me a map?
+    args: dict[ArgumentName, TypeInfo]
     retval: TypeInfo
     varargs: str|None
     kwargs: str|None
-    variables: list[tuple[VariableName, TypeInfo]]
+    variables: dict[VariableName, TypeInfo]
 
 
 @dataclass(eq=True, frozen=True)
 class ModuleVars:
-    variables: list[tuple[VariableName, TypeInfo]]
+    variables: dict[VariableName, TypeInfo]
 
 
 @dataclass

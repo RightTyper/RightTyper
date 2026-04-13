@@ -367,13 +367,13 @@ def emit_json(
 
         func_entry = file_functions[func_json_name] = {
             'args': {
-                a[0]: argtype(*a).replace(".<locals>.", ".")
-                for a in ann.args
+                name: argtype(name, t).replace(".<locals>.", ".")
+                for name, t in ann.args.items()
             },
             'retval': str(ann.retval).replace(".<locals>.", "."),
             'vars': {
-                v[0]: str(v[1]).replace(".<locals>.", ".")
-                for v in ann.variables
+                name: str(t).replace(".<locals>.", ".")
+                for name, t in ann.variables.items()
             }
         }
 
@@ -395,7 +395,7 @@ def emit_json(
     for filename, mv in module_vars.items():
         data['files'][filename]['vars'] = {
             k: str(v).replace(".<locals>.", ".")
-            for k, v in mv.variables
+            for k, v in mv.variables.items()
         }
 
     return data
