@@ -320,68 +320,41 @@ class Observations:
                 )
                 if not static_types or len(static_types) != len(ann.args):
                     continue
-                new_args = dict(ann.args)
-                ann_changed = False
                 for (name, existing), st in zip(ann.args.items(), static_types):
                     if st is not None:
                         m = merged_types({existing, st})
                         if m is not existing:
-                            new_args[name] = m
-                            ann_changed = True
-                if ann_changed:
-                    ann = FuncAnnotation(
-                        args=new_args, retval=ann.retval,
-                        varargs=ann.varargs, kwargs=ann.kwargs,
-                        variables=ann.variables,
-                    )
-                    raw_annotations[fi.code_id] = ann
+                            ann.args[name] = m
 
         if not parent_to_children:
             return
 
         def _widen_annotation(
-            target: FuncAnnotation | None,
-            target_arg_names: tuple[ArgumentName, ...],
+            target: FuncAnnotation,
             sources: list[FuncAnnotation],
             merge_args: bool = True,
             merge_retval: bool = True,
-        ) -> FuncAnnotation | None:
-            """Widen target's types from sources.
+        ) -> None:
+            """Widen target's types from sources, mutating target in place.
 
             merge_args/merge_retval control which parts are widened.
-            Returns a new FuncAnnotation if anything changed, None otherwise.
             """
-            n_args = len(target_arg_names)
-            matching = [s for s in sources if len(s.args) == n_args]
+            matching = [s for s in sources if len(s.args) == len(target.args)]
             if not matching:
-                return None
+                return
 
             if merge_args:
-                new_args: dict[ArgumentName, TypeInfo] = {}
-                for i, name in enumerate(target_arg_names):
+                for i, name in enumerate(target.args):
                     types: set[TypeInfo] = {list(s.args.values())[i] for s in matching}
-                    if target is not None:
+                    if not target.args[name].is_unknown:
                         types.add(target.args[name])
-                    new_args[name] = merged_types(types)
-            else:
-                new_args = dict(target.args) if target else {n: UnknownTypeInfo for n in target_arg_names}
+                    target.args[name] = merged_types(types)
 
             if merge_retval:
                 ret_types: set[TypeInfo] = {s.retval for s in matching}
-                if target is not None:
+                if not target.retval.is_unknown:
                     ret_types.add(target.retval)
-                retval = merged_types(ret_types)
-            else:
-                retval = target.retval if target else UnknownTypeInfo
-
-            new_ann = FuncAnnotation(
-                args=new_args,
-                retval=retval,
-                varargs=target.varargs if target else None,
-                kwargs=target.kwargs if target else None,
-                variables=target.variables if target else {},
-            )
-            return new_ann if new_ann != target else None
+                target.retval = merged_types(ret_types)
 
         # Phase 2: Upward — propagate children's types to parents.
         for parent_id, child_ids in parent_to_children.items():
@@ -396,7 +369,6 @@ class Observations:
             #   Args:    only for unobserved/abstract (child can widen without affecting parent)
             #   Returns: only for observed/abstract (LSP covariance); not for unobserved
             #            concrete (body could contradict)
-            parent_ann = raw_annotations.get(parent_id)
             if parent_fi.is_abstract:
                 merge_args, merge_retval = True, True
             elif not parent_fi.traces:
@@ -404,19 +376,18 @@ class Observations:
             else:
                 merge_args, merge_retval = False, True   # observed concrete
 
-            arg_names = tuple(a.arg_name for a in parent_fi.args)
-            new_parent = _widen_annotation(
-                parent_ann, arg_names, child_anns,
+            if parent_id not in raw_annotations:
+                raw_annotations[parent_id] = FuncAnnotation(
+                    args={a.arg_name: UnknownTypeInfo for a in parent_fi.args},
+                    retval=UnknownTypeInfo,
+                    varargs=parent_fi.varargs, kwargs=parent_fi.kwargs,
+                    variables={},
+                )
+
+            _widen_annotation(
+                raw_annotations[parent_id], child_anns,
                 merge_args=merge_args, merge_retval=merge_retval,
             )
-            if new_parent is not None:
-                if parent_ann is None:
-                    new_parent = FuncAnnotation(
-                        args=new_parent.args, retval=new_parent.retval,
-                        varargs=parent_fi.varargs, kwargs=parent_fi.kwargs,
-                        variables={},
-                    )
-                raw_annotations[parent_id] = new_parent
 
         # Phase 3: Downward — widen children's arg types from parent annotations.
         # A single pass suffices because parent annotations are fixed after Phase 2.
@@ -425,13 +396,8 @@ class Observations:
             if parent_ann is None:
                 continue
             for cid in child_ids:
-                child_ann = raw_annotations.get(cid)
-                if child_ann is None:
-                    continue
-                child_arg_names = tuple(child_ann.args.keys())
-                new_child = _widen_annotation(child_ann, child_arg_names, [parent_ann], merge_args=True, merge_retval=False)
-                if new_child is not None:
-                    raw_annotations[cid] = new_child
+                if (child_ann := raw_annotations.get(cid)):
+                    _widen_annotation(child_ann, [parent_ann], merge_args=True, merge_retval=False)
 
 
     @staticmethod
@@ -526,19 +492,43 @@ class Observations:
             if (annotation := Observations.mk_annotation(self.func_info[code_id])) is not None
         }
 
+        # Merge module variables into ModuleVars (parallel to annotations for functions).
+        module_vars: dict[Filename, ModuleVars] = {
+            filename: ModuleVars({
+                var_name: merged_types(var_types, for_variable=True)
+                for var_name, var_types in var_dict.items()
+            })
+            for filename, var_dict in self.module_variables.items()
+        }
+
+        def _visit_dict(d: dict, tr: TypeInfo.Transformer, tr_name: str, context: str) -> None:
+            """Apply tr to each TypeInfo value in d, updating in place with debug logging."""
+            for name, t in d.items():
+                t_prime = tr.visit(t)
+                if t is not t_prime:
+                    if logger.level == logging.DEBUG:
+                        logger.debug(f"{tr_name} {context}{name}: {t} -> {t_prime}")
+                    d[name] = t_prime
+
         def transform_types(tr: TypeInfo.Transformer) -> None:
-            """Applies the 'tr' transformer to all TypeInfo objects in this class."""
+            """Applies the 'tr' transformer to all TypeInfo objects."""
+            tr_name = type(tr).__name__
 
-            for annotation in annotations.values():
-                for name, t in annotation.args.items():
-                    annotation.args[name] = tr.visit(t)
-                annotation.retval = tr.visit(annotation.retval)
-                for name, t in annotation.variables.items():
-                    annotation.variables[name] = tr.visit(t)
+            for code_id, annotation in annotations.items():
+                prefix = f"{code_id.func_name} "
+                _visit_dict(annotation.args, tr, tr_name, prefix)
 
-            for var_dict in list(self.module_variables.values()):
-                for var_name, var_types in list(var_dict.items()):
-                    var_dict[var_name] = set(tr.visit(t) for t in var_types)
+                t_prime = tr.visit(annotation.retval)
+                if t_prime is not annotation.retval:
+                    if logger.level == logging.DEBUG:
+                        logger.debug(f"{tr_name} {prefix}retval: {annotation.retval} -> {t_prime}")
+                    annotation.retval = t_prime
+
+                _visit_dict(annotation.variables, tr, tr_name, prefix)
+
+            for filename, mv in module_vars.items():
+                module = self.source_to_module_name.get(filename, filename)
+                _visit_dict(mv.variables, tr, tr_name, f"{module} ")
 
 
         class ResolvingT(TypeInfo.Transformer):
@@ -607,46 +597,6 @@ class Observations:
         if output_options.use_typing_self:
             transform_types(SelfT())
 
-        finalizers: list[TypeInfo.Transformer] = []
-
-        def finalize(t: TypeInfo) -> TypeInfo:
-            for f in finalizers:
-                t_prime = f.visit(t)
-                if t is not t_prime:
-                    # MakePickleableT just adds noise: omit it
-                    if logger.level == logging.DEBUG and type(f) is not MakePickleableT:
-                        logger.debug(type(f).__name__ + f" {str(t)} -> {str(t_prime)}")
-                    t = t_prime
-            return t
-
-        if output_options.type_depth_limit is not None:
-            finalizers.append(DepthLimitT(output_options.type_depth_limit))
-
-        if output_options.use_typing_union:
-            finalizers.append(TypesUnionT())
-
-        # Only rename to Iterator as a finalizer so that all [Async]Generator arguments
-        # are available for generalization
-        if output_options.simplify_types:
-            finalizers.append(GeneratorToIteratorT())
-
-        # Only rename away from typing.Never now so that list[X]|list[Never] can be simplified
-        if not output_options.use_typing_never:
-            finalizers.append(NeverSayNeverT())
-        else:
-            finalizers.append(NoReturnToNeverT())
-
-        # Exclude test types before capping union size: removing test-module
-        # members from unions can bring their size below max_union_size.
-        if output_options.exclude_test_types:
-            finalizers.append(ExcludeTestTypesT(
-                self.test_modules,
-                detect_by_name=output_options.detect_test_modules_by_name
-            ))
-
-        finalizers.append(UnionSizeT())
-        finalizers.append(MakePickleableT())
-
         # Compute type distributions from traces, resolving code_id references
         # so that Callable/generator types render with their actual signatures.
         type_distributions: dict[CodeId, list[TraceDistribution]] = {}
@@ -666,21 +616,34 @@ class Observations:
         # Propagate child method types up to parent methods
         self._propagate_to_parents(annotations)
 
-        # Apply finalization
-        for annotation in annotations.values():
-            for name, t in annotation.args.items():
-                annotation.args[name] = finalize(t)
-            annotation.retval = finalize(annotation.retval)
-            for name, t in annotation.variables.items():
-                annotation.variables[name] = finalize(t)
+        # Apply finalizers (order matters — see comments for rationale)
+        if output_options.type_depth_limit is not None:
+            transform_types(DepthLimitT(output_options.type_depth_limit))
 
-        module_vars = {
-            filename: ModuleVars({
-                var_name: finalize(merged_types(var_types, for_variable=True))
-                for var_name, var_types in var_dict.items()
-            })
-            for filename, var_dict in self.module_variables.items()
-        }
+        if output_options.use_typing_union:
+            transform_types(TypesUnionT())
+
+        # Only rename to Iterator as a finalizer so that all [Async]Generator arguments
+        # are available for generalization
+        if output_options.simplify_types:
+            transform_types(GeneratorToIteratorT())
+
+        # Only rename away from typing.Never now so that list[X]|list[Never] can be simplified
+        if not output_options.use_typing_never:
+            transform_types(NeverSayNeverT())
+        else:
+            transform_types(NoReturnToNeverT())
+
+        # Exclude test types before capping union size: removing test-module
+        # members from unions can bring their size below max_union_size.
+        if output_options.exclude_test_types:
+            transform_types(ExcludeTestTypesT(
+                self.test_modules,
+                detect_by_name=output_options.detect_test_modules_by_name
+            ))
+
+        transform_types(UnionSizeT())
+        transform_types(MakePickleableT())
 
         return annotations, module_vars, type_distributions
 

@@ -12,7 +12,7 @@ class FuncAnnotation:
     variables: dict[VariableName, TypeInfo]
 
 
-@dataclass(eq=True, frozen=True)
+@dataclass(eq=True)
 class ModuleVars:
     variables: dict[VariableName, TypeInfo]
 
