@@ -212,6 +212,17 @@ def merge_container_supersets(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     return typeinfoset
 
 
+def _is_empty_container(t: TypeInfo) -> bool:
+    """Check if t represents an empty container (e.g., tuple[()], list[Never], dict[Never, Never])."""
+    import typing
+    if t.type_obj is tuple and t.args == ((),):
+        return True
+    return bool(t.args
+                and isinstance(t.type_obj, type) and issubclass(t.type_obj, abc.Container)
+                and all(isinstance(a, TypeInfo) and a.type_obj is typing.Never
+                        for a in t.args))
+
+
 def merged_types(
     typeinfoset: set[TypeInfo],
     for_variable: bool = False,
@@ -245,6 +256,32 @@ def merged_types(
                     typeinfoset = merge_similar_generics(covariant) | others
             if len(typeinfoset) > 1:
                 typeinfoset = _subsume_fixed_by_varlen_tuples(typeinfoset)
+
+    # Cross-container ABC merge: find a common ABC for different container
+    # types (e.g., list[int] | tuple[int,...] → Sequence[int]).
+    # Empty containers are dropped first (they're compatible with any element type).
+    if len(typeinfoset) > 1 and accessed_attributes:
+        typeinfoset -= {t for t in typeinfoset if _is_empty_container(t)} or set()
+        # Generics with TypeInfo args — group by number of TypeInfo args
+        generics = {t for t in typeinfoset
+                    if t.args and isinstance(t.args[0], TypeInfo) and isinstance(t.type_obj, type)}
+        n_type_args = {sum(isinstance(a, TypeInfo) for a in t.args) for t in generics}
+        if len(generics) >= (2 if len(typeinfoset) > 1 else 1) and len(n_type_args) == 1:
+            n = next(iter(n_type_args))
+            candidates = [g for g, attrs in _abc_own_attrs.items()
+                          if accessed_attributes <= attrs
+                          and all(issubclass(t.type_obj, g) for t in generics)]
+            if candidates:
+                best = max(candidates, key=lambda g: len(g.__mro__))
+                # Merge corresponding TypeInfo args across all generics
+                merged_args = tuple(
+                    TypeInfo.from_set({cast(TypeInfo, [a for a in t.args if isinstance(a, TypeInfo)][i])
+                                       for t in generics})
+                    for i in range(n)
+                )
+                abc_result = (typeinfoset - generics) | {get_type_name(best).replace(args=merged_args)}
+                if len(abc_result) < len(typeinfoset):
+                    typeinfoset = abc_result
 
     return TypeInfo.from_set(typeinfoset)
 

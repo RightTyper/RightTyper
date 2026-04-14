@@ -629,6 +629,104 @@ def test_subsume_empty_tuple_by_varlen():
 
 
 # =============================================================================
+# Tests for cross-container simplification
+# =============================================================================
+
+def test_list_and_empty_tuple_to_sequence():
+    """list[tuple[int, int]] | tuple[()] → Sequence[tuple[int, int]].
+    An empty tuple is an empty sequence, compatible with any element type."""
+    import collections.abc
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    inner = TypeInfo.from_type(tuple).replace(args=(int_t, int_t))
+    list_of_tuples = TypeInfo.from_type(list).replace(args=(inner,))
+    empty_tuple = TypeInfo.from_type(tuple).replace(args=((),))
+
+    result = merged_types({list_of_tuples, empty_tuple},
+                          accessed_attributes={"__iter__"})
+
+    # Should merge to Sequence[tuple[int, int]], not stay as a union
+    assert not result.is_union(), f"Expected single type, got union: {result}"
+    assert result.type_obj is not None
+    assert issubclass(result.type_obj, collections.abc.Sequence)
+    # Element type should be preserved
+    assert result.args and isinstance(result.args[0], TypeInfo)
+    assert result.args[0] == inner
+
+
+def test_list_and_varlen_tuple_to_sequence():
+    """list[int] | tuple[int, ...] → Sequence[int] when accessed via sequence attrs.
+    Two non-empty containers with compatible element types merge to a common ABC."""
+    import collections.abc
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    list_of_int = TypeInfo.from_type(list).replace(args=(int_t,))
+    tuple_of_int = TypeInfo.from_type(tuple).replace(args=(int_t, Ellipsis))
+
+    result = merged_types({list_of_int, tuple_of_int},
+                          accessed_attributes={"__iter__"})
+
+    assert not result.is_union(), f"Expected single type, got union: {result}"
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Sequence)
+    # Element type preserved
+    assert result.args and isinstance(result.args[0], TypeInfo)
+    assert result.args[0].type_obj is int
+
+
+def test_set_and_frozenset_to_abc_set():
+    """set[int] | frozenset[int] → Set[int]."""
+    import collections.abc
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    s = TypeInfo.from_type(set).replace(args=(int_t,))
+    fs = TypeInfo.from_type(frozenset).replace(args=(int_t,))
+
+    result = merged_types({s, fs}, accessed_attributes={"__iter__"})
+    assert not result.is_union(), f"Expected single type, got union: {result}"
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Set)
+
+
+def test_dict_and_ordered_dict_to_mapping():
+    """dict[str, int] | OrderedDict[str, int] → Mapping[str, int] (2 type args)."""
+    import collections
+    import collections.abc
+    from righttyper.generalize import merged_types
+
+    str_t = TypeInfo.from_type(str)
+    int_t = TypeInfo.from_type(int)
+    d = TypeInfo.from_type(dict).replace(args=(str_t, int_t))
+    od = TypeInfo.from_type(collections.OrderedDict).replace(args=(str_t, int_t))
+
+    result = merged_types({d, od}, accessed_attributes={"items"})
+    assert not result.is_union(), f"Expected single type, got union: {result}"
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Mapping)
+    # Both key and value types preserved
+    assert len(result.args) == 2
+    assert result.args[0] == str_t
+    assert result.args[1] == int_t
+
+
+def test_list_and_empty_tuple_without_accessed_attrs():
+    """Without accessed_attributes, list[X] | tuple[()] stays as union."""
+    from righttyper.generalize import merged_types
+
+    int_t = TypeInfo.from_type(int)
+    inner = TypeInfo.from_type(tuple).replace(args=(int_t, int_t))
+    list_of_tuples = TypeInfo.from_type(list).replace(args=(inner,))
+    empty_tuple = TypeInfo.from_type(tuple).replace(args=((),))
+
+    result = merged_types({list_of_tuples, empty_tuple})
+    # Without accessed attributes, no cross-container merge
+    assert result.is_union()
+
+
+# =============================================================================
 # Tests for attribute-aware simplification
 # =============================================================================
 
