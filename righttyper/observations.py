@@ -282,17 +282,21 @@ class Observations:
     def _propagate_to_parents(self, raw_annotations: dict[CodeId, FuncAnnotation]) -> None:
         """Propagates types between parent and child methods for LSP compliance.
 
-        Each iteration:
         - Upward: widens parent arg/return types from children's observations.
         - Downward: widens children's arg types to match parent
           (LSP contravariance — children must accept at least what the parent accepts).
 
-        Iterates until stable to handle multi-level hierarchies.
+        A single pass in each direction suffices because overrides are recorded
+        for all ancestors (not just the immediate parent), so parent_to_children
+        is a flat mapping from every ancestor to each of its descendants.
         """
+
+        # Functions that override a parent method — typically a small subset.
+        overriding = [fi for fi in self.func_info.values() if fi.overrides]
 
         # Build reverse mapping: parent_code_id → [child_code_id, ...]
         parent_to_children: dict[CodeId, list[CodeId]] = defaultdict(list)
-        for fi in self.func_info.values():
+        for fi in overriding:
             for ov in fi.overrides:
                 if ov.code_id and ov.code_id.file_name in self.source_to_module_name:
                     parent_to_children[ov.code_id].append(fi.code_id)
@@ -301,11 +305,14 @@ class Observations:
         # Handles all overrides including typeshed-only parents (no code_id).
         # Static arg types are per-child because inline_arg_types is aligned to the
         # child's parameter order (computed by get_parent_arg_types).
-        for fi in self.func_info.values():
+        for fi in overriding:
             ann = raw_annotations.get(fi.code_id)
             if ann is None:
                 continue
             for ov in fi.overrides:
+                # Skip if parent is observed — Phases 2/3 will merge its actual types.
+                if ov.code_id and ov.code_id in raw_annotations:
+                    continue
                 parent_fi = self.func_info.get(ov.code_id) if ov.code_id else None
                 static_types = (
                     (ov.inline_arg_types if not output_options.ignore_annotations else None)
