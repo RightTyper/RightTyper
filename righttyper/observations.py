@@ -10,6 +10,8 @@ from righttyper.options import output_options
 from righttyper.logger import logger
 from righttyper.generalize import merged_types, generalize
 from righttyper.type_transformers import (
+    ClearCodeIdT,
+    UnionSizeT,
     SelfT,
     NeverSayNeverT,
     NoReturnToNeverT,
@@ -77,26 +79,33 @@ class FuncInfo:
         return traces
 
 
-    def compute_type_distributions(self) -> list[TraceDistribution] | None:
+    def compute_type_distributions(
+        self,
+        resolve: typing.Callable[[TypeInfo], TypeInfo] | None = None,
+    ) -> list[TraceDistribution] | None:
         """Computes trace-level type frequency distributions.
 
         Returns None if there is only one distinct trace (no polymorphism).
         Each trace preserves the coordination between argument types and return type.
         Percentages reflect proportions of all observed calls.
+        If resolve is given, it is applied to each TypeInfo before rendering.
         """
         traces = self.most_common_traces()
         if len(traces) <= 1:
             return None
+
+        def fmt(t: TypeInfo) -> str:
+            return str(resolve(t) if resolve else t)
 
         n_args = len(self.args)
         total = sum(self.traces.values())
         return [
             TraceDistribution(
                 args={
-                    self.args[i].arg_name: str(trace[i]) if i < len(trace) - 1 else "?"
+                    self.args[i].arg_name: fmt(trace[i]) if i < len(trace) - 1 else "?"
                     for i in range(n_args)
                 },
-                retval=str(trace[-1]),
+                retval=fmt(trace[-1]),
                 pct=round(self.traces[trace] / total * 100, 1)
             )
             for trace in traces
@@ -202,11 +211,27 @@ class Observations:
                 for attr in ('varargs', 'kwargs', 'overrides'):
                     v1, v2 = getattr(func_info, attr), getattr(func_info2, attr)
                     if v1 != v2:
-                        # For 'overrides', [] means "not checked" (e.g., parent registered
-                        # without direct observation); prefer the non-empty value.
-                        if attr == 'overrides' and (not v1 or not v2):
-                            if not v1:
-                                func_info.overrides = v2
+                        if attr == 'overrides':
+                            # 'overrides' is semantically a SET (the consumers in
+                            # _propagate_to_parents iterate it without depending
+                            # on order, and look up each entry by code_id), so it
+                            # should arguably be one — left as a list for now to
+                            # avoid touching every recording site.
+                            #
+                            # Two FuncInfo entries for the same code_id can have
+                            # different overrides because _register_parent_function
+                            # early-exits its MRO walk at the first ancestor that
+                            # is already registered, so the recorded chain depends
+                            # on observation order.  Both lists are valid partial
+                            # views of the same MRO; merging them as a union (deduped
+                            # by code_id) yields the most complete view available.
+                            seen: set[CodeId | None] = {ov.code_id for ov in v1}
+                            merged_overrides = list(v1)
+                            for ov in v2:
+                                if ov.code_id not in seen:
+                                    merged_overrides.append(ov)
+                                    seen.add(ov.code_id)
+                            func_info.overrides = merged_overrides
                         else:
                             raise ValueError(f"Incompatible {attr} for {func_id.func_name}:\n" +\
                                              f"    {v1}\n" +\
@@ -257,17 +282,21 @@ class Observations:
     def _propagate_to_parents(self, raw_annotations: dict[CodeId, FuncAnnotation]) -> None:
         """Propagates types between parent and child methods for LSP compliance.
 
-        Each iteration:
         - Upward: widens parent arg/return types from children's observations.
         - Downward: widens children's arg types to match parent
           (LSP contravariance — children must accept at least what the parent accepts).
 
-        Iterates until stable to handle multi-level hierarchies.
+        A single pass in each direction suffices because overrides are recorded
+        for all ancestors (not just the immediate parent), so parent_to_children
+        is a flat mapping from every ancestor to each of its descendants.
         """
+
+        # Functions that override a parent method — typically a small subset.
+        overriding = [fi for fi in self.func_info.values() if fi.overrides]
 
         # Build reverse mapping: parent_code_id → [child_code_id, ...]
         parent_to_children: dict[CodeId, list[CodeId]] = defaultdict(list)
-        for fi in self.func_info.values():
+        for fi in overriding:
             for ov in fi.overrides:
                 if ov.code_id and ov.code_id.file_name in self.source_to_module_name:
                     parent_to_children[ov.code_id].append(fi.code_id)
@@ -276,81 +305,56 @@ class Observations:
         # Handles all overrides including typeshed-only parents (no code_id).
         # Static arg types are per-child because inline_arg_types is aligned to the
         # child's parameter order (computed by get_parent_arg_types).
-        for fi in self.func_info.values():
+        for fi in overriding:
             ann = raw_annotations.get(fi.code_id)
             if ann is None:
                 continue
-            arg_names = tuple(name for name, _ in ann.args)
             for ov in fi.overrides:
+                # Skip if parent is observed — Phases 2/3 will merge its actual types.
+                if ov.code_id and ov.code_id in raw_annotations:
+                    continue
                 parent_fi = self.func_info.get(ov.code_id) if ov.code_id else None
                 static_types = (
                     (ov.inline_arg_types if not output_options.ignore_annotations else None)
                     or get_typeshed_arg_types(ov, parent_fi.args if parent_fi else fi.args)
                 )
-                if not static_types or len(static_types) != len(arg_names):
+                if not static_types or len(static_types) != len(ann.args):
                     continue
-                new_args = list(ann.args)
-                ann_changed = False
-                for i, st in enumerate(static_types):
+                for (name, existing), st in zip(ann.args.items(), static_types):
                     if st is not None:
-                        m = merged_types({new_args[i][1], st})
-                        if m is not new_args[i][1]:
-                            new_args[i] = (arg_names[i], m)
-                            ann_changed = True
-                if ann_changed:
-                    ann = FuncAnnotation(
-                        args=new_args, retval=ann.retval,
-                        varargs=ann.varargs, kwargs=ann.kwargs,
-                        variables=ann.variables,
-                    )
-                    raw_annotations[fi.code_id] = ann
+                        m = merged_types({existing, st})
+                        if m is not existing:
+                            ann.args[name] = m
 
         if not parent_to_children:
             return
 
         def _widen_annotation(
-            target: FuncAnnotation | None,
-            target_arg_names: tuple[ArgumentName, ...],
+            target: FuncAnnotation,
             sources: list[FuncAnnotation],
             merge_args: bool = True,
             merge_retval: bool = True,
-        ) -> FuncAnnotation | None:
-            """Widen target's types from sources.
+        ) -> None:
+            """Widen target's types from sources, mutating target in place.
 
             merge_args/merge_retval control which parts are widened.
-            Returns a new FuncAnnotation if anything changed, None otherwise.
             """
-            n_args = len(target_arg_names)
-            matching = [s for s in sources if len(s.args) == n_args]
+            matching = [s for s in sources if len(s.args) == len(target.args)]
             if not matching:
-                return None
+                return
 
             if merge_args:
-                new_args = []
-                for i in range(n_args):
-                    types: set[TypeInfo] = {s.args[i][1] for s in matching}
-                    if target is not None:
-                        types.add(target.args[i][1])
-                    new_args.append((target_arg_names[i], merged_types(types)))
-            else:
-                new_args = list(target.args) if target else [(n, UnknownTypeInfo) for n in target_arg_names]
+                for i, name in enumerate(target.args):
+                    types: set[TypeInfo] = {list(s.args.values())[i] for s in matching}
+                    if not target.args[name].is_unknown:
+                        types.add(target.args[name])
+                    target.args[name] = merged_types(types)
 
             if merge_retval:
                 ret_types: set[TypeInfo] = {s.retval for s in matching}
-                if target is not None:
+                if not target.retval.is_unknown:
                     ret_types.add(target.retval)
-                retval = merged_types(ret_types)
-            else:
-                retval = target.retval if target else UnknownTypeInfo
-
-            new_ann = FuncAnnotation(
-                args=new_args,
-                retval=retval,
-                varargs=target.varargs if target else None,
-                kwargs=target.kwargs if target else None,
-                variables=target.variables if target else [],
-            )
-            return new_ann if new_ann != target else None
+                target.retval = merged_types(ret_types)
 
         # Phase 2: Upward — propagate children's types to parents.
         for parent_id, child_ids in parent_to_children.items():
@@ -365,7 +369,6 @@ class Observations:
             #   Args:    only for unobserved/abstract (child can widen without affecting parent)
             #   Returns: only for observed/abstract (LSP covariance); not for unobserved
             #            concrete (body could contradict)
-            parent_ann = raw_annotations.get(parent_id)
             if parent_fi.is_abstract:
                 merge_args, merge_retval = True, True
             elif not parent_fi.traces:
@@ -373,19 +376,18 @@ class Observations:
             else:
                 merge_args, merge_retval = False, True   # observed concrete
 
-            arg_names = tuple(a.arg_name for a in parent_fi.args)
-            new_parent = _widen_annotation(
-                parent_ann, arg_names, child_anns,
+            if parent_id not in raw_annotations:
+                raw_annotations[parent_id] = FuncAnnotation(
+                    args={a.arg_name: UnknownTypeInfo for a in parent_fi.args},
+                    retval=UnknownTypeInfo,
+                    varargs=parent_fi.varargs, kwargs=parent_fi.kwargs,
+                    variables={},
+                )
+
+            _widen_annotation(
+                raw_annotations[parent_id], child_anns,
                 merge_args=merge_args, merge_retval=merge_retval,
             )
-            if new_parent is not None:
-                if parent_ann is None:
-                    new_parent = FuncAnnotation(
-                        args=new_parent.args, retval=new_parent.retval,
-                        varargs=parent_fi.varargs, kwargs=parent_fi.kwargs,
-                        variables=[],
-                    )
-                raw_annotations[parent_id] = new_parent
 
         # Phase 3: Downward — widen children's arg types from parent annotations.
         # A single pass suffices because parent annotations are fixed after Phase 2.
@@ -394,67 +396,83 @@ class Observations:
             if parent_ann is None:
                 continue
             for cid in child_ids:
-                child_ann = raw_annotations.get(cid)
-                if child_ann is None:
-                    continue
-                child_arg_names = tuple(name for name, _ in child_ann.args)
-                new_child = _widen_annotation(child_ann, child_arg_names, [parent_ann], merge_args=True, merge_retval=False)
-                if new_child is not None:
-                    raw_annotations[cid] = new_child
+                if (child_ann := raw_annotations.get(cid)):
+                    _widen_annotation(child_ann, [parent_ann], merge_args=True, merge_retval=False)
+
+
+    @staticmethod
+    def mk_annotation(func_info: FuncInfo) -> FuncAnnotation|None:
+        traces = func_info.most_common_traces()
+        if not traces:
+            return None
+
+        if (signature := generalize(traces)) is None:
+            logger.info(f"Unable to generalize {func_info.code_id}: inconsistent traces.\n" +
+                        f"{[tuple(str(t) for t in s) for s in traces]}")
+            return None
+
+        n_sig_args = len(signature) - 1  # last element is the return type
+
+        ann = FuncAnnotation(
+            args={
+                arg.arg_name:
+                    merged_types({
+                        signature[i] if i < n_sig_args else UnknownTypeInfo,
+                        *((arg.default,) if arg.default is not None else ()),
+                    })
+                for i, arg in enumerate(func_info.args)
+            },
+            retval=signature[-1],
+            varargs=func_info.varargs,
+            kwargs=func_info.kwargs,
+            variables={
+                var_name: merged_types(var_types, for_variable=True)
+                for var_name, var_types in func_info.variables.items()
+            }
+        )
+
+        if logger.level == logging.DEBUG:
+            for trace, count in list(func_info.traces.items()):
+                logger.debug(
+                    "trace " + func_info.code_id.func_name +
+                    str(tuple(str(t) for t in trace)) +
+                    f" {count}x"
+                )
+            logger.debug(
+                "ann   " + func_info.code_id.func_name +
+                str((*(str(t) for t in ann.args.values()), str(ann.retval)))
+            )
+            for var_name, var_type in ann.variables.items():
+                logger.debug(
+                    f"var   {func_info.code_id.func_name} {var_name} {str(var_type)}"
+                )
+
+        return ann
+
+
+    def code_id_topo_sort(self) -> list[CodeId]:
+        """Topologically sort functions, so as to compute annotations in dependency order."""
+        visited = set()
+        result = []
+
+        def visit(code_id: CodeId):
+            if code_id not in visited:
+                visited.add(code_id)
+                if (func_info := self.func_info.get(code_id)):
+                    for tr in func_info.traces:
+                        for t in tr:
+                            if t.code_id:
+                                visit(t.code_id)
+                    result.append(code_id)
+
+        for code_id in self.func_info.keys():
+            visit(code_id)
+
+        return result
 
 
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars], dict[CodeId, list[TraceDistribution]]]:
         """Collects function type annotations from the observed types."""
-
-        def mk_annotation(func_info: FuncInfo) -> FuncAnnotation|None:
-            traces = func_info.most_common_traces()
-            if not traces:
-                return None
-
-            if (signature := generalize(traces)) is None:
-                logger.info(f"Unable to generalize {func_info.code_id}: inconsistent traces.\n" +
-                            f"{[tuple(str(t) for t in s) for s in traces]}")
-                return None
-
-            n_sig_args = len(signature) - 1  # last element is the return type
-
-            ann = FuncAnnotation(
-                args=[
-                    (
-                        arg.arg_name,
-                        merged_types({
-                            signature[i] if i < n_sig_args else UnknownTypeInfo,
-                            *((arg.default,) if arg.default is not None else ()),
-                        })
-                    )
-                    for i, arg in enumerate(func_info.args)
-                ],
-                retval=signature[-1],
-                varargs=func_info.varargs,
-                kwargs=func_info.kwargs,
-                variables=[
-                    (var_name, merged_types(var_types, for_variable=True))
-                    for var_name, var_types in func_info.variables.items()
-                ]
-            )
-
-            if logger.level == logging.DEBUG:
-                for trace, count in list(func_info.traces.items()):
-                    logger.debug(
-                        "trace " + func_info.code_id.func_name +
-                        str(tuple(str(t) for t in trace)) +
-                        f" {count}x"
-                    )
-                logger.debug(
-                    "ann   " + func_info.code_id.func_name +
-                    str((*(str(arg[1]) for arg in ann.args), str(ann.retval)))
-                )
-                for var_name, var_type in ann.variables:
-                    logger.debug(
-                        f"var   {func_info.code_id.func_name} {var_name} {str(var_type)}"
-                    )
-
-            return ann
 
         # In the code below, clone (rather than link to) types from Callable, Generator, etc.,
         # clearing is_self, as it may not apply in the new context.
@@ -468,42 +486,93 @@ class Observations:
 
             return T().visit(node)
 
+        annotations: dict[CodeId, FuncAnnotation] = {
+            code_id: annotation
+            for code_id in self.code_id_topo_sort()
+            if (annotation := Observations.mk_annotation(self.func_info[code_id])) is not None
+        }
+
+        # Merge module variables into ModuleVars (parallel to annotations for functions).
+        module_vars: dict[Filename, ModuleVars] = {
+            filename: ModuleVars({
+                var_name: merged_types(var_types, for_variable=True)
+                for var_name, var_types in var_dict.items()
+            })
+            for filename, var_dict in self.module_variables.items()
+        }
+
+        def _visit_dict(d: dict, tr: TypeInfo.Transformer, tr_name: str, context: str) -> None:
+            """Apply tr to each TypeInfo value in d, updating in place with debug logging."""
+            for name, t in d.items():
+                t_prime = tr.visit(t)
+                if t is not t_prime:
+                    if logger.level == logging.DEBUG:
+                        logger.debug(f"{tr_name} {context}{name}: {t} -> {t_prime}")
+                    d[name] = t_prime
+
+        def transform_types(tr: TypeInfo.Transformer) -> None:
+            """Applies the 'tr' transformer to all TypeInfo objects."""
+            tr_name = type(tr).__name__
+
+            for code_id, annotation in annotations.items():
+                prefix = f"{code_id.func_name} "
+                _visit_dict(annotation.args, tr, tr_name, prefix)
+
+                t_prime = tr.visit(annotation.retval)
+                if t_prime is not annotation.retval:
+                    if logger.level == logging.DEBUG:
+                        logger.debug(f"{tr_name} {prefix}retval: {annotation.retval} -> {t_prime}")
+                    annotation.retval = t_prime
+
+                _visit_dict(annotation.variables, tr, tr_name, prefix)
+
+            for filename, mv in module_vars.items():
+                module = self.source_to_module_name.get(filename, filename)
+                _visit_dict(mv.variables, tr, tr_name, f"{module} ")
+
+
         class ResolvingT(TypeInfo.Transformer):
             """Resolves types that may not be fully known until observed at runtime."""
+
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
 
-                if node.code_id and (func_info := self.func_info.get(node.code_id)):
-                    if (ann := mk_annotation(func_info)):
-                        # for Callable, we also merge arguments from annotations with observed ones.
-                        if node.type_obj in (abc.Callable, typing.Callable):
-                            old_params = (
-                                node.args[0].args
-                                if node.args and isinstance(node.args[0], TypeInfo) and node.args[0].is_list()
-                                else ()
-                            )
+                if node.code_id and (ann := annotations.get(node.code_id)):
+                    # for Callable, we also merge arguments from annotations with observed ones.
+                    if node.type_obj in (abc.Callable, typing.Callable):
+                        old_params = (
+                            node.args[0].args
+                            if node.args and isinstance(node.args[0], TypeInfo) and node.args[0].is_list()
+                            else ()
+                        )
 
-                            old_retval = node.args[-1] if node.args else UnknownTypeInfo
+                        old_retval = node.args[-1] if node.args else UnknownTypeInfo
 
-                            def get_old_param(i: int) -> TypeInfoArg:
-                                return old_params[i] if i < len(old_params) else UnknownTypeInfo
+                        def get_old_param(i: int) -> TypeInfoArg:
+                            return old_params[i] if i < len(old_params) else UnknownTypeInfo
 
-                            def is_unknown(t: TypeInfoArg) -> bool:
-                                return isinstance(t, TypeInfo) and t.is_unknown
+                        def is_unknown(t: TypeInfoArg) -> bool:
+                            return isinstance(t, TypeInfo) and t.is_unknown
 
-                            node = node.replace(args=(
-                                TypeInfo.list([
-                                    old if not is_unknown(old := get_old_param(i)) else clone(a[1])
-                                    for i, a in enumerate(ann.args[int(node.is_bound):])
-                                ])
-                                if not (func_info.varargs or func_info.kwargs
-                                       or any(a.default is not None for a in func_info.args))
-                                else
-                                ...,
-                                old_retval if not is_unknown(old_retval) else clone(ann.retval)
-                            ))
-                        else:
-                            node = clone(ann.retval)
+                        # FIXME skip 'self'/'cls' by name rather than assuming it's first
+                        ann_arg_types = list(ann.args.values())
+                        if node.is_bound:
+                            ann_arg_types = ann_arg_types[1:]
+
+                        node = node.replace(args=(
+                            TypeInfo.list([
+                                old if not is_unknown(old := get_old_param(i)) else clone(t)
+                                for i, t in enumerate(ann_arg_types)
+                            ])
+                            if not (ann.varargs or ann.kwargs
+                                   or any(a.default is not None
+                                          for a in self.func_info[node.code_id].args))
+                            else
+                            ...,
+                            old_retval if not is_unknown(old_retval) else clone(ann.retval)
+                        ))
+                    else:
+                        node = clone(ann.retval)
 
                 if node.type_obj is PostponedArg0:
                     # e.g. PostponedArg0[Iterator[X]] -> X
@@ -516,96 +585,65 @@ class Observations:
                         else UnknownTypeInfo
                     )
 
-                # Clear code_id after resolution — it was only needed to look up
-                # the function's observations and should not affect type equality.
-                if node.code_id:
-                    node = node.replace(code_id=None)
-
                 return node
 
-        self.transform_types(ResolvingT())
+        transform_types(ResolvingT())
+
+        # Clear code_id after resolution — it was only needed to look up
+        # the function's observations and should not affect type equality.
+        # This also deduplicates unions whose members became equal after clearing.
+        transform_types(ClearCodeIdT())
 
         if output_options.use_typing_self:
-            self.transform_types(SelfT())
+            transform_types(SelfT())
 
-        if output_options.exclude_test_types:
-            self.transform_types(ExcludeTestTypesT(
-                self.test_modules,
-                detect_by_name=output_options.detect_test_modules_by_name
-            ))
+        # Compute type distributions from traces, resolving code_id references
+        # so that Callable/generator types render with their actual signatures.
+        type_distributions: dict[CodeId, list[TraceDistribution]] = {}
+        if output_options.type_distribution_comments:
+            resolving = ResolvingT()
+            clearing = ClearCodeIdT()
+            resolve = lambda t: clearing.visit(resolving.visit(t))
+            for func_info in self.func_info.values():
+                if func_info.code_id not in self.wrapper_code_ids:
+                    if (dist := func_info.compute_type_distributions(resolve)):
+                        type_distributions[func_info.code_id] = dist
 
+        # Drop wrapper annotations — they were only needed for ResolvingT lookups.
+        for cid in self.wrapper_code_ids:
+            annotations.pop(cid, None)
 
-        finalizers: list[TypeInfo.Transformer] = []
+        # Propagate child method types up to parent methods
+        self._propagate_to_parents(annotations)
 
-        def finalize(t: TypeInfo) -> TypeInfo:
-            for f in finalizers:
-                t_prime = f.visit(t)
-                if t is not t_prime:
-                    # MakePickleableT just adds noise: omit it
-                    if logger.level == logging.DEBUG and type(f) is not MakePickleableT:
-                        logger.debug(type(f).__name__ + f" {str(t)} -> {str(t_prime)}")
-                    t = t_prime
-            return t
-
+        # Apply finalizers (order matters — see comments for rationale)
         if output_options.type_depth_limit is not None:
-            finalizers.append(DepthLimitT(output_options.type_depth_limit))
+            transform_types(DepthLimitT(output_options.type_depth_limit))
 
         if output_options.use_typing_union:
-            finalizers.append(TypesUnionT())
+            transform_types(TypesUnionT())
 
         # Only rename to Iterator as a finalizer so that all [Async]Generator arguments
         # are available for generalization
         if output_options.simplify_types:
-            finalizers.append(GeneratorToIteratorT())
+            transform_types(GeneratorToIteratorT())
 
         # Only rename away from typing.Never now so that list[X]|list[Never] can be simplified
         if not output_options.use_typing_never:
-            finalizers.append(NeverSayNeverT())
+            transform_types(NeverSayNeverT())
         else:
-            finalizers.append(NoReturnToNeverT())
+            transform_types(NoReturnToNeverT())
 
-        finalizers.append(MakePickleableT())
+        # Exclude test types before capping union size: removing test-module
+        # members from unions can bring their size below max_union_size.
+        if output_options.exclude_test_types:
+            transform_types(ExcludeTestTypesT(
+                self.test_modules,
+                detect_by_name=output_options.detect_test_modules_by_name
+            ))
 
-        # Compute type distributions before finalization (uses pre-transformation traces)
-        type_distributions: dict[CodeId, list[TraceDistribution]] = {}
-        if output_options.type_distribution_comments:
-            for func_info in self.func_info.values():
-                if func_info.code_id not in self.wrapper_code_ids:
-                    if (dist := func_info.compute_type_distributions()):
-                        type_distributions[func_info.code_id] = dist
-
-        # Compute raw annotations (before finalization)
-        raw_annotations: dict[CodeId, FuncAnnotation] = {
-            func_info.code_id: annotation
-            for func_info in self.func_info.values()
-            if func_info.code_id not in self.wrapper_code_ids
-            if (annotation := mk_annotation(func_info)) is not None
-        }
-
-        # Propagate child method types up to parent methods
-        self._propagate_to_parents(raw_annotations)
-
-
-
-        # Apply finalization
-        annotations = {
-            code_id: FuncAnnotation(
-                args=[(arg[0], finalize(arg[1])) for arg in annotation.args],
-                retval=finalize(annotation.retval),
-                varargs=annotation.varargs,
-                kwargs=annotation.kwargs,
-                variables=[(var[0], finalize(var[1])) for var in annotation.variables]
-            )
-            for code_id, annotation in raw_annotations.items()
-        }
-
-        module_vars = {
-            filename: ModuleVars([
-                (var_name, finalize(merged_types(var_types, for_variable=True)))
-                for var_name, var_types in var_dict.items()
-            ])
-            for filename, var_dict in self.module_variables.items()
-        }
+        transform_types(UnionSizeT())
+        transform_types(MakePickleableT())
 
         return annotations, module_vars, type_distributions
 

@@ -1267,28 +1267,13 @@ def test_max_limit_has_no_calibration_fields(monkeypatch):
         assert 'singleton_ratios' not in record
 
 
-def test_from_set_union_size_limit(monkeypatch):
-    """Unions exceeding max_union_size collapse to Any."""
-    monkeypatch.setattr(run_options, 'max_union_size', 5)
-
-    # Under limit: 4 types → normal union
-    s = {TypeInfo.from_type(int), TypeInfo.from_type(str),
-         TypeInfo.from_type(float), TypeInfo.from_type(bool)}
+def test_from_set_no_union_size_limit():
+    """from_set() no longer enforces max_union_size; UnionSizeT does that post-resolution."""
+    # Even a large set should produce a union, not collapse to Any
+    s = {TypeInfo(module='mod', name=f'T{i}') for i in range(50)}
     t = TypeInfo.from_set(s)
     assert t.is_union()
-    assert len(t.args) == 4
-
-    # At limit: 5 types → normal union
-    s.add(TypeInfo.from_type(bytes))
-    t = TypeInfo.from_set(s)
-    assert t.is_union()
-    assert len(t.args) == 5
-
-    # Over limit: 6 types → Any
-    s.add(TypeInfo(module='mod', name='Extra'))
-    t = TypeInfo.from_set(s)
-    assert t.type_obj is typing.Any
-    assert not t.is_union()
+    assert len(t.args) == 50
 
 
 def test_from_set_default_limit_allows_normal_unions():
@@ -1300,31 +1285,175 @@ def test_from_set_default_limit_allows_normal_unions():
     assert len(t.args) == 9
 
 
-def test_sample_until_stable_stops_at_union_limit(monkeypatch):
-    """Sampling stops early when distinct types exceed max_union_size."""
+def test_clear_code_id_deduplicates_union():
+    """ClearCodeIdT should clear code_id and deduplicate resulting unions."""
+    from righttyper.type_transformers import ClearCodeIdT
+    from righttyper.typeinfo import UnionTypeInfo
+    from righttyper.righttyper_types import CodeId
+    import collections.abc
+
+    base = TypeInfo.from_type(collections.abc.Callable)
+    a = base.replace(code_id=CodeId("a.py", "f", 1, 0))
+    b = base.replace(code_id=CodeId("b.py", "g", 1, 0))
+    c = TypeInfo.from_type(int)
+
+    # Union with 3 members: two Callables differing only in code_id, plus int
+    union = UnionTypeInfo.from_type(UnionTypeInfo, args=(a, b, c))
+    assert len(union.args) == 3
+
+    result = ClearCodeIdT().visit(union)
+    # Should deduplicate to Callable | int
+    if isinstance(result, UnionTypeInfo):
+        assert len(result.args) == 2
+    else:
+        assert result.type_obj in (collections.abc.Callable, int)
+
+
+def test_clear_code_id_non_union():
+    """ClearCodeIdT should clear code_id on non-union nodes too."""
+    from righttyper.type_transformers import ClearCodeIdT
+    from righttyper.righttyper_types import CodeId
+    import collections.abc
+
+    node = TypeInfo.from_type(collections.abc.Callable).replace(
+        code_id=CodeId("a.py", "f", 1, 0)
+    )
+    assert node.code_id is not None
+
+    result = ClearCodeIdT().visit(node)
+    assert result.code_id is None
+    assert result.type_obj is collections.abc.Callable
+
+
+def test_merge_observations_unions_overrides_lists():
+    """merge_observations must reconcile FuncInfo entries whose overrides
+    lists differ in depth.
+
+    The recorded overrides list depends on the order in which children get
+    observed: _register_parent_function's MRO walk early-exits at the first
+    already-registered ancestor.  So the same function can have a partial
+    chain in one .rt file (because some intermediate parent was already
+    known) and the full chain in another.  Both views are valid partial
+    snapshots of the same MRO, and merging them must take their union (not
+    raise on inequality).
+
+    Regression test for the pylint failure where merging .rt files crashed
+    on _EnableAction.__call__: one trace had only [_XableAction.__call__]
+    while another had the full chain up to argparse.Action.__call__."""
+    from righttyper.observations import (
+        Observations, FuncInfo, OverriddenFunction, ArgInfo,
+    )
+    from righttyper.righttyper_types import (
+        ArgumentName, CodeId, Filename, FunctionName,
+    )
+
+    def cid(name: str, line: int) -> CodeId:
+        return CodeId(Filename("f.py"), FunctionName(name), line, 0)
+
+    def ov(qualname: str, line: int) -> OverriddenFunction:
+        return OverriddenFunction(
+            module="m", qualname=qualname, code_id=cid(qualname, line)
+        )
+
+    func_id = cid("Child.__call__", 100)
+
+    fi1 = FuncInfo(
+        code_id=func_id,
+        args=(ArgInfo(ArgumentName("self"), None),),
+        varargs=None,
+        kwargs=None,
+        overrides=[ov("Parent.__call__", 50)],
+    )
+    fi2 = FuncInfo(
+        code_id=func_id,
+        args=(ArgInfo(ArgumentName("self"), None),),
+        varargs=None,
+        kwargs=None,
+        overrides=[
+            ov("Parent.__call__", 50),
+            ov("Grandparent.__call__", 30),
+            ov("argparse.Action.__call__", 10),
+        ],
+    )
+
+    obs1 = Observations()
+    obs1.func_info[func_id] = fi1
+    obs2 = Observations()
+    obs2.func_info[func_id] = fi2
+
+    obs1.merge_observations(obs2)
+
+    merged = obs1.func_info[func_id].overrides
+    qualnames = {o.qualname for o in merged}
+    assert qualnames == {
+        "Parent.__call__",
+        "Grandparent.__call__",
+        "argparse.Action.__call__",
+    }
+    # Each parent should appear exactly once.
+    assert len(merged) == 3
+
+
+def test_sample_until_stable_lifetime_budget(monkeypatch):
+    """container_max_samples is a per-container lifetime budget, not a
+    per-call cap.  Once the cumulative samples for a container reach the
+    budget, further sample_until_stable calls return immediately without
+    drawing more samples.
+
+    Regression test for the httpx module-__dict__ slowdown where the same
+    polymorphic container was repeatedly fully re-sampled on every visit
+    because Good-Turing's per-cycle counter could not converge on its
+    highly diverse type distribution."""
     from righttyper.type_id import ContainerSamples
+    import righttyper.type_id as t_id_mod
 
-    monkeypatch.setattr(run_options, 'max_union_size', 5)
-    monkeypatch.setattr(run_options, 'container_min_samples', 2)
-    monkeypatch.setattr(run_options, 'container_max_samples', 200)
+    monkeypatch.setattr(run_options, 'container_min_samples', 4)
+    monkeypatch.setattr(run_options, 'container_max_samples', 12)
 
-    # Sampler returns a new unique type each call
-    distinct_types = [type(f'T{i}', (), {}) for i in range(50)]
-    distinct_values = [t() for t in distinct_types]
-    idx = [0]
+    # Ten distinct user-defined classes cycled through the sampler — the
+    # cycle counter's singleton ratio stays well above container_type_threshold
+    # within the small budget, so Good-Turing never converges and the first
+    # call runs all the way to container_max_samples.
+    classes = [type(f'L{i}', (object,), {}) for i in range(10)]
+    sample_count = [0]
 
-    def sampler():
-        v = distinct_values[idx[0] % len(distinct_values)]
-        idx[0] += 1
-        return (v,)
+    def fake_get_value_type(v, depth=0):
+        ti = TypeInfo.from_type(classes[sample_count[0] % len(classes)])
+        sample_count[0] += 1
+        return ti
 
-    entry = ContainerSamples(o=distinct_values, n_counters=1)
-    reason = entry.sample_until_stable(sampler, depth=0)
+    monkeypatch.setattr(t_id_mod, 'get_value_type', fake_get_value_type)
 
-    assert reason == 'union_limit'
-    # Should stop much sooner than max_samples
-    total = entry.all_samples[0].total()
-    assert total < 50
+    samples = ContainerSamples(o=None, n_counters=1)
+
+    reason1 = samples.sample_until_stable(lambda: (None,), depth=0)
+    samples_after_first = sample_count[0]
+    assert reason1 == 'max_limit'
+    assert samples_after_first == run_options.container_max_samples
+
+    # Second call: budget already exhausted, should return immediately
+    # without taking any new samples.
+    reason2 = samples.sample_until_stable(lambda: (None,), depth=0)
+    assert reason2 == 'max_limit'
+    assert sample_count[0] == samples_after_first, (
+        f"second call took {sample_count[0] - samples_after_first} new samples; "
+        "expected 0 (budget already exhausted)"
+    )
+
+
+def test_normalize_unions_enforces_limit(monkeypatch):
+    """UnionSizeT collapses oversized unions to Any."""
+    from righttyper.type_transformers import UnionSizeT
+    from righttyper.typeinfo import UnionTypeInfo
+
+    monkeypatch.setattr(run_options, 'max_union_size', 3)
+
+    types = [TypeInfo(module='mod', name=f'T{i}') for i in range(5)]
+    union = UnionTypeInfo.from_type(UnionTypeInfo, args=tuple(types))
+    assert len(union.args) == 5
+
+    result = UnionSizeT().visit(union)
+    assert result.type_obj is typing.Any
 
 
 def test_eval_sampling_ground_truth_counts(monkeypatch):

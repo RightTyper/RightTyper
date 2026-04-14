@@ -188,12 +188,7 @@ class UnifiedTransformer(cst.CSTTransformer):
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
-        self.module_variables: dict[str, TypeInfo] = {}
-        if module_variables:
-            self.module_variables = {
-                var_name: var_type
-                for var_name, var_type in module_variables.variables
-            }
+        self.module_variables: dict[str, TypeInfo] = module_variables.variables if module_variables else {}
         self.module_name = module_name
         self.override_annotations = override_annotations
         self.only_update_annotations = only_update_annotations
@@ -213,7 +208,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.name2module: dict[str, str] = {
             t.fullname(): t.module
             for ann in type_annotations.values()
-            for root in [arg[1] for arg in ann.args] + [ann.retval] + [var[1] for var in ann.variables]
+            for root in list(ann.args.values()) + [ann.retval] + list(ann.variables.values())
             for t in iter_types(root)
         } | {
             t.fullname(): t.module
@@ -340,7 +335,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             for arg in ti.args:
                 if isinstance(arg, TypeInfo):
                     collect(arg)
-        for _, atype in ann.args:
+        for atype in ann.args.values():
             collect(atype)
         collect(ann.retval)
         return len(indices)
@@ -374,6 +369,12 @@ class UnifiedTransformer(cst.CSTTransformer):
                         self.module_generic_index += 1
 
                     vself.generics[node] = name
+
+                # Don't recurse into typevar nodes: any typevar_index inside
+                # a typevar's bound is from an inner function's generalization
+                # and shouldn't become a top-level type parameter.
+                if node.typevar_index:
+                    return node
 
                 return super().visit(node)
 
@@ -574,13 +575,7 @@ class UnifiedTransformer(cst.CSTTransformer):
         qualname = ".".join(self.name_stack[func_scope_index:] + [_nodes_to_dotted_name(target)])
         if func_scope_index:
             if (ann := self.func_ann_stack[-1]):
-                return next(
-                    (
-                        var_type
-                        for var_name, var_type in ann.variables
-                        if var_name == qualname
-                    ), None
-                )
+                return ann.variables.get(qualname)
         else:
             return self.module_variables.get(qualname)
 
@@ -1009,7 +1004,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             return True
 
         if ann := typing.cast(FuncAnnotation, self.func_ann_stack.pop()):  # cast to make mypy happy
-            annmap: dict[str, TypeInfo] = {aname: atype for aname, atype in ann.args}
+            annmap = dict(ann.args)  # copy; we delete entries below for already-annotated params
 
             for par in typing.cast(typing.Iterator[cst.Param],
                                    cstm.findall(updated_node.params, cstm.Param())):

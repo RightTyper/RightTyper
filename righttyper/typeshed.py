@@ -225,6 +225,7 @@ def get_typeshed_module(module_name: str) -> cst.Module|None:
     return cst.parse_module(stub_path.read_text('utf-8'))
 
 
+@cache
 def get_typeshed_func_params(module_name: str, qualname: str) -> list[TypeInfo] | None:
     if not (module := get_typeshed_module(module_name)):
         return None

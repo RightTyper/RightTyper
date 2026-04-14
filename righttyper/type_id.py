@@ -416,17 +416,31 @@ class ContainerSamples:
         return any(v not in counter for v, counter in zip(sample, self.all_samples))
 
     def sample_until_stable(self, sampler: abc.Callable[[], tuple[Any, ...]], depth: int) -> str:
-        """Sample until Good-Turing indicates stability.
+        """Sample until Good-Turing indicates stability or the per-container
+        lifetime budget ``container_max_samples`` is exhausted.
 
-        Uses cycle-local counters for the stopping criterion, ensuring accurate
-        estimation of the current container's type distribution.
+        Uses cycle-local counters for Good-Turing so convergence reflects
+        the current visit's distribution.
 
-        Returns the stopping reason: 'good_turing' or 'max_limit'.
+        Returns 'good_turing' or 'max_limit'.
         """
         cycle_counter: tuple[Counter[TypeInfo], ...] = tuple(Counter() for _ in range(self.n_counters))
         n = 0
 
         while True:
+            # Lifetime budget check.  At the top of the loop so re-entries
+            # from has_new_type spot-checks on an already-exhausted
+            # container return immediately.
+            if self.all_samples[0].total() >= run_options.container_max_samples:
+                container_type = type(self.o).__name__
+                container_len = len(self.o) if hasattr(self.o, '__len__') else '?'  # type: ignore[arg-type]
+                logger.info(
+                    f"Container sampling hit lifetime budget "
+                    f"({self.all_samples[0].total()}): "
+                    f"{container_type}[{container_len}]"
+                )
+                return 'max_limit'
+
             sample = tuple(get_value_type(v, depth+1) for v in sampler())
             # Add to cumulative history
             for c, v in zip(self.all_samples, sample):
@@ -436,23 +450,9 @@ class ContainerSamples:
                 c[v] += 1
             n += 1
 
-            # Early-out: if cumulative types exceed max_union_size,
-            # further sampling is pointless — from_set() will collapse to Any
-            if any(len(c) > run_options.max_union_size for c in self.all_samples):
-                return 'union_limit'
-
             # Minimum samples before checking Good-Turing
             if n < run_options.container_min_samples:
                 continue
-
-            # Per-cycle max limit
-            if n >= run_options.container_max_samples:
-                container_type = type(self.o).__name__
-                container_len = len(self.o) if hasattr(self.o, '__len__') else '?'
-                all_types = [set(c.keys()) for c in cycle_counter]
-                ratios = [sum(c == 1 for c in counter.values()) / n for counter in cycle_counter]
-                logger.info(f"Container sampling hit max limit ({n}): {container_type}[{container_len}], ratios={ratios}, types={all_types}")
-                return 'max_limit'
 
             # Good-Turing: stop when singleton ratio is low for all counters
             ratios = [

@@ -1,5 +1,5 @@
 import types
-from righttyper.typeinfo import TypeInfo, AnyTypeInfo
+from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo, UnknownTypeInfo, UnionTypeInfo
 from righttyper.type_transformers import MakePickleableT, LoadTypeObjT, ExcludeTestTypesT
 from righttyper.type_id import get_type_name
 
@@ -104,3 +104,62 @@ def test_heuristic_disabled_by_default():
     tr = ExcludeTestTypesT(set())
     t = tr.visit(TypeInfo('test_foo', 'Bar'))
     assert t.module == 'test_foo'
+
+
+def test_exclude_test_types_removes_from_union():
+    """Test types in a union should be removed, not replaced with Any.
+
+    Replacing with Any poisons the whole union (X | Any = Any), losing all
+    useful type information.  Removing the test member preserves the
+    non-test types."""
+    tr = ExcludeTestTypesT({'tests'})
+    real = TypeInfo('click', 'Context')
+    fake = TypeInfo('tests.test_black', 'FakeContext')
+    union = TypeInfo.from_set({real, fake})
+    assert isinstance(union, UnionTypeInfo)
+
+    result = tr.visit(union)
+    # Should be just click.Context, not Any.
+    assert result.module == 'click'
+    assert result.name == 'Context'
+
+
+def test_exclude_test_types_union_all_test():
+    """If ALL members of a union are from test modules, result should be Unknown."""
+    tr = ExcludeTestTypesT({'tests'})
+    a = TypeInfo('tests.fixtures', 'FakeA')
+    b = TypeInfo('tests.helpers', 'FakeB')
+    union = TypeInfo.from_set({a, b})
+
+    result = tr.visit(union)
+    assert result == UnknownTypeInfo
+
+
+def test_exclude_test_types_union_only_none_left():
+    """If removing test types from a union leaves only None, result should be Unknown.
+
+    Optional[TestFoo] should not narrow to None — we don't know the real
+    non-None type, so dropping the annotation is safer than claiming it's
+    always None.
+    """
+    tr = ExcludeTestTypesT({'tests'})
+    fake = TypeInfo('tests.fixtures', 'FakeContext')
+    union = TypeInfo.from_set({fake, NoneTypeInfo})
+
+    result = tr.visit(union)
+    assert result == UnknownTypeInfo
+
+
+def test_exclude_test_types_union_preserves_multiple_non_test():
+    """Non-test members of a union should all be preserved."""
+    tr = ExcludeTestTypesT({'tests'})
+    real1 = TypeInfo('click', 'Context')
+    real2 = TypeInfo('click', 'Option')
+    fake = TypeInfo('tests.test_black', 'FakeContext')
+    union = TypeInfo.from_set({real1, real2, fake})
+
+    result = tr.visit(union)
+    assert isinstance(result, UnionTypeInfo)
+    assert len(result.args) == 2
+    names = {a.name for a in result.args if isinstance(a, TypeInfo)}
+    assert names == {'Context', 'Option'}
