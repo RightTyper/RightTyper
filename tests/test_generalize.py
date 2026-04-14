@@ -626,3 +626,88 @@ def test_subsume_empty_tuple_by_varlen():
 
     result = merged_types({tuple_empty, tuple_var}, for_variable=False)
     assert result == tuple_var
+
+
+# =============================================================================
+# Tests for attribute-aware simplification
+# =============================================================================
+
+# Test hierarchy: Base has .name and .value; ChildA adds .extra_a; ChildB adds .extra_b.
+# Without accessed_attributes, simplify merges ChildA|ChildB → Base (common dir() attrs).
+# With accessed_attributes={'name'}, the merge should still work (Base has .name).
+# With accessed_attributes={'extra_a'}, merge should NOT happen (Base lacks .extra_a).
+
+class _Base:
+    name: str = ""
+    value: int = 0
+
+class _ChildA(_Base):
+    extra_a: str = ""
+
+class _ChildB(_Base):
+    extra_b: str = ""
+
+
+def test_simplify_with_accessed_attributes():
+    """When accessed_attributes are provided and the common base has them, merge happens."""
+    from righttyper.generalize import simplify
+
+    a = TypeInfo.from_type(_ChildA)
+    b = TypeInfo.from_type(_ChildB)
+
+    result = simplify({a, b}, accessed_attributes={"name"})
+    assert len(result) == 1
+    merged = next(iter(result))
+    assert merged.type_obj is _Base
+
+
+def test_simplify_without_accessed_attributes():
+    """Without accessed_attributes, current dir()-based behavior is preserved."""
+    from righttyper.generalize import simplify
+
+    a = TypeInfo.from_type(_ChildA)
+    b = TypeInfo.from_type(_ChildB)
+
+    # dir()-based: ChildA and ChildB share many attrs via Base → merges to Base
+    result = simplify({a, b})
+    assert len(result) == 1
+    merged = next(iter(result))
+    assert merged.type_obj is _Base
+
+
+def test_simplify_accessed_attrs_prevents_over_merge():
+    """When accessed_attributes include an attr not on the common base, merge is prevented."""
+    from righttyper.generalize import simplify
+
+    a = TypeInfo.from_type(_ChildA)
+    b = TypeInfo.from_type(_ChildB)
+
+    # extra_a is only on ChildA, not on Base → can't merge to Base
+    result = simplify({a, b}, accessed_attributes={"extra_a"})
+    assert len(result) == 2
+    types = {t.type_obj for t in result}
+    assert types == {_ChildA, _ChildB}
+
+
+def test_simplify_single_type_with_accessed_attributes():
+    """Even a single type can be generalized to a base when accessed_attributes
+    are all present on that base."""
+    from righttyper.generalize import simplify
+
+    a = TypeInfo.from_type(_ChildA)
+
+    # 'name' is on _Base → ChildA can be generalized to Base
+    result = simplify({a}, accessed_attributes={"name"})
+    assert len(result) == 1
+    assert next(iter(result)).type_obj is _Base
+
+
+def test_simplify_single_type_no_generalization_without_attrs():
+    """Without accessed_attributes, a single type is not generalized (nothing to merge)."""
+    from righttyper.generalize import simplify
+
+    a = TypeInfo.from_type(_ChildA)
+
+    result = simplify({a})
+    assert len(result) == 1
+    assert next(iter(result)).type_obj is _ChildA

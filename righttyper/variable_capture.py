@@ -38,6 +38,9 @@ class CodeVars:
     # class-level attributes (cls.x or class body assignments): attr_name -> initial constant type
     class_attributes: dict[str, type | None] | None = None
 
+    # attributes accessed on each variable (from static analysis of the function body)
+    accessed_attributes: dict[str, set[str]] = field(default_factory=dict)
+
 
 """Maps code objects to the variables assigned/bound within each object."""
 code2variables: dict[types.CodeType, CodeVars] = dict()
@@ -134,6 +137,13 @@ class VariableFinder(ast.NodeVisitor):
         # Resulting map of executing code object to their CodeVars
         self.code_vars: dict[str, CodeVars] = dict()
 
+        # Alias tracking: variable -> set of variables it could be (for attribute propagation)
+        self._aliases: dict[str, set[str]] = {}
+
+        # Attribute accesses collected for the current scope
+        # Stored as code_qualname -> {var_name -> {attr_names}}
+        self._accessed_attributes: dict[str, dict[str, set[str]]] = {}
+
     def _record_variable(self, name: str, value: ast.expr | None = None) -> None:
         if name in self._not_locals_stack[-1]:
             return
@@ -154,9 +164,33 @@ class VariableFinder(ast.NodeVisitor):
             const_type = type(value.value) if (value is not None and isinstance(value, ast.Constant)) else None
             codevars.variables[name] = const_type
 
+    def _record_alias(self, name: str, value: ast.expr | None) -> None:
+        """Track name-to-name aliases for attribute access propagation.
+        Unions aliases across branches (conservative: over-approximates)."""
+        if value is not None and isinstance(value, ast.Name):
+            # y = x → y aliases whatever x aliases (plus x itself), unioned with any prior aliases
+            new_aliases = self._aliases.get(value.id, set()) | {value.id}
+            self._aliases[name] = self._aliases.get(name, set()) | new_aliases
+        elif name in self._aliases:
+            # y = <non-name> → y is no longer a pure alias, but keep prior aliases
+            # (could be from a different branch)
+            pass
+
+    def _resolve_aliases(self, name: str) -> set[str]:
+        """Resolve a variable name to all names it could refer to (including itself)."""
+        return self._aliases.get(name, set()) | {name}
+
+    def _record_attribute_access(self, var_name: str, attr_name: str) -> None:
+        """Record that attr_name is accessed on var_name (and its aliases)."""
+        code_name = self._code_stack[-1]
+        attrs = self._accessed_attributes.setdefault(code_name, {})
+        for name in self._resolve_aliases(var_name):
+            attrs.setdefault(name, set()).add(attr_name)
+
     def _record_target(self, t: ast.AST, value: ast.expr | None = None) -> None:
         if isinstance(t, ast.Name):
             self._record_variable(t.id, value)
+            self._record_alias(t.id, value)
             if t.id == self._self_stack[-1]:
                 self._self_stack[-1] = None # a new assignment masked 'self'
             if t.id == self._cls_stack[-1]:
@@ -293,6 +327,12 @@ class VariableFinder(ast.NodeVisitor):
         self._code_stack.pop()
         self._qualname_stack.pop()
 
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        # Record attribute accesses on variables: x.foo, x.foo(), x.foo = val
+        if isinstance(node.value, ast.Name):
+            self._record_attribute_access(node.value.id, node.attr)
+        self.generic_visit(node)
+
     def visit_Lambda(self, node: ast.Lambda) -> None:
         # any NamedExpr within stay within the lambda's scope
         pass
@@ -410,13 +450,22 @@ def map_variables(tree: ast.Module, module_code: types.CodeType) -> dict[types.C
         for co in _walk_code_objects(module_code)
     }
 
-    return {
-        co: replace(
-            codevars,
-            scope_code=scope_code,
-            class_key=qualname2code.get(codevars.class_name)
-        )
-        for co in qualname2code.values()
-        if (codevars := f.code_vars.get(co.co_qualname))
-        if (scope_code := qualname2code.get(codevars.scope))
-    }
+    result: dict[types.CodeType, CodeVars] = {}
+    for co in qualname2code.values():
+        accessed = f._accessed_attributes.get(co.co_qualname, {})
+        if (codevars := f.code_vars.get(co.co_qualname)):
+            if (scope_code := qualname2code.get(codevars.scope)):
+                result[co] = replace(
+                    codevars,
+                    scope_code=scope_code,
+                    class_key=qualname2code.get(codevars.class_name),
+                    accessed_attributes=accessed,
+                )
+        elif accessed:
+            # Function has attribute accesses but no local variables
+            result[co] = CodeVars(
+                scope=co.co_qualname,
+                scope_code=co,
+                accessed_attributes=accessed,
+            )
+    return result

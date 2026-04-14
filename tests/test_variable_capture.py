@@ -749,3 +749,168 @@ def test_regular_method_no_cls():
             break
     else:
         assert False, "C.method not found"
+
+
+# =============================================================================
+# Tests for accessed attribute collection
+# =============================================================================
+
+def get_accessed_attributes(mapping: dict[types.CodeType, variables.CodeVars], name: str):
+    """Returns accessed_attributes by code name."""
+    for co, codevars in mapping.items():
+        if co.co_qualname == name:
+            return codevars.accessed_attributes
+    return {}
+
+
+def test_accessed_attributes_simple():
+    """x.foo collects 'foo' on parameter x."""
+    src = textwrap.dedent("""
+        def f(x):
+            return x.name
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert attrs.get("x") == {"name"}
+
+
+def test_accessed_attributes_method_call():
+    """x.foo() still collects 'foo' — it's an attribute access followed by a call."""
+    src = textwrap.dedent("""
+        def f(x):
+            return x.process()
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert attrs.get("x") == {"process"}
+
+
+def test_accessed_attributes_multiple_vars():
+    """Different attributes on different variables are tracked separately."""
+    src = textwrap.dedent("""
+        def f(x, y):
+            return x.name + y.value
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert attrs.get("x") == {"name"}
+    assert attrs.get("y") == {"value"}
+
+
+def test_accessed_attributes_multiple_on_same_var():
+    """Multiple attributes on the same variable are all collected."""
+    src = textwrap.dedent("""
+        def f(x):
+            return x.name + x.value
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert attrs.get("x") == {"name", "value"}
+
+
+def test_accessed_attributes_chained():
+    """x.foo.bar collects 'foo' on x (bar is on foo's result, not x)."""
+    src = textwrap.dedent("""
+        def f(x):
+            return x.parent.name
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert attrs.get("x") == {"parent"}
+    assert "name" not in attrs.get("x", set())
+
+
+def test_accessed_attributes_includes_writes():
+    """x.foo = val is still an attribute access — the type needs to support it."""
+    src = textwrap.dedent("""
+        def f(x):
+            x.name = "hello"
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "name" in attrs.get("x", set())
+
+
+def test_accessed_attributes_locals():
+    """Attribute access on local variables, not just parameters."""
+    src = textwrap.dedent("""
+        def f():
+            result = get_result()
+            return result.count
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert attrs.get("result") == {"count"}
+
+
+def test_accessed_attributes_alias():
+    """y = x; y.name records 'name' on x."""
+    src = textwrap.dedent("""
+        def f(x):
+            y = x
+            return y.name
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "name" in attrs.get("x", set())
+
+
+def test_accessed_attributes_transitive_alias():
+    """z = y; y = x; z still aliases through to x."""
+    src = textwrap.dedent("""
+        def f(x):
+            y = x
+            z = y
+            return z.name
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "name" in attrs.get("x", set())
+
+
+def test_accessed_attributes_alias_reassigned():
+    """Reassignment after alias: conservatively keeps the alias (could be a branch)."""
+    src = textwrap.dedent("""
+        def f(x):
+            y = x
+            y = something_else()
+            return y.name
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    # Without flow analysis, we can't distinguish sequential reassignment from
+    # branches, so we conservatively keep the alias. This over-approximates
+    # (records 'name' on x even though y was reassigned), which is safe —
+    # it just makes simplification slightly more conservative.
+    assert "name" in attrs.get("x", set())
+
+
+def test_accessed_attributes_alias_branch_conservative():
+    """Aliases from different branches are unioned (conservative)."""
+    src = textwrap.dedent("""
+        def f(x, y):
+            if True:
+                z = x
+            else:
+                z = y
+            return z.value
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    # z could be x or y, so 'value' should be recorded on both
+    assert "value" in attrs.get("x", set())
+    assert "value" in attrs.get("y", set())
+
+
+def test_accessed_attributes_non_name_assignment_no_alias():
+    """y = x.child is not an alias — attribute access on y stays on y."""
+    src = textwrap.dedent("""
+        def f(x):
+            y = x.child
+            return y.name
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    # y is not an alias for x — y.name is on y, and x.child is on x
+    assert attrs.get("y") == {"name"}
+    assert attrs.get("x") == {"child"}

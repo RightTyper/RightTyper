@@ -2633,6 +2633,66 @@ def test_discovered_function_type_in_yield():
     """)
 
 
+def test_simplify_uses_accessed_attributes():
+    """When a function accesses an attribute on a parameter, simplify() should use
+    that to make better type merging decisions — merging to the common base that
+    has the accessed attribute rather than relying on dir() overlap.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Base:
+            def get_name(self):
+                return ""
+
+        class ChildA(Base):
+            def extra_a(self):
+                return "a"
+
+        class ChildB(Base):
+            def extra_b(self):
+                return "b"
+
+        def process(x):
+            return x.get_name()
+
+        process(ChildA())
+        process(ChildB())
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # With accessed-attribute-aware simplification, x is accessed via .get_name()
+    # which exists on Base, so ChildA|ChildB should merge to Base.
+    assert get_function(code, 'process') == textwrap.dedent("""\
+        def process(x: Base) -> str: ...
+    """)
+
+
+def test_simplify_single_type_with_accessed_attributes():
+    """Even with a single observed type, accessed attributes can simplify it
+    to a more general base. Path('.') produces PosixPath at runtime, but if
+    the function only accesses .name (from PurePath), the annotation should
+    use a more general type.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+
+        def get_name(p):
+            return p.name
+
+        get_name(Path("."))
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    func = get_function(code, 'get_name')
+    # Should be Path or PurePath, not PosixPath
+    assert 'PosixPath' not in func
+
+
 def test_nested_callable_resolution():
     """When a function returns another function that itself returns a function,
     the nested Callable types should be fully resolved.

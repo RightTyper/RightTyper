@@ -401,7 +401,10 @@ class Observations:
 
 
     @staticmethod
-    def mk_annotation(func_info: FuncInfo) -> FuncAnnotation|None:
+    def mk_annotation(
+        func_info: FuncInfo,
+        accessed_attributes: dict[str, set[str]] | None = None,
+    ) -> FuncAnnotation|None:
         traces = func_info.most_common_traces()
         if not traces:
             return None
@@ -416,10 +419,13 @@ class Observations:
         ann = FuncAnnotation(
             args={
                 arg.arg_name:
-                    merged_types({
-                        signature[i] if i < n_sig_args else UnknownTypeInfo,
-                        *((arg.default,) if arg.default is not None else ()),
-                    })
+                    merged_types(
+                        {
+                            signature[i] if i < n_sig_args else UnknownTypeInfo,
+                            *((arg.default,) if arg.default is not None else ()),
+                        },
+                        accessed_attributes=accessed_attributes.get(arg.arg_name) if accessed_attributes else None,
+                    )
                 for i, arg in enumerate(func_info.args)
             },
             retval=signature[-1],
@@ -486,10 +492,21 @@ class Observations:
 
             return T().visit(node)
 
+        # Build CodeId → accessed_attributes from the variable capture data.
+        from righttyper.variable_capture import code2variables
+        accessed_attrs: dict[CodeId, dict[str, set[str]]] = {
+            CodeId.from_code(co): cv.accessed_attributes
+            for co, cv in code2variables.items()
+            if cv.accessed_attributes
+        }
+
         annotations: dict[CodeId, FuncAnnotation] = {
             code_id: annotation
             for code_id in self.code_id_topo_sort()
-            if (annotation := Observations.mk_annotation(self.func_info[code_id])) is not None
+            if (annotation := Observations.mk_annotation(
+                self.func_info[code_id],
+                accessed_attributes=accessed_attrs.get(code_id),
+            )) is not None
         }
 
         # Merge module variables into ModuleVars (parallel to annotations for functions).

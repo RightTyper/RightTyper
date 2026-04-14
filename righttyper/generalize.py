@@ -193,15 +193,21 @@ def merge_container_supersets(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     return typeinfoset
 
 
-def merged_types(typeinfoset: set[TypeInfo], for_variable: bool = False) -> TypeInfo:
+def merged_types(
+    typeinfoset: set[TypeInfo],
+    for_variable: bool = False,
+    accessed_attributes: set[str] | None = None,
+) -> TypeInfo:
     """Attempts to merge types in a set before forming their union.
 
     Args:
         typeinfoset: Set of types to merge
         for_variable: If True, apply similar generics merging (safe for variables only)
+        accessed_attributes: If provided, attribute names accessed on this variable
+            (from static analysis), used to guide type simplification.
     """
-    if len(typeinfoset) > 1 and output_options.simplify_types:
-        typeinfoset = simplify(typeinfoset)
+    if output_options.simplify_types and (len(typeinfoset) > 1 or accessed_attributes):
+        typeinfoset = simplify(typeinfoset, accessed_attributes)
 
     if len(typeinfoset) > 1:
         if for_variable:
@@ -224,9 +230,13 @@ def merged_types(typeinfoset: set[TypeInfo], for_variable: bool = False) -> Type
     return TypeInfo.from_set(typeinfoset)
 
 
-def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
-    """Simplifies the set by replacing types with supertypes that contains
-       all common attributes.
+def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = None) -> set[TypeInfo]:
+    """Simplifies the set by replacing types with supertypes that have
+       all required attributes.
+
+       If accessed_attributes is provided, only those attributes are considered
+       (from static analysis of the function body). Otherwise, falls back to
+       using dir() to find common attributes across the types.
     """
     # Types we support simplifying
     simplifiable_types = set(
@@ -311,18 +321,21 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
         new_mro.extend([int, float, complex, object][tower_index:])
         return tuple(new_mro)
 
-    # FIXME besides attribute presence, we should check their types/signatures
-    # FIXME we should check object attributes, not their classes'
-    common_attributes = set.intersection(
-        *(
-            set(
-                attr
-                for attr in dir(cast_not_None(t.type_obj))
-                if getattr(t.type_obj, attr, None) is not None
-                if not attr.startswith("_") or attr.startswith("__")
-            ) for t in mergeable_types
+    if accessed_attributes is not None:
+        common_attributes = accessed_attributes
+    else:
+        # FIXME besides attribute presence, we should check their types/signatures
+        # FIXME we should check object attributes, not their classes'
+        common_attributes = set.intersection(
+            *(
+                set(
+                    attr
+                    for attr in dir(cast_not_None(t.type_obj))
+                    if getattr(t.type_obj, attr, None) is not None
+                    if not attr.startswith("_") or attr.startswith("__")
+                ) for t in mergeable_types
+            )
         )
-    )
 
     # Get the superclasses, if any, that have all the common attributes
     common_supertypes = defaultdict(list)
@@ -346,7 +359,13 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     # on the list, after sorting by how many types they replace, are as specific as possible.
     for st, types in sorted(common_supertypes.items(), key=lambda item: -len(item[1])):
         if len(types) == 1:
-            break   # we're not interested in 1-for-1 exchanges
+            if accessed_attributes is None:
+                break   # without accessed_attributes, 1-for-1 exchanges aren't useful
+            # With accessed_attributes, generalize a single type to its base
+            # if the base has all accessed attributes (e.g., PosixPath → Path).
+            # Skip self-replacement (type replacing itself with itself).
+            if types[0].type_obj is st:
+                continue
 
         if any(t in mergeable_types for t in types):
             mergeable_types -= set(types)
