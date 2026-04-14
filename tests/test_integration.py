@@ -2669,7 +2669,6 @@ def test_simplify_uses_accessed_attributes():
     """)
 
 
-@pytest.mark.xfail(reason="On 3.13+ Linux, pathlib._local.Path isn't remapped; needs TypeMap serialization")
 def test_simplify_single_type_with_accessed_attributes():
     """Even with a single observed type, accessed attributes can simplify it
     to a more general base. Path('.') produces PosixPath at runtime, but if

@@ -178,6 +178,23 @@ class TypeMap:
                     )
 
 
+    def to_name_map(self) -> dict[tuple[str, str], tuple[str, str]]:
+        """Build a serializable mapping of (original_module, original_name) → (canonical_module, canonical_name)
+        for types whose canonical name differs from their __module__.__qualname__."""
+        from righttyper.righttyper_utils import normalize_module_name
+        result: dict[tuple[str, str], tuple[str, str]] = {}
+        for t, names in self._map.items():
+            if names:
+                original = (
+                    normalize_module_name(getattr(t, '__module__', '')),
+                    getattr(t, '__qualname__', getattr(t, '__name__', ''))
+                )
+                canonical = names[0]
+                if original != canonical:
+                    result[original] = canonical
+        return result
+
+
 class AdjustTypeNamesT(TypeInfo.Transformer):
     """Adjust types' module and name by looking their type_obj on TypeMap."""
     def __init__(self, type_map: TypeMap) -> None:

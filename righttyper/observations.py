@@ -191,6 +191,12 @@ class Observations:
         # CodeIds of wrapper functions (with __wrapped__) — skip annotation
         self.wrapper_code_ids: set[CodeId] = set()
 
+        # Canonical type name map: (original_module, original_name) → (canonical_module, canonical_name).
+        # Set by recorder from TypeMap. Used in collect_annotations to fix names
+        # of types introduced by simplify() (e.g., pathlib._local.Path → pathlib.Path).
+        # All strings, serializable for .rt files.
+        self.type_name_map: dict[tuple[str, str], tuple[str, str]] = {}
+
 
     def transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
@@ -277,6 +283,7 @@ class Observations:
         self.source_to_module_name |= obs2.source_to_module_name
         self.test_modules |= obs2.test_modules
         self.wrapper_code_ids |= obs2.wrapper_code_ids
+        self.type_name_map |= obs2.type_name_map
 
 
     def _propagate_to_parents(self, raw_annotations: dict[CodeId, FuncAnnotation]) -> None:
@@ -660,6 +667,20 @@ class Observations:
             ))
 
         transform_types(UnionSizeT())
+
+        # Fix type names introduced by simplify() (e.g., MRO supertypes
+        # with internal module paths like pathlib._local.Path → pathlib.Path).
+        if self.type_name_map:
+            class _AdjustNewTypeNames(TypeInfo.Transformer):
+                """Remap type names using the serializable name map."""
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    key = (node.module, node.name)
+                    if (canonical := self.type_name_map.get(key)):
+                        if canonical != key:
+                            node = node.replace(module=canonical[0], name=canonical[1])
+                    return super().visit(node)
+            transform_types(_AdjustNewTypeNames())
+
         transform_types(MakePickleableT())
 
         return annotations, module_vars, type_distributions

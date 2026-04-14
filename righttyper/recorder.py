@@ -666,6 +666,7 @@ class ObservationsRecorder:
         if run_options.adjust_type_names:
             type_name_adjuster = AdjustTypeNamesT(type_map)
             obs.transform_types(type_name_adjuster)
+            obs.type_name_map = type_map.to_name_map()
         else:
             type_name_adjuster = None
             obs.transform_types(CheckTypeNamesT(type_map))
