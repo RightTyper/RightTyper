@@ -711,3 +711,65 @@ def test_simplify_single_type_no_generalization_without_attrs():
     result = simplify({a})
     assert len(result) == 1
     assert next(iter(result)).type_obj is _ChildA
+
+
+# =============================================================================
+# Tests for ABC/protocol matching in simplification
+# =============================================================================
+
+class _IterableA:
+    """Implements Iterable (recognized by __subclasshook__)."""
+    def __iter__(self): return iter(())
+    def __len__(self): return 0
+
+class _IterableB:
+    """Different class, also implements Iterable."""
+    def __iter__(self): return iter(())
+    def __len__(self): return 0
+
+
+def test_simplify_abc_fallback():
+    """When types share no concrete base (only object), simplify falls back to
+    ABC matching. _IterableA and _IterableB both implement Iterable via
+    __subclasshook__, so accessing __iter__ should merge to Iterable."""
+    import collections.abc as abc
+    from righttyper.generalize import simplify
+
+    a = TypeInfo.from_type(_IterableA)
+    b = TypeInfo.from_type(_IterableB)
+
+    result = simplify({a, b}, accessed_attributes={"__iter__"})
+    assert len(result) == 1
+    result_type = next(iter(result)).type_obj
+    assert issubclass(result_type, abc.Iterable)
+
+
+def test_simplify_abc_not_used_when_concrete_base_exists():
+    """When a concrete base exists and has the accessed attributes,
+    prefer it over ABC matching."""
+    from righttyper.generalize import simplify
+
+    a = TypeInfo.from_type(_ChildA)
+    b = TypeInfo.from_type(_ChildB)
+
+    # 'name' is on _Base → concrete merge to _Base, not to some ABC
+    result = simplify({a, b}, accessed_attributes={"name"})
+    assert len(result) == 1
+    assert next(iter(result)).type_obj is _Base
+
+
+def test_simplify_abc_single_type():
+    """A single type can be generalized to an ABC if the accessed attributes
+    match and there's no better concrete base."""
+    import collections.abc as abc
+    from righttyper.generalize import simplify
+
+    a = TypeInfo.from_type(_IterableA)
+
+    # _IterableA has no useful concrete base, but implements Sized + Iterable.
+    # Should generalize to the ABC, not stay as _IterableA.
+    result = simplify({a}, accessed_attributes={"__len__"})
+    assert len(result) == 1
+    result_type = next(iter(result)).type_obj
+    assert result_type is not _IterableA
+    assert issubclass(result_type, abc.Sized)

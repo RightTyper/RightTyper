@@ -371,6 +371,45 @@ def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = 
             mergeable_types -= set(types)
             replacements.add(get_type_name(st))
 
+    # ABC fallback: when types remain unmerged and we have accessed_attributes,
+    # try to find a collections.abc ABC that all remaining types implement and
+    # that has all the accessed attributes.
+    if accessed_attributes and mergeable_types and len(mergeable_types) > len(replacements):
+        from righttyper.type_id import ABCFinder
+
+        def structurally_implements(t: type, abc_type: type) -> bool:
+            """Check if t has all abstract methods required by abc_type."""
+            required = getattr(abc_type, '__abstractmethods__', set())
+            return all(hasattr(t, m) for m in required)
+
+        def abc_provides(abc_type: type, attributes: set[str]) -> bool:
+            """Check if the ABC's own interface (not inherited from object) covers the attributes."""
+            # The ABC's own methods: abstract + concrete defined on the ABC itself
+            own_attrs = set(getattr(abc_type, '__abstractmethods__', set()))
+            for cls in abc_type.__mro__:
+                if cls is object:
+                    break
+                own_attrs |= set(cls.__dict__)
+            return attributes <= own_attrs
+
+        # Find ABCs that every remaining type structurally implements
+        # and whose own interface covers the accessed attributes
+        abc_candidates = None
+        for t in mergeable_types:
+            abcs = {
+                g for g in ABCFinder._ABCs
+                if type(t.type_obj) is type
+                and structurally_implements(t.type_obj, g)
+                and abc_provides(g, accessed_attributes)
+            }
+            abc_candidates = abcs if abc_candidates is None else abc_candidates & abcs
+
+        if abc_candidates:
+            # Pick the most specific ABC (deepest MRO)
+            best = max(abc_candidates, key=lambda g: len(g.__mro__))
+            mergeable_types.clear()
+            replacements.add(get_type_name(best))
+
     return mergeable_types | replacements | other_types
 
 
