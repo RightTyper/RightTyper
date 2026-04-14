@@ -537,42 +537,42 @@ class Observations:
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 node = super().visit(node)
 
-                if node.code_id and (func_info := self.func_info.get(node.code_id)):
-                    if (ann := annotations.get(node.code_id)):
-                        # for Callable, we also merge arguments from annotations with observed ones.
-                        if node.type_obj in (abc.Callable, typing.Callable):
-                            old_params = (
-                                node.args[0].args
-                                if node.args and isinstance(node.args[0], TypeInfo) and node.args[0].is_list()
-                                else ()
-                            )
+                if node.code_id and (ann := annotations.get(node.code_id)):
+                    # for Callable, we also merge arguments from annotations with observed ones.
+                    if node.type_obj in (abc.Callable, typing.Callable):
+                        old_params = (
+                            node.args[0].args
+                            if node.args and isinstance(node.args[0], TypeInfo) and node.args[0].is_list()
+                            else ()
+                        )
 
-                            old_retval = node.args[-1] if node.args else UnknownTypeInfo
+                        old_retval = node.args[-1] if node.args else UnknownTypeInfo
 
-                            def get_old_param(i: int) -> TypeInfoArg:
-                                return old_params[i] if i < len(old_params) else UnknownTypeInfo
+                        def get_old_param(i: int) -> TypeInfoArg:
+                            return old_params[i] if i < len(old_params) else UnknownTypeInfo
 
-                            def is_unknown(t: TypeInfoArg) -> bool:
-                                return isinstance(t, TypeInfo) and t.is_unknown
+                        def is_unknown(t: TypeInfoArg) -> bool:
+                            return isinstance(t, TypeInfo) and t.is_unknown
 
-                            # FIXME skip 'self'/'cls' by name rather than assuming it's first
-                            ann_arg_types = list(ann.args.values())
-                            if node.is_bound:
-                                ann_arg_types = ann_arg_types[1:]
+                        # FIXME skip 'self'/'cls' by name rather than assuming it's first
+                        ann_arg_types = list(ann.args.values())
+                        if node.is_bound:
+                            ann_arg_types = ann_arg_types[1:]
 
-                            node = node.replace(args=(
-                                TypeInfo.list([
-                                    old if not is_unknown(old := get_old_param(i)) else clone(t)
-                                    for i, t in enumerate(ann_arg_types)
-                                ])
-                                if not (func_info.varargs or func_info.kwargs
-                                       or any(a.default is not None for a in func_info.args))
-                                else
-                                ...,
-                                old_retval if not is_unknown(old_retval) else clone(ann.retval)
-                            ))
-                        else:
-                            node = clone(ann.retval)
+                        node = node.replace(args=(
+                            TypeInfo.list([
+                                old if not is_unknown(old := get_old_param(i)) else clone(t)
+                                for i, t in enumerate(ann_arg_types)
+                            ])
+                            if not (ann.varargs or ann.kwargs
+                                   or any(a.default is not None
+                                          for a in self.func_info[node.code_id].args))
+                            else
+                            ...,
+                            old_retval if not is_unknown(old_retval) else clone(ann.retval)
+                        ))
+                    else:
+                        node = clone(ann.retval)
 
                 if node.type_obj is PostponedArg0:
                     # e.g. PostponedArg0[Iterator[X]] -> X
