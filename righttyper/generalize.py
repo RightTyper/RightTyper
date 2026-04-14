@@ -14,6 +14,25 @@ from righttyper.options import output_options
 _COVARIANT_TYPES = (tuple, frozenset)
 
 
+# Precomputed ABC data for structural matching in simplify().
+def _build_abc_caches() -> tuple[dict[type, frozenset[str]], dict[type, frozenset[str]]]:
+    from abc import ABCMeta
+    own_attrs: dict[type, frozenset[str]] = {}
+    abstract_methods: dict[type, frozenset[str]] = {}
+    for obj in vars(abc).values():
+        if isinstance(obj, ABCMeta):
+            attrs: set[str] = set()
+            for cls in obj.__mro__:
+                if cls is object:
+                    break
+                attrs |= set(cls.__dict__)
+            own_attrs[obj] = frozenset(attrs)
+            abstract_methods[obj] = frozenset(getattr(obj, '__abstractmethods__', set()))
+    return own_attrs, abstract_methods
+
+_abc_own_attrs, _abc_abstractmethods = _build_abc_caches()
+
+
 def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     """Merge generics with same container but different type args.
 
@@ -378,41 +397,29 @@ def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = 
     # mergeable types structurally implement and that covers the accessed
     # attributes. Use it only if it produces a shorter result than MRO.
     if accessed_attributes:
-        from righttyper.type_id import ABCFinder
+        # Pre-filter ABCs whose interface covers the accessed attributes (cheap set check)
+        candidates = [g for g, attrs in _abc_own_attrs.items()
+                       if accessed_attributes <= attrs]
 
-        def structurally_implements(t: type, abc_type: type) -> bool:
-            """Check if t has all abstract methods required by abc_type."""
-            required = getattr(abc_type, '__abstractmethods__', set())
-            return all(hasattr(t, m) for m in required)
-
-        def abc_provides(abc_type: type, attributes: set[str]) -> bool:
-            """Check if the ABC's own interface (not inherited from object) covers the attributes."""
-            own_attrs = set(getattr(abc_type, '__abstractmethods__', set()))
-            for cls in abc_type.__mro__:
-                if cls is object:
+        if candidates:
+            abc_candidates: set[type] | None = None
+            for t in mergeable_types:
+                if type(t.type_obj) is not type:
+                    abc_candidates = set()
                     break
-                own_attrs |= set(cls.__dict__)
-            return attributes <= own_attrs
+                t_attrs = frozenset(dir(t.type_obj))
+                abcs = {g for g in candidates if _abc_abstractmethods[g] <= t_attrs}
+                abc_candidates = abcs if abc_candidates is None else abc_candidates & abcs
 
-        abc_candidates = None
-        for t in mergeable_types:
-            abcs = {
-                g for g in ABCFinder._ABCs
-                if type(t.type_obj) is type
-                and structurally_implements(t.type_obj, g)
-                and abc_provides(g, accessed_attributes)
-            }
-            abc_candidates = abcs if abc_candidates is None else abc_candidates & abcs
-
-        if abc_candidates:
-            best = max(abc_candidates, key=lambda g: len(g.__mro__))
-            abc_result = {get_type_name(best)} | other_types
-            # Use ABC when it's strictly shorter, or when MRO made no
-            # improvement (e.g., single type with no useful supertype).
-            if len(abc_result) < len(mro_result) or (
-                len(abc_result) == len(mro_result) and not mro_replacements
-            ):
-                return abc_result
+            if abc_candidates:
+                best = max(abc_candidates, key=lambda g: len(g.__mro__))
+                abc_result = {get_type_name(best)} | other_types
+                # Use ABC when it's strictly shorter, or when MRO made no
+                # improvement (e.g., single type with no useful supertype).
+                if len(abc_result) < len(mro_result) or (
+                    len(abc_result) == len(mro_result) and not mro_replacements
+                ):
+                    return abc_result
 
     return mro_result
 
