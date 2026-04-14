@@ -4,6 +4,42 @@ from dataclasses import dataclass, field, replace
 import collections.abc as abc
 
 
+# Operator/builtin → dunder method maps for desugaring
+_BINOP_TO_DUNDER: dict[type, str] = {
+    ast.Add: "__add__", ast.Sub: "__sub__", ast.Mult: "__mul__", ast.Div: "__truediv__",
+    ast.FloorDiv: "__floordiv__", ast.Mod: "__mod__", ast.Pow: "__pow__",
+    ast.LShift: "__lshift__", ast.RShift: "__rshift__",
+    ast.BitOr: "__or__", ast.BitXor: "__xor__", ast.BitAnd: "__and__",
+    ast.MatMult: "__matmul__",
+}
+
+_AUGASSIGN_TO_DUNDER: dict[type, str] = {
+    ast.Add: "__iadd__", ast.Sub: "__isub__", ast.Mult: "__imul__", ast.Div: "__itruediv__",
+    ast.FloorDiv: "__ifloordiv__", ast.Mod: "__imod__", ast.Pow: "__ipow__",
+    ast.LShift: "__ilshift__", ast.RShift: "__irshift__",
+    ast.BitOr: "__ior__", ast.BitXor: "__ixor__", ast.BitAnd: "__iand__",
+    ast.MatMult: "__imatmul__",
+}
+
+_UNARYOP_TO_DUNDER: dict[type, str] = {
+    ast.UAdd: "__pos__", ast.USub: "__neg__", ast.Invert: "__invert__",
+    # ast.Not uses __bool__, but everything has that
+}
+
+_CMPOP_TO_DUNDER: dict[type, str] = {
+    ast.Eq: "__eq__", ast.NotEq: "__ne__",
+    ast.Lt: "__lt__", ast.LtE: "__le__", ast.Gt: "__gt__", ast.GtE: "__ge__",
+}
+
+_BUILTIN_TO_DUNDER: dict[str, str] = {
+    "len": "__len__", "iter": "__iter__", "next": "__next__",
+    "hash": "__hash__", "abs": "__abs__", "repr": "__repr__",
+    "reversed": "__reversed__", "str": "__str__", "bool": "__bool__",
+    "int": "__int__", "float": "__float__", "round": "__round__",
+    "complex": "__complex__", "bytes": "__bytes__",
+}
+
+
 @dataclass
 class CodeVars:
     """Identifies variables and attributes for a code object, facilitating their capture."""
@@ -327,10 +363,83 @@ class VariableFinder(ast.NodeVisitor):
         self._code_stack.pop()
         self._qualname_stack.pop()
 
+    def _is_builtin(self, name: str) -> bool:
+        """Check if name refers to a builtin (not shadowed by a local or parameter)."""
+        return (name not in self._not_locals_stack[-1]  # not a parameter
+                and name not in self.code_vars.get(self._code_stack[-1], CodeVars("")).variables)
+
     def visit_Attribute(self, node: ast.Attribute) -> None:
         # Record attribute accesses on variables: x.foo, x.foo(), x.foo = val
         if isinstance(node.value, ast.Name):
             self._record_attribute_access(node.value.id, node.attr)
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        if isinstance(node.value, ast.Name):
+            dunder = {ast.Load: "__getitem__", ast.Store: "__setitem__", ast.Del: "__delitem__"}
+            if (d := dunder.get(type(node.ctx))):
+                self._record_attribute_access(node.value.id, d)
+        self.generic_visit(node)
+
+    def visit_BinOp(self, node: ast.BinOp) -> None:
+        if isinstance(node.left, ast.Name) and (d := _BINOP_TO_DUNDER.get(type(node.op))):
+            self._record_attribute_access(node.left.id, d)
+        self.generic_visit(node)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> None:
+        if isinstance(node.operand, ast.Name) and (d := _UNARYOP_TO_DUNDER.get(type(node.op))):
+            self._record_attribute_access(node.operand.id, d)
+        self.generic_visit(node)
+
+    def visit_Compare(self, node: ast.Compare) -> None:
+        # x < y → __lt__ on x; item in x → __contains__ on x (right operand)
+        prev = node.left
+        for op, comparator in zip(node.ops, node.comparators):
+            if isinstance(op, (ast.In, ast.NotIn)):
+                if isinstance(comparator, ast.Name):
+                    self._record_attribute_access(comparator.id, "__contains__")
+            elif isinstance(prev, ast.Name) and (d := _CMPOP_TO_DUNDER.get(type(op))):
+                self._record_attribute_access(prev.id, d)
+            prev = comparator
+        self.generic_visit(node)
+
+    def visit_Await(self, node: ast.Await) -> None:
+        if isinstance(node.value, ast.Name):
+            self._record_attribute_access(node.value.id, "__await__")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        # Desugar builtin calls: len(x) → __len__ on x, etc.
+        if (isinstance(node.func, ast.Name)
+            and (dunder := _BUILTIN_TO_DUNDER.get(node.func.id))
+            and self._is_builtin(node.func.id)
+            and node.args
+            and isinstance(node.args[0], ast.Name)):
+            self._record_attribute_access(node.args[0].id, dunder)
+        self.generic_visit(node)
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        for gen in node.generators:
+            if isinstance(gen.iter, ast.Name):
+                self._record_attribute_access(gen.iter.id, "__iter__")
+        self.generic_visit(node)
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        for gen in node.generators:
+            if isinstance(gen.iter, ast.Name):
+                self._record_attribute_access(gen.iter.id, "__iter__")
+        self.generic_visit(node)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        for gen in node.generators:
+            if isinstance(gen.iter, ast.Name):
+                self._record_attribute_access(gen.iter.id, "__iter__")
+        self.generic_visit(node)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        for gen in node.generators:
+            if isinstance(gen.iter, ast.Name):
+                self._record_attribute_access(gen.iter.id, "__iter__")
         self.generic_visit(node)
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
@@ -377,6 +486,8 @@ class VariableFinder(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        if isinstance(node.target, ast.Name) and (d := _AUGASSIGN_TO_DUNDER.get(type(node.op))):
+            self._record_attribute_access(node.target.id, d)
         for t in _iter_target_atoms(node.target):
             self._record_target(t)
         self.generic_visit(node)
@@ -387,17 +498,24 @@ class VariableFinder(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_For(self, node: ast.For) -> None:
+        if isinstance(node.iter, ast.Name):
+            self._record_attribute_access(node.iter.id, "__iter__")
         for t in _iter_target_atoms(node.target):
             self._record_target(t)
         self.generic_visit(node)
 
     def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        if isinstance(node.iter, ast.Name):
+            self._record_attribute_access(node.iter.id, "__iter__")
         for t in _iter_target_atoms(node.target):
             self._record_target(t)
         self.generic_visit(node)
 
     def visit_With(self, node: ast.With) -> None:
         for item in node.items:
+            if isinstance(item.context_expr, ast.Name):
+                self._record_attribute_access(item.context_expr.id, "__enter__")
+                self._record_attribute_access(item.context_expr.id, "__exit__")
             if item.optional_vars is not None:
                 for t in _iter_target_atoms(item.optional_vars):
                     self._record_target(t)
@@ -405,6 +523,9 @@ class VariableFinder(ast.NodeVisitor):
 
     def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
         for item in node.items:
+            if isinstance(item.context_expr, ast.Name):
+                self._record_attribute_access(item.context_expr.id, "__aenter__")
+                self._record_attribute_access(item.context_expr.id, "__aexit__")
             if item.optional_vars is not None:
                 for t in _iter_target_atoms(item.optional_vars):
                     self._record_target(t)

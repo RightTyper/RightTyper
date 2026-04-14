@@ -914,3 +914,198 @@ def test_accessed_attributes_non_name_assignment_no_alias():
     # y is not an alias for x — y.name is on y, and x.child is on x
     assert attrs.get("y") == {"name"}
     assert attrs.get("x") == {"child"}
+
+
+# =============================================================================
+# Tests for operator/builtin desugaring to dunder attributes
+# =============================================================================
+
+def test_desugar_subscript_getitem():
+    """x[i] → __getitem__ on x."""
+    src = textwrap.dedent("""
+        def f(x, i):
+            return x[i]
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__getitem__" in attrs.get("x", set())
+
+
+def test_desugar_subscript_setitem():
+    """x[i] = v → __setitem__ on x."""
+    src = textwrap.dedent("""
+        def f(x, i, v):
+            x[i] = v
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__setitem__" in attrs.get("x", set())
+
+
+def test_desugar_subscript_delitem():
+    """del x[i] → __delitem__ on x."""
+    src = textwrap.dedent("""
+        def f(x, i):
+            del x[i]
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__delitem__" in attrs.get("x", set())
+
+
+def test_desugar_for_iter():
+    """for item in x → __iter__ on x."""
+    src = textwrap.dedent("""
+        def f(x):
+            for item in x:
+                pass
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__iter__" in attrs.get("x", set())
+
+
+def test_desugar_comprehension_iter():
+    """[... for item in x] → __iter__ on x."""
+    src = textwrap.dedent("""
+        def f(x):
+            return [item for item in x]
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__iter__" in attrs.get("x", set())
+
+
+def test_desugar_binop():
+    """x + y → __add__ on x."""
+    src = textwrap.dedent("""
+        def f(x, y):
+            return x + y
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__add__" in attrs.get("x", set())
+
+
+def test_desugar_augassign():
+    """x += y → __iadd__ on x."""
+    src = textwrap.dedent("""
+        def f(x, y):
+            x += y
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__iadd__" in attrs.get("x", set())
+
+
+def test_desugar_unaryop():
+    """-x → __neg__ on x."""
+    src = textwrap.dedent("""
+        def f(x):
+            return -x
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__neg__" in attrs.get("x", set())
+
+
+def test_desugar_compare():
+    """x < y → __lt__ on x."""
+    src = textwrap.dedent("""
+        def f(x, y):
+            return x < y
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__lt__" in attrs.get("x", set())
+
+
+def test_desugar_contains():
+    """item in x → __contains__ on x (right operand)."""
+    src = textwrap.dedent("""
+        def f(item, x):
+            return item in x
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__contains__" in attrs.get("x", set())
+
+
+def test_desugar_with():
+    """with x: → __enter__ and __exit__ on x."""
+    src = textwrap.dedent("""
+        def f(x):
+            with x:
+                pass
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__enter__" in attrs.get("x", set())
+    assert "__exit__" in attrs.get("x", set())
+
+
+def test_desugar_builtin_len():
+    """len(x) → __len__ on x."""
+    src = textwrap.dedent("""
+        def f(x):
+            return len(x)
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__len__" in attrs.get("x", set())
+
+
+def test_desugar_builtin_iter():
+    """iter(x) → __iter__ on x."""
+    src = textwrap.dedent("""
+        def f(x):
+            return iter(x)
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__iter__" in attrs.get("x", set())
+
+
+def test_desugar_builtin_reversed():
+    """reversed(x) → __reversed__ on x."""
+    src = textwrap.dedent("""
+        def f(x):
+            return reversed(x)
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__reversed__" in attrs.get("x", set())
+
+
+def test_desugar_builtin_shadowed():
+    """If len is shadowed by a local, don't desugar."""
+    src = textwrap.dedent("""
+        def f(x):
+            len = lambda y: 42
+            return len(x)
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__len__" not in attrs.get("x", set())
+
+
+def test_desugar_builtin_shadowed_by_param():
+    """If len is a parameter name, don't desugar."""
+    src = textwrap.dedent("""
+        def f(len, x):
+            return len(x)
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__len__" not in attrs.get("x", set())
+
+
+def test_desugar_await():
+    """await x → __await__ on x."""
+    src = textwrap.dedent("""
+        async def f(x):
+            return await x
+        """)
+    m = map_variables(src)
+    attrs = get_accessed_attributes(m, "f")
+    assert "__await__" in attrs.get("x", set())
