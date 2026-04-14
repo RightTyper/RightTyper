@@ -351,9 +351,10 @@ def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = 
 
 #    print("common_supertypes=", {k: [str(t) for t in v] for k, v in common_supertypes.items() if len(v)>1})
 
-    # Since we want types that are as specific as possible, save the replacements in a separate set,
-    # so that they don't get replaced as well.
-    replacements = set()
+    # MRO-based merge: replace types with the most specific common supertype.
+    # Save replacements separately so they don't get replaced in turn.
+    mro_mergeable = set(mergeable_types)
+    mro_replacements: set[TypeInfo] = set()
 
     # 'defaultdict' retains insertion order, and 'sorted' is stable, so the first supertypes
     # on the list, after sorting by how many types they replace, are as specific as possible.
@@ -367,14 +368,16 @@ def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = 
             if types[0].type_obj is st:
                 continue
 
-        if any(t in mergeable_types for t in types):
-            mergeable_types -= set(types)
-            replacements.add(get_type_name(st))
+        if any(t in mro_mergeable for t in types):
+            mro_mergeable -= set(types)
+            mro_replacements.add(get_type_name(st))
 
-    # ABC fallback: when types remain unmerged and we have accessed_attributes,
-    # try to find a collections.abc ABC that all remaining types implement and
-    # that has all the accessed attributes.
-    if accessed_attributes and mergeable_types and len(mergeable_types) > len(replacements):
+    mro_result = mro_mergeable | mro_replacements | other_types
+
+    # ABC matching: try to find a collections.abc ABC that all original
+    # mergeable types structurally implement and that covers the accessed
+    # attributes. Use it only if it produces a shorter result than MRO.
+    if accessed_attributes:
         from righttyper.type_id import ABCFinder
 
         def structurally_implements(t: type, abc_type: type) -> bool:
@@ -384,7 +387,6 @@ def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = 
 
         def abc_provides(abc_type: type, attributes: set[str]) -> bool:
             """Check if the ABC's own interface (not inherited from object) covers the attributes."""
-            # The ABC's own methods: abstract + concrete defined on the ABC itself
             own_attrs = set(getattr(abc_type, '__abstractmethods__', set()))
             for cls in abc_type.__mro__:
                 if cls is object:
@@ -392,8 +394,6 @@ def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = 
                 own_attrs |= set(cls.__dict__)
             return attributes <= own_attrs
 
-        # Find ABCs that every remaining type structurally implements
-        # and whose own interface covers the accessed attributes
         abc_candidates = None
         for t in mergeable_types:
             abcs = {
@@ -405,12 +405,16 @@ def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = 
             abc_candidates = abcs if abc_candidates is None else abc_candidates & abcs
 
         if abc_candidates:
-            # Pick the most specific ABC (deepest MRO)
             best = max(abc_candidates, key=lambda g: len(g.__mro__))
-            mergeable_types.clear()
-            replacements.add(get_type_name(best))
+            abc_result = {get_type_name(best)} | other_types
+            # Use ABC when it's strictly shorter, or when MRO made no
+            # improvement (e.g., single type with no useful supertype).
+            if len(abc_result) < len(mro_result) or (
+                len(abc_result) == len(mro_result) and not mro_replacements
+            ):
+                return abc_result
 
-    return mergeable_types | replacements | other_types
+    return mro_result
 
 
 def generalize_jaxtyping(samples: Sequence[CallTrace]) -> Sequence[CallTrace]:
