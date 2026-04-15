@@ -857,17 +857,12 @@ def test_simplify_abc_not_used_when_concrete_base_exists():
 
 
 def test_simplify_abc_single_type():
-    """A single type can be generalized to an ABC if the accessed attributes
-    match and there's no better concrete base."""
-    import collections.abc as abc
+    """A single type is not generalized to an ABC — ABC matching only
+    reduces union size, not replaces a single concrete type."""
     from righttyper.generalize import simplify
 
     a = TypeInfo.from_type(_IterableA)
 
-    # _IterableA has no useful concrete base, but implements Sized + Iterable.
-    # Should generalize to the ABC, not stay as _IterableA.
     result = simplify({a}, accessed_attributes={"__len__"})
     assert len(result) == 1
-    result_type = next(iter(result)).type_obj
-    assert result_type is not _IterableA
-    assert issubclass(result_type, abc.Sized)
+    assert next(iter(result)).type_obj is _IterableA

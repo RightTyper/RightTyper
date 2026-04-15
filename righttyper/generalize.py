@@ -15,10 +15,10 @@ _COVARIANT_TYPES = (tuple, frozenset)
 
 
 # Precomputed ABC data for structural matching in simplify().
-def _build_abc_caches() -> tuple[dict[type, frozenset[str]], dict[type, frozenset[str]]]:
+def _build_abc_own_attrs() -> dict[type, frozenset[str]]:
+    """Precompute the own attributes (excluding object) for each collections.abc ABC."""
     from abc import ABCMeta
-    own_attrs: dict[type, frozenset[str]] = {}
-    abstract_methods: dict[type, frozenset[str]] = {}
+    result: dict[type, frozenset[str]] = {}
     for obj in vars(abc).values():
         if isinstance(obj, ABCMeta):
             attrs: set[str] = set()
@@ -26,11 +26,10 @@ def _build_abc_caches() -> tuple[dict[type, frozenset[str]], dict[type, frozense
                 if cls is object:
                     break
                 attrs |= set(cls.__dict__)
-            own_attrs[obj] = frozenset(attrs)
-            abstract_methods[obj] = frozenset(getattr(obj, '__abstractmethods__', set()))
-    return own_attrs, abstract_methods
+            result[obj] = frozenset(attrs)
+    return result
 
-_abc_own_attrs, _abc_abstractmethods = _build_abc_caches()
+_abc_own_attrs = _build_abc_own_attrs()
 
 
 def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
@@ -420,8 +419,11 @@ def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = 
                 break   # without accessed_attributes, 1-for-1 exchanges aren't useful
             # With accessed_attributes, generalize a single type to its base
             # if the base has all accessed attributes (e.g., PosixPath → Path).
-            # Skip self-replacement (type replacing itself with itself).
+            # Skip self-replacement and numeric tower widening (float → complex
+            # is technically valid but not useful).
             if types[0].type_obj is st:
+                continue
+            if st in (int, float, complex):
                 continue
 
         if any(t in mro_mergeable for t in types):
@@ -433,7 +435,7 @@ def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = 
     # ABC matching: try to find a collections.abc ABC that all original
     # mergeable types structurally implement and that covers the accessed
     # attributes. Use it only if it produces a shorter result than MRO.
-    if accessed_attributes:
+    if accessed_attributes and len(mro_result) > 1:
         # Pre-filter ABCs whose interface covers the accessed attributes (cheap set check)
         candidates = [g for g, attrs in _abc_own_attrs.items()
                        if accessed_attributes <= attrs]
@@ -444,18 +446,13 @@ def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = 
                 if type(t.type_obj) is not type:
                     abc_candidates = set()
                     break
-                t_attrs = frozenset(dir(t.type_obj))
-                abcs = {g for g in candidates if _abc_abstractmethods[g] <= t_attrs}
+                abcs = {g for g in candidates if issubclass(t.type_obj, g)}
                 abc_candidates = abcs if abc_candidates is None else abc_candidates & abcs
 
             if abc_candidates:
                 best = max(abc_candidates, key=lambda g: len(g.__mro__))
                 abc_result = {get_type_name(best)} | other_types
-                # Use ABC when it's strictly shorter, or when MRO made no
-                # improvement (e.g., single type with no useful supertype).
-                if len(abc_result) < len(mro_result) or (
-                    len(abc_result) == len(mro_result) and not mro_replacements
-                ):
+                if len(abc_result) < len(mro_result):
                     return abc_result
 
     return mro_result
