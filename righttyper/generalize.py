@@ -88,28 +88,24 @@ def lub(
         if _is_subtype(b.type_obj, a.type_obj):
             return a
 
+    # Rule 4b: Bare generic subsumes parametrized (list subsumes list[int]).
+    # Only for types where bare means "Any args": containers and ABC generics.
+    _BARE_SUBSUMES = (abc.Callable, abc.Iterator, abc.AsyncIterator, abc.Iterable,
+                      abc.Generator, abc.AsyncGenerator, abc.Coroutine)
+    if (a.module == b.module and a.name == b.name
+        and isinstance(a.type_obj, type)
+        and (a.type_obj in _BARE_SUBSUMES or issubclass(a.type_obj, abc.Container))):
+        if not a.args and b.args:
+            return a
+        if a.args and not b.args:
+            return b
+
     # Rule 5: Same container, different args
     if (a.module == b.module and a.name == b.name
-        and a.args and b.args and len(a.args) == len(b.args)
+        and a.args and b.args
         and isinstance(a.type_obj, type)):
-        is_covariant = issubclass(a.type_obj, _COVARIANT_TYPES)
-        if for_variable or is_covariant:
-            # Check args are all TypeInfo or matching non-TypeInfo (e.g., Ellipsis)
-            can_merge = all(
-                (isinstance(aa, TypeInfo) and isinstance(ba, TypeInfo))
-                or aa is ba  # both Ellipsis, both (), etc.
-                for aa, ba in zip(a.args, b.args)
-            )
-            if can_merge:
-                merged_args = tuple(
-                    lub(cast(TypeInfo, aa), cast(TypeInfo, ba), for_variable=True)
-                    if isinstance(aa, TypeInfo) and isinstance(ba, TypeInfo)
-                    else aa
-                    for aa, ba in zip(a.args, b.args)
-                )
-                return a.replace(args=merged_args)
 
-        # Varlen tuple subsumes fixed tuple
+        # Rule 5a: Varlen tuple subsumes fixed tuple (different arg lengths OK)
         if a.type_obj is tuple:
             a_varlen = len(a.args) == 2 and a.args[1] is Ellipsis and isinstance(a.args[0], TypeInfo)
             b_varlen = len(b.args) == 2 and b.args[1] is Ellipsis and isinstance(b.args[0], TypeInfo)
@@ -125,28 +121,74 @@ def lub(
                 if a.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in a.args):
                     return b
 
-    # Rule 6: Empty container subsumed by compatible non-empty container
+        # Rule 5b: Same container, empty subsumed by non-empty
+        if _is_empty_container(a):
+            return b
+        if _is_empty_container(b):
+            return a
+
+        # Rule 5c: Same container, same arg count — merge args
+        if len(a.args) == len(b.args):
+            is_covariant = issubclass(a.type_obj, _COVARIANT_TYPES)
+            if for_variable or is_covariant:
+                can_merge = all(
+                    (isinstance(aa, TypeInfo) and isinstance(ba, TypeInfo))
+                    or aa is ba
+                    for aa, ba in zip(a.args, b.args)
+                )
+                if can_merge:
+                    merged_args = tuple(
+                        lub(cast(TypeInfo, aa), cast(TypeInfo, ba), for_variable=True)
+                        if isinstance(aa, TypeInfo) and isinstance(ba, TypeInfo)
+                        else aa
+                        for aa, ba in zip(a.args, b.args)
+                    )
+                    return a.replace(args=merged_args)
+
+    # Rule 6: Empty container + non-empty container → common ABC with element type.
+    # E.g., tuple[()] + list[int] → Sequence[int].
     _CONTAINER_ABCS = (abc.Sequence, abc.Mapping, abc.Set)
 
-    def _compatible_containers(t1: TypeInfo, t2: TypeInfo) -> bool:
-        """Check if t1 and t2 share a common container ABC."""
+    def _find_common_container_abc(t1: TypeInfo, t2: TypeInfo) -> type | None:
         if not (isinstance(t1.type_obj, type) and isinstance(t2.type_obj, type)):
-            return False
-        return any(issubclass(t1.type_obj, g) and issubclass(t2.type_obj, g)
-                   for g in _CONTAINER_ABCS)
+            return None
+        for g in _CONTAINER_ABCS:
+            if issubclass(t1.type_obj, g) and issubclass(t2.type_obj, g):
+                return g
+        return None
 
-    if _is_empty_container(a) and b.args and _compatible_containers(a, b):
-        return b
-    if _is_empty_container(b) and a.args and _compatible_containers(a, b):
-        return a
+    if (_is_empty_container(a) and b.args and isinstance(b.args[0], TypeInfo)
+        and a.type_obj is not b.type_obj):  # different containers only
+        if (common := _find_common_container_abc(a, b)):
+            return get_type_name(common).replace(args=(b.args[0],))
+    if (_is_empty_container(b) and a.args and isinstance(a.args[0], TypeInfo)
+        and a.type_obj is not b.type_obj):
+        if (common := _find_common_container_abc(a, b)):
+            return get_type_name(common).replace(args=(a.args[0],))
 
-    # Rule 7: MRO common supertype (non-generic types only)
+    # Rule 7: MRO common supertype (non-generic types only).
     if (not a.args and not b.args
         and isinstance(a.type_obj, type) and isinstance(b.type_obj, type)):
+        if accessed_attributes:
+            common_attrs = accessed_attributes
+        else:
+            # Without accessed_attributes, use dir() intersection as safety filter:
+            # only merge to a supertype that has all the shared attributes.
+            common_attrs = (
+                {attr for attr in dir(a.type_obj)
+                 if getattr(a.type_obj, attr, None) is not None
+                 if not attr.startswith("_") or attr.startswith("__")}
+                &
+                {attr for attr in dir(b.type_obj)
+                 if getattr(b.type_obj, attr, None) is not None
+                 if not attr.startswith("_") or attr.startswith("__")}
+            )
         a_mro = set(a.type_obj.__mro__)
         for base in b.type_obj.__mro__:
             if base in a_mro and base is not object:
-                if base not in (int, float, complex):
+                if base in (int, float, complex):
+                    continue
+                if common_attrs.issubset(dir(base)):
                     return get_type_name(base)
 
     # Rule 8: ABC matching (when accessed_attributes available)

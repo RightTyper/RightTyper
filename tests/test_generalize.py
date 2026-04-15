@@ -996,18 +996,24 @@ def test_lub_idempotent():
         assert lub(a, a) == a
 
 
-def test_lub_empty_container_subsumed():
-    """lub(tuple[()], list[int]) → list[int] (empty subsumed by non-empty)."""
+def test_lub_empty_tuple_and_list_to_sequence():
+    """lub(tuple[()], list[int]) → Sequence[int] (cross-container, common ABC)."""
+    import collections.abc
     from righttyper.generalize import lub
     int_t = TypeInfo.from_type(int)
     empty = TypeInfo.from_type(tuple).replace(args=((),))
     non_empty = TypeInfo.from_type(list).replace(args=(int_t,))
-    assert lub(empty, non_empty) == non_empty
-    assert lub(non_empty, empty) == non_empty
+    result = lub(empty, non_empty)
+    assert not result.is_union()
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Sequence)
+    assert result.args and result.args[0].type_obj is int
+    # Commutative
+    assert lub(non_empty, empty) == result
 
 
-def test_lub_empty_never_container_subsumed():
-    """lub(list[Never], list[int]) → list[int]."""
+def test_lub_empty_same_container():
+    """lub(list[Never], list[int]) → list[int] (same container, empty subsumed)."""
     from righttyper.generalize import lub
     int_t = TypeInfo.from_type(int)
     empty = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(Never),))
@@ -1037,8 +1043,18 @@ def test_lub_empty_tuple_subsumed_by_varlen():
     assert lub(varlen, empty) == varlen
 
 
-def test_lub_mro_common_base():
-    """lub(ChildA, ChildB) → Base (common MRO supertype)."""
+def test_lub_mro_common_base_with_attrs():
+    """lub(ChildA, ChildB) → Base with accessed_attributes."""
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(_ChildA)
+    b = TypeInfo.from_type(_ChildB)
+    result = lub(a, b, accessed_attributes={"name"})
+    assert not result.is_union()
+    assert result.type_obj is _Base
+
+
+def test_lub_mro_common_base_without_attrs():
+    """lub(ChildA, ChildB) → Base even without accessed_attributes (dir() check passes)."""
     from righttyper.generalize import lub
     a = TypeInfo.from_type(_ChildA)
     b = TypeInfo.from_type(_ChildB)
