@@ -149,6 +149,34 @@ def lub(
                 if base not in (int, float, complex):
                     return get_type_name(base)
 
+    # Rule 8: ABC matching (when accessed_attributes available)
+    if accessed_attributes and isinstance(a.type_obj, type) and isinstance(b.type_obj, type):
+        candidates = [g for g, attrs in _abc_own_attrs.items()
+                      if accessed_attributes <= attrs
+                      and issubclass(a.type_obj, g)
+                      and issubclass(b.type_obj, g)]
+        if candidates:
+            best = max(candidates, key=lambda g: len(g.__mro__))
+            # For generics: try to merge element types
+            if a.args or b.args:
+                a_ti = [x for x in a.args if isinstance(x, TypeInfo)] if a.args else []
+                b_ti = [x for x in b.args if isinstance(x, TypeInfo)] if b.args else []
+                n = min(len(a_ti), len(b_ti))
+                if n > 0:
+                    is_covariant = issubclass(best, _COVARIANT_TYPES)
+                    if for_variable or is_covariant:
+                        merged_args = tuple(
+                            lub(a_ti[i], b_ti[i], for_variable=True)
+                            for i in range(n)
+                        )
+                        return get_type_name(best).replace(args=merged_args)
+                    # Invariant: only merge if args are identical
+                    if a_ti[:n] == b_ti[:n]:
+                        return get_type_name(best).replace(args=tuple(a_ti[:n]))
+                # Can't merge args — fall through to union
+            else:
+                return get_type_name(best)
+
     # Rule 9: Fallback — union
     return TypeInfo.from_set_new({a, b})
 

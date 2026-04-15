@@ -1061,3 +1061,78 @@ def test_lub_mro_skips_numeric_widening():
     from righttyper.generalize import lub
     result = lub(TypeInfo.from_type(int), TypeInfo.from_type(float))
     assert result.type_obj is float  # numeric tower, not complex
+
+
+def test_lub_abc_fallback():
+    """lub(IterableA, IterableB) → Iterable when no MRO base but both implement ABC."""
+    import collections.abc
+    from righttyper.generalize import lub
+
+    a = TypeInfo.from_type(_IterableA)
+    b = TypeInfo.from_type(_IterableB)
+
+    # No common MRO base (only object), but both implement Iterable.
+    # ABC matching only kicks in when it reduces a union (len > 1),
+    # so we need accessed_attributes for the ABC pre-filter.
+    result = lub(a, b, accessed_attributes={"__iter__"})
+    assert not result.is_union()
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Iterable)
+
+
+def test_lub_abc_not_used_without_accessed_attrs():
+    """Without accessed_attributes, ABC matching doesn't fire."""
+    from righttyper.generalize import lub
+
+    a = TypeInfo.from_type(_IterableA)
+    b = TypeInfo.from_type(_IterableB)
+
+    # No accessed_attributes → falls through to union
+    result = lub(a, b)
+    assert result.is_union()
+    assert result.to_set() == {a, b}
+
+
+def test_lub_abc_cross_container_same_args():
+    """lub(list[int], set[int]) → Collection[int] via ABC when args match."""
+    import collections.abc
+    from righttyper.generalize import lub
+
+    int_t = TypeInfo.from_type(int)
+    a = TypeInfo.from_type(list).replace(args=(int_t,))
+    b = TypeInfo.from_type(set).replace(args=(int_t,))
+
+    result = lub(a, b, accessed_attributes={"__iter__"})
+    assert not result.is_union()
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Iterable)
+    assert result.args and result.args[0].type_obj is int
+
+
+def test_lub_abc_cross_container_different_args_invariant():
+    """lub(list[int], set[str]) stays as union when for_variable=False (invariant)."""
+    from righttyper.generalize import lub
+
+    a = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(int),))
+    b = TypeInfo.from_type(set).replace(args=(TypeInfo.from_type(str),))
+
+    result = lub(a, b, for_variable=False, accessed_attributes={"__iter__"})
+    assert result.is_union()
+    assert result.to_set() == {a, b}
+
+
+def test_lub_abc_cross_container_different_args_for_variable():
+    """lub(list[int], set[str]) merges args when for_variable=True."""
+    import collections.abc
+    from righttyper.generalize import lub
+
+    a = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(int),))
+    b = TypeInfo.from_type(set).replace(args=(TypeInfo.from_type(str),))
+
+    result = lub(a, b, for_variable=True, accessed_attributes={"__iter__"})
+    assert not result.is_union()
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Iterable)
+    # Args should be merged: int|str
+    assert result.args and result.args[0].is_union()
+    assert result.args[0].to_set() == {TypeInfo.from_type(int), TypeInfo.from_type(str)}
