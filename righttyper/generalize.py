@@ -32,6 +32,103 @@ def _build_abc_own_attrs() -> dict[type, frozenset[str]]:
 _abc_own_attrs = _build_abc_own_attrs()
 
 
+# Numeric tower: int <: float <: complex (PEP 3141)
+_NUMERIC_TOWER = {int: float, float: complex}
+
+
+def _is_subtype(a: type, b: type) -> bool:
+    """Check if a is a subtype of b, including the numeric tower."""
+    if a is b:
+        return True
+    if issubclass(a, b):
+        return True
+    # Numeric tower: int <: float <: complex
+    t = a
+    while t in _NUMERIC_TOWER:
+        t = _NUMERIC_TOWER[t]
+        if t is b:
+            return True
+    return False
+
+
+def lub(
+    a: TypeInfo,
+    b: TypeInfo,
+    for_variable: bool = False,
+    accessed_attributes: set[str] | None = None,
+) -> TypeInfo:
+    """Compute the least upper bound (most specific common supertype) of two types.
+
+    Returns a single TypeInfo that contains both a and b. Falls back to
+    a union (a | b) when no better merge is available.
+    """
+    import typing
+
+    # Rule 1: Identity
+    if a == b:
+        return a
+
+    # Rule 2: Never/NoReturn subsumption
+    if a.type_obj in (typing.Never, typing.NoReturn):
+        return b
+    if b.type_obj in (typing.Never, typing.NoReturn):
+        return a
+
+    # Rule 3: Any subsumption
+    if a.type_obj is typing.Any:
+        return a
+    if b.type_obj is typing.Any:
+        return b
+
+    # Rule 4: Subtype check (MRO + numeric tower)
+    if (isinstance(a.type_obj, type) and isinstance(b.type_obj, type)
+        and not a.args and not b.args):
+        if _is_subtype(a.type_obj, b.type_obj):
+            return b
+        if _is_subtype(b.type_obj, a.type_obj):
+            return a
+
+    # Rule 5: Same container, different args
+    if (a.module == b.module and a.name == b.name
+        and a.args and b.args and len(a.args) == len(b.args)
+        and isinstance(a.type_obj, type)):
+        is_covariant = issubclass(a.type_obj, _COVARIANT_TYPES)
+        if for_variable or is_covariant:
+            # Check args are all TypeInfo or matching non-TypeInfo (e.g., Ellipsis)
+            can_merge = all(
+                (isinstance(aa, TypeInfo) and isinstance(ba, TypeInfo))
+                or aa is ba  # both Ellipsis, both (), etc.
+                for aa, ba in zip(a.args, b.args)
+            )
+            if can_merge:
+                merged_args = tuple(
+                    lub(cast(TypeInfo, aa), cast(TypeInfo, ba), for_variable=True)
+                    if isinstance(aa, TypeInfo) and isinstance(ba, TypeInfo)
+                    else aa
+                    for aa, ba in zip(a.args, b.args)
+                )
+                return a.replace(args=merged_args)
+
+        # Varlen tuple subsumes fixed tuple
+        if a.type_obj is tuple:
+            a_varlen = len(a.args) == 2 and a.args[1] is Ellipsis and isinstance(a.args[0], TypeInfo)
+            b_varlen = len(b.args) == 2 and b.args[1] is Ellipsis and isinstance(b.args[0], TypeInfo)
+            a_fixed = all(isinstance(x, TypeInfo) for x in a.args) and not a_varlen
+            b_fixed = all(isinstance(x, TypeInfo) for x in b.args) and not b_varlen
+
+            if a_varlen and (b_fixed or b.args == ((),)):
+                elem = cast(TypeInfo, a.args[0])
+                if b.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in b.args):
+                    return a
+            if b_varlen and (a_fixed or a.args == ((),)):
+                elem = cast(TypeInfo, b.args[0])
+                if a.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in a.args):
+                    return b
+
+    # Rule 9: Fallback — union
+    return TypeInfo.from_set({a, b})
+
+
 def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     """Merge generics with same container but different type args.
 

@@ -866,3 +866,130 @@ def test_simplify_abc_single_type():
     result = simplify({a}, accessed_attributes={"__len__"})
     assert len(result) == 1
     assert next(iter(result)).type_obj is _IterableA
+
+
+# =============================================================================
+# Tests for lub(a, b) — least upper bound
+# =============================================================================
+
+def test_lub_identity():
+    """lub(a, a) = a."""
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(int)
+    assert lub(a, a) == a
+
+
+def test_lub_never():
+    """lub(a, Never) = a."""
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(int)
+    never = TypeInfo.from_type(Never)
+    assert lub(a, never) == a
+    assert lub(never, a) == a
+
+
+def test_lub_any():
+    """lub(a, Any) = Any."""
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(int)
+    any_t = TypeInfo.from_type(Any)
+    assert lub(a, any_t) == any_t
+    assert lub(any_t, a) == any_t
+
+
+def test_lub_subtype_bool_int():
+    """lub(bool, int) = int (bool <: int)."""
+    from righttyper.generalize import lub
+    assert lub(TypeInfo.from_type(bool), TypeInfo.from_type(int)) == TypeInfo.from_type(int)
+    assert lub(TypeInfo.from_type(int), TypeInfo.from_type(bool)) == TypeInfo.from_type(int)
+
+
+def test_lub_numeric_tower():
+    """lub(int, float) = float (numeric tower)."""
+    from righttyper.generalize import lub
+    assert lub(TypeInfo.from_type(int), TypeInfo.from_type(float)).type_obj is float
+
+
+def test_lub_no_common_base():
+    """lub(int, str) = int|str (no useful common supertype)."""
+    from righttyper.generalize import lub
+    result = lub(TypeInfo.from_type(int), TypeInfo.from_type(str))
+    assert result.is_union()
+    types = {t.type_obj for t in result.args if isinstance(t, TypeInfo)}
+    assert types == {int, str}
+
+
+def test_lub_same_container_merge_for_variable():
+    """lub(list[int], list[str]) = list[int|str] when for_variable=True."""
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    a = TypeInfo.from_type(list).replace(args=(int_t,))
+    b = TypeInfo.from_type(list).replace(args=(str_t,))
+    result = lub(a, b, for_variable=True)
+    assert result.type_obj is list
+    assert result.args and isinstance(result.args[0], TypeInfo)
+    assert result.args[0].is_union()
+
+
+def test_lub_same_container_no_merge_invariant():
+    """lub(list[int], list[str]) = list[int]|list[str] when for_variable=False (invariant)."""
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    a = TypeInfo.from_type(list).replace(args=(int_t,))
+    b = TypeInfo.from_type(list).replace(args=(str_t,))
+    result = lub(a, b, for_variable=False)
+    assert result.is_union()
+
+
+def test_lub_same_container_subtype_args():
+    """lub(list[bool], list[int]) = list[int] when for_variable=True (bool <: int)."""
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(bool),))
+    b = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(int),))
+    result = lub(a, b, for_variable=True)
+    assert result.type_obj is list
+    assert result.args[0].type_obj is int
+
+
+def test_lub_covariant_tuple_always_merges():
+    """lub(tuple[int,...], tuple[str,...]) = tuple[int|str,...] even for_variable=False."""
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    a = TypeInfo.from_type(tuple).replace(args=(int_t, Ellipsis))
+    b = TypeInfo.from_type(tuple).replace(args=(str_t, Ellipsis))
+    result = lub(a, b, for_variable=False)
+    assert result.type_obj is tuple
+    assert result.args[0].is_union()
+
+
+def test_lub_varlen_subsumes_fixed():
+    """lub(tuple[int,int], tuple[int,...]) = tuple[int,...]."""
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    fixed = TypeInfo.from_type(tuple).replace(args=(int_t, int_t))
+    varlen = TypeInfo.from_type(tuple).replace(args=(int_t, Ellipsis))
+    assert lub(fixed, varlen) == varlen
+    assert lub(varlen, fixed) == varlen
+
+
+def test_lub_commutative():
+    """lub(a, b) == lub(b, a) for various type pairs."""
+    from righttyper.generalize import lub
+    pairs = [
+        (TypeInfo.from_type(int), TypeInfo.from_type(str)),
+        (TypeInfo.from_type(bool), TypeInfo.from_type(int)),
+        (TypeInfo.from_type(int), TypeInfo.from_type(float)),
+    ]
+    for a, b in pairs:
+        assert lub(a, b) == lub(b, a), f"lub not commutative for {a}, {b}"
+
+
+def test_lub_idempotent():
+    """lub(a, a) == a for various types."""
+    from righttyper.generalize import lub
+    for t in [int, str, float, list, dict]:
+        a = TypeInfo.from_type(t)
+        assert lub(a, a) == a
