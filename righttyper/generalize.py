@@ -387,8 +387,8 @@ def merged_types(
     if output_options.simplify_types:
         new_result = _merge_set(typeinfoset, for_variable, accessed_attributes)
         if old_result != new_result:
-            import logging
-            logging.getLogger('righttyper').debug(
+            import warnings
+            warnings.warn(
                 f"lub mismatch: {typeinfoset} for_variable={for_variable} "
                 f"attrs={accessed_attributes}\n  old={old_result}\n  new={new_result}"
             )
