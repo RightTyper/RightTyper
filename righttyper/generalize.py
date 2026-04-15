@@ -126,7 +126,40 @@ def lub(
                     return b
 
     # Rule 9: Fallback — union
-    return TypeInfo.from_set({a, b})
+    return TypeInfo.from_set_new({a, b})
+
+
+def _merge_set(
+    typeinfoset: set[TypeInfo],
+    for_variable: bool = False,
+    accessed_attributes: set[str] | None = None,
+) -> TypeInfo:
+    """Reduce a set of types using pairwise lub, then form the final union."""
+    if not typeinfoset:
+        import typing
+        return TypeInfo.from_type(typing.Never)
+
+    # Iteratively reduce: try to merge pairs until stable
+    types = list(typeinfoset)
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        while i < len(types):
+            j = i + 1
+            while j < len(types):
+                merged = lub(types[i], types[j], for_variable, accessed_attributes)
+                if not merged.is_union():
+                    # lub produced a single type — replace both with it
+                    types[i] = merged
+                    types.pop(j)
+                    changed = True
+                else:
+                    j += 1
+            i += 1
+
+    # lub already handled simplification; just form the union
+    return TypeInfo.from_set_new(set(types))
 
 
 def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
@@ -324,14 +357,27 @@ def merged_types(
     for_variable: bool = False,
     accessed_attributes: set[str] | None = None,
 ) -> TypeInfo:
-    """Attempts to merge types in a set before forming their union.
+    """Attempts to merge types in a set before forming their union."""
+    old_result = _merged_types_old(typeinfoset, for_variable, accessed_attributes)
 
-    Args:
-        typeinfoset: Set of types to merge
-        for_variable: If True, apply similar generics merging (safe for variables only)
-        accessed_attributes: If provided, attribute names accessed on this variable
-            (from static analysis), used to guide type simplification.
-    """
+    if output_options.simplify_types:
+        new_result = _merge_set(typeinfoset, for_variable, accessed_attributes)
+        if old_result != new_result:
+            import logging
+            logging.getLogger('righttyper').debug(
+                f"lub mismatch: {typeinfoset} for_variable={for_variable} "
+                f"attrs={accessed_attributes}\n  old={old_result}\n  new={new_result}"
+            )
+
+    return old_result
+
+
+def _merged_types_old(
+    typeinfoset: set[TypeInfo],
+    for_variable: bool = False,
+    accessed_attributes: set[str] | None = None,
+) -> TypeInfo:
+    """Original merged_types implementation (ad-hoc chain)."""
     if output_options.simplify_types and (len(typeinfoset) > 1 or accessed_attributes):
         typeinfoset = simplify(typeinfoset, accessed_attributes)
 

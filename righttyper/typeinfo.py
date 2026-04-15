@@ -100,6 +100,12 @@ class TypeInfo:
 
     @staticmethod
     def from_set(s: "set[TypeInfo]", empty_is_none=False, **kwargs: Any) -> "TypeInfo":
+        """Form a union from a set, with simplification.
+
+        Expands nested unions, subsumes Any, removes Never/NoReturn,
+        cleans up Never-generics, caps oversized unions, and sorts
+        for deterministic output.
+        """
         if not s:
             return NoneTypeInfo if empty_is_none else TypeInfo.from_type(typing.Never)
 
@@ -149,6 +155,36 @@ class TypeInfo:
             UnionTypeInfo,
             # 'None' at the end is seen as more readable
             args=tuple(sorted(s, key = lambda x: (x == NoneTypeInfo, str(x)))),
+            **kwargs
+        )
+
+
+    @staticmethod
+    def from_set_new(s: "set[TypeInfo]", **kwargs: Any) -> "TypeInfo":
+        """Form a union from a set of already-simplified types.
+
+        Assumes the caller (lub/merge_set) already handled Never removal,
+        Any subsumption, and Never-generic cleanup. Only flattens nested
+        unions, deduplicates, and sorts for deterministic output.
+        """
+        if not s:
+            return TypeInfo.from_type(typing.Never)
+
+        # Flatten nested unions
+        expanded: set[TypeInfo] = set()
+        for t in s:
+            if t.is_union() and not t.typevar_index:
+                expanded |= {a for a in t.args if isinstance(a, TypeInfo)}
+            else:
+                expanded.add(t)
+
+        if len(expanded) == 1:
+            return next(iter(expanded))
+
+        return UnionTypeInfo.from_type(
+            UnionTypeInfo,
+            # Sort for deterministic output (None at end for readability)
+            args=tuple(sorted(expanded, key=lambda x: (x == NoneTypeInfo, str(x)))),
             **kwargs
         )
 
