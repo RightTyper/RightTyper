@@ -941,6 +941,7 @@ def test_lub_same_container_no_merge_invariant():
     b = TypeInfo.from_type(list).replace(args=(str_t,))
     result = lub(a, b, for_variable=False)
     assert result.is_union()
+    assert result.to_set() == {a, b}
 
 
 def test_lub_same_container_subtype_args():
@@ -993,3 +994,70 @@ def test_lub_idempotent():
     for t in [int, str, float, list, dict]:
         a = TypeInfo.from_type(t)
         assert lub(a, a) == a
+
+
+def test_lub_empty_container_subsumed():
+    """lub(tuple[()], list[int]) → list[int] (empty subsumed by non-empty)."""
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    empty = TypeInfo.from_type(tuple).replace(args=((),))
+    non_empty = TypeInfo.from_type(list).replace(args=(int_t,))
+    assert lub(empty, non_empty) == non_empty
+    assert lub(non_empty, empty) == non_empty
+
+
+def test_lub_empty_never_container_subsumed():
+    """lub(list[Never], list[int]) → list[int]."""
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    empty = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(Never),))
+    non_empty = TypeInfo.from_type(list).replace(args=(int_t,))
+    assert lub(empty, non_empty) == non_empty
+    assert lub(non_empty, empty) == non_empty
+
+
+def test_lub_empty_container_incompatible():
+    """lub(dict[Never,Never], list[int]) stays as union (incompatible containers)."""
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    empty_dict = TypeInfo.from_type(dict).replace(args=(TypeInfo.from_type(Never), TypeInfo.from_type(Never)))
+    list_int = TypeInfo.from_type(list).replace(args=(int_t,))
+    result = lub(empty_dict, list_int)
+    assert result.is_union()
+    assert result.to_set() == {empty_dict, list_int}
+
+
+def test_lub_empty_tuple_subsumed_by_varlen():
+    """lub(tuple[()], tuple[int, ...]) → tuple[int, ...] (empty subsumed by varlen)."""
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    empty = TypeInfo.from_type(tuple).replace(args=((),))
+    varlen = TypeInfo.from_type(tuple).replace(args=(int_t, Ellipsis))
+    assert lub(empty, varlen) == varlen
+    assert lub(varlen, empty) == varlen
+
+
+def test_lub_mro_common_base():
+    """lub(ChildA, ChildB) → Base (common MRO supertype)."""
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(_ChildA)
+    b = TypeInfo.from_type(_ChildB)
+    result = lub(a, b)
+    assert not result.is_union()
+    assert result.type_obj is _Base
+
+
+def test_lub_mro_no_useful_base():
+    """lub(int, str) stays as union (only 'object' in common)."""
+    from righttyper.generalize import lub
+    a, b = TypeInfo.from_type(int), TypeInfo.from_type(str)
+    result = lub(a, b)
+    assert result.is_union()
+    assert result.to_set() == {a, b}
+
+
+def test_lub_mro_skips_numeric_widening():
+    """lub(int, float) uses numeric tower (rule 4), not MRO to complex."""
+    from righttyper.generalize import lub
+    result = lub(TypeInfo.from_type(int), TypeInfo.from_type(float))
+    assert result.type_obj is float  # numeric tower, not complex

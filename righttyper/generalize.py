@@ -125,6 +125,30 @@ def lub(
                 if a.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in a.args):
                     return b
 
+    # Rule 6: Empty container subsumed by compatible non-empty container
+    _CONTAINER_ABCS = (abc.Sequence, abc.Mapping, abc.Set)
+
+    def _compatible_containers(t1: TypeInfo, t2: TypeInfo) -> bool:
+        """Check if t1 and t2 share a common container ABC."""
+        if not (isinstance(t1.type_obj, type) and isinstance(t2.type_obj, type)):
+            return False
+        return any(issubclass(t1.type_obj, g) and issubclass(t2.type_obj, g)
+                   for g in _CONTAINER_ABCS)
+
+    if _is_empty_container(a) and b.args and _compatible_containers(a, b):
+        return b
+    if _is_empty_container(b) and a.args and _compatible_containers(a, b):
+        return a
+
+    # Rule 7: MRO common supertype (non-generic types only)
+    if (not a.args and not b.args
+        and isinstance(a.type_obj, type) and isinstance(b.type_obj, type)):
+        a_mro = set(a.type_obj.__mro__)
+        for base in b.type_obj.__mro__:
+            if base in a_mro and base is not object:
+                if base not in (int, float, complex):
+                    return get_type_name(base)
+
     # Rule 9: Fallback — union
     return TypeInfo.from_set_new({a, b})
 
