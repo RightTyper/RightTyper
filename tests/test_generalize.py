@@ -346,34 +346,34 @@ def test_generalize_type_and_never():
 # Tests for container superset merging
 
 def test_merge_container_supersets_list():
-    """list[int] | list[int|str] -> list[int|str] (int ⊆ int|str)"""
-    from righttyper.generalize import merge_container_supersets
+    """list[int] | list[int|str] -> list[int|str] for variables"""
+    from righttyper.generalize import merged_types
 
     int_t = TypeInfo.from_type(int)
     str_t = TypeInfo.from_type(str)
     list_int = TypeInfo.from_type(list).replace(args=(int_t,))
     list_int_str = TypeInfo.from_type(list).replace(args=(TypeInfo.from_set({int_t, str_t}),))
 
-    result = merge_container_supersets({list_int, list_int_str})
-    assert result == {list_int_str}
+    result = merged_types({list_int, list_int_str}, for_variable=True)
+    assert result == list_int_str
 
 
 def test_merge_container_supersets_no_subset():
-    """list[int] | list[str] -> unchanged (no subset relationship)"""
-    from righttyper.generalize import merge_container_supersets
+    """list[int] | list[str] -> list[int|str] for variables (merges args)"""
+    from righttyper.generalize import merged_types
 
     int_t = TypeInfo.from_type(int)
     str_t = TypeInfo.from_type(str)
     list_int = TypeInfo.from_type(list).replace(args=(int_t,))
     list_str = TypeInfo.from_type(list).replace(args=(str_t,))
 
-    result = merge_container_supersets({list_int, list_str})
-    assert result == {list_int, list_str}
+    result = merged_types({list_int, list_str}, for_variable=True)
+    assert result == TypeInfo.from_type(list).replace(args=(TypeInfo.from_set({int_t, str_t}),))
 
 
 def test_merge_container_supersets_chain():
-    """list[int] | list[int|str] | list[int|str|float] -> list[int|str|float]"""
-    from righttyper.generalize import merge_container_supersets
+    """list[int] | list[int|str] | list[int|str|float] -> list[int|str|float] for variables"""
+    from righttyper.generalize import merged_types
 
     int_t = TypeInfo.from_type(int)
     str_t = TypeInfo.from_type(str)
@@ -383,13 +383,13 @@ def test_merge_container_supersets_chain():
     list_int_str = TypeInfo.from_type(list).replace(args=(TypeInfo.from_set({int_t, str_t}),))
     list_all = TypeInfo.from_type(list).replace(args=(TypeInfo.from_set({int_t, str_t, float_t}),))
 
-    result = merge_container_supersets({list_int, list_int_str, list_all})
-    assert result == {list_all}
+    result = merged_types({list_int, list_int_str, list_all}, for_variable=True)
+    assert result == list_all
 
 
 def test_merge_container_supersets_nested():
-    """list[set[int]] | list[set[int|str]] -> list[set[int|str]]"""
-    from righttyper.generalize import merge_container_supersets
+    """list[set[int]] | list[set[int|str]] -> list[set[int|str]] for variables"""
+    from righttyper.generalize import merged_types
 
     int_t = TypeInfo.from_type(int)
     str_t = TypeInfo.from_type(str)
@@ -398,13 +398,13 @@ def test_merge_container_supersets_nested():
     list_set_int = TypeInfo.from_type(list).replace(args=(set_int,))
     list_set_int_str = TypeInfo.from_type(list).replace(args=(set_int_str,))
 
-    result = merge_container_supersets({list_set_int, list_set_int_str})
-    assert result == {list_set_int_str}
+    result = merged_types({list_set_int, list_set_int_str}, for_variable=True)
+    assert result == list_set_int_str
 
 
 def test_merge_container_supersets_dict():
-    """dict[str, int] | dict[str, int|float] -> dict[str, int|float]"""
-    from righttyper.generalize import merge_container_supersets
+    """dict[str, int] | dict[str, int|float] -> dict[str, int|float] for variables"""
+    from righttyper.generalize import merged_types
 
     str_t = TypeInfo.from_type(str)
     int_t = TypeInfo.from_type(int)
@@ -413,13 +413,13 @@ def test_merge_container_supersets_dict():
     dict_str_int = TypeInfo.from_type(dict).replace(args=(str_t, int_t))
     dict_str_int_float = TypeInfo.from_type(dict).replace(args=(str_t, TypeInfo.from_set({int_t, float_t})))
 
-    result = merge_container_supersets({dict_str_int, dict_str_int_float})
-    assert result == {dict_str_int_float}
+    result = merged_types({dict_str_int, dict_str_int_float}, for_variable=True)
+    assert result == dict_str_int_float
 
 
 def test_merge_container_supersets_dict_no_subset():
-    """dict[str, int] | dict[int, int] -> unchanged (no subset relationship in keys)"""
-    from righttyper.generalize import merge_container_supersets
+    """dict[str, int] | dict[int, int] -> dict[str|int, int] for variables (merges keys)"""
+    from righttyper.generalize import merged_types
 
     str_t = TypeInfo.from_type(str)
     int_t = TypeInfo.from_type(int)
@@ -427,13 +427,13 @@ def test_merge_container_supersets_dict_no_subset():
     dict_str_int = TypeInfo.from_type(dict).replace(args=(str_t, int_t))
     dict_int_int = TypeInfo.from_type(dict).replace(args=(int_t, int_t))
 
-    result = merge_container_supersets({dict_str_int, dict_int_int})
-    assert result == {dict_str_int, dict_int_int}
+    result = merged_types({dict_str_int, dict_int_int}, for_variable=True)
+    assert result == TypeInfo.from_type(dict).replace(args=(TypeInfo.from_set({str_t, int_t}), int_t))
 
 
 def test_merge_container_supersets_dict_key_subset():
-    """dict[str, int] | dict[str|int, int] -> dict[str|int, int] (str ⊆ str|int)"""
-    from righttyper.generalize import merge_container_supersets
+    """dict[str, int] | dict[str|int, int] -> dict[str|int, int] for variables"""
+    from righttyper.generalize import merged_types
 
     str_t = TypeInfo.from_type(str)
     int_t = TypeInfo.from_type(int)
@@ -441,13 +441,13 @@ def test_merge_container_supersets_dict_key_subset():
     dict_str_int = TypeInfo.from_type(dict).replace(args=(str_t, int_t))
     dict_str_or_int_int = TypeInfo.from_type(dict).replace(args=(TypeInfo.from_set({str_t, int_t}), int_t))
 
-    result = merge_container_supersets({dict_str_int, dict_str_or_int_int})
-    assert result == {dict_str_or_int_int}
+    result = merged_types({dict_str_int, dict_str_or_int_int}, for_variable=True)
+    assert result == dict_str_or_int_int
 
 
 def test_merge_container_supersets_mixed_containers():
-    """list[int] | set[int] | list[int|str] -> set[int] | list[int|str]"""
-    from righttyper.generalize import merge_container_supersets
+    """list[int] | set[int] | list[int|str] -> set[int] | list[int|str] for variables"""
+    from righttyper.generalize import merged_types
 
     int_t = TypeInfo.from_type(int)
     str_t = TypeInfo.from_type(str)
@@ -455,8 +455,8 @@ def test_merge_container_supersets_mixed_containers():
     list_int_str = TypeInfo.from_type(list).replace(args=(TypeInfo.from_set({int_t, str_t}),))
     set_int = TypeInfo.from_type(set).replace(args=(int_t,))
 
-    result = merge_container_supersets({list_int, set_int, list_int_str})
-    assert result == {set_int, list_int_str}
+    result = merged_types({list_int, set_int, list_int_str}, for_variable=True)
+    assert result == TypeInfo.from_set({set_int, list_int_str})
 
 
 # Tests for covariant type merging in merged_types
@@ -524,7 +524,12 @@ def test_merge_covariant_frozenset():
 
 
 def test_merge_covariant_tuple_different_lengths():
-    """tuple[int] | tuple[int, str] -> unchanged (different arities)"""
+    """tuple[int] | tuple[int, str] -> tuple[int|str, ...] (different arities → varlen).
+
+    This is a valid LUB but wider than the original union: it loses positional
+    type information and length constraints. Acceptable for runtime-inferred
+    annotations where observing multiple lengths implies variable-length usage.
+    """
     from righttyper.generalize import merged_types
 
     int_t = TypeInfo.from_type(int)
@@ -533,7 +538,9 @@ def test_merge_covariant_tuple_different_lengths():
     tuple_2 = TypeInfo.from_type(tuple).replace(args=(int_t, str_t))
 
     result = merged_types({tuple_1, tuple_2}, for_variable=False)
-    assert result == TypeInfo.from_set({tuple_1, tuple_2})
+    assert result == TypeInfo.from_type(tuple).replace(
+        args=(TypeInfo.from_set({int_t, str_t}), Ellipsis)
+    )
 
 
 def test_merge_covariant_tuple_fixed_vs_varlen():
@@ -713,7 +720,9 @@ def test_dict_and_ordered_dict_to_mapping():
 
 
 def test_list_and_empty_tuple_without_accessed_attrs():
-    """Without accessed_attributes, list[X] | tuple[()] stays as union."""
+    """list[X] | tuple[()] → Sequence[X] even without accessed_attributes,
+    since an empty tuple is compatible with any element type."""
+    import collections.abc as abc
     from righttyper.generalize import merged_types
 
     int_t = TypeInfo.from_type(int)
@@ -722,8 +731,9 @@ def test_list_and_empty_tuple_without_accessed_attrs():
     empty_tuple = TypeInfo.from_type(tuple).replace(args=((),))
 
     result = merged_types({list_of_tuples, empty_tuple})
-    # Without accessed attributes, no cross-container merge
-    assert result.is_union()
+    assert not result.is_union()
+    assert result.type_obj is abc.Sequence
+    assert result.args[0] == inner
 
 
 # =============================================================================
@@ -748,67 +758,62 @@ class _ChildB(_Base):
 
 def test_simplify_with_accessed_attributes():
     """When accessed_attributes are provided and the common base has them, merge happens."""
-    from righttyper.generalize import simplify
+    from righttyper.generalize import merged_types
 
     a = TypeInfo.from_type(_ChildA)
     b = TypeInfo.from_type(_ChildB)
 
-    result = simplify({a, b}, accessed_attributes={"name"})
-    assert len(result) == 1
-    merged = next(iter(result))
-    assert merged.type_obj is _Base
+    result = merged_types({a, b}, accessed_attributes={"name"})
+    assert not result.is_union()
+    assert result.type_obj is _Base
 
 
 def test_simplify_without_accessed_attributes():
-    """Without accessed_attributes, current dir()-based behavior is preserved."""
-    from righttyper.generalize import simplify
+    """Without accessed_attributes, dir()-based MRO merge to common base."""
+    from righttyper.generalize import merged_types
 
     a = TypeInfo.from_type(_ChildA)
     b = TypeInfo.from_type(_ChildB)
 
-    # dir()-based: ChildA and ChildB share many attrs via Base → merges to Base
-    result = simplify({a, b})
-    assert len(result) == 1
-    merged = next(iter(result))
-    assert merged.type_obj is _Base
+    result = merged_types({a, b})
+    assert not result.is_union()
+    assert result.type_obj is _Base
 
 
 def test_simplify_accessed_attrs_prevents_over_merge():
     """When accessed_attributes include an attr not on the common base, merge is prevented."""
-    from righttyper.generalize import simplify
+    from righttyper.generalize import merged_types
 
     a = TypeInfo.from_type(_ChildA)
     b = TypeInfo.from_type(_ChildB)
 
     # extra_a is only on ChildA, not on Base → can't merge to Base
-    result = simplify({a, b}, accessed_attributes={"extra_a"})
-    assert len(result) == 2
-    types = {t.type_obj for t in result}
+    result = merged_types({a, b}, accessed_attributes={"extra_a"})
+    assert result.is_union()
+    types = {t.type_obj for t in result.to_set()}
     assert types == {_ChildA, _ChildB}
 
 
 def test_simplify_single_type_with_accessed_attributes():
     """Even a single type can be generalized to a base when accessed_attributes
     are all present on that base."""
-    from righttyper.generalize import simplify
+    from righttyper.generalize import merged_types
 
     a = TypeInfo.from_type(_ChildA)
 
     # 'name' is on _Base → ChildA can be generalized to Base
-    result = simplify({a}, accessed_attributes={"name"})
-    assert len(result) == 1
-    assert next(iter(result)).type_obj is _Base
+    result = merged_types({a}, accessed_attributes={"name"})
+    assert result.type_obj is _Base
 
 
 def test_simplify_single_type_no_generalization_without_attrs():
-    """Without accessed_attributes, a single type is not generalized (nothing to merge)."""
-    from righttyper.generalize import simplify
+    """Without accessed_attributes, a single type stays as-is."""
+    from righttyper.generalize import merged_types
 
     a = TypeInfo.from_type(_ChildA)
 
-    result = simplify({a})
-    assert len(result) == 1
-    assert next(iter(result)).type_obj is _ChildA
+    result = merged_types({a})
+    assert result.type_obj is _ChildA
 
 
 # =============================================================================
@@ -827,45 +832,43 @@ class _IterableB:
 
 
 def test_simplify_abc_fallback():
-    """When types share no concrete base (only object), simplify falls back to
+    """When types share no concrete base (only object), falls back to
     ABC matching. _IterableA and _IterableB both implement Iterable via
     __subclasshook__, so accessing __iter__ should merge to Iterable."""
     import collections.abc as abc
-    from righttyper.generalize import simplify
+    from righttyper.generalize import merged_types
 
     a = TypeInfo.from_type(_IterableA)
     b = TypeInfo.from_type(_IterableB)
 
-    result = simplify({a, b}, accessed_attributes={"__iter__"})
-    assert len(result) == 1
-    result_type = next(iter(result)).type_obj
-    assert issubclass(result_type, abc.Iterable)
+    result = merged_types({a, b}, accessed_attributes={"__iter__"})
+    assert not result.is_union()
+    assert issubclass(result.type_obj, abc.Iterable)
 
 
 def test_simplify_abc_not_used_when_concrete_base_exists():
     """When a concrete base exists and has the accessed attributes,
     prefer it over ABC matching."""
-    from righttyper.generalize import simplify
+    from righttyper.generalize import merged_types
 
     a = TypeInfo.from_type(_ChildA)
     b = TypeInfo.from_type(_ChildB)
 
     # 'name' is on _Base → concrete merge to _Base, not to some ABC
-    result = simplify({a, b}, accessed_attributes={"name"})
-    assert len(result) == 1
-    assert next(iter(result)).type_obj is _Base
+    result = merged_types({a, b}, accessed_attributes={"name"})
+    assert not result.is_union()
+    assert result.type_obj is _Base
 
 
 def test_simplify_abc_single_type():
     """A single type is not generalized to an ABC — ABC matching only
     reduces union size, not replaces a single concrete type."""
-    from righttyper.generalize import simplify
+    from righttyper.generalize import merged_types
 
     a = TypeInfo.from_type(_IterableA)
 
-    result = simplify({a}, accessed_attributes={"__len__"})
-    assert len(result) == 1
-    assert next(iter(result)).type_obj is _IterableA
+    result = merged_types({a}, accessed_attributes={"__len__"})
+    assert result.type_obj is _IterableA
 
 
 # =============================================================================

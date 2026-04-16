@@ -1,11 +1,9 @@
 from typing import cast, Sequence, Iterator, Any, Never, NoReturn
 import collections.abc as abc
-from collections import defaultdict, Counter
+from collections import Counter
 from types import EllipsisType
-import itertools
 from righttyper.typeinfo import TypeInfo, ListTypeInfo, CallTrace
 from righttyper.type_id import get_type_name
-from righttyper.righttyper_types import cast_not_None
 from righttyper.options import output_options
 
 
@@ -261,6 +259,17 @@ def _merge_set(
     if not typeinfoset:
         return TypeInfo.from_type(Never)
 
+    # Single-type generalization: if accessed_attributes are provided,
+    # walk up the MRO to find a more general base type.
+    if len(typeinfoset) == 1 and accessed_attributes:
+        t = next(iter(typeinfoset))
+        if isinstance(t.type_obj, type) and not t.args:
+            for base in t.type_obj.__mro__:
+                if base is t.type_obj or base is object:
+                    continue
+                if accessed_attributes.issubset(dir(base)):
+                    return get_type_name(base)
+
     # Iteratively reduce: try to merge pairs until stable
     types = list(typeinfoset)
     changed = True
@@ -282,99 +291,6 @@ def _merge_set(
 
     # lub already handled simplification; just form the union
     return TypeInfo.from_set_new(set(types))
-
-
-def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
-    """Merge generics with same container but different type args.
-
-    E.g., list[int] | list[bool] → list[int] (bool is subtype of int)
-         dict[str, int] | dict[str, str] → dict[str, int | str]
-         tuple[int, ...] | tuple[str, ...] → tuple[int | str, ...]
-
-    For invariant types (list, dict, set, etc.) this is only safe for variable
-    annotations.  For covariant types (tuple, frozenset) this is safe everywhere;
-    see merged_types() for where that distinction is enforced.
-    """
-    if not any(t.args for t in typeinfoset):
-        return typeinfoset
-
-    typeinfoset = set(typeinfoset)  # avoid modifying argument
-
-    # Group by (module, name, per-position TypeInfo pattern, nargs).
-    # This ensures e.g. tuple[int, str] and tuple[int, ...] end up in
-    # different groups (different TypeInfo/Ellipsis patterns).
-    def group_key(t: TypeInfo) -> tuple[str, str, tuple[bool, ...], int]:
-        return (t.module, t.name,
-                tuple(isinstance(arg, TypeInfo) for arg in t.args),
-                len(t.args))
-
-    for (_mod, _name, is_info_per_arg, nargs), group in itertools.groupby(
-        sorted(typeinfoset, key=group_key),
-        group_key
-    ):
-        group_set = set(group)
-        if len(group_set) <= 1:
-            continue
-
-        first = next(iter(group_set))
-
-        # Only merge when every non-TypeInfo arg is Ellipsis
-        if not all(is_info or first.args[i] is Ellipsis
-                   for i, is_info in enumerate(is_info_per_arg)):
-            continue
-
-        typeinfoset -= group_set
-        # Recursively merge and simplify inner type arguments.
-        # This allows bool|int -> int, and handles nested generics.
-        # Ellipsis positions are preserved as-is.
-        typeinfoset.add(first.replace(args=tuple(
-            merged_types({
-                cast(TypeInfo, member.args[i]) for member in group_set
-            }, for_variable=True)
-            if is_info_per_arg[i] else first.args[i]
-            for i in range(nargs)
-        )))
-
-    return typeinfoset
-
-
-def _subsume_fixed_by_varlen_tuples(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
-    """Remove fixed-length tuples subsumed by a variable-length tuple.
-
-    tuple[int, int] | tuple[int, ...] → tuple[int, ...]
-    because tuple[int, int] is a subtype of tuple[int, ...] (all elements are ints).
-
-    Also removes tuple[()] (empty tuple) since it is a subtype of any tuple[T, ...].
-    """
-    varlen = {
-        t for t in typeinfoset
-        if t.type_obj is tuple
-        and len(t.args) == 2
-        and t.args[1] is Ellipsis
-        and isinstance(t.args[0], TypeInfo)
-    }
-    if not varlen:
-        return typeinfoset
-
-    # Empty tuples (tuple[()]) are subtypes of any tuple[T, ...]
-    empty = {t for t in typeinfoset if t.type_obj is tuple and t.args == ((),)}
-
-    fixed = {
-        t for t in typeinfoset - varlen - empty
-        if t.type_obj is tuple
-        and t.args
-        and all(isinstance(a, TypeInfo) for a in t.args)
-    }
-
-    to_remove = set(empty)
-    for f in fixed:
-        for v in varlen:
-            elem = cast(TypeInfo, v.args[0])
-            if all(type_contains(elem, cast(TypeInfo, a)) for a in f.args):
-                to_remove.add(f)
-                break
-
-    return typeinfoset - to_remove if to_remove else typeinfoset
 
 
 def type_contains(a: TypeInfo, b: TypeInfo) -> bool:
@@ -408,61 +324,6 @@ def type_contains(a: TypeInfo, b: TypeInfo) -> bool:
     return False
 
 
-def merge_container_supersets(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
-    """Remove containers whose element types are subsets of another container's.
-
-    E.g., list[int] | list[int|str] → list[int|str]
-          list[int] | list[str] → list[int] | list[str]  (no subset relationship)
-
-    This is safe for Container types because a subset observation represents
-    an earlier/partial view of the same container accumulating elements.
-    """
-    # Only consider Container types (list, set, dict, etc.)
-    container_types = {
-        t for t in typeinfoset
-        if t.args and
-        type(t.type_obj) is type and
-        issubclass(t.type_obj, abc.Container)
-    }
-
-    if not container_types:
-        return typeinfoset
-
-    typeinfoset = set(typeinfoset)  # avoid modifying argument
-
-    def group_key(t: TypeInfo) -> tuple[str, str, int]:
-        return t.module, t.name, len(t.args)
-
-    for (_mod, _name, nargs), group in itertools.groupby(
-        sorted(container_types, key=group_key),
-        group_key
-    ):
-        group_list = list(group)
-        if len(group_list) <= 1:
-            continue
-
-        # Check if all args are TypeInfo
-        if not all(all(isinstance(arg, TypeInfo) for arg in t.args) for t in group_list):
-            continue
-
-        # Find containers that are strict subsets of others
-        to_remove = set()
-        for t1 in group_list:
-            if t1 in to_remove:
-                continue
-            for t2 in group_list:
-                if t1 is t2 or t2 in to_remove:
-                    continue
-                # If t1 is contained by t2 (and they're not equal), remove t1
-                if t1 != t2 and type_contains(t2, t1):
-                    to_remove.add(t1)
-                    break
-
-        typeinfoset -= to_remove
-
-    return typeinfoset
-
-
 def _is_empty_container(t: TypeInfo) -> bool:
     """Check if t represents an empty container (e.g., tuple[()], list[Never], dict[Never, Never])."""
     if t.type_obj is tuple and t.args == ((),):
@@ -479,247 +340,9 @@ def merged_types(
     accessed_attributes: set[str] | None = None,
 ) -> TypeInfo:
     """Attempts to merge types in a set before forming their union."""
-    old_result = _merged_types_old(typeinfoset, for_variable, accessed_attributes)
-
     if output_options.simplify_types:
-        new_result = _merge_set(typeinfoset, for_variable, accessed_attributes)
-        if old_result != new_result:
-            import warnings
-            warnings.warn(
-                f"lub mismatch: {typeinfoset} for_variable={for_variable} "
-                f"attrs={accessed_attributes}\n  old={old_result}\n  new={new_result}"
-            )
-
-    return old_result
-
-
-def _merged_types_old(
-    typeinfoset: set[TypeInfo],
-    for_variable: bool = False,
-    accessed_attributes: set[str] | None = None,
-) -> TypeInfo:
-    """Original merged_types implementation (ad-hoc chain)."""
-    if output_options.simplify_types and (len(typeinfoset) > 1 or accessed_attributes):
-        typeinfoset = simplify(typeinfoset, accessed_attributes)
-
-    if len(typeinfoset) > 1:
-        if for_variable:
-            typeinfoset = merge_similar_generics(typeinfoset)
-        else:
-            typeinfoset = merge_container_supersets(typeinfoset)
-            # Covariant (immutable) types can safely have their type args
-            # merged even for params/returns, since there is no write path.
-            if len(typeinfoset) > 1:
-                covariant = {t for t in typeinfoset
-                             if t.args
-                             and isinstance(t.type_obj, type)
-                             and issubclass(t.type_obj, _COVARIANT_TYPES)}
-                if len(covariant) > 1:
-                    others = typeinfoset - covariant
-                    typeinfoset = merge_similar_generics(covariant) | others
-            if len(typeinfoset) > 1:
-                typeinfoset = _subsume_fixed_by_varlen_tuples(typeinfoset)
-
-    # Cross-container ABC merge: find a common ABC for different container
-    # types (e.g., list[int] | tuple[int,...] → Sequence[int]).
-    # Empty containers are dropped first (they're compatible with any element type).
-    if len(typeinfoset) > 1 and accessed_attributes:
-        typeinfoset -= {t for t in typeinfoset if _is_empty_container(t)} or set()
-        # Generics with TypeInfo args — group by number of TypeInfo args
-        generics = {t for t in typeinfoset
-                    if t.args and isinstance(t.args[0], TypeInfo) and isinstance(t.type_obj, type)}
-        n_type_args = {sum(isinstance(a, TypeInfo) for a in t.args) for t in generics}
-        if len(generics) >= (2 if len(typeinfoset) > 1 else 1) and len(n_type_args) == 1:
-            n = next(iter(n_type_args))
-            candidates = [g for g, attrs in _abc_own_attrs.items()
-                          if accessed_attributes <= attrs
-                          and all(issubclass(t.type_obj, g) for t in generics)]
-            if candidates:
-                best = max(candidates, key=lambda g: len(g.__mro__))
-                # Merge corresponding TypeInfo args across all generics
-                merged_args = tuple(
-                    TypeInfo.from_set({cast(TypeInfo, [a for a in t.args if isinstance(a, TypeInfo)][i])
-                                       for t in generics})
-                    for i in range(n)
-                )
-                abc_result = (typeinfoset - generics) | {get_type_name(best).replace(args=merged_args)}
-                if len(abc_result) < len(typeinfoset):
-                    typeinfoset = abc_result
-
+        return _merge_set(typeinfoset, for_variable, accessed_attributes)
     return TypeInfo.from_set(typeinfoset)
-
-
-def simplify(typeinfoset: set[TypeInfo], accessed_attributes: set[str] | None = None) -> set[TypeInfo]:
-    """Simplifies the set by replacing types with supertypes that have
-       all required attributes.
-
-       If accessed_attributes is provided, only those attributes are considered
-       (from static analysis of the function body). Otherwise, falls back to
-       using dir() to find common attributes across the types.
-    """
-    # Types we support simplifying
-    simplifiable_types = set(
-        t
-        for t in typeinfoset
-        if len(t.args) == 0                          # we don't compare arguments yet
-        if not hasattr(t.type_obj, "__orig_class__") # we don't support generics yet
-    )
-
-    if not simplifiable_types:
-        return typeinfoset
-
-    other_types = typeinfoset - simplifiable_types 
-
-    # generics whose incomplete (argumentless) forms default to Any arguments
-    incomplete_types = set(
-        t
-        for t in simplifiable_types
-        if (
-            # TODO many more could be added here -- maybe every ABC?
-            t.type_obj in (abc.Callable, abc.Iterator, abc.AsyncIterator, abc.Iterable,
-                           abc.Generator, abc.AsyncGenerator, abc.Coroutine)
-            or (type(t.type_obj) is type and issubclass(t.type_obj, abc.Container))
-        )
-    )
-
-    if incomplete_types:
-        # the incomplete form subsumes those with arguments: delete them
-        other_types = set(
-            t
-            for t in other_types
-            if not any(bc.type_obj is t.type_obj for bc in incomplete_types)
-        )
-
-    # Types we support merging
-    mergeable_types = set(
-        t
-        for t in simplifiable_types
-        if type(t.type_obj) is type     # we need a type_obj with __mro__ for merging
-    )
-
-    other_types |= (simplifiable_types - mergeable_types)
-
-    if not mergeable_types:
-        return other_types
-
-    # TODO do we want to merge by protocol?  search for protocols in collections.abc types?
-
-    def insert_numerics(mro: tuple[type, ...]) -> tuple[type, ...]:
-        """Inserts numerics where applicable into an mro list
-        
-        This also preserves topological order.
-
-        For example, suppose our type hierarchy looks like
-        ```
-             float int
-                |   |
-                A   B
-        ```
-        And we are given [A, float] for A and [B, int] for B
-
-        According to [PEP 3141](https://peps.python.org/pep-3141/), this type hierarchy is equivalent to
-        ```
-             complex
-                |
-              float
-                | \\
-                |  int
-                |   |
-                A   B
-        ```
-
-        This method returns a new mro that is consistent with this type hierarchy
-        ([A, float, complex] for A and [B, int, float, complex] for B)
-        """
-        numeric_hierarchy = frozenset({int, float, complex, object})
-        numerics = [mro_type for mro_type in mro if mro_type in numeric_hierarchy]
-        if len(numerics) <= 1:
-            return mro
-        new_mro = [mro_type for mro_type in mro if mro_type not in numeric_hierarchy]
-        tower_index = min([int, float, complex, object].index(mro_type) for mro_type in numerics)
-        new_mro.extend([int, float, complex, object][tower_index:])
-        return tuple(new_mro)
-
-    if accessed_attributes is not None:
-        common_attributes = accessed_attributes
-    else:
-        # FIXME besides attribute presence, we should check their types/signatures
-        # FIXME we should check object attributes, not their classes'
-        common_attributes = set.intersection(
-            *(
-                set(
-                    attr
-                    for attr in dir(cast_not_None(t.type_obj))
-                    if getattr(t.type_obj, attr, None) is not None
-                    if not attr.startswith("_") or attr.startswith("__")
-                ) for t in mergeable_types
-            )
-        )
-
-    # Get the superclasses, if any, that have all the common attributes
-    common_supertypes = defaultdict(list)
-    for t in mergeable_types:
-        for base in insert_numerics(cast(type, t.type_obj).__mro__):
-            if common_attributes.issubset(set(dir(base))):
-                common_supertypes[base].append(t)
-
-    # Unless "object" is in the set, it's likely too general to be useful
-    # TODO why aren't the attributes enough to exclude "object" ?
-    if object in common_supertypes and not any(t.type_obj is object for t in mergeable_types):
-        del common_supertypes[object]
-
-#    print("common_supertypes=", {k: [str(t) for t in v] for k, v in common_supertypes.items() if len(v)>1})
-
-    # MRO-based merge: replace types with the most specific common supertype.
-    # Save replacements separately so they don't get replaced in turn.
-    mro_mergeable = set(mergeable_types)
-    mro_replacements: set[TypeInfo] = set()
-
-    # 'defaultdict' retains insertion order, and 'sorted' is stable, so the first supertypes
-    # on the list, after sorting by how many types they replace, are as specific as possible.
-    for st, types in sorted(common_supertypes.items(), key=lambda item: -len(item[1])):
-        if len(types) == 1:
-            if accessed_attributes is None:
-                break   # without accessed_attributes, 1-for-1 exchanges aren't useful
-            # With accessed_attributes, generalize a single type to its base
-            # if the base has all accessed attributes (e.g., PosixPath → Path).
-            # Skip self-replacement and numeric tower widening (float → complex
-            # is technically valid but not useful).
-            if types[0].type_obj is st:
-                continue
-            if st in (int, float, complex):
-                continue
-
-        if any(t in mro_mergeable for t in types):
-            mro_mergeable -= set(types)
-            mro_replacements.add(get_type_name(st))
-
-    mro_result = mro_mergeable | mro_replacements | other_types
-
-    # ABC matching: try to find a collections.abc ABC that all original
-    # mergeable types structurally implement and that covers the accessed
-    # attributes. Use it only if it produces a shorter result than MRO.
-    if accessed_attributes and len(mro_result) > 1:
-        # Pre-filter ABCs whose interface covers the accessed attributes (cheap set check)
-        candidates = [g for g, attrs in _abc_own_attrs.items()
-                       if accessed_attributes <= attrs]
-
-        if candidates:
-            abc_candidates: set[type] | None = None
-            for t in mergeable_types:
-                if type(t.type_obj) is not type:
-                    abc_candidates = set()
-                    break
-                abcs = {g for g in candidates if issubclass(t.type_obj, g)}
-                abc_candidates = abcs if abc_candidates is None else abc_candidates & abcs
-
-            if abc_candidates:
-                best = max(abc_candidates, key=lambda g: len(g.__mro__))
-                abc_result = {get_type_name(best)} | other_types
-                if len(abc_result) < len(mro_result):
-                    return abc_result
-
-    return mro_result
 
 
 def generalize_jaxtyping(samples: Sequence[CallTrace]) -> Sequence[CallTrace]:

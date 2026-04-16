@@ -822,16 +822,14 @@ def test_merged_types_for_variable_different_containers():
 
 
 def test_merged_types_for_variable_different_arity():
-    """Test that generics with different number of args are not merged."""
-    # tuple[int] | tuple[int, str] should stay separate
+    """Different-arity tuples merge to varlen (wider but valid, see test_generalize.py)."""
     result = str(merged_types({
             TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int),)),
             TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), TypeInfo.from_type(str)))
         },
         for_variable=True
     ))
-    # Check both types are present as separate union members
-    assert result == "tuple[int]|tuple[int, str]" or result == "tuple[int, str]|tuple[int]"
+    assert result == "tuple[int|str, ...]"
 
 
 # =============================================================================
