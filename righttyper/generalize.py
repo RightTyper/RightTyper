@@ -128,19 +128,16 @@ def lub(
         if a.args and b.args:
             # Rule 5a: Varlen tuple subsumes fixed tuple (different arg lengths OK)
             if a.type_obj is tuple:
-                a_varlen = len(a.args) == 2 and a.args[1] is Ellipsis and isinstance(a.args[0], TypeInfo)
-                b_varlen = len(b.args) == 2 and b.args[1] is Ellipsis and isinstance(b.args[0], TypeInfo)
-                a_fixed = not a_varlen and all(isinstance(x, TypeInfo) for x in a.args)
-                b_fixed = not b_varlen and all(isinstance(x, TypeInfo) for x in b.args)
+                def _is_varlen(t: TypeInfo) -> bool:
+                    return len(t.args) == 2 and t.args[1] is Ellipsis and isinstance(t.args[0], TypeInfo)
+                def _is_fixed(t: TypeInfo) -> bool:
+                    return not _is_varlen(t) and all(isinstance(x, TypeInfo) for x in t.args)
 
-                if a_varlen and (b_fixed or b.args == ((),)):
-                    elem = cast(TypeInfo, a.args[0])
-                    if b.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in b.args):
-                        return a
-                if b_varlen and (a_fixed or a.args == ((),)):
-                    elem = cast(TypeInfo, b.args[0])
-                    if a.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in a.args):
-                        return b
+                for vl, other in ((a, b), (b, a)):
+                    if _is_varlen(vl) and (_is_fixed(other) or other.args == ((),)):
+                        elem = cast(TypeInfo, vl.args[0])
+                        if other.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in other.args):
+                            return vl
 
             # Rule 5b: Same container, empty subsumed by non-empty.
             # For tuples, skip — rule 5d will merge to varlen instead.
