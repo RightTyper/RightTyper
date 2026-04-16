@@ -13,6 +13,20 @@ from righttyper.options import output_options
 # is safe even for function parameters and return types.
 _COVARIANT_TYPES = (tuple, frozenset)
 
+# Generic types where bare form (no args) means "Any args" and subsumes parametrized forms.
+# Containers are handled separately via issubclass(t, abc.Container).
+_BARE_SUBSUMES: set[type] = {
+    abc.Callable, abc.Iterator, abc.AsyncIterator, abc.Iterable,
+    abc.Generator, abc.AsyncGenerator, abc.Coroutine,
+    abc.Awaitable, abc.AsyncIterable, abc.Reversible, abc.MappingView, type,
+}
+
+# All generic container ABCs from collections.abc, ordered most-specific-first.
+_CONTAINER_ABCS: list[type] = [
+    obj for obj in reversed(list(vars(abc).values()))
+    if isinstance(obj, type) and hasattr(obj, '__class_getitem__') and issubclass(obj, abc.Container)
+]
+
 
 # Precomputed ABC data for structural matching in simplify().
 def _build_abc_own_attrs() -> dict[type, frozenset[str]]:
@@ -89,9 +103,6 @@ def lub(
             return a
 
     # Rule 4b: Bare generic subsumes parametrized (list subsumes list[int]).
-    # Only for types where bare means "Any args": containers and ABC generics.
-    _BARE_SUBSUMES = (abc.Callable, abc.Iterator, abc.AsyncIterator, abc.Iterable,
-                      abc.Generator, abc.AsyncGenerator, abc.Coroutine)
     if (a.module == b.module and a.name == b.name
         and isinstance(a.type_obj, type)
         and (a.type_obj in _BARE_SUBSUMES or issubclass(a.type_obj, abc.Container))):
@@ -131,7 +142,8 @@ def lub(
 
         # Rule 5c: Same container, same arg count — merge args
         if len(a.args) == len(b.args):
-            is_covariant = issubclass(a.type_obj, _COVARIANT_TYPES)
+            # type[X] is covariant (type[B] <: type[A] when B <: A)
+            is_covariant = issubclass(a.type_obj, _COVARIANT_TYPES) or a.type_obj is type
             if for_variable or is_covariant:
                 can_merge = all(
                     (isinstance(aa, TypeInfo) and isinstance(ba, TypeInfo))
@@ -162,8 +174,6 @@ def lub(
 
     # Rule 6: Empty container + non-empty container → common ABC with element type.
     # E.g., tuple[()] + list[int] → Sequence[int].
-    _CONTAINER_ABCS = (abc.Sequence, abc.Mapping, abc.Set, abc.Collection)
-
     def _find_common_container_abc(t1: TypeInfo, t2: TypeInfo) -> type | None:
         if not (isinstance(t1.type_obj, type) and isinstance(t2.type_obj, type)):
             return None

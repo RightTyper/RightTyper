@@ -1382,3 +1382,144 @@ def test_lub_mypy_varlen_tuples():
     # join(tuple[a, ...], tuple[()]) = tuple[a, ...]
     empty = TypeInfo.from_type(tuple).replace(args=((),))
     assert lub(varlen, empty) == varlen
+
+
+def test_lub_callable_same_signature():
+    """lub(Callable[[int], str], Callable[[int], str]) = Callable[[int], str]."""
+    import collections.abc
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    params = TypeInfo.list([int_t])
+    a = TypeInfo.from_type(collections.abc.Callable).replace(args=(params, str_t))
+    assert lub(a, a) == a
+
+
+def test_lub_callable_different_return():
+    """lub(Callable[[int], int], Callable[[int], str]) merges return types (covariant)."""
+    import collections.abc
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    a = TypeInfo.from_type(collections.abc.Callable).replace(
+        args=(TypeInfo.list([int_t]), int_t))
+    b = TypeInfo.from_type(collections.abc.Callable).replace(
+        args=(TypeInfo.list([int_t]), str_t))
+    result = lub(a, b, for_variable=True)
+    # Same params, different return → merge return to int|str
+    assert result.type_obj is collections.abc.Callable
+    assert not result.is_union()
+    # Return type (last arg) should be a union
+    assert result.args[-1].is_union()
+    assert result.args[-1].to_set() == {int_t, str_t}
+    # Params (first arg) should be unchanged
+    assert result.args[0].is_list()
+    assert result.args[0].args == (int_t,)
+
+
+def test_lub_callable_different_params():
+    """lub(Callable[[int], str], Callable[[float], str]) — different params stay as union."""
+    import collections.abc
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    float_t = TypeInfo.from_type(float)
+    str_t = TypeInfo.from_type(str)
+    a = TypeInfo.from_type(collections.abc.Callable).replace(
+        args=(TypeInfo.list([int_t]), str_t))
+    b = TypeInfo.from_type(collections.abc.Callable).replace(
+        args=(TypeInfo.list([float_t]), str_t))
+    result = lub(a, b)
+    # Different param types, invariant by default → union
+    assert result.is_union()
+    assert result.to_set() == {a, b}
+
+
+def test_lub_callable_ellipsis_params():
+    """lub(Callable[..., int], Callable[..., str]) merges return types."""
+    import collections.abc
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    a = TypeInfo.from_type(collections.abc.Callable).replace(args=(..., int_t))
+    b = TypeInfo.from_type(collections.abc.Callable).replace(args=(..., str_t))
+    result = lub(a, b, for_variable=True)
+    assert result.type_obj is collections.abc.Callable
+    assert not result.is_union()
+    assert result.args[0] is ...
+    assert result.args[-1].is_union()
+    assert result.args[-1].to_set() == {int_t, str_t}
+
+
+def test_lub_type_of_subtype():
+    """lub(type[B], type[C]) = type[A] when B, C both extend A."""
+    from righttyper.generalize import lub
+    b_t = TypeInfo.from_type(type).replace(args=(TypeInfo.from_type(_B_mypy),))
+    c_t = TypeInfo.from_type(type).replace(args=(TypeInfo.from_type(_C_mypy),))
+    result = lub(b_t, c_t)
+    assert result.type_obj is type
+    assert not result.is_union()
+    # type arg should be A (common base of B and C)
+    assert result.args[0].type_obj is _A_mypy
+
+
+def test_lub_type_of_same():
+    """lub(type[B], type[B]) = type[B]."""
+    from righttyper.generalize import lub
+    b_t = TypeInfo.from_type(type).replace(args=(TypeInfo.from_type(_B_mypy),))
+    assert lub(b_t, b_t) == b_t
+
+
+def test_lub_type_of_unrelated():
+    """lub(type[A], type[D]) = type[A|D] (covariant merge of unrelated args)."""
+    from righttyper.generalize import lub
+    a_ti = TypeInfo.from_type(_A_mypy)
+    d_ti = TypeInfo.from_type(_D_mypy)
+    a_t = TypeInfo.from_type(type).replace(args=(a_ti,))
+    d_t = TypeInfo.from_type(type).replace(args=(d_ti,))
+    result = lub(a_t, d_t)
+    assert result.type_obj is type
+    assert not result.is_union()
+    # Inner arg is the union A|D
+    assert result.args[0].is_union()
+    assert result.args[0].to_set() == {a_ti, d_ti}
+
+
+# --- Rule 4b: bare generic subsumes parametrized ---
+
+def test_lub_bare_type_subsumes_parametrized():
+    """lub(type, type[int]) = type (bare type subsumes type[int])."""
+    from righttyper.generalize import lub
+    bare = TypeInfo.from_type(type)
+    parametrized = TypeInfo.from_type(type).replace(args=(TypeInfo.from_type(int),))
+    assert lub(bare, parametrized) == bare
+    assert lub(parametrized, bare) == bare
+
+
+def test_lub_bare_awaitable_subsumes_parametrized():
+    """lub(Awaitable, Awaitable[int]) = Awaitable."""
+    from righttyper.generalize import lub
+    import collections.abc as abc
+    bare = TypeInfo.from_type(abc.Awaitable)
+    parametrized = TypeInfo.from_type(abc.Awaitable).replace(args=(TypeInfo.from_type(int),))
+    assert lub(bare, parametrized) == bare
+    assert lub(parametrized, bare) == bare
+
+
+def test_lub_bare_async_iterable_subsumes_parametrized():
+    """lub(AsyncIterable, AsyncIterable[str]) = AsyncIterable."""
+    from righttyper.generalize import lub
+    import collections.abc as abc
+    bare = TypeInfo.from_type(abc.AsyncIterable)
+    parametrized = TypeInfo.from_type(abc.AsyncIterable).replace(args=(TypeInfo.from_type(str),))
+    assert lub(bare, parametrized) == bare
+    assert lub(parametrized, bare) == bare
+
+
+def test_lub_bare_reversible_subsumes_parametrized():
+    """lub(Reversible, Reversible[float]) = Reversible."""
+    from righttyper.generalize import lub
+    import collections.abc as abc
+    bare = TypeInfo.from_type(abc.Reversible)
+    parametrized = TypeInfo.from_type(abc.Reversible).replace(args=(TypeInfo.from_type(float),))
+    assert lub(bare, parametrized) == bare
+    assert lub(parametrized, bare) == bare
