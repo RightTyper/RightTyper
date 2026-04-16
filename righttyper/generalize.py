@@ -205,8 +205,15 @@ def lub(
                 b_ti = [x for x in b.args if isinstance(x, TypeInfo)] if b.args else []
                 n = min(len(a_ti), len(b_ti))
                 if n > 0:
-                    is_covariant = issubclass(best, _COVARIANT_TYPES)
-                    if for_variable or is_covariant:
+                    # If either type is immutable, the function can't mutate
+                    # the container, so the merge is effectively covariant.
+                    # FIXME: this assumes no type narrowing (isinstance checks);
+                    # if the code narrows, the mutable branch could be written to.
+                    either_immutable = (
+                        issubclass(a.type_obj, _COVARIANT_TYPES)
+                        or issubclass(b.type_obj, _COVARIANT_TYPES)
+                    )
+                    if for_variable or either_immutable:
                         merged_args = tuple(
                             lub(a_ti[i], b_ti[i], for_variable=True)
                             for i in range(n)

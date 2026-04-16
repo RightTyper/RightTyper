@@ -1134,6 +1134,47 @@ def test_lub_list_str_and_empty_tuple_to_sequence():
     assert result.args and result.args[0].type_obj is str
 
 
+def test_lub_list_and_tuple_same_elem_to_sequence():
+    """list[str]|tuple[str] → Sequence[str] (cross-container, same element type)."""
+    import collections.abc
+    from righttyper.generalize import lub
+    str_t = TypeInfo.from_type(str)
+    a = TypeInfo.from_type(list).replace(args=(str_t,))
+    b = TypeInfo.from_type(tuple).replace(args=(str_t,))
+    result = lub(a, b, accessed_attributes={"__iter__"})
+    assert not result.is_union()
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Sequence)
+    assert result.args and result.args[0].type_obj is str
+
+
+def test_lub_list_and_tuple_different_elem():
+    """list[int]|tuple[str] → Sequence[int|str] (immutable tuple makes it covariant)."""
+    import collections.abc
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(int),))
+    b = TypeInfo.from_type(tuple).replace(args=(TypeInfo.from_type(str),))
+    result = lub(a, b, accessed_attributes={"__iter__"})
+    assert not result.is_union()
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Sequence)
+    assert result.args and result.args[0].is_union()
+    assert result.args[0].to_set() == {TypeInfo.from_type(int), TypeInfo.from_type(str)}
+
+
+def test_lub_dict_and_list_of_tuples():
+    """dict[str,str]|list[tuple[str,str]] stays as union (incompatible arg arities)."""
+    from righttyper.generalize import lub
+    str_t = TypeInfo.from_type(str)
+    d = TypeInfo.from_type(dict).replace(args=(str_t, str_t))
+    lt = TypeInfo.from_type(list).replace(args=(
+        TypeInfo.from_type(tuple).replace(args=(str_t, str_t)),
+    ))
+    result = lub(d, lt)
+    assert result.is_union()
+    assert result.to_set() == {d, lt}
+
+
 def test_lub_abc_fallback():
     """lub(IterableA, IterableB) → Iterable when no MRO base but both implement ABC."""
     import collections.abc
