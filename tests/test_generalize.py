@@ -1022,15 +1022,17 @@ def test_lub_empty_same_container():
     assert lub(non_empty, empty) == non_empty
 
 
-def test_lub_empty_container_incompatible():
-    """lub(dict[Never,Never], list[int]) stays as union (incompatible containers)."""
+def test_lub_empty_dict_and_list_to_collection():
+    """lub(dict[Never,Never], list[int]) → Collection[int] (both are Collections)."""
+    import collections.abc
     from righttyper.generalize import lub
     int_t = TypeInfo.from_type(int)
     empty_dict = TypeInfo.from_type(dict).replace(args=(TypeInfo.from_type(Never), TypeInfo.from_type(Never)))
     list_int = TypeInfo.from_type(list).replace(args=(int_t,))
     result = lub(empty_dict, list_int)
-    assert result.is_union()
-    assert result.to_set() == {empty_dict, list_int}
+    assert not result.is_union()
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Collection)
 
 
 def test_lub_empty_tuple_subsumed_by_varlen():
@@ -1077,6 +1079,59 @@ def test_lub_mro_skips_numeric_widening():
     from righttyper.generalize import lub
     result = lub(TypeInfo.from_type(int), TypeInfo.from_type(float))
     assert result.type_obj is float  # numeric tower, not complex
+
+
+def test_lub_empty_tuple_and_fixed_tuple():
+    """tuple[()]|tuple[str] should merge.
+    An empty tuple + a fixed tuple of strings → variable-length tuple of strings."""
+    from righttyper.generalize import lub
+    empty = TypeInfo.from_type(tuple).replace(args=((),))
+    fixed = TypeInfo.from_type(tuple).replace(args=(TypeInfo.from_type(str),))
+    result = lub(empty, fixed)
+    # varlen tuple subsumes both
+    assert result.type_obj is tuple
+    assert not result.is_union()
+
+
+def test_lub_list_and_empty_tuple_to_sequence():
+    """list[tuple[int,int]]|tuple[()] → Sequence[tuple[int,int]]."""
+    import collections.abc
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    inner = TypeInfo.from_type(tuple).replace(args=(int_t, int_t))
+    list_t = TypeInfo.from_type(list).replace(args=(inner,))
+    empty = TypeInfo.from_type(tuple).replace(args=((),))
+    result = lub(list_t, empty)
+    assert not result.is_union()
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Sequence)
+
+
+def test_lub_set_and_empty_tuple_to_collection():
+    """set[int]|tuple[()] → Collection[int] (both are Collections)."""
+    import collections.abc
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    set_t = TypeInfo.from_type(set).replace(args=(int_t,))
+    empty = TypeInfo.from_type(tuple).replace(args=((),))
+    result = lub(set_t, empty)
+    assert not result.is_union()
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Collection)
+    assert result.args and result.args[0].type_obj is int
+
+
+def test_lub_list_str_and_empty_tuple_to_sequence():
+    """list[str]|tuple[()] → Sequence[str]."""
+    import collections.abc
+    from righttyper.generalize import lub
+    list_t = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(str),))
+    empty = TypeInfo.from_type(tuple).replace(args=((),))
+    result = lub(list_t, empty)
+    assert not result.is_union()
+    assert isinstance(result.type_obj, type)
+    assert issubclass(result.type_obj, collections.abc.Sequence)
+    assert result.args and result.args[0].type_obj is str
 
 
 def test_lub_abc_fallback():

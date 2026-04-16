@@ -147,7 +147,7 @@ def lub(
 
     # Rule 6: Empty container + non-empty container → common ABC with element type.
     # E.g., tuple[()] + list[int] → Sequence[int].
-    _CONTAINER_ABCS = (abc.Sequence, abc.Mapping, abc.Set)
+    _CONTAINER_ABCS = (abc.Sequence, abc.Mapping, abc.Set, abc.Collection)
 
     def _find_common_container_abc(t1: TypeInfo, t2: TypeInfo) -> type | None:
         if not (isinstance(t1.type_obj, type) and isinstance(t2.type_obj, type)):
