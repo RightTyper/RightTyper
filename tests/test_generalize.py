@@ -1175,6 +1175,49 @@ def test_lub_dict_and_list_of_tuples():
     assert result.to_set() == {d, lt}
 
 
+def test_lub_subtype_narrowing():
+    """lub(ChildA, Base) → Base (ChildA <: Base)."""
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(_ChildA)
+    base = TypeInfo.from_type(_Base)
+    assert lub(a, base) == base
+    assert lub(base, a) == base
+
+
+def test_lub_fixed_tuple_different_lengths():
+    """tuple[int] | tuple[int, str] — different fixed lengths, stays as union."""
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(tuple).replace(args=(TypeInfo.from_type(int),))
+    b = TypeInfo.from_type(tuple).replace(args=(TypeInfo.from_type(int), TypeInfo.from_type(str)))
+    result = lub(a, b)
+    assert result.is_union()
+    assert result.to_set() == {a, b}
+
+
+def test_lub_fixed_tuple_same_length_merge():
+    """tuple[int, str] | tuple[float, str] → tuple[int|float, str] (covariant, same length)."""
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(tuple).replace(args=(TypeInfo.from_type(int), TypeInfo.from_type(str)))
+    b = TypeInfo.from_type(tuple).replace(args=(TypeInfo.from_type(float), TypeInfo.from_type(str)))
+    result = lub(a, b)
+    assert result.type_obj is tuple
+    assert not result.is_union()
+    # First arg merged (int|float → float via numeric tower)
+    assert result.args[0].type_obj is float
+    assert result.args[1].type_obj is str
+
+
+def test_lub_multiple_lists_merge_args():
+    """list[int] | list[str] → list[int|str] when for_variable=True."""
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(int),))
+    b = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(str),))
+    result = lub(a, b, for_variable=True)
+    assert result.type_obj is list
+    assert result.args[0].is_union()
+    assert result.args[0].to_set() == {TypeInfo.from_type(int), TypeInfo.from_type(str)}
+
+
 def test_lub_abc_fallback():
     """lub(IterableA, IterableB) → Iterable when no MRO base but both implement ABC."""
     import collections.abc
