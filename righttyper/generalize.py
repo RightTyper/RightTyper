@@ -130,8 +130,8 @@ def lub(
             if a.type_obj is tuple:
                 a_varlen = len(a.args) == 2 and a.args[1] is Ellipsis and isinstance(a.args[0], TypeInfo)
                 b_varlen = len(b.args) == 2 and b.args[1] is Ellipsis and isinstance(b.args[0], TypeInfo)
-                a_fixed = all(isinstance(x, TypeInfo) for x in a.args) and not a_varlen
-                b_fixed = all(isinstance(x, TypeInfo) for x in b.args) and not b_varlen
+                a_fixed = not a_varlen and all(isinstance(x, TypeInfo) for x in a.args)
+                b_fixed = not b_varlen and all(isinstance(x, TypeInfo) for x in b.args)
 
                 if a_varlen and (b_fixed or b.args == ((),)):
                     elem = cast(TypeInfo, a.args[0])
