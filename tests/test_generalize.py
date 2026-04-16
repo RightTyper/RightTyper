@@ -1311,3 +1311,74 @@ def test_lub_abc_cross_container_different_args_for_variable():
     # Args should be merged: int|str
     assert result.args and result.args[0].is_union()
     assert result.args[0].to_set() == {TypeInfo.from_type(int), TypeInfo.from_type(str)}
+
+
+# =============================================================================
+# Tests inspired by mypy's JoinSuite (testtypes.py)
+# =============================================================================
+
+# Class hierarchy for mypy-style tests:
+#     object
+#    / |  \
+#   A  D   F(abstract via ABC)
+#  / \     |
+# B   C    E
+
+class _A_mypy: pass
+class _B_mypy(_A_mypy): pass
+class _C_mypy(_A_mypy): pass
+class _D_mypy: pass
+
+from abc import ABC
+class _F_mypy(ABC): pass
+class _E_mypy(_F_mypy): pass
+
+
+def test_lub_mypy_class_subtyping():
+    """From mypy JoinSuite.test_class_subtyping."""
+    from righttyper.generalize import lub
+    a, b, c, d, o = (TypeInfo.from_type(t) for t in (_A_mypy, _B_mypy, _C_mypy, _D_mypy, object))
+    # join(a, o) = o
+    assert lub(a, o) == o
+    # join(b, c) = a
+    assert lub(b, c).type_obj is _A_mypy
+    # join(b, d) = union (only object in common, excluded)
+    assert lub(b, d).is_union()
+    assert lub(b, d).to_set() == {b, d}
+    # join(a, d) = union
+    assert lub(a, d).is_union()
+    assert lub(a, d).to_set() == {a, d}
+
+
+def test_lub_mypy_interface_types():
+    """From mypy JoinSuite.test_join_interface_and_class_types.
+    E implements F (abstract). join(e, f) = f."""
+    from righttyper.generalize import lub
+    e = TypeInfo.from_type(_E_mypy)
+    f = TypeInfo.from_type(_F_mypy)
+    assert lub(e, f) == f
+    assert lub(f, e) == f
+
+
+def test_lub_mypy_unrelated_with_object():
+    """Unrelated types join to union (no useful base besides object)."""
+    from righttyper.generalize import lub
+    a = TypeInfo.from_type(_A_mypy)
+    d = TypeInfo.from_type(_D_mypy)
+    result = lub(a, d)
+    assert result.is_union()
+    assert result.to_set() == {a, d}
+
+
+def test_lub_mypy_varlen_tuples():
+    """From mypy JoinSuite.test_var_tuples.
+    join(tuple[a], tuple[a, ...]) = tuple[a, ...]."""
+    from righttyper.generalize import lub
+    a_t = TypeInfo.from_type(_A_mypy)
+    fixed = TypeInfo.from_type(tuple).replace(args=(a_t,))
+    varlen = TypeInfo.from_type(tuple).replace(args=(a_t, Ellipsis))
+    assert lub(fixed, varlen) == varlen
+    assert lub(varlen, fixed) == varlen
+    # join(tuple[a, ...], tuple[()]) = tuple[a, ...]
+    empty = TypeInfo.from_type(tuple).replace(args=((),))
+    assert lub(varlen, empty) == varlen
