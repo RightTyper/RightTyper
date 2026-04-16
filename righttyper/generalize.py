@@ -121,11 +121,13 @@ def lub(
                 if a.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in a.args):
                     return b
 
-        # Rule 5b: Same container, empty subsumed by non-empty
-        if _is_empty_container(a):
-            return b
-        if _is_empty_container(b):
-            return a
+        # Rule 5b: Same container, empty subsumed by non-empty.
+        # For tuples, skip — rule 5d will merge to varlen instead.
+        if a.type_obj is not tuple:
+            if _is_empty_container(a):
+                return b
+            if _is_empty_container(b):
+                return a
 
         # Rule 5c: Same container, same arg count — merge args
         if len(a.args) == len(b.args):
@@ -144,6 +146,19 @@ def lub(
                         for aa, ba in zip(a.args, b.args)
                     )
                     return a.replace(args=merged_args)
+
+        # Rule 5d: Different-length or empty fixed tuples → varlen tuple
+        # tuple[int] | tuple[int, str] → tuple[int|str, ...]
+        # tuple[()] | tuple[int] → tuple[int, ...]
+        if a.type_obj is tuple and (len(a.args) != len(b.args)
+                                    or a.args == ((),) or b.args == ((),)):
+            all_elems: set[TypeInfo] = {x for x in (*a.args, *b.args) if isinstance(x, TypeInfo)}
+            if all_elems:
+                merged_elem = TypeInfo.from_set(all_elems)
+                return a.replace(args=(merged_elem, Ellipsis))
+            # Both empty → stay as empty
+            if a.args == ((),):
+                return a
 
     # Rule 6: Empty container + non-empty container → common ABC with element type.
     # E.g., tuple[()] + list[int] → Sequence[int].

@@ -1184,14 +1184,34 @@ def test_lub_subtype_narrowing():
     assert lub(base, a) == base
 
 
-def test_lub_fixed_tuple_different_lengths():
-    """tuple[int] | tuple[int, str] — different fixed lengths, stays as union."""
+def test_lub_fixed_tuple_different_lengths_to_varlen():
+    """tuple[int] | tuple[int, str] → tuple[int|str, ...] (from mypy's JoinSuite).
+    Different-length fixed tuples merge to varlen with unioned element types."""
     from righttyper.generalize import lub
-    a = TypeInfo.from_type(tuple).replace(args=(TypeInfo.from_type(int),))
-    b = TypeInfo.from_type(tuple).replace(args=(TypeInfo.from_type(int), TypeInfo.from_type(str)))
+    int_t = TypeInfo.from_type(int)
+    str_t = TypeInfo.from_type(str)
+    a = TypeInfo.from_type(tuple).replace(args=(int_t,))
+    b = TypeInfo.from_type(tuple).replace(args=(int_t, str_t))
     result = lub(a, b)
-    assert result.is_union()
-    assert result.to_set() == {a, b}
+    assert result.type_obj is tuple
+    assert not result.is_union()
+    # Should be tuple[int|str, ...]
+    assert len(result.args) == 2
+    assert result.args[1] is Ellipsis
+
+
+def test_lub_empty_and_fixed_tuple_to_varlen():
+    """tuple[()] | tuple[int] → tuple[int, ...] (from mypy's JoinSuite: line 727)."""
+    from righttyper.generalize import lub
+    int_t = TypeInfo.from_type(int)
+    empty = TypeInfo.from_type(tuple).replace(args=((),))
+    fixed = TypeInfo.from_type(tuple).replace(args=(int_t,))
+    result = lub(empty, fixed)
+    assert result.type_obj is tuple
+    assert not result.is_union()
+    assert len(result.args) == 2
+    assert result.args[1] is Ellipsis
+    assert result.args[0].type_obj is int
 
 
 def test_lub_fixed_tuple_same_length_merge():
