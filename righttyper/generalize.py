@@ -47,9 +47,10 @@ _abc_own_attrs = _build_abc_own_attrs()
 
 
 def _find_common_container_abc(t1: TypeInfo, t2: TypeInfo) -> type | None:
-    """Find the most specific generic container ABC both types implement."""
-    if not (isinstance(t1.type_obj, type) and isinstance(t2.type_obj, type)):
-        return None
+    """Find the most specific generic container ABC both types implement.
+
+    Caller must ensure both type_objs are real types (not None or special forms).
+    """
     for g in _CONTAINER_ABCS:
         if issubclass(t1.type_obj, g) and issubclass(t2.type_obj, g):
             return g
@@ -102,83 +103,84 @@ def lub(
     if b.type_obj is Any:
         return b
 
+    # Without a real type (could be None or a typing special form),
+    # no merging rules apply.
+    if not isinstance(a.type_obj, type) or not isinstance(b.type_obj, type):
+        return TypeInfo.from_set_new({a, b})
+
     # Rule 4: Subtype check (MRO + numeric tower)
-    if (isinstance(a.type_obj, type) and isinstance(b.type_obj, type)
-        and not a.args and not b.args):
+    if not a.args and not b.args:
         if _is_subtype(a.type_obj, b.type_obj):
             return b
         if _is_subtype(b.type_obj, a.type_obj):
             return a
 
-    # Rule 4b: Bare generic subsumes parametrized (list subsumes list[int]).
-    if (a.module == b.module and a.name == b.name
-        and isinstance(a.type_obj, type)
-        and (a.type_obj in _BARE_SUBSUMES or issubclass(a.type_obj, abc.Container))):
-        if not a.args and b.args:
-            return a
-        if a.args and not b.args:
-            return b
-
-    # Rule 5: Same container, different args
-    if (a.module == b.module and a.name == b.name
-        and a.args and b.args
-        and isinstance(a.type_obj, type)):
-
-        # Rule 5a: Varlen tuple subsumes fixed tuple (different arg lengths OK)
-        if a.type_obj is tuple:
-            a_varlen = len(a.args) == 2 and a.args[1] is Ellipsis and isinstance(a.args[0], TypeInfo)
-            b_varlen = len(b.args) == 2 and b.args[1] is Ellipsis and isinstance(b.args[0], TypeInfo)
-            a_fixed = all(isinstance(x, TypeInfo) for x in a.args) and not a_varlen
-            b_fixed = all(isinstance(x, TypeInfo) for x in b.args) and not b_varlen
-
-            if a_varlen and (b_fixed or b.args == ((),)):
-                elem = cast(TypeInfo, a.args[0])
-                if b.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in b.args):
-                    return a
-            if b_varlen and (a_fixed or a.args == ((),)):
-                elem = cast(TypeInfo, b.args[0])
-                if a.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in a.args):
-                    return b
-
-        # Rule 5b: Same container, empty subsumed by non-empty.
-        # For tuples, skip — rule 5d will merge to varlen instead.
-        if a.type_obj is not tuple:
-            if _is_empty_container(a):
-                return b
-            if _is_empty_container(b):
+    # Rules 4b + 5: Same type — bare subsumption and arg merging.
+    if a.type_obj is b.type_obj:
+        # Rule 4b: Bare generic subsumes parametrized (list subsumes list[int]).
+        if a.type_obj in _BARE_SUBSUMES or issubclass(a.type_obj, abc.Container):
+            if not a.args and b.args:
                 return a
+            if a.args and not b.args:
+                return b
 
-        # Rule 5c: Same container, same arg count — merge args
-        if len(a.args) == len(b.args):
-            # type[X] is covariant (type[B] <: type[A] when B <: A)
-            is_covariant = issubclass(a.type_obj, _COVARIANT_TYPES) or a.type_obj is type
-            if for_variable or is_covariant:
-                can_merge = all(
-                    (isinstance(aa, TypeInfo) and isinstance(ba, TypeInfo))
-                    or aa is ba
-                    for aa, ba in zip(a.args, b.args)
-                )
-                if can_merge:
-                    merged_args = tuple(
-                        lub(cast(TypeInfo, aa), cast(TypeInfo, ba), for_variable=True)
-                        if isinstance(aa, TypeInfo) and isinstance(ba, TypeInfo)
-                        else aa
+        # Rule 5: Same container, different args
+        if a.args and b.args:
+            # Rule 5a: Varlen tuple subsumes fixed tuple (different arg lengths OK)
+            if a.type_obj is tuple:
+                a_varlen = len(a.args) == 2 and a.args[1] is Ellipsis and isinstance(a.args[0], TypeInfo)
+                b_varlen = len(b.args) == 2 and b.args[1] is Ellipsis and isinstance(b.args[0], TypeInfo)
+                a_fixed = all(isinstance(x, TypeInfo) for x in a.args) and not a_varlen
+                b_fixed = all(isinstance(x, TypeInfo) for x in b.args) and not b_varlen
+
+                if a_varlen and (b_fixed or b.args == ((),)):
+                    elem = cast(TypeInfo, a.args[0])
+                    if b.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in b.args):
+                        return a
+                if b_varlen and (a_fixed or a.args == ((),)):
+                    elem = cast(TypeInfo, b.args[0])
+                    if a.args == ((),) or all(type_contains(elem, cast(TypeInfo, x)) for x in a.args):
+                        return b
+
+            # Rule 5b: Same container, empty subsumed by non-empty.
+            # For tuples, skip — rule 5d will merge to varlen instead.
+            if a.type_obj is not tuple:
+                if _is_empty_container(a):
+                    return b
+                if _is_empty_container(b):
+                    return a
+
+            # Rule 5c: Same container, same arg count — merge args
+            if len(a.args) == len(b.args):
+                # type[X] is covariant (type[B] <: type[A] when B <: A)
+                is_covariant = issubclass(a.type_obj, _COVARIANT_TYPES) or a.type_obj is type
+                if for_variable or is_covariant:
+                    can_merge = all(
+                        (isinstance(aa, TypeInfo) and isinstance(ba, TypeInfo))
+                        or aa is ba
                         for aa, ba in zip(a.args, b.args)
                     )
-                    return a.replace(args=merged_args)
+                    if can_merge:
+                        merged_args = tuple(
+                            lub(cast(TypeInfo, aa), cast(TypeInfo, ba), for_variable=True)
+                            if isinstance(aa, TypeInfo) and isinstance(ba, TypeInfo)
+                            else aa
+                            for aa, ba in zip(a.args, b.args)
+                        )
+                        return a.replace(args=merged_args)
 
-        # Rule 5d: Different-length or empty fixed tuples → varlen tuple
-        # tuple[int] | tuple[int, str] → tuple[int|str, ...]
-        # tuple[()] | tuple[int] → tuple[int, ...]
-        if a.type_obj is tuple and (len(a.args) != len(b.args)
-                                    or a.args == ((),) or b.args == ((),)):
-            all_elems: set[TypeInfo] = {x for x in (*a.args, *b.args) if isinstance(x, TypeInfo)}
-            if all_elems:
-                merged_elem = TypeInfo.from_set(all_elems)
-                return a.replace(args=(merged_elem, Ellipsis))
-            # Both empty → stay as empty
-            if a.args == ((),):
-                return a
+            # Rule 5d: Different-length or empty fixed tuples → varlen tuple
+            # tuple[int] | tuple[int, str] → tuple[int|str, ...]
+            # tuple[()] | tuple[int] → tuple[int, ...]
+            if a.type_obj is tuple and (len(a.args) != len(b.args)
+                                        or a.args == ((),) or b.args == ((),)):
+                all_elems: set[TypeInfo] = {x for x in (*a.args, *b.args) if isinstance(x, TypeInfo)}
+                if all_elems:
+                    merged_elem = TypeInfo.from_set(all_elems)
+                    return a.replace(args=(merged_elem, Ellipsis))
+                # Both empty → stay as empty
+                if a.args == ((),):
+                    return a
 
     # Rule 6: Empty container + non-empty container → common ABC with element type.
     # E.g., tuple[()] + list[int] → Sequence[int].
@@ -190,8 +192,7 @@ def lub(
                 return get_type_name(common).replace(args=(nonempty.args[0],))
 
     # Rule 7: MRO common supertype (non-generic types only).
-    if (not a.args and not b.args
-        and isinstance(a.type_obj, type) and isinstance(b.type_obj, type)):
+    if not a.args and not b.args:
         if accessed_attributes:
             common_attrs = accessed_attributes
         else:
@@ -215,7 +216,7 @@ def lub(
                     return get_type_name(base)
 
     # Rule 8: ABC matching (when accessed_attributes available)
-    if accessed_attributes and isinstance(a.type_obj, type) and isinstance(b.type_obj, type):
+    if accessed_attributes:
         candidates = [g for g, attrs in _abc_own_attrs.items()
                       if accessed_attributes <= attrs
                       and issubclass(a.type_obj, g)
