@@ -1,4 +1,4 @@
-from typing import cast, Sequence, Iterator
+from typing import cast, Sequence, Iterator, Any, Never, NoReturn
 import collections.abc as abc
 from collections import defaultdict, Counter
 from types import EllipsisType
@@ -46,6 +46,16 @@ def _build_abc_own_attrs() -> dict[type, frozenset[str]]:
 _abc_own_attrs = _build_abc_own_attrs()
 
 
+def _find_common_container_abc(t1: TypeInfo, t2: TypeInfo) -> type | None:
+    """Find the most specific generic container ABC both types implement."""
+    if not (isinstance(t1.type_obj, type) and isinstance(t2.type_obj, type)):
+        return None
+    for g in _CONTAINER_ABCS:
+        if issubclass(t1.type_obj, g) and issubclass(t2.type_obj, g):
+            return g
+    return None
+
+
 # Numeric tower: int <: float <: complex (PEP 3141)
 _NUMERIC_TOWER = {int: float, float: complex}
 
@@ -76,22 +86,20 @@ def lub(
     Returns a single TypeInfo that contains both a and b. Falls back to
     a union (a | b) when no better merge is available.
     """
-    import typing
-
     # Rule 1: Identity
     if a == b:
         return a
 
     # Rule 2: Never/NoReturn subsumption
-    if a.type_obj in (typing.Never, typing.NoReturn):
+    if a.type_obj in (Never, NoReturn):
         return b
-    if b.type_obj in (typing.Never, typing.NoReturn):
+    if b.type_obj in (Never, NoReturn):
         return a
 
     # Rule 3: Any subsumption
-    if a.type_obj is typing.Any:
+    if a.type_obj is Any:
         return a
-    if b.type_obj is typing.Any:
+    if b.type_obj is Any:
         return b
 
     # Rule 4: Subtype check (MRO + numeric tower)
@@ -174,22 +182,12 @@ def lub(
 
     # Rule 6: Empty container + non-empty container → common ABC with element type.
     # E.g., tuple[()] + list[int] → Sequence[int].
-    def _find_common_container_abc(t1: TypeInfo, t2: TypeInfo) -> type | None:
-        if not (isinstance(t1.type_obj, type) and isinstance(t2.type_obj, type)):
-            return None
-        for g in _CONTAINER_ABCS:
-            if issubclass(t1.type_obj, g) and issubclass(t2.type_obj, g):
-                return g
-        return None
-
-    if (_is_empty_container(a) and b.args and isinstance(b.args[0], TypeInfo)
-        and a.type_obj is not b.type_obj):  # different containers only
-        if (common := _find_common_container_abc(a, b)):
-            return get_type_name(common).replace(args=(b.args[0],))
-    if (_is_empty_container(b) and a.args and isinstance(a.args[0], TypeInfo)
-        and a.type_obj is not b.type_obj):
-        if (common := _find_common_container_abc(a, b)):
-            return get_type_name(common).replace(args=(a.args[0],))
+    if a.type_obj is not b.type_obj:  # different containers only
+        empty, nonempty = (a, b) if _is_empty_container(a) else (b, a) if _is_empty_container(b) else (None, None)
+        if (empty is not None and nonempty is not None
+            and nonempty.args and isinstance(nonempty.args[0], TypeInfo)):
+            if (common := _find_common_container_abc(empty, nonempty)):
+                return get_type_name(common).replace(args=(nonempty.args[0],))
 
     # Rule 7: MRO common supertype (non-generic types only).
     if (not a.args and not b.args
@@ -237,6 +235,7 @@ def lub(
                     either_immutable = (
                         issubclass(a.type_obj, _COVARIANT_TYPES)
                         or issubclass(b.type_obj, _COVARIANT_TYPES)
+                        or a.type_obj is type or b.type_obj is type
                     )
                     if for_variable or either_immutable:
                         merged_args = tuple(
@@ -262,8 +261,7 @@ def _merge_set(
 ) -> TypeInfo:
     """Reduce a set of types using pairwise lub, then form the final union."""
     if not typeinfoset:
-        import typing
-        return TypeInfo.from_type(typing.Never)
+        return TypeInfo.from_type(Never)
 
     # Iteratively reduce: try to merge pairs until stable
     types = list(typeinfoset)
@@ -469,12 +467,11 @@ def merge_container_supersets(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
 
 def _is_empty_container(t: TypeInfo) -> bool:
     """Check if t represents an empty container (e.g., tuple[()], list[Never], dict[Never, Never])."""
-    import typing
     if t.type_obj is tuple and t.args == ((),):
         return True
     return bool(t.args
                 and isinstance(t.type_obj, type) and issubclass(t.type_obj, abc.Container)
-                and all(isinstance(a, TypeInfo) and a.type_obj is typing.Never
+                and all(isinstance(a, TypeInfo) and a.type_obj is Never
                         for a in t.args))
 
 
