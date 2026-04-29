@@ -111,7 +111,7 @@ class PendingCallTrace:
                 retval = TypeInfo.from_type(abc.AsyncGenerator, args=(y, s))
             else:
                 retval = TypeInfo.from_type(abc.Generator, args=(y, s, retval))
-            
+
         # Arguments may change value (and, in particular, empty containers may be added to)
         # during the function execution, so we sample a 2nd time at the end.
         args_now = self._get_arg_types(self.arg_info)
@@ -123,28 +123,7 @@ class PendingCallTrace:
             retval
         )
 
-        if self.self_type and self.self_replacement:
-            self_type = self.self_type
-            self_replacement = self.self_replacement
-
-            class SelfTransformer(TypeInfo.Transformer):
-                """Replaces 'self' types with the type of the class that defines them,
-                   also setting is_self for possible later replacement with typing.Self."""
-
-                def visit(vself, node: TypeInfo) -> TypeInfo:
-                    if (
-                        hasattr(node.type_obj, "__mro__")
-                        and self_type.type_obj in cast(type, node.type_obj).__mro__
-                    ):
-                        node = self_replacement.replace(is_self=True)
-
-                    return super().visit(node)
-
-
-            tr = SelfTransformer()
-            type_data = (*(tr.visit(arg) for arg in type_data),)
-
-        return type_data
+        return CallTrace(type_data, first_arg_class=self.self_type)
 
 
 class ObservationsRecorder:
@@ -203,7 +182,8 @@ class ObservationsRecorder:
         code: CodeType,
         function: CallableWithCode|None,
         arg_info: inspect.ArgInfo,
-        overrides: list[OverriddenFunction]
+        overrides: list[OverriddenFunction],
+        defining_class: TypeInfo|None = None,
     ) -> None:
         """Registers a function if not already known."""
 
@@ -242,6 +222,7 @@ class ObservationsRecorder:
                 ArgumentName(arg_info.varargs) if arg_info.varargs else None,
                 ArgumentName(arg_info.keywords) if arg_info.keywords else None,
                 overrides=overrides,
+                defining_class=defining_class,
             )
             self._obs.func_info[func_info.code_id] = func_info
 
@@ -311,7 +292,8 @@ class ObservationsRecorder:
         # call, as the new dictionary is created for the new scope.
         if (code.co_flags & inspect.CO_NEWLOCALS):
             sti = get_self_type(code, arg_info)
-            self._register_function(code, find_function(frame, code), arg_info, sti.overrides)
+            self._register_function(code, find_function(frame, code), arg_info,
+                                    sti.overrides, defining_class=sti.self_replacement)
 
             if sti.parent_func is not None and sti.override_finder is not None:
                 child_fi = self._code2func_info[code]
@@ -395,7 +377,8 @@ class ObservationsRecorder:
         sti = get_self_type(wrapped_code, synthetic_arg_info)
 
         # Register the wrapped function if not already known
-        self._register_function(wrapped_code, wrapped, synthetic_arg_info, sti.overrides)
+        self._register_function(wrapped_code, wrapped, synthetic_arg_info,
+                                sti.overrides, defining_class=sti.self_replacement)
 
         pending = PendingCallTrace(synthetic_arg_info, wrapped_code.co_flags, sti.self_type, sti.self_replacement)
         self._pending_wrapped_traces[wrapped_code][id(frame)] = pending

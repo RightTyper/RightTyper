@@ -14,6 +14,39 @@ from righttyper.options import output_options
 _COVARIANT_TYPES = (tuple, frozenset)
 
 
+def is_homogeneous(types: tuple[TypeInfo, ...] | list[TypeInfo]) -> bool:
+    """Whether the tuple only contains instances of a single, consistent generic type
+       whose arguments are all either TypeInfo or ellipsis.
+    """
+    if not types:
+        return False
+
+    first = types[0]
+
+    return (
+        all(
+            isinstance(t, TypeInfo) and
+            all(isinstance(a, (TypeInfo, EllipsisType)) for a in t.args)
+            for t in types
+        )
+        and all(
+            t.module == first.module and
+            t.name == first.name and
+            t.code_id == first.code_id and
+            t.is_self == first.is_self and
+            len(t.args) == len(first.args) and
+            all((a is Ellipsis) == (first.args[i] is Ellipsis) for i, a in enumerate(t.args)) and
+            # ListTypeInfo args (e.g. Callable param lists) must have the same arity
+            all(
+                len(cast(TypeInfo, t.args[i]).args) == len(cast(TypeInfo, first.args[i]).args)
+                for i in range(len(first.args))
+                if isinstance(first.args[i], ListTypeInfo)
+            )
+            for t in list(types)[1:]
+        )
+    )
+
+
 def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     """Merge generics with same container but different type args.
 
@@ -441,38 +474,6 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
     # By transposing the per-argument types, we obtain tuples with all the
     # various types seen for each argument.
     transposed = list(zip(*samples))
-
-    def is_homogeneous(types: tuple[TypeInfo, ...]) -> bool:
-        """Whether the tuple only contains instances of a single, consistent generic type
-           whose arguments are all either TypeInfo or ellipsis.
-        """
-        if not types:
-            return False
-
-        first = types[0]
-
-        return (
-            all(
-                isinstance(t, TypeInfo) and
-                all(isinstance(a, (TypeInfo, EllipsisType)) for a in t.args)
-                for t in types
-            )
-            and all(
-                t.module == first.module and
-                t.name == first.name and
-                t.code_id == first.code_id and
-                t.is_self == first.is_self and
-                len(t.args) == len(first.args) and
-                all((a is Ellipsis) == (first.args[i] is Ellipsis) for i, a in enumerate(t.args)) and
-                # ListTypeInfo args (e.g. Callable param lists) must have the same arity
-                all(
-                    len(cast(TypeInfo, t.args[i]).args) == len(cast(TypeInfo, first.args[i]).args)
-                    for i in range(len(first.args))
-                    if isinstance(first.args[i], ListTypeInfo)
-                )
-                for t in types[1:]
-            )
-        )
 
     # Count the number of times a type usage pattern occurs, as we only want to generalize
     # if one occurs more than once (in more than one argument).

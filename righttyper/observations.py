@@ -1,5 +1,6 @@
 import ast
 import typing
+from typing import cast
 import builtins
 from collections import defaultdict, Counter
 import collections.abc as abc
@@ -8,7 +9,7 @@ import logging
 
 from righttyper.options import output_options
 from righttyper.logger import logger
-from righttyper.generalize import merged_types, generalize
+from righttyper.generalize import merged_types, generalize, is_homogeneous
 from righttyper.type_transformers import (
     ClearCodeIdT,
     UnionSizeT,
@@ -25,7 +26,7 @@ from righttyper.type_transformers import (
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownTypeInfo, CallTrace
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId
 from righttyper.annotation import FuncAnnotation, ModuleVars, TraceDistribution
-from righttyper.type_id import PostponedArg0
+from righttyper.type_id import PostponedArg0, get_type_name
 from righttyper.typeshed import get_typeshed_func_params
 
 
@@ -53,6 +54,10 @@ class FuncInfo:
     overrides: list[OverriddenFunction] = field(default_factory=list)
 
     is_abstract: bool = False
+
+    # The defining class of the method, if this is a method.  Set during
+    # registration from get_self_type's self_replacement.
+    defining_class: TypeInfo | None = None
 
     traces: Counter[CallTrace] = field(default_factory=Counter)
 
@@ -172,6 +177,78 @@ class FuncInfo:
 
         for var_name, var_types in list(self.variables.items()):
             self.variables[var_name] = set(tr.visit(t) for t in var_types)
+
+
+def _stamp_self(
+    per_trace: list[TypeInfo],
+    self_classes: list[TypeInfo],
+) -> TypeInfo | list[TypeInfo]:
+    """Replace nodes that are leaf-equal to the per-trace self_class in EVERY
+    trace with `typing.Self`.
+
+    Returns a single TypeInfo when the position should be uniformly replaced
+    with Self, or a per-trace list of TypeInfos when only nested positions
+    were replaced (or nothing was replaced).
+
+    `self_classes[i]` is the receiver TypeInfo for trace i. Comparison uses
+    TypeInfo equality (structural: module + name) rather than `type_obj is`,
+    so this works even when type_obj reloads as None from a serialized .rt
+    file.
+    """
+    # Leaf match: every trace has matching TypeInfo and no args.
+    if all(t == sc and not t.args
+           for t, sc in zip(per_trace, self_classes)):
+        return TypeInfo.from_type(typing.Self)
+
+    # Recurse if structurally homogeneous across traces.
+    if not is_homogeneous(per_trace):
+        return list(per_trace)
+
+    first = per_trace[0]
+    n_args = len(first.args)
+    # For each arg position, gather the per-trace types.
+    new_args_per_trace: list[list] = [list(t.args) for t in per_trace]
+    for i in range(n_args):
+        col = [t.args[i] for t in per_trace]
+        if all(isinstance(a, TypeInfo) for a in col):
+            sub = _stamp_self([cast(TypeInfo, a) for a in col], self_classes)
+            if isinstance(sub, TypeInfo):
+                # Uniform replacement at this nested position
+                for trace_idx in range(len(per_trace)):
+                    new_args_per_trace[trace_idx][i] = sub
+            else:
+                # Per-trace nested results
+                for trace_idx, replaced in enumerate(sub):
+                    new_args_per_trace[trace_idx][i] = replaced
+        # else: ellipsis or other non-TypeInfo arg — leave as-is
+    return [
+        per_trace[trace_idx].replace(args=tuple(new_args_per_trace[trace_idx]))
+        for trace_idx in range(len(per_trace))
+    ]
+
+
+class NormalizeSubtypeT(TypeInfo.Transformer):
+    """Replace TypeInfos whose type_obj is a strict subtype of `defining_class`
+    with `defining_class` itself (inheritance normalization).
+
+    For single-observation cases this widens the annotation toward the method's
+    defining class (more permissive) instead of leaving the observed subclass.
+    For multi-trace cases, lub's subtype merge produces the same result, so
+    this transformer only changes single-observation outputs.
+
+    TODO consider dropping this if it produces less useful annotations than
+    keeping the literally-observed subtype — the trade-off is permissiveness
+    vs. fidelity to observation.
+    """
+    def __init__(self, defining_class: type):
+        self.defining_class = defining_class
+
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        if (hasattr(node.type_obj, "__mro__")
+                and self.defining_class in cast(type, node.type_obj).__mro__
+                and node.type_obj is not self.defining_class):
+            node = get_type_name(self.defining_class)
+        return super().visit(node)
 
 
 class Observations:
@@ -406,6 +483,52 @@ class Observations:
         if not traces:
             return None
 
+        # Self detection: if this is a method, structurally stamp typing.Self
+        # at positions where the per-trace receiver class matches across all
+        # traces. arg0 and retval get single-trace detection; other args
+        # require >= 2 traces. After stamping, normalize remaining subtypes
+        # of the defining class to defining_class itself.
+        if ((defining_class := func_info.defining_class) is not None
+                and isinstance(defining_class.type_obj, type)):
+            n_positions = len(traces[0])
+            modified = [list(t) for t in traces]
+
+            # Stamp typing.Self only when the output target supports it (3.11+).
+            if output_options.use_typing_self:
+                # Per-trace receiver class is recorded on the CallTrace at trace
+                # time (CallTrace.first_arg_class).  May be None for non-methods
+                # or when the per-trace info wasn't captured.
+                self_classes_ti = [t.first_arg_class for t in traces]
+                if all(sc is not None for sc in self_classes_ti):
+                    self_classes = [cast(TypeInfo, sc) for sc in self_classes_ti]
+                else:
+                    self_classes = []
+                for pos in range(n_positions):
+                    is_arg0 = (pos == 0)
+                    is_retval = (pos == n_positions - 1)
+                    if not (is_arg0 or is_retval) and len(traces) < 2:
+                        continue  # don't stamp Self on non-arg0/retval from single observation
+                    col = [m[pos] for m in modified]
+                    if not all(isinstance(c, TypeInfo) for c in col):
+                        continue
+                    result = _stamp_self([cast(TypeInfo, c) for c in col], self_classes)
+                    if isinstance(result, TypeInfo):
+                        for m in modified:
+                            m[pos] = result
+                    else:
+                        for i, replaced in enumerate(result):
+                            modified[i][pos] = replaced
+
+            # Inheritance widening: replace subtypes of defining_class with defining_class.
+            # Applies regardless of typing.Self availability.
+            normalize = NormalizeSubtypeT(cast(type, defining_class.type_obj))
+            modified = [
+                [normalize.visit(c) if isinstance(c, TypeInfo) else c for c in m]
+                for m in modified
+            ]
+
+            traces = [tuple(m) for m in modified]
+
         if (signature := generalize(traces)) is None:
             logger.info(f"Unable to generalize {func_info.code_id}: inconsistent traces.\n" +
                         f"{[tuple(str(t) for t in s) for s in traces]}")
@@ -428,7 +551,8 @@ class Observations:
             variables={
                 var_name: merged_types(var_types, for_variable=True)
                 for var_name, var_types in func_info.variables.items()
-            }
+            },
+            self_class=func_info.defining_class,
         )
 
         if logger.level == logging.DEBUG:
@@ -594,8 +718,6 @@ class Observations:
         # This also deduplicates unions whose members became equal after clearing.
         transform_types(ClearCodeIdT())
 
-        if output_options.use_typing_self:
-            transform_types(SelfT())
 
         # Compute type distributions from traces, resolving code_id references
         # so that Callable/generator types render with their actual signatures.
