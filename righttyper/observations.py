@@ -805,6 +805,14 @@ class Observations:
                     for var_types in func_info.variables.values():
                         for t in var_types:
                             walk(t)
+                    for arg in func_info.args:
+                        if arg.default is not None:
+                            walk(arg.default)
+                    for override in func_info.overrides:
+                        if override.inline_arg_types:
+                            for it in override.inline_arg_types:
+                                if it is not None:
+                                    walk(it)
                     result.append(code_id)
 
         for code_id in self.func_info.keys():
