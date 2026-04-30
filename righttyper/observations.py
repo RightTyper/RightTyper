@@ -581,8 +581,9 @@ class Observations:
                         for s in matching
                     }
                     if not target.args[name].is_unknown:
-                        types.add(_clone_for_context(target.args[name],
-                                                     target.self_class, target.self_class))
+                        # target's own type is already in the destination context;
+                        # add it directly without cloning (no substitution, no restamp).
+                        types.add(target.args[name])
                     target.args[name] = _restamp(merged_types(types))
 
             if merge_retval:
@@ -591,8 +592,7 @@ class Observations:
                     for s in matching
                 }
                 if not target.retval.is_unknown:
-                    ret_types.add(_clone_for_context(target.retval,
-                                                     target.self_class, target.self_class))
+                    ret_types.add(target.retval)
                 target.retval = _restamp(merged_types(ret_types))
 
         # Phase 2: Upward — propagate children's types to parents.
