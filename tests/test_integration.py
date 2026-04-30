@@ -21,7 +21,15 @@ def tmp_cwd(tmp_path, monkeypatch):
     yield tmp_path
 
 
-MYPY_CACHE_DIR = Path.cwd() / '.mypy_tests_cache'
+# Per-worker cache dir under pytest-xdist: mypy's SQLite cache doesn't tolerate
+# concurrent writers from sibling workers ("database is locked"). Falls back to
+# a single shared dir for serial runs.
+import os
+_mypy_worker_id = os.environ.get('PYTEST_XDIST_WORKER')
+MYPY_CACHE_DIR = (
+    Path.cwd() / f'.mypy_tests_cache_{_mypy_worker_id}' if _mypy_worker_id
+    else Path.cwd() / '.mypy_tests_cache'
+)
 
 @pytest.fixture(scope='function', autouse=True)
 def runmypy(tmp_cwd, request):
