@@ -10,6 +10,10 @@ class FuncAnnotation:
     varargs: str|None
     kwargs: str|None
     variables: dict[VariableName, TypeInfo]
+    # The defining class of the method, if this annotation is for a method.
+    # Used to substitute typing.Self when copying types across annotations
+    # (cf. clone() and _widen_annotation in observations.py).
+    self_class: TypeInfo | None = None
 
 
 @dataclass(eq=True)

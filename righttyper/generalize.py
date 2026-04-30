@@ -14,6 +14,38 @@ from righttyper.options import output_options
 _COVARIANT_TYPES = (tuple, frozenset)
 
 
+def is_homogeneous(types: tuple[TypeInfo, ...] | list[TypeInfo]) -> bool:
+    """Whether the tuple only contains instances of a single, consistent generic type
+       whose arguments are all either TypeInfo or ellipsis.
+    """
+    if not types:
+        return False
+
+    first = types[0]
+
+    return (
+        all(
+            isinstance(t, TypeInfo) and
+            all(isinstance(a, (TypeInfo, EllipsisType)) for a in t.args)
+            for t in types
+        )
+        and all(
+            t.module == first.module and
+            t.name == first.name and
+            t.code_id == first.code_id and
+            len(t.args) == len(first.args) and
+            all((a is Ellipsis) == (first.args[i] is Ellipsis) for i, a in enumerate(t.args)) and
+            # ListTypeInfo args (e.g. Callable param lists) must have the same arity
+            all(
+                len(cast(TypeInfo, t.args[i]).args) == len(cast(TypeInfo, first.args[i]).args)
+                for i in range(len(first.args))
+                if isinstance(first.args[i], ListTypeInfo)
+            )
+            for t in list(types)[1:]
+        )
+    )
+
+
 def merge_similar_generics(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
     """Merge generics with same container but different type args.
 
@@ -261,11 +293,12 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
             if not any(bc.type_obj is t.type_obj for bc in incomplete_types)
         )
 
-    # Types we support merging
+    # Types we support merging — anything with an __mro__ to walk.
+    # Includes classes whose metaclass is a `type` subclass (e.g., ABCMeta).
     mergeable_types = set(
         t
         for t in simplifiable_types
-        if type(t.type_obj) is type     # we need a type_obj with __mro__ for merging
+        if hasattr(t.type_obj, "__mro__")
     )
 
     other_types |= (simplifiable_types - mergeable_types)
@@ -441,38 +474,6 @@ def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
     # By transposing the per-argument types, we obtain tuples with all the
     # various types seen for each argument.
     transposed = list(zip(*samples))
-
-    def is_homogeneous(types: tuple[TypeInfo, ...]) -> bool:
-        """Whether the tuple only contains instances of a single, consistent generic type
-           whose arguments are all either TypeInfo or ellipsis.
-        """
-        if not types:
-            return False
-
-        first = types[0]
-
-        return (
-            all(
-                isinstance(t, TypeInfo) and
-                all(isinstance(a, (TypeInfo, EllipsisType)) for a in t.args)
-                for t in types
-            )
-            and all(
-                t.module == first.module and
-                t.name == first.name and
-                t.code_id == first.code_id and
-                t.is_self == first.is_self and
-                len(t.args) == len(first.args) and
-                all((a is Ellipsis) == (first.args[i] is Ellipsis) for i, a in enumerate(t.args)) and
-                # ListTypeInfo args (e.g. Callable param lists) must have the same arity
-                all(
-                    len(cast(TypeInfo, t.args[i]).args) == len(cast(TypeInfo, first.args[i]).args)
-                    for i in range(len(first.args))
-                    if isinstance(first.args[i], ListTypeInfo)
-                )
-                for t in types[1:]
-            )
-        )
 
     # Count the number of times a type usage pattern occurs, as we only want to generalize
     # if one occurs more than once (in more than one argument).

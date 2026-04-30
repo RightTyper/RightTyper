@@ -1,5 +1,6 @@
 import ast
 import typing
+from typing import cast
 import builtins
 from collections import defaultdict, Counter
 import collections.abc as abc
@@ -8,11 +9,9 @@ import logging
 
 from righttyper.options import output_options
 from righttyper.logger import logger
-from righttyper.generalize import merged_types, generalize
+from righttyper.generalize import merged_types, generalize, is_homogeneous
 from righttyper.type_transformers import (
-    ClearCodeIdT,
     UnionSizeT,
-    SelfT,
     NeverSayNeverT,
     NoReturnToNeverT,
     ExcludeTestTypesT,
@@ -22,10 +21,10 @@ from righttyper.type_transformers import (
     MakePickleableT,
     LoadTypeObjT
 )
-from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownTypeInfo, CallTrace
+from righttyper.typeinfo import TypeInfo, TypeInfoArg, UnknownTypeInfo, UnionTypeInfo, CallTrace
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId
 from righttyper.annotation import FuncAnnotation, ModuleVars, TraceDistribution
-from righttyper.type_id import PostponedArg0
+from righttyper.type_id import PostponedArg0, get_type_name
 from righttyper.typeshed import get_typeshed_func_params
 
 
@@ -53,6 +52,10 @@ class FuncInfo:
     overrides: list[OverriddenFunction] = field(default_factory=list)
 
     is_abstract: bool = False
+
+    # The defining class of the method, if this is a method.  Set during
+    # registration from get_self_type's self_replacement.
+    defining_class: TypeInfo | None = None
 
     traces: Counter[CallTrace] = field(default_factory=Counter)
 
@@ -114,6 +117,11 @@ class FuncInfo:
 
     def transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this object."""
+        if self.defining_class is not None:
+            new_dc = tr.visit(self.defining_class)
+            if new_dc is not self.defining_class:
+                self.defining_class = new_dc
+
         args_prime = tuple(
             ArgInfo(
                 arg.arg_name,
@@ -156,10 +164,19 @@ class FuncInfo:
                     override.inline_arg_types = inline_types_prime
 
 
-        for trace, count in list(self.traces.items()):
-            trace_prime = tuple(tr.visit(t) for t in trace)
+        for trace in list(self.traces):
+            # Re-read count from the live counter: an earlier iteration may have
+            # transformed another trace's content to match this key, contributing
+            # additional count we must carry through this iteration's rebuild.
+            count = self.traces[trace]
+            old_fac = trace.first_arg_class
+            new_fac = tr.visit(old_fac) if old_fac is not None else None
+            trace_prime = CallTrace(
+                [tr.visit(t) for t in trace],
+                first_arg_class=new_fac,
+            )
             # Use identity rather than ==, as only non-essential attributes may have changed
-            if any(old is not new for old, new in zip(trace, trace_prime)):
+            if any(old is not new for old, new in zip(trace, trace_prime)) or old_fac is not new_fac:
                 if logger.level == logging.DEBUG:
                     logger.debug(
                         type(tr).__name__ + " " + self.code_id.func_name +
@@ -168,10 +185,249 @@ class FuncInfo:
                         str(tuple(str(t) for t in trace_prime))
                     )
                 del self.traces[trace]
-                self.traces[trace_prime] = count
+                self.traces[trace_prime] += count
 
         for var_name, var_types in list(self.variables.items()):
             self.variables[var_name] = set(tr.visit(t) for t in var_types)
+
+
+def _stamp_self(
+    per_trace: list[TypeInfo],
+    self_classes: list[TypeInfo],
+) -> TypeInfo | list[TypeInfo]:
+    """Replace nodes that are leaf-equal to the per-trace self_class in EVERY
+    trace with `typing.Self`.
+
+    Returns a single TypeInfo when the position should be uniformly replaced
+    with Self, or a per-trace list of TypeInfos when only nested positions
+    were replaced (or nothing was replaced).
+
+    `self_classes[i]` is the receiver TypeInfo for trace i. Comparison uses
+    TypeInfo equality (structural: module + name) rather than `type_obj is`,
+    so this works even when type_obj reloads as None from a serialized .rt
+    file.
+    """
+    # Leaf match: every trace has matching TypeInfo and no args.
+    if all(t == sc and not t.args
+           for t, sc in zip(per_trace, self_classes)):
+        return TypeInfo.from_type(typing.Self)
+
+    # Recurse if structurally homogeneous across traces.
+    if not is_homogeneous(per_trace):
+        return list(per_trace)
+
+    first = per_trace[0]
+    n_args = len(first.args)
+    # For each arg position, gather the per-trace types.
+    new_args_per_trace: list[list] = [list(t.args) for t in per_trace]
+    for i in range(n_args):
+        col = [t.args[i] for t in per_trace]
+        if all(isinstance(a, TypeInfo) for a in col):
+            sub = _stamp_self([cast(TypeInfo, a) for a in col], self_classes)
+            if isinstance(sub, TypeInfo):
+                # Uniform replacement at this nested position
+                for trace_idx in range(len(per_trace)):
+                    new_args_per_trace[trace_idx][i] = sub
+            else:
+                # Per-trace nested results
+                for trace_idx, replaced in enumerate(sub):
+                    new_args_per_trace[trace_idx][i] = replaced
+        # else: ellipsis or other non-TypeInfo arg — leave as-is
+    return [
+        per_trace[trace_idx].replace(args=tuple(new_args_per_trace[trace_idx]))
+        for trace_idx in range(len(per_trace))
+    ]
+
+
+class _CloneForContextT(TypeInfo.Transformer):
+    """Implements `_clone_for_context`. See that function for parameter semantics."""
+    def __init__(self,
+                 source_self_class: TypeInfo | None,
+                 dest_self_class: TypeInfo | None) -> None:
+        self.source_self_class = source_self_class
+        self.dest_self_class = dest_self_class
+        # Self carries through the substitution (rather than being concretized) when
+        # source has no self_class, or when source.self_class is the same as or a
+        # subclass of dest.self_class — i.e., dest's Self is at least as wide as
+        # source's Self in their respective contexts.
+        #
+        # The subclass branch needs live `type_obj` to walk MRO via issubclass.
+        # For `.rt` files where type_obj reloads as None (e.g., classes from
+        # __main__ or unimportable modules), this branch silently fails and the
+        # Self in source gets substituted to source's concrete class. The
+        # annotation is still correct, just less precise (concrete instead of Self).
+        self.keep_self = (
+            source_self_class is None
+            or (dest_self_class is not None and source_self_class == dest_self_class)
+            or (
+                source_self_class is not None
+                and dest_self_class is not None
+                and isinstance(source_self_class.type_obj, type)
+                and isinstance(dest_self_class.type_obj, type)
+                and issubclass(source_self_class.type_obj, dest_self_class.type_obj)
+            )
+        )
+        # Gate Self re-stamping on the same option that gates trace-time
+        # _stamp_self: pre-3.11 targets must not see typing.Self injected here.
+        self.can_restamp = (
+            output_options.use_typing_self
+            and dest_self_class is not None
+            and (source_self_class is None or source_self_class == dest_self_class)
+        )
+
+    def visit(self, n: TypeInfo) -> TypeInfo:
+        if n.type_obj is typing.Self:
+            if self.keep_self:
+                return n
+            if self.source_self_class is not None:
+                return self.source_self_class
+        if self.can_restamp and not n.args and n == self.dest_self_class:
+            return TypeInfo.from_type(typing.Self)
+        return super().visit(n)
+
+
+def _clone_for_context(node: TypeInfo,
+                       source_self_class: TypeInfo | None = None,
+                       dest_self_class: TypeInfo | None = None) -> TypeInfo:
+    """Clone a TypeInfo subtree for use in a different annotation context.
+
+    `source_self_class` is the class that `typing.Self` resolves to in the
+    annotation `node` came from — i.e., the source annotation's `self_class`.
+    None for non-method sources (anonymous functions, lambdas, plain functions).
+
+    `dest_self_class` is the class that `typing.Self` will resolve to in the
+    annotation `node` is being cloned into — i.e., the destination annotation's
+    `self_class`. None for non-method destinations.
+
+    Both refer to the *meaning of Self* in their respective contexts, not to
+    where the underlying code is lexically defined (which is `defining_class`
+    on FuncInfo). For a freshly-built annotation `defining_class == self_class`,
+    but synthetic annotations (e.g., from `_register_parent_function`) can
+    diverge.
+
+    Behavior:
+    - Substitute `typing.Self` -> `source_self_class` when leaving the source
+      context (Self's meaning is local).
+    - With `dest_self_class` set AND source either anonymous or matching dest,
+      re-stamp leaf nodes whose TypeInfo equals `dest_self_class` as
+      `typing.Self`. This recovers Self when ResolvingT injects concrete types
+      that align with the destination's receiver — e.g., a lambda capturing
+      self pulled into a method's retval.
+    """
+    return _CloneForContextT(source_self_class, dest_self_class).visit(node)
+
+
+class ResolvingT(TypeInfo.Transformer):
+    """Resolves TypeInfo nodes that carry a `code_id` by substituting the
+    referenced annotation's signature. Also unwraps `PostponedArg0`.
+
+    Used at mk_annotation time (per-trace, with annotations built so far) and
+    at collect_annotations time (over each annotation's args/retval). Cross-
+    annotation `Self` semantics flow through `_clone_for_context` using the
+    source annotation's `self_class` and the destination's `self_class`.
+    """
+    def __init__(self,
+                 annotations: dict["CodeId", "FuncAnnotation"],
+                 func_info: dict["CodeId", "FuncInfo"],
+                 dest_self_class: TypeInfo | None = None):
+        self.annotations = annotations
+        self.func_info = func_info
+        self.dest_self_class = dest_self_class
+
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        pre = node
+        node = super().visit(node)
+
+        if node.code_id and (ann := self.annotations.get(node.code_id)):
+            cl = lambda t: _clone_for_context(t, ann.self_class, self.dest_self_class)
+            if node.type_obj in (abc.Callable, typing.Callable):
+                old_params = (
+                    node.args[0].args
+                    if node.args and isinstance(node.args[0], TypeInfo) and node.args[0].is_list()
+                    else ()
+                )
+                old_retval = node.args[-1] if node.args else UnknownTypeInfo
+
+                def get_old_param(i: int) -> TypeInfoArg:
+                    return old_params[i] if i < len(old_params) else UnknownTypeInfo
+
+                def is_unknown(t: TypeInfoArg) -> bool:
+                    return isinstance(t, TypeInfo) and t.is_unknown
+
+                # FIXME skip 'self'/'cls' by name rather than assuming it's first
+                ann_arg_types = list(ann.args.values())
+                if node.is_bound:
+                    ann_arg_types = ann_arg_types[1:]
+
+                fi = self.func_info.get(node.code_id)
+                use_ann_args = fi is not None and not (
+                    ann.varargs or ann.kwargs
+                    or any(a.default is not None for a in fi.args)
+                )
+                node = node.replace(args=(
+                    TypeInfo.list([
+                        old if not is_unknown(old := get_old_param(i)) else cl(t)
+                        for i, t in enumerate(ann_arg_types)
+                    ]) if use_ann_args else ...,
+                    old_retval if not is_unknown(old_retval) else cl(ann.retval)
+                ))
+            else:
+                node = cl(ann.retval)
+
+        if node.type_obj is PostponedArg0:
+            # e.g. PostponedArg0[Iterator[X]] -> X
+            node = (
+                node.args[0].args[0]
+                if node.args
+                    and isinstance(node.args[0], TypeInfo)
+                    and node.args[0].args
+                    and isinstance(node.args[0].args[0], TypeInfo)
+                else UnknownTypeInfo
+            )
+
+        # Clear code_id once resolved; if children changed, dedup the union
+        # so members that became equal after clearing collapse.
+        if node.code_id:
+            node = node.replace(code_id=None)
+        if pre is not node and isinstance(node, UnionTypeInfo):
+            node = TypeInfo.from_set(set(node.args), typevar_index=node.typevar_index)
+
+        return node
+
+
+class NormalizeSubtypeT(TypeInfo.Transformer):
+    """Replace TypeInfos whose type_obj is a strict subtype of `defining_class`
+    with `defining_class` itself (inheritance normalization).
+
+    For single-observation cases this widens the annotation toward the method's
+    defining class (more permissive) instead of leaving the observed subclass.
+    For multi-trace cases, lub's subtype merge produces the same result, so
+    this transformer only changes single-observation outputs.
+
+    Example. Given:
+
+        class A:
+            def merge(self, other): ...
+        class B(A): ...
+        A().merge(B())
+
+    The single observed call has `other: B`. `B` is a strict subtype of
+    `A` (the defining class of `merge`), so without this transformer the
+    annotation is `def merge(self, other: "B")` — fidelity to the
+    observation but tighter than the method's actual contract. With it,
+    `B` normalizes to `A`, giving `def merge(self, other: "A")`. With
+    multiple observations Self detection would already produce
+    `other: Self`; this transformer plugs the single-observation gap.
+    """
+    def __init__(self, defining_class: type):
+        self.defining_class = defining_class
+
+    def visit(self, node: TypeInfo) -> TypeInfo:
+        if (hasattr(node.type_obj, "__mro__")
+                and self.defining_class in cast(type, node.type_obj).__mro__
+                and node.type_obj is not self.defining_class):
+            node = get_type_name(self.defining_class)
+        return super().visit(node)
 
 
 class Observations:
@@ -337,7 +593,22 @@ class Observations:
         ) -> None:
             """Widen target's types from sources, mutating target in place.
 
-            merge_args/merge_retval control which parts are widened.
+            Self-handling for cross-class merges:
+
+            - **Source types are cloned** via `_clone_for_context(t,
+              source.self_class, target.self_class)`. Inside clone, `typing.Self`
+              is substituted to source's concrete class UNLESS source's
+              self_class is the same as or a subclass of target's (parent's
+              Self is at least as wide as child's, so it stays as Self).
+
+            - **Target's own types are added as-is** (no clone) — they're
+              already in destination's context.
+
+            arg0 (self/cls) is skipped only when target's arg0 is already
+            non-Unknown — receiver type is fixed by target.self_class. When
+            target's arg0 is Unknown (synthetic parent with no traces),
+            widening fills it in from children; the keep_self rule in clone
+            preserves Self from children's arg0.
             """
             matching = [s for s in sources if len(s.args) == len(target.args)]
             if not matching:
@@ -345,13 +616,33 @@ class Observations:
 
             if merge_args:
                 for i, name in enumerate(target.args):
-                    types: set[TypeInfo] = {list(s.args.values())[i] for s in matching}
+                    # Skip arg0 (self/cls) for methods that already have a known
+                    # receiver type: it's always exactly target.self_class (or
+                    # Self), not subject to Liskov widening from parents. If
+                    # target's arg0 is still Unknown (synthetic parent with no
+                    # traces), let widening fill it in from children — the
+                    # keep_self branch in _clone_for_context preserves Self
+                    # from children's arg0 when source.self_class is a subclass
+                    # of target.self_class.
+                    if (i == 0 and target.self_class is not None
+                            and not target.args[name].is_unknown):
+                        continue
+                    types: set[TypeInfo] = {
+                        _clone_for_context(list(s.args.values())[i],
+                                           s.self_class, target.self_class)
+                        for s in matching
+                    }
                     if not target.args[name].is_unknown:
+                        # target's own type is already in the destination context;
+                        # add it directly without cloning (no substitution, no restamp).
                         types.add(target.args[name])
                     target.args[name] = merged_types(types)
 
             if merge_retval:
-                ret_types: set[TypeInfo] = {s.retval for s in matching}
+                ret_types: set[TypeInfo] = {
+                    _clone_for_context(s.retval, s.self_class, target.self_class)
+                    for s in matching
+                }
                 if not target.retval.is_unknown:
                     ret_types.add(target.retval)
                 target.retval = merged_types(ret_types)
@@ -382,6 +673,7 @@ class Observations:
                     retval=UnknownTypeInfo,
                     varargs=parent_fi.varargs, kwargs=parent_fi.kwargs,
                     variables={},
+                    self_class=parent_fi.defining_class,
                 )
 
             _widen_annotation(
@@ -401,10 +693,76 @@ class Observations:
 
 
     @staticmethod
-    def mk_annotation(func_info: FuncInfo) -> FuncAnnotation|None:
+    def mk_annotation(func_info: FuncInfo,
+                      annotations: dict[CodeId, FuncAnnotation] | None = None,
+                      func_info_map: dict[CodeId, FuncInfo] | None = None,
+                      ) -> FuncAnnotation|None:
         traces = func_info.most_common_traces()
         if not traces:
             return None
+
+        # Resolve code_id references in traces using already-built annotations.
+        # Topo sort guarantees dependencies are built first, so by the time we
+        # process this trace, any nested Callable/Generator code_ids it contains
+        # have ready annotations. This lets the Self detection below recurse
+        # into resolved types (e.g., a lambda's retval that matches self_class).
+        if annotations:
+            resolver = ResolvingT(
+                annotations,
+                func_info_map or {},
+                dest_self_class=func_info.defining_class,
+            )
+            traces = [
+                CallTrace(
+                    [resolver.visit(t) for t in trace],
+                    first_arg_class=trace.first_arg_class,
+                )
+                for trace in traces
+            ]
+
+        # Self detection: if this is a method, structurally stamp typing.Self
+        # at positions where the per-trace receiver class matches across all
+        # traces. arg0 and retval get single-trace detection; other args
+        # require >= 2 traces. After stamping, normalize remaining subtypes
+        # of the defining class to defining_class itself.
+        if ((defining_class := func_info.defining_class) is not None
+                and isinstance(defining_class.type_obj, type)):
+            n_positions = len(traces[0])
+            modified = [list(t) for t in traces]
+
+            # Stamp typing.Self only when the output target supports it (3.11+).
+            # For methods, every trace carries first_arg_class (set in
+            # PendingCallTrace.finish() at record time).
+            if output_options.use_typing_self:
+                self_classes = [cast(TypeInfo, t.first_arg_class) for t in traces]
+                for pos in range(n_positions):
+                    is_arg0 = (pos == 0)
+                    is_retval = (pos == n_positions - 1)
+                    if not (is_arg0 or is_retval) and len(traces) < 2:
+                        continue  # don't stamp Self on non-arg0/retval from single observation
+                    col = [m[pos] for m in modified]
+                    if not all(isinstance(c, TypeInfo) for c in col):
+                        continue
+                    result = _stamp_self([cast(TypeInfo, c) for c in col], self_classes)
+                    if isinstance(result, TypeInfo):
+                        for m in modified:
+                            m[pos] = result
+                    else:
+                        for i, replaced in enumerate(result):
+                            modified[i][pos] = replaced
+
+            # Inheritance widening: replace subtypes of defining_class with defining_class.
+            # Applies regardless of typing.Self availability.
+            normalize = NormalizeSubtypeT(cast(type, defining_class.type_obj))
+            modified = [
+                [normalize.visit(c) if isinstance(c, TypeInfo) else c for c in m]
+                for m in modified
+            ]
+
+            traces = [
+                CallTrace(m, first_arg_class=t.first_arg_class)
+                for m, t in zip(modified, traces)
+            ]
 
         if (signature := generalize(traces)) is None:
             logger.info(f"Unable to generalize {func_info.code_id}: inconsistent traces.\n" +
@@ -412,6 +770,15 @@ class Observations:
             return None
 
         n_sig_args = len(signature) - 1  # last element is the return type
+
+        # Resolve code_ids in variable types too (they don't go through traces).
+        variables = {
+            var_name: merged_types(
+                {resolver.visit(t) for t in var_types} if annotations else var_types,
+                for_variable=True,
+            )
+            for var_name, var_types in func_info.variables.items()
+        }
 
         ann = FuncAnnotation(
             args={
@@ -425,10 +792,8 @@ class Observations:
             retval=signature[-1],
             varargs=func_info.varargs,
             kwargs=func_info.kwargs,
-            variables={
-                var_name: merged_types(var_types, for_variable=True)
-                for var_name, var_types in func_info.variables.items()
-            }
+            variables=variables,
+            self_class=func_info.defining_class,
         )
 
         if logger.level == logging.DEBUG:
@@ -455,14 +820,31 @@ class Observations:
         visited = set()
         result = []
 
-        def visit(code_id: CodeId):
+        def walk(t: TypeInfo) -> None:
+            if t.code_id:
+                visit(t.code_id)
+            for a in t.args:
+                if isinstance(a, TypeInfo):
+                    walk(a)
+
+        def visit(code_id: CodeId) -> None:
             if code_id not in visited:
                 visited.add(code_id)
                 if (func_info := self.func_info.get(code_id)):
                     for tr in func_info.traces:
                         for t in tr:
-                            if t.code_id:
-                                visit(t.code_id)
+                            walk(t)
+                    for var_types in func_info.variables.values():
+                        for t in var_types:
+                            walk(t)
+                    for arg in func_info.args:
+                        if arg.default is not None:
+                            walk(arg.default)
+                    for override in func_info.overrides:
+                        if override.inline_arg_types:
+                            for it in override.inline_arg_types:
+                                if it is not None:
+                                    walk(it)
                     result.append(code_id)
 
         for code_id in self.func_info.keys():
@@ -474,28 +856,23 @@ class Observations:
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars], dict[CodeId, list[TraceDistribution]]]:
         """Collects function type annotations from the observed types."""
 
-        # In the code below, clone (rather than link to) types from Callable, Generator, etc.,
-        # clearing is_self, as it may not apply in the new context.
-        def clone(node: TypeInfo) -> TypeInfo:
-            class T(TypeInfo.Transformer):
-                """Clones the given TypeInfo tree, clearing 'is_self',
-                   as the type information may not be equivalent in the new context.
-                """
-                def visit(vself, node: TypeInfo) -> TypeInfo:
-                    return super().visit(node.replace(is_self=False))
-
-            return T().visit(node)
-
-        annotations: dict[CodeId, FuncAnnotation] = {
-            code_id: annotation
-            for code_id in self.code_id_topo_sort()
-            if (annotation := Observations.mk_annotation(self.func_info[code_id])) is not None
-        }
+        annotations: dict[CodeId, FuncAnnotation] = {}
+        for code_id in self.code_id_topo_sort():
+            annotation = Observations.mk_annotation(
+                self.func_info[code_id],
+                annotations=annotations,
+                func_info_map=self.func_info,
+            )
+            if annotation is not None:
+                annotations[code_id] = annotation
 
         # Merge module variables into ModuleVars (parallel to annotations for functions).
+        # Module-scope vars don't go through mk_annotation, so resolve any code_id
+        # references against the just-built annotations here.
+        mv_resolver = ResolvingT(annotations, self.func_info)
         module_vars: dict[Filename, ModuleVars] = {
             filename: ModuleVars({
-                var_name: merged_types(var_types, for_variable=True)
+                var_name: mv_resolver.visit(merged_types(var_types, for_variable=True))
                 for var_name, var_types in var_dict.items()
             })
             for filename, var_dict in self.module_variables.items()
@@ -531,79 +908,14 @@ class Observations:
                 _visit_dict(mv.variables, tr, tr_name, f"{module} ")
 
 
-        class ResolvingT(TypeInfo.Transformer):
-            """Resolves types that may not be fully known until observed at runtime."""
-
-            def visit(vself, node: TypeInfo) -> TypeInfo:
-                node = super().visit(node)
-
-                if node.code_id and (ann := annotations.get(node.code_id)):
-                    # for Callable, we also merge arguments from annotations with observed ones.
-                    if node.type_obj in (abc.Callable, typing.Callable):
-                        old_params = (
-                            node.args[0].args
-                            if node.args and isinstance(node.args[0], TypeInfo) and node.args[0].is_list()
-                            else ()
-                        )
-
-                        old_retval = node.args[-1] if node.args else UnknownTypeInfo
-
-                        def get_old_param(i: int) -> TypeInfoArg:
-                            return old_params[i] if i < len(old_params) else UnknownTypeInfo
-
-                        def is_unknown(t: TypeInfoArg) -> bool:
-                            return isinstance(t, TypeInfo) and t.is_unknown
-
-                        # FIXME skip 'self'/'cls' by name rather than assuming it's first
-                        ann_arg_types = list(ann.args.values())
-                        if node.is_bound:
-                            ann_arg_types = ann_arg_types[1:]
-
-                        node = node.replace(args=(
-                            TypeInfo.list([
-                                old if not is_unknown(old := get_old_param(i)) else clone(t)
-                                for i, t in enumerate(ann_arg_types)
-                            ])
-                            if not (ann.varargs or ann.kwargs
-                                   or any(a.default is not None
-                                          for a in self.func_info[node.code_id].args))
-                            else
-                            ...,
-                            old_retval if not is_unknown(old_retval) else clone(ann.retval)
-                        ))
-                    else:
-                        node = clone(ann.retval)
-
-                if node.type_obj is PostponedArg0:
-                    # e.g. PostponedArg0[Iterator[X]] -> X
-                    node = (
-                        node.args[0].args[0]
-                        if node.args
-                            and isinstance(node.args[0], TypeInfo)
-                            and node.args[0].args
-                            and isinstance(node.args[0].args[0], TypeInfo)
-                        else UnknownTypeInfo
-                    )
-
-                return node
-
-        transform_types(ResolvingT())
-
-        # Clear code_id after resolution — it was only needed to look up
-        # the function's observations and should not affect type equality.
-        # This also deduplicates unions whose members became equal after clearing.
-        transform_types(ClearCodeIdT())
-
-        if output_options.use_typing_self:
-            transform_types(SelfT())
+        # Resolve code_id refs unreachable from topo sort (cycles, self-references).
+        transform_types(ResolvingT(annotations, self.func_info))
 
         # Compute type distributions from traces, resolving code_id references
         # so that Callable/generator types render with their actual signatures.
         type_distributions: dict[CodeId, list[TraceDistribution]] = {}
         if output_options.type_distribution_comments:
-            resolving = ResolvingT()
-            clearing = ClearCodeIdT()
-            resolve = lambda t: clearing.visit(resolving.visit(t))
+            resolve = ResolvingT(annotations, self.func_info).visit
             for func_info in self.func_info.values():
                 if func_info.code_id not in self.wrapper_code_ids:
                     if (dist := func_info.compute_type_distributions(resolve)):

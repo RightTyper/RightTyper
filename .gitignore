@@ -5,3 +5,4 @@ righttyper.egg-info/
 venv
 righttyper.log
 *.swp
+.mypy_tests_cache*
