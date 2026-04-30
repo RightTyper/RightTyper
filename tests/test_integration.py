@@ -2645,8 +2645,8 @@ def test_discovered_function_type_in_yield():
     """)
 
 
-def test_simplify_uses_accessed_attributes():
-    """When a function accesses an attribute on a parameter, simplify() should use
+def test_lub_uses_accessed_attributes():
+    """When a function accesses an attribute on a parameter, lub should use
     that to make better type merging decisions — merging to the common base that
     has the accessed attribute rather than relying on dir() overlap.
     """
@@ -2681,7 +2681,7 @@ def test_simplify_uses_accessed_attributes():
     """)
 
 
-def test_simplify_single_type_with_accessed_attributes():
+def test_lub_single_type_with_accessed_attributes():
     """Even with a single observed type, accessed attributes can simplify it
     to a more general base. Path('.') produces PosixPath at runtime, but if
     the function only accesses .name (from PurePath), the annotation should

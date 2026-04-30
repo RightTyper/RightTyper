@@ -58,7 +58,7 @@ def is_homogeneous(types: tuple[TypeInfo, ...] | list[TypeInfo]) -> bool:
     )
 
 
-# Precomputed ABC data for structural matching in simplify().
+# Precomputed ABC data for structural matching in lub.
 def _build_abc_own_attrs() -> dict[type, frozenset[str]]:
     """Precompute the own attributes (excluding object) for each collections.abc ABC."""
     from abc import ABCMeta

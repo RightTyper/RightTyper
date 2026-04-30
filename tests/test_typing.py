@@ -777,7 +777,7 @@ def test_merged_types_for_variable_simple():
     ))
 
     # With for_variable=True, should merge type arguments.
-    # bool is a subtype of int, so simplify() further reduces to list[int]
+    # bool is a subtype of int, so lub further reduces to list[int]
     assert "list[int]" == str(merged_types({
             TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
             TypeInfo.from_type(list, args=(TypeInfo.from_type(bool),))

@@ -449,7 +449,7 @@ class Observations:
 
         # Canonical type name map: (original_module, original_name) → (canonical_module, canonical_name).
         # Set by recorder from TypeMap. Used in collect_annotations to fix names
-        # of types introduced by simplify() (e.g., pathlib._local.Path → pathlib.Path).
+        # of types introduced by lub (e.g., pathlib._local.Path → pathlib.Path).
         # All strings, serializable for .rt files.
         self.type_name_map: dict[tuple[str, str], tuple[str, str]] = {}
 
@@ -976,7 +976,7 @@ class Observations:
 
         transform_types(UnionSizeT())
 
-        # Fix type names introduced by simplify() (e.g., MRO supertypes
+        # Fix type names introduced by lub (e.g., MRO supertypes
         # with internal module paths like pathlib._local.Path → pathlib.Path).
         if self.type_name_map:
             class _AdjustNewTypeNames(TypeInfo.Transformer):

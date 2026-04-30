@@ -756,7 +756,7 @@ class _ChildB(_Base):
     extra_b: str = ""
 
 
-def test_simplify_with_accessed_attributes():
+def test_lub_with_accessed_attributes():
     """When accessed_attributes are provided and the common base has them, merge happens."""
     from righttyper.generalize import merged_types
 
@@ -768,7 +768,7 @@ def test_simplify_with_accessed_attributes():
     assert result.type_obj is _Base
 
 
-def test_simplify_without_accessed_attributes():
+def test_lub_without_accessed_attributes():
     """Without accessed_attributes, dir()-based MRO merge to common base."""
     from righttyper.generalize import merged_types
 
@@ -780,7 +780,7 @@ def test_simplify_without_accessed_attributes():
     assert result.type_obj is _Base
 
 
-def test_simplify_accessed_attrs_prevents_over_merge():
+def test_lub_accessed_attrs_prevents_over_merge():
     """When accessed_attributes include an attr not on the common base, merge is prevented."""
     from righttyper.generalize import merged_types
 
@@ -794,7 +794,7 @@ def test_simplify_accessed_attrs_prevents_over_merge():
     assert types == {_ChildA, _ChildB}
 
 
-def test_simplify_single_type_with_accessed_attributes():
+def test_lub_single_type_with_accessed_attributes():
     """Even a single type can be generalized to a base when accessed_attributes
     are all present on that base."""
     from righttyper.generalize import merged_types
@@ -806,7 +806,7 @@ def test_simplify_single_type_with_accessed_attributes():
     assert result.type_obj is _Base
 
 
-def test_simplify_single_type_no_generalization_without_attrs():
+def test_lub_single_type_no_generalization_without_attrs():
     """Without accessed_attributes, a single type stays as-is."""
     from righttyper.generalize import merged_types
 
@@ -831,7 +831,7 @@ class _IterableB:
     def __len__(self): return 0
 
 
-def test_simplify_abc_fallback():
+def test_lub_abc_fallback():
     """When types share no concrete base (only object), falls back to
     ABC matching. _IterableA and _IterableB both implement Iterable via
     __subclasshook__, so accessing __iter__ should merge to Iterable."""
@@ -846,7 +846,7 @@ def test_simplify_abc_fallback():
     assert issubclass(result.type_obj, abc.Iterable)
 
 
-def test_simplify_abc_not_used_when_concrete_base_exists():
+def test_lub_abc_not_used_when_concrete_base_exists():
     """When a concrete base exists and has the accessed attributes,
     prefer it over ABC matching."""
     from righttyper.generalize import merged_types
@@ -860,7 +860,7 @@ def test_simplify_abc_not_used_when_concrete_base_exists():
     assert result.type_obj is _Base
 
 
-def test_simplify_abc_single_type():
+def test_lub_abc_single_type():
     """A single type is not generalized to an ABC — ABC matching only
     reduces union size, not replaces a single concrete type."""
     from righttyper.generalize import merged_types
