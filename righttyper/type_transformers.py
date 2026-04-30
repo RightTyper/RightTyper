@@ -6,8 +6,6 @@ from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo, UnknownType
 from righttyper.generalize import merged_types
 from functools import cache
 
-import logging
-from righttyper.logger import logger
 
 
 class UnionSizeT(TypeInfo.Transformer):

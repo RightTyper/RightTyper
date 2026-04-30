@@ -1,7 +1,7 @@
 import inspect
 import builtins
 from dataclasses import dataclass, field
-from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType
+from types import CodeType, FrameType, FunctionType, GeneratorType
 from collections import defaultdict
 import collections.abc as abc
 from pathlib import Path
@@ -9,7 +9,7 @@ import logging
 from righttyper.logger import logger
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, CallableWithCode, cast_not_None
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, UnknownTypeInfo, CallTrace
-from typing import Final, Any, NewType, overload, cast
+from typing import Final, Any, NewType, overload
 import typing
 from righttyper.observations import Observations, FuncInfo, OverriddenFunction, ArgInfo
 from righttyper.variable_capture import code2variables
@@ -19,7 +19,7 @@ from righttyper.righttyper_utils import (
     detected_test_files, detected_test_modules, is_test_module,
     normalize_module_name, unwrap
 )
-from righttyper.type_id import find_function, get_value_type, get_type_name, hint2type, PostponedArg0
+from righttyper.type_id import find_function, get_value_type, get_type_name, hint2type
 from righttyper.righttyper_tool import field_class_init_codes
 from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
 

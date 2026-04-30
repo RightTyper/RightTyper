@@ -21,7 +21,7 @@ from righttyper.type_transformers import (
     MakePickleableT,
     LoadTypeObjT
 )
-from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, UnknownTypeInfo, UnionTypeInfo, CallTrace
+from righttyper.typeinfo import TypeInfo, TypeInfoArg, UnknownTypeInfo, UnionTypeInfo, CallTrace
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId
 from righttyper.annotation import FuncAnnotation, ModuleVars, TraceDistribution
 from righttyper.type_id import PostponedArg0, get_type_name
