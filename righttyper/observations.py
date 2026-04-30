@@ -401,9 +401,20 @@ class NormalizeSubtypeT(TypeInfo.Transformer):
     For multi-trace cases, lub's subtype merge produces the same result, so
     this transformer only changes single-observation outputs.
 
-    TODO consider dropping this if it produces less useful annotations than
-    keeping the literally-observed subtype — the trade-off is permissiveness
-    vs. fidelity to observation.
+    Example. Given:
+
+        class A:
+            def merge(self, other): ...
+        class B(A): ...
+        A().merge(B())
+
+    The single observed call has `other: B`. `B` is a strict subtype of
+    `A` (the defining class of `merge`), so without this transformer the
+    annotation is `def merge(self, other: "B")` — fidelity to the
+    observation but tighter than the method's actual contract. With it,
+    `B` normalizes to `A`, giving `def merge(self, other: "A")`. With
+    multiple observations Self detection would already produce
+    `other: Self`; this transformer plugs the single-observation gap.
     """
     def __init__(self, defining_class: type):
         self.defining_class = defining_class
@@ -758,19 +769,13 @@ class Observations:
         n_sig_args = len(signature) - 1  # last element is the return type
 
         # Resolve code_ids in variable types too (they don't go through traces).
-        if annotations:
-            assert resolver is not None  # set above when annotations is provided
-            variables = {
-                var_name: merged_types(
-                    {resolver.visit(t) for t in var_types}, for_variable=True,
-                )
-                for var_name, var_types in func_info.variables.items()
-            }
-        else:
-            variables = {
-                var_name: merged_types(var_types, for_variable=True)
-                for var_name, var_types in func_info.variables.items()
-            }
+        variables = {
+            var_name: merged_types(
+                {resolver.visit(t) for t in var_types} if annotations else var_types,
+                for_variable=True,
+            )
+            for var_name, var_types in func_info.variables.items()
+        }
 
         ann = FuncAnnotation(
             args={
