@@ -4672,18 +4672,20 @@ def test_empty_container(python_version, opt):
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
+    # f accesses only __len__; lub picks Collection as the tightest ABC that
+    # covers both list and dict — preferred over keeping them as a union.
     if python_version == "3.11" and opt == '--use-typing-never':
         assert get_function(code, 'f', body=True) == textwrap.dedent("""\
-            def f(x: dict[Never, Never]|list[Never]) -> int:
-                y: dict[Never, Never]|list[Never] = x
+            def f(x: Collection[Never]) -> int:
+                y: Collection[Never] = x
                 return len(y)
         """)
         assert "g: dict[Never, Never] = {}" in output
 
     else:
         assert get_function(code, 'f', body=True) == textwrap.dedent("""\
-            def f(x: dict[Any, Any]|list[Any]) -> int:
-                y: dict[Any, Any]|list[Any] = x
+            def f(x: Collection[Any]) -> int:
+                y: Collection[Any] = x
                 return len(y)
         """)
         assert "g: dict[Any, Any] = {}" in output
