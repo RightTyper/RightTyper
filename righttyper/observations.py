@@ -239,56 +239,78 @@ def _stamp_self(
     ]
 
 
+class _CloneForContextT(TypeInfo.Transformer):
+    """Implements `_clone_for_context`. See that function for parameter semantics."""
+    def __init__(self,
+                 source_self_class: TypeInfo | None,
+                 dest_self_class: TypeInfo | None) -> None:
+        self.source_self_class = source_self_class
+        self.dest_self_class = dest_self_class
+        # Self carries through the substitution (rather than being concretized) when
+        # source has no self_class, or when source.self_class is the same as or a
+        # subclass of dest.self_class — i.e., dest's Self is at least as wide as
+        # source's Self in their respective contexts.
+        #
+        # The subclass branch needs live `type_obj` to walk MRO via issubclass.
+        # For `.rt` files where type_obj reloads as None (e.g., classes from
+        # __main__ or unimportable modules), this branch silently fails and the
+        # Self in source gets substituted to source's concrete class. The
+        # annotation is still correct, just less precise (concrete instead of Self).
+        self.keep_self = (
+            source_self_class is None
+            or (dest_self_class is not None and source_self_class == dest_self_class)
+            or (
+                source_self_class is not None
+                and dest_self_class is not None
+                and isinstance(source_self_class.type_obj, type)
+                and isinstance(dest_self_class.type_obj, type)
+                and issubclass(source_self_class.type_obj, dest_self_class.type_obj)
+            )
+        )
+        self.can_restamp = dest_self_class is not None and (
+            source_self_class is None or source_self_class == dest_self_class
+        )
+
+    def visit(self, n: TypeInfo) -> TypeInfo:
+        if n.type_obj is typing.Self:
+            if self.keep_self:
+                return n
+            if self.source_self_class is not None:
+                return self.source_self_class
+        if self.can_restamp and not n.args and n == self.dest_self_class:
+            return TypeInfo.from_type(typing.Self)
+        return super().visit(n)
+
+
 def _clone_for_context(node: TypeInfo,
                        source_self_class: TypeInfo | None = None,
                        dest_self_class: TypeInfo | None = None) -> TypeInfo:
     """Clone a TypeInfo subtree for use in a different annotation context.
 
-    Substitutes `typing.Self` with the source annotation's concrete `self_class`
-    (if provided), since Self's meaning is local to its source annotation.
+    `source_self_class` is the class that `typing.Self` resolves to in the
+    annotation `node` came from — i.e., the source annotation's `self_class`.
+    None for non-method sources (anonymous functions, lambdas, plain functions).
 
-    If `dest_self_class` is set AND the source either has no self_class
-    (anonymous, e.g., a lambda) or shares the destination's self_class, also
-    stamp `typing.Self` on leaf nodes whose TypeInfo equals `dest_self_class`.
-    This recovers Self when ResolvingT injects concrete types that align with
-    the destination's receiver — e.g., a lambda capturing self pulled into a
-    method's retval.
+    `dest_self_class` is the class that `typing.Self` will resolve to in the
+    annotation `node` is being cloned into — i.e., the destination annotation's
+    `self_class`. None for non-method destinations.
+
+    Both refer to the *meaning of Self* in their respective contexts, not to
+    where the underlying code is lexically defined (which is `defining_class`
+    on FuncInfo). For a freshly-built annotation `defining_class == self_class`,
+    but synthetic annotations (e.g., from `_register_parent_function`) can
+    diverge.
+
+    Behavior:
+    - Substitute `typing.Self` -> `source_self_class` when leaving the source
+      context (Self's meaning is local).
+    - With `dest_self_class` set AND source either anonymous or matching dest,
+      re-stamp leaf nodes whose TypeInfo equals `dest_self_class` as
+      `typing.Self`. This recovers Self when ResolvingT injects concrete types
+      that align with the destination's receiver — e.g., a lambda capturing
+      self pulled into a method's retval.
     """
-    # Self carries through the substitution (rather than being concretized) when
-    # source has no self_class, or when source.self_class is the same as or a
-    # subclass of dest.self_class — i.e., dest's Self is at least as wide as
-    # source's Self in their respective contexts.
-    #
-    # The subclass branch needs live `type_obj` to walk MRO via issubclass.
-    # For `.rt` files where type_obj reloads as None (e.g., classes from
-    # __main__ or unimportable modules), this branch silently fails and the
-    # Self in source gets substituted to source's concrete class. The
-    # annotation is still correct, just less precise (concrete instead of Self).
-    keep_self = (
-        source_self_class is None
-        or (dest_self_class is not None and source_self_class == dest_self_class)
-        or (
-            source_self_class is not None
-            and dest_self_class is not None
-            and isinstance(source_self_class.type_obj, type)
-            and isinstance(dest_self_class.type_obj, type)
-            and issubclass(source_self_class.type_obj, dest_self_class.type_obj)
-        )
-    )
-    can_restamp = dest_self_class is not None and (
-        source_self_class is None or source_self_class == dest_self_class
-    )
-    class T(TypeInfo.Transformer):
-        def visit(vself, n: TypeInfo) -> TypeInfo:
-            if n.type_obj is typing.Self:
-                if keep_self:
-                    return n
-                if source_self_class is not None:
-                    return source_self_class
-            if can_restamp and not n.args and n == dest_self_class:
-                return TypeInfo.from_type(typing.Self)
-            return super().visit(n)
-    return T().visit(node)
+    return _CloneForContextT(source_self_class, dest_self_class).visit(node)
 
 
 class ResolvingT(TypeInfo.Transformer):
@@ -585,7 +607,9 @@ class Observations:
                     # Self), not subject to Liskov widening from parents. If
                     # target's arg0 is still Unknown (synthetic parent with no
                     # traces), let widening fill it in from children — the
-                    # post-merge re-stamp will recover Self.
+                    # keep_self branch in _clone_for_context preserves Self
+                    # from children's arg0 when source.self_class is a subclass
+                    # of target.self_class.
                     if (i == 0 and target.self_class is not None
                             and not target.args[name].is_unknown):
                         continue
