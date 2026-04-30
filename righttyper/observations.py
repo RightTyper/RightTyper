@@ -254,6 +254,12 @@ def _clone_for_context(node: TypeInfo,
     # source has no self_class, or when source.self_class is the same as or a
     # subclass of dest.self_class — i.e., dest's Self is at least as wide as
     # source's Self in their respective contexts.
+    #
+    # The subclass branch needs live `type_obj` to walk MRO via issubclass.
+    # For `.rt` files where type_obj reloads as None (e.g., classes from
+    # __main__ or unimportable modules), this branch silently fails and the
+    # Self in source gets substituted to source's concrete class. The
+    # annotation is still correct, just less precise (concrete instead of Self).
     keep_self = (
         source_self_class is None
         or (dest_self_class is not None and source_self_class == dest_self_class)
@@ -547,22 +553,26 @@ class Observations:
         ) -> None:
             """Widen target's types from sources, mutating target in place.
 
-            merge_args/merge_retval control which parts are widened. Source
-            types are cloned with their own self_class (substituting typing.Self
-            to the concrete class) so cross-class merges are Liskov-correct.
-            After merging, re-stamp typing.Self at positions whose merged value
-            matches target.self_class — recovering Self for nested positions
-            like Callable[[], Self] or parent-retval-from-children's-Self.
+            Self-handling for cross-class merges:
+
+            - **Source types are cloned** via `_clone_for_context(t,
+              source.self_class, target.self_class)`. Inside clone, `typing.Self`
+              is substituted to source's concrete class UNLESS source's
+              self_class is the same as or a subclass of target's (parent's
+              Self is at least as wide as child's, so it stays as Self).
+
+            - **Target's own types are added as-is** (no clone) — they're
+              already in destination's context.
+
+            arg0 (self/cls) is skipped only when target's arg0 is already
+            non-Unknown — receiver type is fixed by target.self_class. When
+            target's arg0 is Unknown (synthetic parent with no traces),
+            widening fills it in from children; the keep_self rule in clone
+            preserves Self from children's arg0.
             """
             matching = [s for s in sources if len(s.args) == len(target.args)]
             if not matching:
                 return
-
-            def _restamp(merged: TypeInfo) -> TypeInfo:
-                if target.self_class is None:
-                    return merged
-                result = _stamp_self([merged], [target.self_class])
-                return result if isinstance(result, TypeInfo) else result[0]
 
             if merge_args:
                 for i, name in enumerate(target.args):
@@ -584,7 +594,7 @@ class Observations:
                         # target's own type is already in the destination context;
                         # add it directly without cloning (no substitution, no restamp).
                         types.add(target.args[name])
-                    target.args[name] = _restamp(merged_types(types))
+                    target.args[name] = merged_types(types)
 
             if merge_retval:
                 ret_types: set[TypeInfo] = {
@@ -593,7 +603,7 @@ class Observations:
                 }
                 if not target.retval.is_unknown:
                     ret_types.add(target.retval)
-                target.retval = _restamp(merged_types(ret_types))
+                target.retval = merged_types(ret_types)
 
         # Phase 2: Upward — propagate children's types to parents.
         for parent_id, child_ids in parent_to_children.items():
@@ -785,8 +795,6 @@ class Observations:
 
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars], dict[CodeId, list[TraceDistribution]]]:
         """Collects function type annotations from the observed types."""
-
-        clone = _clone_for_context
 
         annotations: dict[CodeId, FuncAnnotation] = {}
         for code_id in self.code_id_topo_sort():
