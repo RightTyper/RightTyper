@@ -169,7 +169,7 @@ class FuncInfo:
             # transformed another trace's content to match this key, contributing
             # additional count we must carry through this iteration's rebuild.
             count = self.traces[trace]
-            old_fac = getattr(trace, 'first_arg_class', None)
+            old_fac = trace.first_arg_class
             new_fac = tr.visit(old_fac) if old_fac is not None else None
             trace_prime = CallTrace(
                 [tr.visit(t) for t in trace],
@@ -693,15 +693,10 @@ class Observations:
             modified = [list(t) for t in traces]
 
             # Stamp typing.Self only when the output target supports it (3.11+).
+            # For methods, every trace carries first_arg_class (set in
+            # PendingCallTrace.finish() at record time).
             if output_options.use_typing_self:
-                # Per-trace receiver class is recorded on the CallTrace at trace
-                # time (CallTrace.first_arg_class).  May be None for non-methods
-                # or when the per-trace info wasn't captured.
-                self_classes_ti = [t.first_arg_class for t in traces]
-                if all(sc is not None for sc in self_classes_ti):
-                    self_classes = [cast(TypeInfo, sc) for sc in self_classes_ti]
-                else:
-                    self_classes = []
+                self_classes = [cast(TypeInfo, t.first_arg_class) for t in traces]
                 for pos in range(n_positions):
                     is_arg0 = (pos == 0)
                     is_retval = (pos == n_positions - 1)

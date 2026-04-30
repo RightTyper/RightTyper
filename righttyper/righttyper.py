@@ -48,7 +48,7 @@ from righttyper.atomic import AtomicCounter
 
 
 PKL_FILE_NAME = TOOL_NAME+"-{N}.rt"
-PKL_FILE_VERSION = 6
+PKL_FILE_VERSION = 7
 
 
 rec = ObservationsRecorder()
