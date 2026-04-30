@@ -97,12 +97,16 @@ def _is_subtype(a: type, b: type) -> bool:
         return True
     if issubclass(a, b):
         return True
-    # Numeric tower: int <: float <: complex
-    t = a
-    while t in _NUMERIC_TOWER:
-        t = _NUMERIC_TOWER[t]
-        if t is b:
-            return True
+    # Numeric tower: int <: float <: complex. Walk a's MRO for the nearest
+    # tower entry, then promote up the tower checking against b.
+    for ancestor in a.__mro__:
+        if ancestor in _NUMERIC_TOWER:
+            t = ancestor
+            while t in _NUMERIC_TOWER:
+                t = _NUMERIC_TOWER[t]
+                if issubclass(t, b):
+                    return True
+            break
     return False
 
 
