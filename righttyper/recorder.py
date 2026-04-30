@@ -61,7 +61,6 @@ class PendingCallTrace:
         arg_info: inspect.ArgInfo,
         co_flags: int,
         self_type: TypeInfo|None,
-        self_replacement: TypeInfo|None
     ) -> None:
         self.arg_info = arg_info
         self.args_start = self._get_arg_types(arg_info)
@@ -70,7 +69,6 @@ class PendingCallTrace:
         self.is_async = bool(co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE))
         self.is_generator=bool(co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR))
         self.self_type = self_type
-        self.self_replacement = self_replacement
 
 
     @staticmethod
@@ -306,7 +304,7 @@ class ObservationsRecorder:
                                                sti.override_finder, sti.parent_defining_class)
 
             self._pending_traces[code][id(frame)] = PendingCallTrace(
-                arg_info, code.co_flags, sti.self_type, sti.self_replacement
+                arg_info, code.co_flags, sti.self_type
             )
 
             if run_options.propagate_wrapped_types:
@@ -386,7 +384,7 @@ class ObservationsRecorder:
         self._register_function(wrapped_code, wrapped, synthetic_arg_info,
                                 sti.overrides, defining_class=sti.self_replacement)
 
-        pending = PendingCallTrace(synthetic_arg_info, wrapped_code.co_flags, sti.self_type, sti.self_replacement)
+        pending = PendingCallTrace(synthetic_arg_info, wrapped_code.co_flags, sti.self_type)
         self._pending_wrapped_traces[wrapped_code][id(frame)] = pending
 
 
