@@ -33,11 +33,6 @@ class TypeInfo:
     # Multiple can occur in a function call, in different order, so include in comparisons.
     typevar_index: int = field(default=0, compare=True)
 
-    # Indicates equivalence to typing.Self. Note that is_self may be true for one
-    # type (class) in one trace, but false for the exact same type in another,
-    # so that is_self matters for equivalence
-    is_self: bool = field(default=False, compare=True)
-
 
     @staticmethod
     def _arg2str(a: TypeInfoArg, modifier: Callable[["TypeInfo"], str|None]|None) -> str:

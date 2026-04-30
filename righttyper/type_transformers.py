@@ -48,15 +48,6 @@ class UnionSizeT(TypeInfo.Transformer):
         return node
 
 
-class SelfT(TypeInfo.Transformer):
-    """Renames types to typing.Self according to is_self."""
-    def visit(vself, node: TypeInfo) -> TypeInfo:
-        if node.is_self:
-            return TypeInfo.from_type(typing.Self)
-
-        return super().visit(node)
-
-
 class NeverSayNeverT(TypeInfo.Transformer):
     """Removes uses of typing.Never, replacing them with typing.Any"""
     def visit(vself, node: TypeInfo) -> TypeInfo:

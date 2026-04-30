@@ -1265,8 +1265,12 @@ def test_method_overriding_typeshed():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
+    # `other: object` from typeshed's signature for object.__eq__. With single
+    # observation (self=C, other=C), Self detection on non-arg0/non-retval
+    # requires >= 2 traces, so `other` doesn't become Self. The merge with
+    # typeshed's object widens it correctly.
     assert get_function(code, 'C.__eq__') == textwrap.dedent("""\
-        def __eq__(self: Self, other: object|Self) -> bool: ...
+        def __eq__(self: Self, other: object) -> bool: ...
     """)
 
     assert "\nimport Self" not in output
@@ -1291,7 +1295,7 @@ def test_method_overriding_typeshed_ignore_annotations():
     code = cst.parse_module(output)
 
     assert get_function(code, 'C.__eq__') == textwrap.dedent("""\
-        def __eq__(self: Self, other: object|Self) -> bool: ...
+        def __eq__(self: Self, other: object) -> bool: ...
     """)
 
 
@@ -1312,7 +1316,7 @@ def test_method_overriding_inherited_typeshed():
     code = cst.parse_module(output)
 
     assert get_function(code, 'Comparable.__eq__') == textwrap.dedent("""\
-        def __eq__(self: Self, other: object|Self) -> bool: ...
+        def __eq__(self: Self, other: object) -> bool: ...
     """)
 
 
@@ -4155,16 +4159,13 @@ def test_self_subtyping_reversed_too(python_version):
 
 
 def test_self_unrelated_subclass_arg():
-    """When rhs receives a subclass of self's class (only once), SelfTransformer
-    over-stamps it as is_self=True. simplify can't undo it because there's only
-    one observation, so the result is `rhs: Self` — but that annotation forbids
-    the inverse call b.operation(a), which the actual code accepts.
+    """When rhs receives a subclass of self's class (only once), it must not be
+    typed as `Self`. The annotation `rhs: Self` would forbid the inverse call
+    b.operation(a), which the actual code accepts.
 
-    The right detection rule is "rhs's observed type matches self's observed
-    type across all traces." Here rhs is IntegerAdd while self is NumberAdd —
-    different types — so Self is incorrect. SelfTransformer in recorder.py
-    only checks MRO compatibility (rhs's type's MRO contains self_type), which
-    is too permissive.
+    The detection rule is "rhs's observed type matches self's observed type
+    across all traces." Here rhs is IntegerAdd while self is NumberAdd —
+    different types — so Self is incorrect; rhs should be NumberAdd (concrete).
     """
     t = textwrap.dedent("""\
         class NumberAdd:

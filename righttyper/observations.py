@@ -249,20 +249,35 @@ def _clone_for_context(node: TypeInfo,
     This recovers Self when ResolvingT injects concrete types that align with
     the destination's receiver — e.g., a lambda capturing self pulled into a
     method's retval.
-
-    Also clears the legacy is_self=True flag (pending removal of the field).
     """
+    # Self carries through the substitution (rather than being concretized) when
+    # source has no self_class, or when source.self_class is the same as or a
+    # subclass of dest.self_class — i.e., dest's Self is at least as wide as
+    # source's Self in their respective contexts.
+    keep_self = (
+        source_self_class is None
+        or (dest_self_class is not None and source_self_class == dest_self_class)
+        or (
+            source_self_class is not None
+            and dest_self_class is not None
+            and isinstance(source_self_class.type_obj, type)
+            and isinstance(dest_self_class.type_obj, type)
+            and issubclass(source_self_class.type_obj, dest_self_class.type_obj)
+        )
+    )
     can_restamp = dest_self_class is not None and (
         source_self_class is None or source_self_class == dest_self_class
     )
     class T(TypeInfo.Transformer):
         def visit(vself, n: TypeInfo) -> TypeInfo:
-            if (n.type_obj is typing.Self
-                    and source_self_class is not None):
-                return source_self_class
+            if n.type_obj is typing.Self:
+                if keep_self:
+                    return n
+                if source_self_class is not None:
+                    return source_self_class
             if can_restamp and not n.args and n == dest_self_class:
                 return TypeInfo.from_type(typing.Self)
-            return super().visit(n.replace(is_self=False))
+            return super().visit(n)
     return T().visit(node)
 
 
@@ -551,25 +566,33 @@ class Observations:
 
             if merge_args:
                 for i, name in enumerate(target.args):
-                    # Skip arg0 (self/cls) for methods: the receiver type is
-                    # always exactly target.self_class (or Self), not subject
-                    # to Liskov widening from parent classes.
-                    if i == 0 and target.self_class is not None:
+                    # Skip arg0 (self/cls) for methods that already have a known
+                    # receiver type: it's always exactly target.self_class (or
+                    # Self), not subject to Liskov widening from parents. If
+                    # target's arg0 is still Unknown (synthetic parent with no
+                    # traces), let widening fill it in from children — the
+                    # post-merge re-stamp will recover Self.
+                    if (i == 0 and target.self_class is not None
+                            and not target.args[name].is_unknown):
                         continue
                     types: set[TypeInfo] = {
-                        _clone_for_context(list(s.args.values())[i], s.self_class)
+                        _clone_for_context(list(s.args.values())[i],
+                                           s.self_class, target.self_class)
                         for s in matching
                     }
                     if not target.args[name].is_unknown:
-                        types.add(_clone_for_context(target.args[name], target.self_class))
+                        types.add(_clone_for_context(target.args[name],
+                                                     target.self_class, target.self_class))
                     target.args[name] = _restamp(merged_types(types))
 
             if merge_retval:
                 ret_types: set[TypeInfo] = {
-                    _clone_for_context(s.retval, s.self_class) for s in matching
+                    _clone_for_context(s.retval, s.self_class, target.self_class)
+                    for s in matching
                 }
                 if not target.retval.is_unknown:
-                    ret_types.add(_clone_for_context(target.retval, target.self_class))
+                    ret_types.add(_clone_for_context(target.retval,
+                                                     target.self_class, target.self_class))
                 target.retval = _restamp(merged_types(ret_types))
 
         # Phase 2: Upward — propagate children's types to parents.
@@ -593,17 +616,8 @@ class Observations:
                 merge_args, merge_retval = False, True   # observed concrete
 
             if parent_id not in raw_annotations:
-                # For methods, arg0 (self/cls) is always Self in its own
-                # context — initialize it directly. Widening skips arg0 for
-                # methods, so this is the only place it gets set.
-                _self_ti = TypeInfo.from_type(typing.Self)
-                args = {
-                    a.arg_name: (_self_ti if i == 0 and parent_fi.defining_class is not None
-                                 else UnknownTypeInfo)
-                    for i, a in enumerate(parent_fi.args)
-                }
                 raw_annotations[parent_id] = FuncAnnotation(
-                    args=args,
+                    args={a.arg_name: UnknownTypeInfo for a in parent_fi.args},
                     retval=UnknownTypeInfo,
                     varargs=parent_fi.varargs, kwargs=parent_fi.kwargs,
                     variables={},
