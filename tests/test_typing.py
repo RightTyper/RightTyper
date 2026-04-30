@@ -533,6 +533,26 @@ def name(t: type):
     return f"{t.__module__}.{t.__qualname__}"
 
 
+def test_merged_types_superclass_abc():
+    """simplify should merge ABC subclasses to their common base. The check for
+    "is this a class with MRO" must accept ABC classes (whose metaclass is
+    ABCMeta, not type)."""
+    from abc import ABC, abstractmethod
+    class Base(ABC):
+        @abstractmethod
+        def factory(self): ...
+    class A(Base):
+        def factory(self): return self
+    class B(Base):
+        def factory(self): return self
+
+    assert f"{name(Base)}" == str(merged_types({
+            TypeInfo.from_type(A),
+            TypeInfo.from_type(B),
+        }
+    ))
+
+
 def test_merged_types_superclass_checks_attributes():
     class A: pass
     class B(A):

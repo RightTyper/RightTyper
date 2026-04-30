@@ -4219,6 +4219,7 @@ def test_self_widen_abstract_retval():
 
     # Parent retval widened from children's Self → re-stamp keeps it Self.
     assert get_function(code, 'Base.factory') == textwrap.dedent("""\
+        @abstractmethod
         def factory(self: Self) -> Self: ...
     """)
     assert get_function(code, 'A.factory') == textwrap.dedent("""\
@@ -4252,20 +4253,25 @@ def test_self_widen_lsp_arg():
 
     # Each method, observed once, has only one trace. Non-arg0/non-retval
     # parameter `other` is not stamped Self from a single observation. So
-    # parent's `other` is "Parent" (concrete). After Phase 3, child's `other`
-    # widens from parent's: child sees {Parent (after substitution), Self_child→Child}
-    # → lub Parent. Re-stamp Parent==Child? no → stays Parent.
+    # parent's `other` is Parent (concrete; forward-ref quoted only because
+    # the method is inside the class definition). After Phase 3, child's
+    # `other` widens from parent's: child sees {Parent (after substitution),
+    # Self_child→Child} → lub Parent. Re-stamp Parent==Child? no → stays Parent.
     assert get_function(code, 'Parent.merge') == textwrap.dedent("""\
         def merge(self: Self, other: "Parent") -> Self: ...
     """)
+    # Child references Parent which is defined earlier — no forward-ref quotes.
     assert get_function(code, 'Child.merge') == textwrap.dedent("""\
-        def merge(self: Self, other: "Parent") -> Self: ...
+        def merge(self: Self, other: Parent) -> Self: ...
     """)
 
 
 def test_self_widen_callable_retval():
-    """Method returning a Callable involving Self. Tests that nested Self
-    survives widening across class hierarchy."""
+    """Method returns a Callable that itself returns self. ResolvingT pulls in
+    the lambda's resolved retval (a concrete A after lub-merging A|B from the
+    two trace receivers); we need Self detection to recover Self at the inner
+    Callable position because the lambda's retval matches the outer method's
+    self_class."""
     t = textwrap.dedent("""\
         from typing import Callable
         class A:
@@ -7313,6 +7319,39 @@ def test_parent_type_propagation_only_collect():
     # B's args widened to include A's
     assert get_function(code, 'B.foo') == textwrap.dedent("""\
         def foo(self: Self, x: int|str) -> str: ...
+    """)
+
+
+def test_self_detection_through_collect_and_process():
+    """Self detection survives the .rt collect/process round-trip.
+
+    `--only-collect` writes traces to a .rt file (via dill); `process` reads
+    them back in a fresh interpreter. CallTrace.first_arg_class is recorded
+    as a TypeInfo, so structural Self detection in mk_annotation works on
+    the deserialized data even if type_obj fails to reload.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class NumberAdd:
+            def operation(self, rhs):
+                return self
+
+        class IntegerAdd(NumberAdd):
+            pass
+
+        a = NumberAdd()
+        b = IntegerAdd()
+        a.operation(b)
+    """))
+
+    rt_run('--only-collect', '--python-version=3.11', 't.py')
+    rt_run('process', '--python-version=3.11')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # Same expectation as test_self_unrelated_subclass_arg, but exercises
+    # the .rt serialization path.
+    assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
+        def operation(self: Self, rhs: "NumberAdd") -> Self: ...
     """)
 
 

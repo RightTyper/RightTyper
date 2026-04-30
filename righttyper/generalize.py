@@ -294,11 +294,12 @@ def simplify(typeinfoset: set[TypeInfo]) -> set[TypeInfo]:
             if not any(bc.type_obj is t.type_obj for bc in incomplete_types)
         )
 
-    # Types we support merging
+    # Types we support merging — anything with an __mro__ to walk.
+    # Includes classes whose metaclass is a `type` subclass (e.g., ABCMeta).
     mergeable_types = set(
         t
         for t in simplifiable_types
-        if type(t.type_obj) is type     # we need a type_obj with __mro__ for merging
+        if hasattr(t.type_obj, "__mro__")
     )
 
     other_types |= (simplifiable_types - mergeable_types)
