@@ -1305,46 +1305,6 @@ def test_from_set_default_limit_allows_normal_unions():
     assert len(t.args) == 9
 
 
-def test_clear_code_id_deduplicates_union():
-    """ClearCodeIdT should clear code_id and deduplicate resulting unions."""
-    from righttyper.type_transformers import ClearCodeIdT
-    from righttyper.typeinfo import UnionTypeInfo
-    from righttyper.righttyper_types import CodeId
-    import collections.abc
-
-    base = TypeInfo.from_type(collections.abc.Callable)
-    a = base.replace(code_id=CodeId("a.py", "f", 1, 0))
-    b = base.replace(code_id=CodeId("b.py", "g", 1, 0))
-    c = TypeInfo.from_type(int)
-
-    # Union with 3 members: two Callables differing only in code_id, plus int
-    union = UnionTypeInfo.from_type(UnionTypeInfo, args=(a, b, c))
-    assert len(union.args) == 3
-
-    result = ClearCodeIdT().visit(union)
-    # Should deduplicate to Callable | int
-    if isinstance(result, UnionTypeInfo):
-        assert len(result.args) == 2
-    else:
-        assert result.type_obj in (collections.abc.Callable, int)
-
-
-def test_clear_code_id_non_union():
-    """ClearCodeIdT should clear code_id on non-union nodes too."""
-    from righttyper.type_transformers import ClearCodeIdT
-    from righttyper.righttyper_types import CodeId
-    import collections.abc
-
-    node = TypeInfo.from_type(collections.abc.Callable).replace(
-        code_id=CodeId("a.py", "f", 1, 0)
-    )
-    assert node.code_id is not None
-
-    result = ClearCodeIdT().visit(node)
-    assert result.code_id is None
-    assert result.type_obj is collections.abc.Callable
-
-
 def test_merge_observations_unions_overrides_lists():
     """merge_observations must reconcile FuncInfo entries whose overrides
     lists differ in depth.

@@ -381,9 +381,8 @@ class ResolvingT(TypeInfo.Transformer):
                 else UnknownTypeInfo
             )
 
-        # Clear code_id once resolved — same job ClearCodeIdT used to do.
-        # Folding it here saves a second tree walk and lets union members
-        # that became equal after clearing dedup in one place.
+        # Clear code_id once resolved; if children changed, dedup the union
+        # so members that became equal after clearing collapse.
         if node.code_id:
             node = node.replace(code_id=None)
         if pre is not node and isinstance(node, UnionTypeInfo):
