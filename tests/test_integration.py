@@ -5404,6 +5404,8 @@ def test_log_includes_non_inline_typevar():
     ("[[[[3]]]]", ("--type-depth-limit", "1"), "list[list]"),
     ("{0:{1:{2:2}}}", ("--type-depth-limit", "1"), "dict[int, dict]"),
     ("[{1}]", ("--type-depth-limit", "1"), "list[set]"),
+    # foo(foo) — self-reference: foo's arg references its own code_id, a cycle
+    # that topo sort cannot resolve, so a fallback resolution pass is required.
     ("foo", ("--type-depth-limit", "0"), "Callable"),
     ("foo", ("--type-depth-limit", "1"), "Callable[[Callable], None]"),
 ])

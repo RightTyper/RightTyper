@@ -734,6 +734,21 @@ class Observations:
 
         n_sig_args = len(signature) - 1  # last element is the return type
 
+        # Resolve code_ids in variable types too (they don't go through traces).
+        if annotations:
+            assert resolver is not None  # set above when annotations is provided
+            variables = {
+                var_name: merged_types(
+                    {resolver.visit(t) for t in var_types}, for_variable=True,
+                )
+                for var_name, var_types in func_info.variables.items()
+            }
+        else:
+            variables = {
+                var_name: merged_types(var_types, for_variable=True)
+                for var_name, var_types in func_info.variables.items()
+            }
+
         ann = FuncAnnotation(
             args={
                 arg.arg_name:
@@ -746,10 +761,7 @@ class Observations:
             retval=signature[-1],
             varargs=func_info.varargs,
             kwargs=func_info.kwargs,
-            variables={
-                var_name: merged_types(var_types, for_variable=True)
-                for var_name, var_types in func_info.variables.items()
-            },
+            variables=variables,
             self_class=func_info.defining_class,
         )
 
@@ -777,14 +789,23 @@ class Observations:
         visited = set()
         result = []
 
-        def visit(code_id: CodeId):
+        def walk(t: TypeInfo) -> None:
+            if t.code_id:
+                visit(t.code_id)
+            for a in t.args:
+                if isinstance(a, TypeInfo):
+                    walk(a)
+
+        def visit(code_id: CodeId) -> None:
             if code_id not in visited:
                 visited.add(code_id)
                 if (func_info := self.func_info.get(code_id)):
                     for tr in func_info.traces:
                         for t in tr:
-                            if t.code_id:
-                                visit(t.code_id)
+                            walk(t)
+                    for var_types in func_info.variables.values():
+                        for t in var_types:
+                            walk(t)
                     result.append(code_id)
 
         for code_id in self.func_info.keys():
@@ -807,9 +828,12 @@ class Observations:
                 annotations[code_id] = annotation
 
         # Merge module variables into ModuleVars (parallel to annotations for functions).
+        # Module-scope vars don't go through mk_annotation, so resolve any code_id
+        # references against the just-built annotations here.
+        mv_resolver = ResolvingT(annotations, self.func_info)
         module_vars: dict[Filename, ModuleVars] = {
             filename: ModuleVars({
-                var_name: merged_types(var_types, for_variable=True)
+                var_name: mv_resolver.visit(merged_types(var_types, for_variable=True))
                 for var_name, var_types in var_dict.items()
             })
             for filename, var_dict in self.module_variables.items()
@@ -845,10 +869,7 @@ class Observations:
                 _visit_dict(mv.variables, tr, tr_name, f"{module} ")
 
 
-        # Resolution may already have run per-trace inside mk_annotation (since
-        # topo sort orders dependencies first), but run a final pass to catch
-        # any code_ids that survived (e.g., variable types that didn't go through
-        # mk_annotation, or cycles).
+        # Resolve code_id refs unreachable from topo sort (cycles, self-references).
         transform_types(ResolvingT(annotations, self.func_info))
 
         # Compute type distributions from traces, resolving code_id references
