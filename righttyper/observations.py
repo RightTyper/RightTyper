@@ -164,7 +164,11 @@ class FuncInfo:
                     override.inline_arg_types = inline_types_prime
 
 
-        for trace, count in list(self.traces.items()):
+        for trace in list(self.traces):
+            # Re-read count from the live counter: an earlier iteration may have
+            # transformed another trace's content to match this key, contributing
+            # additional count we must carry through this iteration's rebuild.
+            count = self.traces[trace]
             old_fac = getattr(trace, 'first_arg_class', None)
             new_fac = tr.visit(old_fac) if old_fac is not None else None
             trace_prime = CallTrace(
@@ -181,7 +185,7 @@ class FuncInfo:
                         str(tuple(str(t) for t in trace_prime))
                     )
                 del self.traces[trace]
-                self.traces[trace_prime] = count
+                self.traces[trace_prime] += count
 
         for var_name, var_types in list(self.variables.items()):
             self.variables[var_name] = set(tr.visit(t) for t in var_types)
