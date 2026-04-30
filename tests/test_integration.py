@@ -21,7 +21,15 @@ def tmp_cwd(tmp_path, monkeypatch):
     yield tmp_path
 
 
-MYPY_CACHE_DIR = Path.cwd() / '.mypy_tests_cache'
+# Per-worker cache dir under pytest-xdist: mypy's SQLite cache doesn't tolerate
+# concurrent writers from sibling workers ("database is locked"). Falls back to
+# a single shared dir for serial runs.
+import os
+_mypy_worker_id = os.environ.get('PYTEST_XDIST_WORKER')
+MYPY_CACHE_DIR = (
+    Path.cwd() / f'.mypy_tests_cache_{_mypy_worker_id}' if _mypy_worker_id
+    else Path.cwd() / '.mypy_tests_cache'
+)
 
 @pytest.fixture(scope='function', autouse=True)
 def runmypy(tmp_cwd, request):
@@ -1265,8 +1273,12 @@ def test_method_overriding_typeshed():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
+    # `other: object` from typeshed's signature for object.__eq__. With single
+    # observation (self=C, other=C), Self detection on non-arg0/non-retval
+    # requires >= 2 traces, so `other` doesn't become Self. The merge with
+    # typeshed's object widens it correctly.
     assert get_function(code, 'C.__eq__') == textwrap.dedent("""\
-        def __eq__(self: Self, other: object|Self) -> bool: ...
+        def __eq__(self: Self, other: object) -> bool: ...
     """)
 
     assert "\nimport Self" not in output
@@ -1291,7 +1303,7 @@ def test_method_overriding_typeshed_ignore_annotations():
     code = cst.parse_module(output)
 
     assert get_function(code, 'C.__eq__') == textwrap.dedent("""\
-        def __eq__(self: Self, other: object|Self) -> bool: ...
+        def __eq__(self: Self, other: object) -> bool: ...
     """)
 
 
@@ -1312,7 +1324,7 @@ def test_method_overriding_inherited_typeshed():
     code = cst.parse_module(output)
 
     assert get_function(code, 'Comparable.__eq__') == textwrap.dedent("""\
-        def __eq__(self: Self, other: object|Self) -> bool: ...
+        def __eq__(self: Self, other: object) -> bool: ...
     """)
 
 
@@ -4122,14 +4134,17 @@ def test_self_subtyping(python_version):
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    # IntegerAdd IS-A NumberAdd, the enclosed class; so the argument should be 'Self'
+    # Single observation a.operation(b) where rhs (IntegerAdd) is a subclass of
+    # self (NumberAdd). With one trace and no exact-class match for rhs, we don't
+    # stamp Self on a non-arg0 parameter (would over-restrict: Self forbids
+    # b.operation(a), which Python accepts).
     if python_version == '3.10':
         assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
             def operation(self: "NumberAdd", rhs: "NumberAdd") -> "NumberAdd": ...
         """)
     else:
         assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
-            def operation(self: Self, rhs: Self) -> Self: ...
+            def operation(self: Self, rhs: "NumberAdd") -> Self: ...
         """)
 
 
@@ -4209,6 +4224,168 @@ def test_self_subtyping_reversed_too(python_version):
         assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
             def operation(self: Self, rhs: "NumberAdd") -> Self: ...
         """)
+
+
+def test_self_unrelated_subclass_arg():
+    """When rhs receives a subclass of self's class (only once), it must not be
+    typed as `Self`. The annotation `rhs: Self` would forbid the inverse call
+    b.operation(a), which the actual code accepts.
+
+    The detection rule is "rhs's observed type matches self's observed type
+    across all traces." Here rhs is IntegerAdd while self is NumberAdd —
+    different types — so Self is incorrect; rhs should be NumberAdd (concrete).
+    """
+    t = textwrap.dedent("""\
+        class NumberAdd:
+            def operation(self, rhs):
+                # rhs is not accessed inside the method, so accessed_attributes is empty
+                return self
+
+        class IntegerAdd(NumberAdd):
+            pass
+
+        a = NumberAdd()
+        b = IntegerAdd()
+        a.operation(b)  # single call: self=NumberAdd, rhs=IntegerAdd
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run('--python-version=3.11', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # The correct annotation: rhs is observed only as IntegerAdd (a NumberAdd subclass);
+    # it should be NumberAdd (or IntegerAdd), NOT Self. Self would forbid b.operation(a).
+    assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
+        def operation(self: Self, rhs: "NumberAdd") -> Self: ...
+    """)
+
+
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_widen_abstract_retval(python_version):
+    """Phase 2 widening from children's Self retvals into an abstract parent
+    should re-stamp Self in the parent's annotation (not collapse to concrete).
+    Targeting 3.10 verifies no Self leaks through the re-stamp path."""
+    t = textwrap.dedent("""\
+        from abc import ABC, abstractmethod
+        class Base(ABC):
+            @abstractmethod
+            def factory(self): ...
+        class A(Base):
+            def factory(self):
+                return self
+        class B(Base):
+            def factory(self):
+                return self
+        A().factory()
+        B().factory()
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run(f'--python-version={python_version}', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    if python_version == "3.11":
+        # Parent retval widened from children's Self → re-stamp keeps it Self.
+        assert get_function(code, 'Base.factory') == textwrap.dedent("""\
+            @abstractmethod
+            def factory(self: Self) -> Self: ...
+        """)
+        assert get_function(code, 'A.factory') == textwrap.dedent("""\
+            def factory(self: Self) -> Self: ...
+        """)
+        assert get_function(code, 'B.factory') == textwrap.dedent("""\
+            def factory(self: Self) -> Self: ...
+        """)
+    else:
+        assert 'Self' not in output, (
+            f"unexpected typing.Self in {python_version}-target output:\n{output}"
+        )
+
+
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_widen_lsp_arg(python_version):
+    """Phase 3 widening: child's `other` arg widened from parent's `other: Self`.
+    With substitution (parent's Self → Parent), child's other becomes Parent —
+    Liskov-compatible with parent's signature."""
+    t = textwrap.dedent("""\
+        class Parent:
+            def merge(self, other):
+                return self
+        class Child(Parent):
+            def merge(self, other):
+                return self
+        Parent().merge(Parent())
+        Child().merge(Child())
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run(f'--python-version={python_version}', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    if python_version == "3.11":
+        # Each method, observed once, has only one trace. Non-arg0/non-retval
+        # parameter `other` is not stamped Self from a single observation. So
+        # parent's `other` is Parent (concrete; forward-ref quoted only because
+        # the method is inside the class definition). After Phase 3, child's
+        # `other` widens from parent's: child sees {Parent (after substitution),
+        # Self_child→Child} → lub Parent. Re-stamp Parent==Child? no → stays Parent.
+        assert get_function(code, 'Parent.merge') == textwrap.dedent("""\
+            def merge(self: Self, other: "Parent") -> Self: ...
+        """)
+        # Child references Parent which is defined earlier — no forward-ref quotes.
+        assert get_function(code, 'Child.merge') == textwrap.dedent("""\
+            def merge(self: Self, other: Parent) -> Self: ...
+        """)
+    else:
+        assert 'Self' not in output, (
+            f"unexpected typing.Self in {python_version}-target output:\n{output}"
+        )
+
+
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_widen_callable_retval(python_version):
+    """Method returns a Callable that itself returns self. ResolvingT pulls in
+    the lambda's resolved retval (a concrete A after lub-merging A|B from the
+    two trace receivers); we need Self detection to recover Self at the inner
+    Callable position because the lambda's retval matches the outer method's
+    self_class. Targeting 3.10 verifies _clone_for_context's can_restamp
+    branch respects use_typing_self and does not inject Self.
+    """
+    t = textwrap.dedent("""\
+        from typing import Callable
+        class A:
+            def factory(self):
+                return lambda: self
+        class B(A):
+            pass
+        A().factory()()
+        B().factory()()
+        """)
+
+    Path("t.py").write_text(t)
+
+    rt_run(f'--python-version={python_version}', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    if python_version == "3.11":
+        # B inherits without override: same code_id, single annotation on A.factory.
+        # Retval is observed as a function returning A or B (matching self class
+        # in each trace). Recursive Self detection inside the Callable's retval
+        # position stamps the inner type as Self.
+        fn = get_function(code, 'A.factory')
+        assert 'def factory(self: Self)' in fn
+        assert 'Callable[[], Self]' in fn or 'Callable[..., Self]' in fn
+    else:
+        assert 'Self' not in output, (
+            f"unexpected typing.Self in {python_version}-target output:\n{output}"
+        )
 
 
 def test_returns_or_yields_generator():
@@ -5316,6 +5493,8 @@ def test_log_includes_non_inline_typevar():
     ("[[[[3]]]]", ("--type-depth-limit", "1"), "list[list]"),
     ("{0:{1:{2:2}}}", ("--type-depth-limit", "1"), "dict[int, dict]"),
     ("[{1}]", ("--type-depth-limit", "1"), "list[set]"),
+    # foo(foo) — self-reference: foo's arg references its own code_id, a cycle
+    # that topo sort cannot resolve, so a fallback resolution pass is required.
     ("foo", ("--type-depth-limit", "0"), "Callable"),
     ("foo", ("--type-depth-limit", "1"), "Callable[[Callable], None]"),
 ])
@@ -7232,6 +7411,39 @@ def test_parent_type_propagation_only_collect():
     # B's args widened to include A's
     assert get_function(code, 'B.foo') == textwrap.dedent("""\
         def foo(self: Self, x: int|str) -> str: ...
+    """)
+
+
+def test_self_detection_through_collect_and_process():
+    """Self detection survives the .rt collect/process round-trip.
+
+    `--only-collect` writes traces to a .rt file (via dill); `process` reads
+    them back in a fresh interpreter. CallTrace.first_arg_class is recorded
+    as a TypeInfo, so structural Self detection in mk_annotation works on
+    the deserialized data even if type_obj fails to reload.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class NumberAdd:
+            def operation(self, rhs):
+                return self
+
+        class IntegerAdd(NumberAdd):
+            pass
+
+        a = NumberAdd()
+        b = IntegerAdd()
+        a.operation(b)
+    """))
+
+    rt_run('--only-collect', '--python-version=3.11', 't.py')
+    rt_run('process', '--python-version=3.11')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # Same expectation as test_self_unrelated_subclass_arg, but exercises
+    # the .rt serialization path.
+    assert get_function(code, 'NumberAdd.operation') == textwrap.dedent("""\
+        def operation(self: Self, rhs: "NumberAdd") -> Self: ...
     """)
 
 

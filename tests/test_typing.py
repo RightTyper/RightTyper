@@ -533,6 +533,26 @@ def name(t: type):
     return f"{t.__module__}.{t.__qualname__}"
 
 
+def test_merged_types_superclass_abc():
+    """simplify should merge ABC subclasses to their common base. The check for
+    "is this a class with MRO" must accept ABC classes (whose metaclass is
+    ABCMeta, not type)."""
+    from abc import ABC, abstractmethod
+    class Base(ABC):
+        @abstractmethod
+        def factory(self): ...
+    class A(Base):
+        def factory(self): return self
+    class B(Base):
+        def factory(self): return self
+
+    assert f"{name(Base)}" == str(merged_types({
+            TypeInfo.from_type(A),
+            TypeInfo.from_type(B),
+        }
+    ))
+
+
 def test_merged_types_superclass_checks_attributes():
     class A: pass
     class B(A):
@@ -1281,46 +1301,6 @@ def test_from_set_default_limit_allows_normal_unions():
     t = TypeInfo.from_set(s)
     assert t.is_union()
     assert len(t.args) == 9
-
-
-def test_clear_code_id_deduplicates_union():
-    """ClearCodeIdT should clear code_id and deduplicate resulting unions."""
-    from righttyper.type_transformers import ClearCodeIdT
-    from righttyper.typeinfo import UnionTypeInfo
-    from righttyper.righttyper_types import CodeId
-    import collections.abc
-
-    base = TypeInfo.from_type(collections.abc.Callable)
-    a = base.replace(code_id=CodeId("a.py", "f", 1, 0))
-    b = base.replace(code_id=CodeId("b.py", "g", 1, 0))
-    c = TypeInfo.from_type(int)
-
-    # Union with 3 members: two Callables differing only in code_id, plus int
-    union = UnionTypeInfo.from_type(UnionTypeInfo, args=(a, b, c))
-    assert len(union.args) == 3
-
-    result = ClearCodeIdT().visit(union)
-    # Should deduplicate to Callable | int
-    if isinstance(result, UnionTypeInfo):
-        assert len(result.args) == 2
-    else:
-        assert result.type_obj in (collections.abc.Callable, int)
-
-
-def test_clear_code_id_non_union():
-    """ClearCodeIdT should clear code_id on non-union nodes too."""
-    from righttyper.type_transformers import ClearCodeIdT
-    from righttyper.righttyper_types import CodeId
-    import collections.abc
-
-    node = TypeInfo.from_type(collections.abc.Callable).replace(
-        code_id=CodeId("a.py", "f", 1, 0)
-    )
-    assert node.code_id is not None
-
-    result = ClearCodeIdT().visit(node)
-    assert result.code_id is None
-    assert result.type_obj is collections.abc.Callable
 
 
 def test_merge_observations_unions_overrides_lists():

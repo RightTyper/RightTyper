@@ -1,5 +1,5 @@
 import typing
-from typing import Iterator, Final, Callable, Any
+from typing import Iterator, Iterable, Final, Callable, Any
 import types
 from dataclasses import dataclass, replace, field
 from righttyper.righttyper_types import CodeId
@@ -32,11 +32,6 @@ class TypeInfo:
     # Type pattern index (>0), when a pattern is detected.  Only UnionTypeInfo should have these.
     # Multiple can occur in a function call, in different order, so include in comparisons.
     typevar_index: int = field(default=0, compare=True)
-
-    # Indicates equivalence to typing.Self. Note that is_self may be true for one
-    # type (class) in one trace, but false for the exact same type in another,
-    # so that is_self matters for equivalence
-    is_self: bool = field(default=False, compare=True)
 
 
     @staticmethod
@@ -275,4 +270,22 @@ UnknownTypeInfo: Final = TypeInfo.from_type(typing.Any, is_unknown=True)
 AnyTypeInfo: Final = TypeInfo.from_type(typing.Any)
 
 
-type CallTrace = tuple[TypeInfo, ...]
+class CallTrace(tuple[TypeInfo, ...]):
+    """A recorded call trace: tuple of (arg types..., retval) plus per-trace metadata.
+
+    Subclasses tuple so existing iteration/indexing continues to work. Equality
+    and hashing inherit from tuple — two CallTraces with the same contents are
+    equal regardless of metadata (and in practice same contents always implies
+    same metadata, since metadata is a function of the receiver).
+
+    Note: tuple subclasses can't use __slots__, so first_arg_class lives on
+    instance __dict__.  This is fine: dicts pickle and the attribute is always
+    set in __new__.
+    """
+    first_arg_class: "TypeInfo | None"
+
+    def __new__(cls, items: "Iterable[TypeInfo]",
+                first_arg_class: "TypeInfo | None" = None) -> "CallTrace":
+        self = super().__new__(cls, items)
+        self.first_arg_class = first_arg_class
+        return self

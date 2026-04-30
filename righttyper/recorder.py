@@ -1,7 +1,7 @@
 import inspect
 import builtins
 from dataclasses import dataclass, field
-from types import CodeType, FrameType, FunctionType, MethodType, GeneratorType
+from types import CodeType, FrameType, FunctionType, GeneratorType
 from collections import defaultdict
 import collections.abc as abc
 from pathlib import Path
@@ -9,7 +9,7 @@ import logging
 from righttyper.logger import logger
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, CallableWithCode, cast_not_None
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, UnknownTypeInfo, CallTrace
-from typing import Final, Any, NewType, overload, cast
+from typing import Final, Any, NewType, overload
 import typing
 from righttyper.observations import Observations, FuncInfo, OverriddenFunction, ArgInfo
 from righttyper.variable_capture import code2variables
@@ -19,7 +19,7 @@ from righttyper.righttyper_utils import (
     detected_test_files, detected_test_modules, is_test_module,
     normalize_module_name, unwrap
 )
-from righttyper.type_id import find_function, get_value_type, get_type_name, hint2type, PostponedArg0
+from righttyper.type_id import find_function, get_value_type, get_type_name, hint2type
 from righttyper.righttyper_tool import field_class_init_codes
 from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
 
@@ -61,7 +61,6 @@ class PendingCallTrace:
         arg_info: inspect.ArgInfo,
         co_flags: int,
         self_type: TypeInfo|None,
-        self_replacement: TypeInfo|None
     ) -> None:
         self.arg_info = arg_info
         self.args_start = self._get_arg_types(arg_info)
@@ -70,7 +69,6 @@ class PendingCallTrace:
         self.is_async = bool(co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_COROUTINE))
         self.is_generator=bool(co_flags & (inspect.CO_ASYNC_GENERATOR | inspect.CO_GENERATOR))
         self.self_type = self_type
-        self.self_replacement = self_replacement
 
 
     @staticmethod
@@ -111,7 +109,7 @@ class PendingCallTrace:
                 retval = TypeInfo.from_type(abc.AsyncGenerator, args=(y, s))
             else:
                 retval = TypeInfo.from_type(abc.Generator, args=(y, s, retval))
-            
+
         # Arguments may change value (and, in particular, empty containers may be added to)
         # during the function execution, so we sample a 2nd time at the end.
         args_now = self._get_arg_types(self.arg_info)
@@ -123,28 +121,7 @@ class PendingCallTrace:
             retval
         )
 
-        if self.self_type and self.self_replacement:
-            self_type = self.self_type
-            self_replacement = self.self_replacement
-
-            class SelfTransformer(TypeInfo.Transformer):
-                """Replaces 'self' types with the type of the class that defines them,
-                   also setting is_self for possible later replacement with typing.Self."""
-
-                def visit(vself, node: TypeInfo) -> TypeInfo:
-                    if (
-                        hasattr(node.type_obj, "__mro__")
-                        and self_type.type_obj in cast(type, node.type_obj).__mro__
-                    ):
-                        node = self_replacement.replace(is_self=True)
-
-                    return super().visit(node)
-
-
-            tr = SelfTransformer()
-            type_data = (*(tr.visit(arg) for arg in type_data),)
-
-        return type_data
+        return CallTrace(type_data, first_arg_class=self.self_type)
 
 
 class ObservationsRecorder:
@@ -203,7 +180,8 @@ class ObservationsRecorder:
         code: CodeType,
         function: CallableWithCode|None,
         arg_info: inspect.ArgInfo,
-        overrides: list[OverriddenFunction]
+        overrides: list[OverriddenFunction],
+        defining_class: TypeInfo|None = None,
     ) -> None:
         """Registers a function if not already known."""
 
@@ -242,12 +220,14 @@ class ObservationsRecorder:
                 ArgumentName(arg_info.varargs) if arg_info.varargs else None,
                 ArgumentName(arg_info.keywords) if arg_info.keywords else None,
                 overrides=overrides,
+                defining_class=defining_class,
             )
             self._obs.func_info[func_info.code_id] = func_info
 
 
     def _register_parent_function(
-        self, child_fi: FuncInfo, parent_func: FunctionType, finder: 'OverrideFinder'
+        self, child_fi: FuncInfo, parent_func: FunctionType, finder: 'OverrideFinder',
+        parent_defining_class: TypeInfo | None,
     ) -> None:
         """Registers all ancestor functions that the child overrides.
 
@@ -271,7 +251,8 @@ class ObservationsRecorder:
             parent_arg_info = inspect.ArgInfo(parent_args.args, parent_args.varargs, parent_args.varkw, {})
 
             # Register this parent with no overrides of its own
-            self._register_function(parent_code, parent_func, parent_arg_info, [])
+            self._register_function(parent_code, parent_func, parent_arg_info, [],
+                                    defining_class=parent_defining_class)
             self._code2func_info[parent_code].is_abstract = getattr(parent_func, '__isabstractmethod__', False)
 
             # Find next ancestor in the child's MRO
@@ -279,13 +260,16 @@ class ObservationsRecorder:
             if not result:
                 return
 
-            override, next_func = result
+            override, next_func, next_class = result
             child_fi.overrides.append(override)
 
             if not next_func:
                 return
 
             parent_func = next_func
+            parent_defining_class = (
+                get_type_name(next_class) if next_class is not None else None
+            )
 
 
     def record_start(
@@ -311,14 +295,16 @@ class ObservationsRecorder:
         # call, as the new dictionary is created for the new scope.
         if (code.co_flags & inspect.CO_NEWLOCALS):
             sti = get_self_type(code, arg_info)
-            self._register_function(code, find_function(frame, code), arg_info, sti.overrides)
+            self._register_function(code, find_function(frame, code), arg_info,
+                                    sti.overrides, defining_class=sti.self_replacement)
 
             if sti.parent_func is not None and sti.override_finder is not None:
                 child_fi = self._code2func_info[code]
-                self._register_parent_function(child_fi, sti.parent_func, sti.override_finder)
+                self._register_parent_function(child_fi, sti.parent_func,
+                                               sti.override_finder, sti.parent_defining_class)
 
             self._pending_traces[code][id(frame)] = PendingCallTrace(
-                arg_info, code.co_flags, sti.self_type, sti.self_replacement
+                arg_info, code.co_flags, sti.self_type
             )
 
             if run_options.propagate_wrapped_types:
@@ -395,9 +381,10 @@ class ObservationsRecorder:
         sti = get_self_type(wrapped_code, synthetic_arg_info)
 
         # Register the wrapped function if not already known
-        self._register_function(wrapped_code, wrapped, synthetic_arg_info, sti.overrides)
+        self._register_function(wrapped_code, wrapped, synthetic_arg_info,
+                                sti.overrides, defining_class=sti.self_replacement)
 
-        pending = PendingCallTrace(synthetic_arg_info, wrapped_code.co_flags, sti.self_type, sti.self_replacement)
+        pending = PendingCallTrace(synthetic_arg_info, wrapped_code.co_flags, sti.self_type)
         self._pending_wrapped_traces[wrapped_code][id(frame)] = pending
 
 
@@ -762,11 +749,12 @@ class OverrideFinder:
 
     def find_next(
         self, code: CodeType, child_arg_info: inspect.ArgInfo
-    ) -> tuple[OverriddenFunction, FunctionType | None] | None:
+    ) -> tuple[OverriddenFunction, FunctionType | None, type | None] | None:
         """Find the next override of the method in the MRO.
 
-        Returns (overrides, parent_func) or None.  parent_func is None for
-        native/builtin methods.
+        Returns (overrides, parent_func, defining_class) or None.
+        parent_func is None for native/builtin methods.
+        defining_class is the MRO ancestor that defines the override.
         """
         for idx, ancestor in enumerate(self._mro[self._index:]):
             f = unwrap(ancestor.__dict__.get(self._method_name, None))
@@ -780,6 +768,7 @@ class OverrideFinder:
                         get_parent_arg_types(f, child_arg_info)
                     ),
                     f if isinstance(f, FunctionType) else None,
+                    ancestor,
                 )
         return None
 
@@ -791,6 +780,7 @@ class SelfTypeInfo:
     self_replacement: TypeInfo | None = None
     overrides: list[OverriddenFunction] = field(default_factory=list)
     parent_func: FunctionType | None = None
+    parent_defining_class: TypeInfo | None = None  # defining class of parent_func
     override_finder: OverrideFinder | None = None  # for walking the parent chain
 
 
@@ -814,6 +804,7 @@ def get_self_type(
         overrides: list[OverriddenFunction] = []
         parent_func = None
         finder: OverrideFinder | None = None
+        parent_defining_class: TypeInfo | None = None
         if not (
             info.is_property
             or info.name in ('__init__', '__new__')  # irrelevant for Liskov
@@ -823,12 +814,16 @@ def get_self_type(
             if result:
                 overrides = [result[0]]
                 parent_func = result[1]
+                parent_defining_class = (
+                    get_type_name(result[2]) if result[2] is not None else None
+                )
 
         return SelfTypeInfo(
             get_type_name(info.first_arg_class),
             get_type_name(info.defining_class),
             overrides,
             parent_func,
+            parent_defining_class=parent_defining_class,
             override_finder=finder if parent_func else None,
         )
 

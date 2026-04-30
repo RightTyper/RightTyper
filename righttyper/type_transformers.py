@@ -6,31 +6,6 @@ from righttyper.typeinfo import TypeInfo, AnyTypeInfo, NoneTypeInfo, UnknownType
 from righttyper.generalize import merged_types
 from functools import cache
 
-import logging
-from righttyper.logger import logger
-
-
-class ClearCodeIdT(TypeInfo.Transformer):
-    """Clear code_id and deduplicate any unions that had code_id-inflated members.
-
-    code_id distinguishes different callables during tracing but should not
-    affect the final annotation. After clearing, previously-distinct Callable
-    members of a union become equal and are deduplicated via from_set().
-    """
-    def visit(self, node: TypeInfo) -> TypeInfo:
-        pre = node
-        node = super().visit(node)  # returns identical node iff no arg changed
-
-        if node.code_id:
-            node = node.replace(code_id=None)
-
-        # Clearing code_ids on union members may collapse previously-distinct
-        # members into equal ones, so rebuild the union to let from_set() dedup
-        # them.
-        if pre is not node and isinstance(node, UnionTypeInfo):
-            return TypeInfo.from_set(set(node.args), typevar_index=node.typevar_index)
-
-        return node
 
 
 class UnionSizeT(TypeInfo.Transformer):
@@ -46,15 +21,6 @@ class UnionSizeT(TypeInfo.Transformer):
             if len(node.args) > run_options.max_union_size:
                 return TypeInfo.from_type(typing.Any)
         return node
-
-
-class SelfT(TypeInfo.Transformer):
-    """Renames types to typing.Self according to is_self."""
-    def visit(vself, node: TypeInfo) -> TypeInfo:
-        if node.is_self:
-            return TypeInfo.from_type(typing.Self)
-
-        return super().visit(node)
 
 
 class NeverSayNeverT(TypeInfo.Transformer):
