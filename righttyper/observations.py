@@ -267,8 +267,12 @@ class _CloneForContextT(TypeInfo.Transformer):
                 and issubclass(source_self_class.type_obj, dest_self_class.type_obj)
             )
         )
-        self.can_restamp = dest_self_class is not None and (
-            source_self_class is None or source_self_class == dest_self_class
+        # Gate Self re-stamping on the same option that gates trace-time
+        # _stamp_self: pre-3.11 targets must not see typing.Self injected here.
+        self.can_restamp = (
+            output_options.use_typing_self
+            and dest_self_class is not None
+            and (source_self_class is None or source_self_class == dest_self_class)
         )
 
     def visit(self, n: TypeInfo) -> TypeInfo:

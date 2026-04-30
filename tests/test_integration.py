@@ -4202,9 +4202,11 @@ def test_self_unrelated_subclass_arg():
     """)
 
 
-def test_self_widen_abstract_retval():
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_widen_abstract_retval(python_version):
     """Phase 2 widening from children's Self retvals into an abstract parent
-    should re-stamp Self in the parent's annotation (not collapse to concrete)."""
+    should re-stamp Self in the parent's annotation (not collapse to concrete).
+    Targeting 3.10 verifies no Self leaks through the re-stamp path."""
     t = textwrap.dedent("""\
         from abc import ABC, abstractmethod
         class Base(ABC):
@@ -4222,24 +4224,30 @@ def test_self_widen_abstract_retval():
 
     Path("t.py").write_text(t)
 
-    rt_run('--python-version=3.11', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    # Parent retval widened from children's Self → re-stamp keeps it Self.
-    assert get_function(code, 'Base.factory') == textwrap.dedent("""\
-        @abstractmethod
-        def factory(self: Self) -> Self: ...
-    """)
-    assert get_function(code, 'A.factory') == textwrap.dedent("""\
-        def factory(self: Self) -> Self: ...
-    """)
-    assert get_function(code, 'B.factory') == textwrap.dedent("""\
-        def factory(self: Self) -> Self: ...
-    """)
+    if python_version == "3.11":
+        # Parent retval widened from children's Self → re-stamp keeps it Self.
+        assert get_function(code, 'Base.factory') == textwrap.dedent("""\
+            @abstractmethod
+            def factory(self: Self) -> Self: ...
+        """)
+        assert get_function(code, 'A.factory') == textwrap.dedent("""\
+            def factory(self: Self) -> Self: ...
+        """)
+        assert get_function(code, 'B.factory') == textwrap.dedent("""\
+            def factory(self: Self) -> Self: ...
+        """)
+    else:
+        assert 'Self' not in output, (
+            f"unexpected typing.Self in {python_version}-target output:\n{output}"
+        )
 
 
-def test_self_widen_lsp_arg():
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_widen_lsp_arg(python_version):
     """Phase 3 widening: child's `other` arg widened from parent's `other: Self`.
     With substitution (parent's Self → Parent), child's other becomes Parent —
     Liskov-compatible with parent's signature."""
@@ -4256,31 +4264,39 @@ def test_self_widen_lsp_arg():
 
     Path("t.py").write_text(t)
 
-    rt_run('--python-version=3.11', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    # Each method, observed once, has only one trace. Non-arg0/non-retval
-    # parameter `other` is not stamped Self from a single observation. So
-    # parent's `other` is Parent (concrete; forward-ref quoted only because
-    # the method is inside the class definition). After Phase 3, child's
-    # `other` widens from parent's: child sees {Parent (after substitution),
-    # Self_child→Child} → lub Parent. Re-stamp Parent==Child? no → stays Parent.
-    assert get_function(code, 'Parent.merge') == textwrap.dedent("""\
-        def merge(self: Self, other: "Parent") -> Self: ...
-    """)
-    # Child references Parent which is defined earlier — no forward-ref quotes.
-    assert get_function(code, 'Child.merge') == textwrap.dedent("""\
-        def merge(self: Self, other: Parent) -> Self: ...
-    """)
+    if python_version == "3.11":
+        # Each method, observed once, has only one trace. Non-arg0/non-retval
+        # parameter `other` is not stamped Self from a single observation. So
+        # parent's `other` is Parent (concrete; forward-ref quoted only because
+        # the method is inside the class definition). After Phase 3, child's
+        # `other` widens from parent's: child sees {Parent (after substitution),
+        # Self_child→Child} → lub Parent. Re-stamp Parent==Child? no → stays Parent.
+        assert get_function(code, 'Parent.merge') == textwrap.dedent("""\
+            def merge(self: Self, other: "Parent") -> Self: ...
+        """)
+        # Child references Parent which is defined earlier — no forward-ref quotes.
+        assert get_function(code, 'Child.merge') == textwrap.dedent("""\
+            def merge(self: Self, other: Parent) -> Self: ...
+        """)
+    else:
+        assert 'Self' not in output, (
+            f"unexpected typing.Self in {python_version}-target output:\n{output}"
+        )
 
 
-def test_self_widen_callable_retval():
+@pytest.mark.parametrize("python_version", ["3.10", "3.11"])
+def test_self_widen_callable_retval(python_version):
     """Method returns a Callable that itself returns self. ResolvingT pulls in
     the lambda's resolved retval (a concrete A after lub-merging A|B from the
     two trace receivers); we need Self detection to recover Self at the inner
     Callable position because the lambda's retval matches the outer method's
-    self_class."""
+    self_class. Targeting 3.10 verifies _clone_for_context's can_restamp
+    branch respects use_typing_self and does not inject Self.
+    """
     t = textwrap.dedent("""\
         from typing import Callable
         class A:
@@ -4294,17 +4310,22 @@ def test_self_widen_callable_retval():
 
     Path("t.py").write_text(t)
 
-    rt_run('--python-version=3.11', 't.py')
+    rt_run(f'--python-version={python_version}', 't.py')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    # B inherits without override: same code_id, single annotation on A.factory.
-    # Retval is observed as a function returning A or B (matching self class
-    # in each trace). Recursive Self detection inside the Callable's retval
-    # position stamps the inner type as Self.
-    fn = get_function(code, 'A.factory')
-    assert 'def factory(self: Self)' in fn
-    assert 'Callable[[], Self]' in fn or 'Callable[..., Self]' in fn
+    if python_version == "3.11":
+        # B inherits without override: same code_id, single annotation on A.factory.
+        # Retval is observed as a function returning A or B (matching self class
+        # in each trace). Recursive Self detection inside the Callable's retval
+        # position stamps the inner type as Self.
+        fn = get_function(code, 'A.factory')
+        assert 'def factory(self: Self)' in fn
+        assert 'Callable[[], Self]' in fn or 'Callable[..., Self]' in fn
+    else:
+        assert 'Self' not in output, (
+            f"unexpected typing.Self in {python_version}-target output:\n{output}"
+        )
 
 
 def test_returns_or_yields_generator():
