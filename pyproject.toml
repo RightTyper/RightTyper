@@ -69,6 +69,7 @@ classifiers = [
 tests = [
     "pytest",
     "pytest-antilru",
+    "pytest-xdist",
     "mypy",
     "numpy",
     "ml_dtypes",
@@ -85,6 +86,7 @@ shapes = [
 righttyper = "righttyper.righttyper:main"
 
 [tool.pytest.ini_options]
+addopts = "-n auto"
 markers = [
     'dont_run_mypy',
     'mypy_args'
