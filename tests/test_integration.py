@@ -7601,3 +7601,33 @@ def test_exclude_test_types_preserves_union_members():
     assert get_function(code, 'f') == textwrap.dedent("""\
         def f(x: int|str) -> str: ...
     """)
+
+
+def test_local_class_not_imported_from_typing():
+    """When a class shares a name with a typing export (e.g. Text),
+    the annotation writer must not add 'from typing import Text' —
+    that would shadow the local class with typing.Text (str alias)."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Text:
+            def append(self, other):
+                pass
+
+        t = Text()
+        t.append(Text())
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    # The import line must not pull Text from typing
+    for line in output.splitlines():
+        if line.startswith("from typing import"):
+            assert "Text" not in line.split("import")[1], \
+                f"imported typing.Text, shadowing local class: {line}"
+
+    # The annotation should use the local Text class, quoted (because the
+    # class name isn't in scope during class body evaluation).
+    code = cst.parse_module(output)
+    assert get_function(code, 'Text.append') == textwrap.dedent("""\
+        def append(self: Self, other: "Text") -> None: ...
+    """)
