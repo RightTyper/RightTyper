@@ -2705,6 +2705,138 @@ def test_lub_single_type_with_accessed_attributes():
     assert 'PosixPath' not in func
 
 
+def test_lub_local_variable_uses_accessed_attributes():
+    """Same simplification should apply to local variables as to args:
+    a local that only accesses an attribute defined on a base class
+    should be annotated as that base, not the observed subclass.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Base:
+            name = ""
+
+        class Derived(Base):
+            extra = ""
+
+        def f(p):
+            y = p
+            return y.name
+
+        f(Derived())
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    # The local 'y' only accesses .name (on Base), so it should be
+    # simplified to Base, not left as the observed Derived.
+    assert 'y: "Derived"' not in output and 'y: Derived' not in output, (
+        f"local 'y' annotation should be simplified to Base, got:\n{output}"
+    )
+
+
+def test_lub_module_variable_uses_accessed_attributes():
+    """Module-level variables should also be simplified using accessed
+    attributes — same mechanism as args and local variables.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Base:
+            name = ""
+
+        class Derived(Base):
+            extra = ""
+
+        g = Derived()
+
+        def f():
+            return g.name
+
+        f()
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    # The module-level 'g' only has .name accessed (in f), so it should be
+    # simplified to Base, not left as the observed Derived.
+    assert 'g: Derived' not in output and 'g: "Derived"' not in output, (
+        f"module 'g' annotation should be simplified to Base, got:\n{output}"
+    )
+
+
+def test_alias_resolution_does_not_leak_across_functions():
+    """Same-named variables in different functions should be independent.
+    Here `y` in f is aliased to global `g`; `y` in h is just an unrelated
+    parameter. h's access to y.extra should NOT be attributed to g.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Base:
+            name = ""
+
+        class Derived(Base):
+            extra = ""
+
+        g = Derived()
+
+        def f():
+            y = g
+            return y.name
+
+        def h(y):
+            return y.extra
+
+        f()
+        h(Derived())
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    # Only .name is accessed on g (via f's alias y = g).
+    # h's access on its own parameter y must not leak onto g.
+    # With cross-function alias leakage, g's accessed_attributes would also
+    # include 'extra' — preventing simplification to Base.
+    assert 'g: Derived' not in output and 'g: "Derived"' not in output, output
+
+
+@pytest.mark.xfail(
+    reason="class-attribute simplification needs chained attribute path tracking; "
+           "see CodeVars.attributes / class_attributes flow"
+)
+def test_lub_class_attribute_uses_accessed_attributes():
+    """Class attributes should also be simplified using accessed attributes —
+    e.g., `self.x.append(...)` should record `append` as accessed on attribute
+    x, allowing simplification from the runtime type to a base that has append.
+
+    This requires capturing chained attribute accesses (Attribute(Attribute(
+    Name('self'), 'x'), 'append')) which the current visit_Attribute doesn't
+    handle (it only records when node.value is a Name).
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Base:
+            name = ""
+
+        class Derived(Base):
+            extra = ""
+
+        class C:
+            def __init__(self):
+                self.x = Derived()
+
+            def use(self):
+                return self.x.name
+
+        c = C()
+        c.use()
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    # The class attribute 'x' only has .name accessed, so it should be
+    # simplified to Base, not left as the observed Derived.
+    assert 'x: Derived' not in output and 'x: "Derived"' not in output, output
+
+
 def test_nested_callable_resolution():
     """When a function returns another function that itself returns a function,
     the nested Callable types should be fully resolved.

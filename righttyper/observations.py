@@ -784,6 +784,7 @@ class Observations:
             var_name: merged_types(
                 {resolver.visit(t) for t in var_types} if annotations else var_types,
                 for_variable=True,
+                accessed_attributes=accessed_attributes.get(var_name) if accessed_attributes else None,
             )
             for var_name, var_types in func_info.variables.items()
         }
@@ -875,6 +876,20 @@ class Observations:
             if cv.accessed_attributes
         }
 
+        # Aggregate per-file accessed_attributes for module globals only.
+        # A name accessed inside a function is module-global iff it's neither a
+        # local/parameter (co_varnames) nor a closure reference (co_freevars).
+        module_accessed: dict[Filename, dict[str, set[str]]] = defaultdict(
+            lambda: defaultdict(set)
+        )
+        for co, cv in code2variables.items():
+            if cv.accessed_attributes:
+                fn = Filename(co.co_filename)
+                for var_name, attrs in cv.accessed_attributes.items():
+                    if var_name in co.co_varnames or var_name in co.co_freevars:
+                        continue
+                    module_accessed[fn][var_name] |= attrs
+
         annotations: dict[CodeId, FuncAnnotation] = {}
         for code_id in self.code_id_topo_sort():
             annotation = Observations.mk_annotation(
@@ -892,7 +907,11 @@ class Observations:
         mv_resolver = ResolvingT(annotations, self.func_info)
         module_vars: dict[Filename, ModuleVars] = {
             filename: ModuleVars({
-                var_name: mv_resolver.visit(merged_types(var_types, for_variable=True))
+                var_name: mv_resolver.visit(merged_types(
+                    var_types,
+                    for_variable=True,
+                    accessed_attributes=module_accessed[filename].get(var_name) or None,
+                ))
                 for var_name, var_types in var_dict.items()
             })
             for filename, var_dict in self.module_variables.items()
