@@ -390,7 +390,7 @@ class ResolvingT(TypeInfo.Transformer):
         if node.code_id:
             node = node.replace(code_id=None)
         if pre is not node and isinstance(node, UnionTypeInfo):
-            node = TypeInfo.from_set(set(node.args), typevar_index=node.typevar_index)
+            node = TypeInfo.from_set(node.to_set(), typevar_index=node.typevar_index)
 
         return node
 

@@ -4320,6 +4320,7 @@ def test_self_widen_callable_retval(python_version):
         # in each trace). Recursive Self detection inside the Callable's retval
         # position stamps the inner type as Self.
         fn = get_function(code, 'A.factory')
+        assert fn is not None
         assert 'def factory(self: Self)' in fn
         assert 'Callable[[], Self]' in fn or 'Callable[..., Self]' in fn
     else:
@@ -7541,6 +7542,7 @@ def test_no_type_parameters():
     code = cst.parse_module(output)
 
     func = get_function(code, 'f')
+    assert func is not None
     assert 'T1' not in func
     assert get_function(code, 'f') == textwrap.dedent("""\
         def f(x: list[int|str]) -> int|str: ...

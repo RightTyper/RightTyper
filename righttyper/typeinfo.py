@@ -1,5 +1,5 @@
 import typing
-from typing import Iterator, Iterable, Final, Callable, Any
+from typing import Iterator, Iterable, Final, Callable, Any, cast
 import types
 from dataclasses import dataclass, replace, field
 from righttyper.righttyper_types import CodeId
@@ -203,7 +203,8 @@ class UnionTypeInfo(TypeInfo):
 
 
     def to_set(self) -> set["TypeInfo"]:
-        return set(t for t in self.args if isinstance(t, TypeInfo))
+        # Union args are always TypeInfo by construction.
+        return cast(set["TypeInfo"], set(self.args))
 
 
     def format(self, modifier: Callable[["TypeInfo"], str|None]|None=None) -> str:

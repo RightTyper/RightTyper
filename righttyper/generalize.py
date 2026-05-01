@@ -451,7 +451,7 @@ def generalize_jaxtyping(samples: Sequence[CallTrace]) -> Sequence[CallTrace]:
             results.append([s[argno] for s in samples])
 
     # Transpose once more to finish up
-    return list(tuple(t) for t in zip(*results))
+    return [CallTrace(t) for t in zip(*results)]
 
 
 def generalize(samples: Sequence[CallTrace]) -> list[TypeInfo]|None:
