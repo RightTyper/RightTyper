@@ -693,6 +693,12 @@ def add_output_options(group=None):
                 default=output_options.inline_generics,
                 help="""Whether to use PEP 695 inline type parameter syntax (Python 3.12+). Disable for module-level TypeVar declarations."""
             ),
+            base.option(
+                "--use-attribute-simplification/--no-use-attribute-simplification",
+                is_flag=True,
+                default=output_options.use_attribute_simplification,
+                help="""Whether to simplify types based on the minimum object attributes the code requires, derived through static analysis."""
+            ),
         ]):
             func = opt(func)
         return func

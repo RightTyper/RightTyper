@@ -389,6 +389,10 @@ def merged_types(
 ) -> TypeInfo:
     """Attempts to merge types in a set before forming their union."""
     if output_options.simplify_types:
+        # Static-analysis simplification (single-type MRO walk + Rule-8 ABC matching)
+        # is gated separately; honor the flag here so callers don't need to.
+        if not output_options.use_attribute_simplification:
+            accessed_attributes = None
         return _merge_set(typeinfoset, for_variable, accessed_attributes)
     return TypeInfo.from_set(typeinfoset)
 

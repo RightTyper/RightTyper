@@ -2730,6 +2730,33 @@ def test_lub_single_type_with_accessed_attributes():
     assert 'p: Path' in func or 'p: PurePath' in func, func
 
 
+def test_no_use_attribute_simplification_disables_simplification():
+    """With --no-use-attribute-simplification, the static-analysis-driven
+    simplification should not run; the parameter keeps its observed concrete
+    type instead of being widened to a base via accessed_attributes."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Base:
+            name = ""
+
+        class Derived(Base):
+            extra = ""
+
+        def get_name(p):
+            return p.name
+
+        get_name(Derived())
+        """))
+
+    rt_run('--no-use-attribute-simplification', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    func = get_function(code, 'get_name')
+    assert func is not None
+    # Without the simplification, p stays as the observed Derived (not Base).
+    assert 'Derived' in func, func
+
+
 def test_lub_local_variable_uses_accessed_attributes():
     """Same simplification should apply to local variables as to args:
     a local that only accesses an attribute defined on a base class
