@@ -84,17 +84,12 @@ class ExcludeTestTypesT(TypeInfo.Transformer):
         # the recursive visit replace them with Unknown/Any, which would
         # poison the whole union (X | Any = Any).
         if isinstance(node, UnionTypeInfo):
-            non_test = tuple(
-                a for a in node.args
-                if not (isinstance(a, TypeInfo) and self._is_test_module(a.module))
-            )
+            non_test = {a for a in node.to_set() if not self._is_test_module(a.module)}
             if len(non_test) < len(node.args):
-                if not non_test or non_test == (NoneTypeInfo,):
+                if not non_test or non_test == {NoneTypeInfo}:
                     # All useful types removed — we don't know the real type.
                     return UnknownTypeInfo
-                node = TypeInfo.from_set(
-                    set(non_test), typevar_index=node.typevar_index
-                )
+                node = TypeInfo.from_set(non_test, typevar_index=node.typevar_index)
 
         return super().visit(node)
 

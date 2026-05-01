@@ -1154,6 +1154,30 @@ def test_method_overriding_inherited():
     """)
 
 
+def test_run_with_multiprocessing_method_in_main():
+    """Regression: with multiprocessing enabled, running rt on a script that
+    defines a class with methods used to fail with 'PicklingError: Can't
+    pickle <class __main__.X>' because FuncAnnotation.self_class carried a
+    live type_obj past the MakePickleableT finalizer."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        class C:
+            def foo(self, x):
+                pass
+
+        C().foo(10)
+    """))
+
+    # rt_run defaults to --no-use-multiprocessing; --use-multiprocessing
+    # appended later wins (click last-wins).
+    rt_run('--use-multiprocessing', 't.py')
+
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+    assert get_function(code, 'C.foo') == textwrap.dedent("""\
+        def foo(self: Self, x: int) -> None: ...
+    """)
+
+
 def test_method_overriding_arg_names_change():
     Path("t.py").write_text(textwrap.dedent("""\
         class C:
@@ -4320,6 +4344,7 @@ def test_self_widen_callable_retval(python_version):
         # in each trace). Recursive Self detection inside the Callable's retval
         # position stamps the inner type as Self.
         fn = get_function(code, 'A.factory')
+        assert fn is not None
         assert 'def factory(self: Self)' in fn
         assert 'Callable[[], Self]' in fn or 'Callable[..., Self]' in fn
     else:
@@ -7541,6 +7566,7 @@ def test_no_type_parameters():
     code = cst.parse_module(output)
 
     func = get_function(code, 'f')
+    assert func is not None
     assert 'T1' not in func
     assert get_function(code, 'f') == textwrap.dedent("""\
         def f(x: list[int|str]) -> int|str: ...
