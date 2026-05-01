@@ -9,7 +9,7 @@ from righttyper.variable_binding import VariableBindingProvider
 import re
 
 from righttyper.typeinfo import TypeInfo
-from righttyper.righttyper_types import Filename, CodeId, FunctionName
+from righttyper.righttyper_types import Filename, CodeId, FunctionName, VariableName, ArgumentName
 from righttyper.annotation import FuncAnnotation, ModuleVars, TraceDistribution
 
 
@@ -188,7 +188,7 @@ class UnifiedTransformer(cst.CSTTransformer):
     ) -> None:
         self.filename = filename
         self.type_annotations = type_annotations
-        self.module_variables: dict[str, TypeInfo] = module_variables.variables if module_variables else {}
+        self.module_variables: dict[VariableName, TypeInfo] = module_variables.variables if module_variables else {}
         self.module_name = module_name
         self.override_annotations = override_annotations
         self.only_update_annotations = only_update_annotations
@@ -342,7 +342,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
     def _process_generics(
         self,
-        annmap: dict[str, TypeInfo],
+        annmap: dict[ArgumentName, TypeInfo],
         used_inline_names: set[str],
         reserved_names: list[str] | None = None,
     ) -> dict[TypeInfo, str]:
@@ -356,12 +356,17 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             def visit(vself, node: TypeInfo) -> TypeInfo:
                 if node.typevar_index and node not in vself.generics:
+                    name: str
                     if self.inline_generics:
-                        name = next(reserved_iter, None) if reserved_iter else None
-                        if name is None or name in used_inline_names:
+                        candidate = next(reserved_iter, None) if reserved_iter else None
+                        if candidate is None or candidate in used_inline_names:
                             i = 1
-                            while (name := f"T{i}") in used_inline_names:
+                            while (candidate := f"T{i}") in used_inline_names:
                                 i += 1
+                        # candidate is now a str — either the reserved name or the
+                        # walrus loop's last assignment (the loop runs at least once).
+                        assert candidate is not None
+                        name = candidate
                         used_inline_names.add(name)
                     else:
                         while self._is_defined(name := f"rt_T{self.module_generic_index}"):
@@ -572,7 +577,9 @@ class UnifiedTransformer(cst.CSTTransformer):
         if (func_scope_index := list_rindex(self.name_stack, '<locals>')):
             func_scope_index = len(self.name_stack) + func_scope_index + 1
 
-        qualname = ".".join(self.name_stack[func_scope_index:] + [_nodes_to_dotted_name(target)])
+        qualname = VariableName(
+            ".".join(self.name_stack[func_scope_index:] + [_nodes_to_dotted_name(target)])
+        )
         if func_scope_index:
             if (ann := self.func_ann_stack[-1]):
                 return ann.variables.get(qualname)
@@ -1008,8 +1015,9 @@ class UnifiedTransformer(cst.CSTTransformer):
 
             for par in typing.cast(typing.Iterator[cst.Param],
                                    cstm.findall(updated_node.params, cstm.Param())):
-                if par.name.value in annmap and not _will_update(par.annotation):
-                    del annmap[par.name.value]
+                par_name = ArgumentName(par.name.value)
+                if par_name in annmap and not _will_update(par.annotation):
+                    del annmap[par_name]
 
             pre_function: list[cst.SimpleStatementLine | cst.BaseCompoundStatement] = []
             overloads = self.overload_stack[-1]
@@ -1033,7 +1041,9 @@ class UnifiedTransformer(cst.CSTTransformer):
                                             cstm.findall(updated_node.returns, cstm.Name()))
                 }
             else:
-                annmap['return'] = ann.retval
+                # 'return' is a pseudo-arg name used to thread the return type
+                # through the same processing pipeline as parameter annotations.
+                annmap[ArgumentName('return')] = ann.retval
 
 #            print(f"{annmap.keys()=}")
 #            print(f"{retained_annotation_names=}")
@@ -1098,7 +1108,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                 # Now update the parameters
                 class ParamChanger(cst.CSTTransformer):
                     def leave_Param(vself, node: cst.Param, updated_node: cst.Param) -> cst.Param:
-                        if (annotation := annmap.get(updated_node.name.value)) is None:
+                        if (annotation := annmap.get(ArgumentName(updated_node.name.value))) is None:
                             return updated_node
 
                         if (
@@ -1304,9 +1314,10 @@ class UnifiedTransformer(cst.CSTTransformer):
                 new_body.insert(if_type_checking_position, new_stmt)
 
             # Only need to import TYPE_CHECKING when we created a new block
+            inserted = new_body[if_type_checking_position]
             if (
-                isinstance(new_body[if_type_checking_position], cst.If)
-                and cstm.matches(new_body[if_type_checking_position].test, cstm.Name("TYPE_CHECKING"))
+                isinstance(inserted, cst.If)
+                and cstm.matches(inserted.test, cstm.Name("TYPE_CHECKING"))
                 and 'TYPE_CHECKING' not in self.known_names[-1]
             ):
                 self.unknown_types.add('TYPE_CHECKING')

@@ -390,7 +390,7 @@ class ResolvingT(TypeInfo.Transformer):
         if node.code_id:
             node = node.replace(code_id=None)
         if pre is not node and isinstance(node, UnionTypeInfo):
-            node = TypeInfo.from_set(set(node.args), typevar_index=node.typevar_index)
+            node = TypeInfo.from_set(node.to_set(), typevar_index=node.typevar_index)
 
         return node
 
@@ -941,6 +941,13 @@ class Observations:
                     annotation.retval = t_prime
 
                 _visit_dict(annotation.variables, tr, tr_name, prefix)
+
+                if annotation.self_class is not None:
+                    sc_prime = tr.visit(annotation.self_class)
+                    if sc_prime is not annotation.self_class:
+                        if logger.level == logging.DEBUG:
+                            logger.debug(f"{tr_name} {prefix}self_class: {annotation.self_class} -> {sc_prime}")
+                        annotation.self_class = sc_prime
 
             for filename, mv in module_vars.items():
                 module = self.source_to_module_name.get(filename, filename)

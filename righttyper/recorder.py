@@ -226,7 +226,7 @@ class ObservationsRecorder:
 
 
     def _register_parent_function(
-        self, child_fi: FuncInfo, parent_func: FunctionType, finder: 'OverrideFinder',
+        self, child_fi: FuncInfo, parent_func: CallableWithCode, finder: 'OverrideFinder',
         parent_defining_class: TypeInfo | None,
     ) -> None:
         """Registers all ancestor functions that the child overrides.
@@ -446,7 +446,6 @@ class ObservationsRecorder:
 
         f_locals = frame.f_locals
         prefix = codevars.var_prefix
-        value: Any
 
         for var_name, const_type in codevars.variables.items():
             qualified = f"{prefix}{var_name}"
@@ -779,7 +778,10 @@ class SelfTypeInfo:
     self_type: TypeInfo | None = None
     self_replacement: TypeInfo | None = None
     overrides: list[OverriddenFunction] = field(default_factory=list)
-    parent_func: FunctionType | None = None
+    # Typed as CallableWithCode (a Protocol) rather than FunctionType to avoid
+    # typeshed's descriptor-protocol behavior on instance access — accessing a
+    # FunctionType-typed dataclass field via an instance reports MethodType.
+    parent_func: CallableWithCode | None = None
     parent_defining_class: TypeInfo | None = None  # defining class of parent_func
     override_finder: OverrideFinder | None = None  # for walking the parent chain
 
