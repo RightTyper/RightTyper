@@ -13,11 +13,12 @@ _COVARIANT_TYPES = (tuple, frozenset)
 
 # Generic types where bare form (no args) means "Any args" and subsumes parametrized forms.
 # Containers are handled separately via issubclass(t, abc.Container).
-_BARE_SUBSUMES: set[type] = {
+# abc.Callable etc. are typing special forms, not types — silence mypy.
+_BARE_SUBSUMES: set[type] = cast(set[type], {
     abc.Callable, abc.Iterator, abc.AsyncIterator, abc.Iterable,
     abc.Generator, abc.AsyncGenerator, abc.Coroutine,
     abc.Awaitable, abc.AsyncIterable, abc.Reversible, abc.MappingView, type,
-}
+})
 
 # All generic container ABCs from collections.abc, ordered most-specific-first.
 _CONTAINER_ABCS: list[type] = [
@@ -81,8 +82,10 @@ def _find_common_container_abc(t1: TypeInfo, t2: TypeInfo) -> type | None:
 
     Caller must ensure both type_objs are real types (not None or special forms).
     """
+    # Caller's contract guarantees both type_objs are real types.
+    o1, o2 = cast(type, t1.type_obj), cast(type, t2.type_obj)
     for g in _CONTAINER_ABCS:
-        if issubclass(t1.type_obj, g) and issubclass(t2.type_obj, g):
+        if issubclass(o1, g) and issubclass(o2, g):
             return g
     return None
 

@@ -2725,8 +2725,9 @@ def test_lub_single_type_with_accessed_attributes():
     code = cst.parse_module(output)
 
     func = get_function(code, 'get_name')
-    # Should be Path or PurePath, not PosixPath
-    assert 'PosixPath' not in func
+    assert func is not None
+    # Should simplify to Path or PurePath (a base of PosixPath that has .name).
+    assert 'p: Path' in func or 'p: PurePath' in func, func
 
 
 def test_lub_local_variable_uses_accessed_attributes():

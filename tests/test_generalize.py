@@ -1,13 +1,19 @@
-from righttyper.typeinfo import TypeInfo
+from righttyper.typeinfo import TypeInfo, TypeInfoArg
 from righttyper.type_id import normalize_module_name
 import righttyper.generalize
-from typing import Any, Never, Self
+from typing import Any, Never, Self, cast
 import pytest
 from righttyper.options import output_options
 
 
 def ti(name: str, **kwargs) -> TypeInfo:
     return TypeInfo(module='', name=name, **kwargs)
+
+
+def _ti(a: TypeInfoArg) -> TypeInfo:
+    """Narrow a TypeInfoArg to TypeInfo for tests where it's known to be one."""
+    assert isinstance(a, TypeInfo)
+    return a
 
 
 def generalize(samples):
@@ -680,7 +686,7 @@ def test_list_and_varlen_tuple_to_sequence():
     assert issubclass(result.type_obj, collections.abc.Sequence)
     # Element type preserved
     assert result.args and isinstance(result.args[0], TypeInfo)
-    assert result.args[0].type_obj is int
+    assert _ti(result.args[0]).type_obj is int
 
 
 def test_set_and_frozenset_to_abc_set():
@@ -843,7 +849,7 @@ def test_lub_abc_fallback():
 
     result = merged_types({a, b}, accessed_attributes={"__iter__"})
     assert not result.is_union()
-    assert issubclass(result.type_obj, abc.Iterable)
+    assert issubclass(cast(type, result.type_obj), abc.Iterable)
 
 
 def test_lub_abc_not_used_when_concrete_base_exists():
@@ -932,7 +938,7 @@ def test_lub_same_container_merge_for_variable():
     result = lub(a, b, for_variable=True)
     assert result.type_obj is list
     assert result.args and isinstance(result.args[0], TypeInfo)
-    assert result.args[0].is_union()
+    assert _ti(result.args[0]).is_union()
 
 
 def test_lub_same_container_no_merge_invariant():
@@ -954,7 +960,7 @@ def test_lub_same_container_subtype_args():
     b = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(int),))
     result = lub(a, b, for_variable=True)
     assert result.type_obj is list
-    assert result.args[0].type_obj is int
+    assert _ti(result.args[0]).type_obj is int
 
 
 def test_lub_covariant_tuple_always_merges():
@@ -966,7 +972,7 @@ def test_lub_covariant_tuple_always_merges():
     b = TypeInfo.from_type(tuple).replace(args=(str_t, Ellipsis))
     result = lub(a, b, for_variable=False)
     assert result.type_obj is tuple
-    assert result.args[0].is_union()
+    assert _ti(result.args[0]).is_union()
 
 
 def test_lub_varlen_subsumes_fixed():
@@ -1010,7 +1016,7 @@ def test_lub_empty_tuple_and_list_to_sequence():
     assert not result.is_union()
     assert isinstance(result.type_obj, type)
     assert issubclass(result.type_obj, collections.abc.Sequence)
-    assert result.args and result.args[0].type_obj is int
+    assert result.args and _ti(result.args[0]).type_obj is int
     # Commutative
     assert lub(non_empty, empty) == result
 
@@ -1121,7 +1127,7 @@ def test_lub_set_and_empty_tuple_to_collection():
     assert not result.is_union()
     assert isinstance(result.type_obj, type)
     assert issubclass(result.type_obj, collections.abc.Collection)
-    assert result.args and result.args[0].type_obj is int
+    assert result.args and _ti(result.args[0]).type_obj is int
 
 
 def test_lub_list_str_and_empty_tuple_to_sequence():
@@ -1134,7 +1140,7 @@ def test_lub_list_str_and_empty_tuple_to_sequence():
     assert not result.is_union()
     assert isinstance(result.type_obj, type)
     assert issubclass(result.type_obj, collections.abc.Sequence)
-    assert result.args and result.args[0].type_obj is str
+    assert result.args and _ti(result.args[0]).type_obj is str
 
 
 def test_lub_list_and_tuple_same_elem_to_sequence():
@@ -1148,7 +1154,7 @@ def test_lub_list_and_tuple_same_elem_to_sequence():
     assert not result.is_union()
     assert isinstance(result.type_obj, type)
     assert issubclass(result.type_obj, collections.abc.Sequence)
-    assert result.args and result.args[0].type_obj is str
+    assert result.args and _ti(result.args[0]).type_obj is str
 
 
 def test_lub_list_and_tuple_different_elem():
@@ -1161,8 +1167,8 @@ def test_lub_list_and_tuple_different_elem():
     assert not result.is_union()
     assert isinstance(result.type_obj, type)
     assert issubclass(result.type_obj, collections.abc.Sequence)
-    assert result.args and result.args[0].is_union()
-    assert result.args[0].to_set() == {TypeInfo.from_type(int), TypeInfo.from_type(str)}
+    assert result.args and _ti(result.args[0]).is_union()
+    assert _ti(result.args[0]).to_set() == {TypeInfo.from_type(int), TypeInfo.from_type(str)}
 
 
 def test_lub_dict_and_list_of_tuples():
@@ -1214,7 +1220,7 @@ def test_lub_empty_and_fixed_tuple_to_varlen():
     assert not result.is_union()
     assert len(result.args) == 2
     assert result.args[1] is Ellipsis
-    assert result.args[0].type_obj is int
+    assert _ti(result.args[0]).type_obj is int
 
 
 def test_lub_fixed_tuple_same_length_merge():
@@ -1226,8 +1232,8 @@ def test_lub_fixed_tuple_same_length_merge():
     assert result.type_obj is tuple
     assert not result.is_union()
     # First arg merged (int|float → float via numeric tower)
-    assert result.args[0].type_obj is float
-    assert result.args[1].type_obj is str
+    assert _ti(result.args[0]).type_obj is float
+    assert _ti(result.args[1]).type_obj is str
 
 
 def test_lub_multiple_lists_merge_args():
@@ -1237,11 +1243,11 @@ def test_lub_multiple_lists_merge_args():
     b = TypeInfo.from_type(list).replace(args=(TypeInfo.from_type(str),))
     result = lub(a, b, for_variable=True)
     assert result.type_obj is list
-    assert result.args[0].is_union()
-    assert result.args[0].to_set() == {TypeInfo.from_type(int), TypeInfo.from_type(str)}
+    assert _ti(result.args[0]).is_union()
+    assert _ti(result.args[0]).to_set() == {TypeInfo.from_type(int), TypeInfo.from_type(str)}
 
 
-def test_lub_abc_fallback():
+def test_lub_abc_fallback_via_lub():
     """lub(IterableA, IterableB) → Iterable when no MRO base but both implement ABC."""
     import collections.abc
     from righttyper.generalize import lub
@@ -1284,7 +1290,7 @@ def test_lub_abc_cross_container_same_args():
     assert not result.is_union()
     assert isinstance(result.type_obj, type)
     assert issubclass(result.type_obj, collections.abc.Iterable)
-    assert result.args and result.args[0].type_obj is int
+    assert result.args and _ti(result.args[0]).type_obj is int
 
 
 def test_lub_abc_cross_container_different_args_invariant():
@@ -1312,8 +1318,8 @@ def test_lub_abc_cross_container_different_args_for_variable():
     assert isinstance(result.type_obj, type)
     assert issubclass(result.type_obj, collections.abc.Iterable)
     # Args should be merged: int|str
-    assert result.args and result.args[0].is_union()
-    assert result.args[0].to_set() == {TypeInfo.from_type(int), TypeInfo.from_type(str)}
+    assert result.args and _ti(result.args[0]).is_union()
+    assert _ti(result.args[0]).to_set() == {TypeInfo.from_type(int), TypeInfo.from_type(str)}
 
 
 # =============================================================================
@@ -1413,11 +1419,11 @@ def test_lub_callable_different_return():
     assert result.type_obj is collections.abc.Callable
     assert not result.is_union()
     # Return type (last arg) should be a union
-    assert result.args[-1].is_union()
-    assert result.args[-1].to_set() == {int_t, str_t}
+    assert _ti(result.args[-1]).is_union()
+    assert _ti(result.args[-1]).to_set() == {int_t, str_t}
     # Params (first arg) should be unchanged
-    assert result.args[0].is_list()
-    assert result.args[0].args == (int_t,)
+    assert _ti(result.args[0]).is_list()
+    assert _ti(result.args[0]).args == (int_t,)
 
 
 def test_lub_callable_different_params():
@@ -1449,8 +1455,8 @@ def test_lub_callable_ellipsis_params():
     assert result.type_obj is collections.abc.Callable
     assert not result.is_union()
     assert result.args[0] is ...
-    assert result.args[-1].is_union()
-    assert result.args[-1].to_set() == {int_t, str_t}
+    assert _ti(result.args[-1]).is_union()
+    assert _ti(result.args[-1]).to_set() == {int_t, str_t}
 
 
 def test_lub_type_of_subtype():
@@ -1462,7 +1468,7 @@ def test_lub_type_of_subtype():
     assert result.type_obj is type
     assert not result.is_union()
     # type arg should be A (common base of B and C)
-    assert result.args[0].type_obj is _A_mypy
+    assert _ti(result.args[0]).type_obj is _A_mypy
 
 
 def test_lub_type_of_same():
@@ -1483,8 +1489,8 @@ def test_lub_type_of_unrelated():
     assert result.type_obj is type
     assert not result.is_union()
     # Inner arg is the union A|D
-    assert result.args[0].is_union()
-    assert result.args[0].to_set() == {a_ti, d_ti}
+    assert _ti(result.args[0]).is_union()
+    assert _ti(result.args[0]).to_set() == {a_ti, d_ti}
 
 
 # --- Rule 4b: bare generic subsumes parametrized ---
