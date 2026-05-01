@@ -173,8 +173,10 @@ class VariableFinder(ast.NodeVisitor):
         # Resulting map of executing code object to their CodeVars
         self.code_vars: dict[str, CodeVars] = dict()
 
-        # Alias tracking: variable -> set of variables it could be (for attribute propagation)
-        self._aliases: dict[str, set[str]] = {}
+        # Alias tracking: variable -> set of variables it could be (for attribute propagation).
+        # Stacked per function scope so siblings don't see each other's aliases; nested
+        # functions inherit a copy of their parent scope's aliases (closure refs preserved).
+        self._aliases_stack: list[dict[str, set[str]]] = [{}]
 
         # Attribute accesses collected for the current scope
         # Stored as code_qualname -> {var_name -> {attr_names}}
@@ -203,18 +205,19 @@ class VariableFinder(ast.NodeVisitor):
     def _record_alias(self, name: str, value: ast.expr | None) -> None:
         """Track name-to-name aliases for attribute access propagation.
         Unions aliases across branches (conservative: over-approximates)."""
+        aliases = self._aliases_stack[-1]
         if value is not None and isinstance(value, ast.Name):
             # y = x → y aliases whatever x aliases (plus x itself), unioned with any prior aliases
-            new_aliases = self._aliases.get(value.id, set()) | {value.id}
-            self._aliases[name] = self._aliases.get(name, set()) | new_aliases
-        elif name in self._aliases:
+            new_aliases = aliases.get(value.id, set()) | {value.id}
+            aliases[name] = aliases.get(name, set()) | new_aliases
+        elif name in aliases:
             # y = <non-name> → y is no longer a pure alias, but keep prior aliases
             # (could be from a different branch)
             pass
 
     def _resolve_aliases(self, name: str) -> set[str]:
         """Resolve a variable name to all names it could refer to (including itself)."""
-        return self._aliases.get(name, set()) | {name}
+        return self._aliases_stack[-1].get(name, set()) | {name}
 
     def _record_attribute_access(self, var_name: str, attr_name: str) -> None:
         """Record that attr_name is accessed on var_name (and its aliases)."""
@@ -311,6 +314,9 @@ class VariableFinder(ast.NodeVisitor):
             self._cls_stack.append(None)
 
         self._not_locals_stack.append(set(arguments))
+        # Inherit a copy of the parent's aliases so closure refs still propagate,
+        # but isolate this scope's new aliases from siblings.
+        self._aliases_stack.append(dict(self._aliases_stack[-1]))
 
         if self._class_stack:
             class_info = self._class_stack[-1]
@@ -325,6 +331,7 @@ class VariableFinder(ast.NodeVisitor):
 
         self.generic_visit(node)
 
+        self._aliases_stack.pop()
         self._not_locals_stack.pop()
         self._self_stack.pop()
         self._cls_stack.pop()

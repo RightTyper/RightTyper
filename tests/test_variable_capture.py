@@ -902,6 +902,49 @@ def test_accessed_attributes_alias_branch_conservative():
     assert "value" in attrs.get("y", set())
 
 
+def test_aliases_do_not_leak_across_sibling_functions():
+    """An alias recorded in one function (y = x) must not be visible to a
+    sibling function's same-named variable. With shared alias state, h's
+    y.foo would erroneously be recorded as foo on x — even though h's y is
+    its own parameter, unrelated to f's y."""
+    src = textwrap.dedent("""
+        def f(x):
+            y = x
+            return y.shared
+
+        def h(y):
+            return y.h_only
+        """)
+    m = map_variables(src)
+    f_attrs = get_accessed_attributes(m, "f")
+    h_attrs = get_accessed_attributes(m, "h")
+
+    # f sees 'shared' on x via the alias y = x.
+    assert "shared" in f_attrs.get("x", set())
+    # h's y.h_only must not leak to f's x.
+    assert "h_only" not in f_attrs.get("x", set()), (
+        f"h's y.h_only leaked to f's x via shared alias state: {f_attrs}"
+    )
+    # And h itself records h_only on its own y.
+    assert "h_only" in h_attrs.get("y", set())
+
+
+def test_aliases_propagate_into_nested_functions():
+    """Closures should still see their enclosing scope's aliases."""
+    src = textwrap.dedent("""
+        def f(x):
+            y = x
+            def inner():
+                return y.name
+            return inner
+        """)
+    m = map_variables(src)
+    f_attrs = get_accessed_attributes(m, "f")
+    inner_attrs = get_accessed_attributes(m, "f.<locals>.inner")
+    # inner's access on y should propagate to x via f's alias.
+    assert "name" in f_attrs.get("x", set()) or "name" in inner_attrs.get("x", set())
+
+
 def test_accessed_attributes_non_name_assignment_no_alias():
     """y = x.child is not an alias — attribute access on y stays on y."""
     src = textwrap.dedent("""
