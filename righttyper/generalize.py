@@ -26,6 +26,9 @@ _CONTAINER_ABCS: list[type] = [
     if isinstance(obj, type) and hasattr(obj, '__class_getitem__') and issubclass(obj, abc.Container)
 ]
 
+# Container ABCs that take 2 type parameters (KT, VT); all others take 1.
+_TWO_PARAM_ABCS: frozenset[type] = frozenset({abc.Mapping, abc.MutableMapping, abc.ItemsView})
+
 
 def is_homogeneous(types: tuple[TypeInfo, ...] | list[TypeInfo]) -> bool:
     """Whether the tuple only contains instances of a single, consistent generic type
@@ -216,14 +219,24 @@ def lub(
                 if a.args == ((),):
                     return a
 
-    # Rule 6: Empty container + non-empty container → common ABC with element type.
-    # E.g., tuple[()] + list[int] → Sequence[int].
+    # Rule 6: Empty container + non-empty container → MRO common supertype
+    # with the non-empty container's args (the empty side contributes nothing).
+    # E.g., dict[Never,Never] + defaultdict[str, list[X]] → dict[str, list[X]].
     if a.type_obj is not b.type_obj:  # different containers only
         empty, nonempty = (a, b) if _is_empty_container(a) else (b, a) if _is_empty_container(b) else (None, None)
-        if (empty is not None and nonempty is not None
-            and nonempty.args and isinstance(nonempty.args[0], TypeInfo)):
-            if (common := _find_common_container_abc(empty, nonempty)):
-                return get_type_name(common).replace(args=(nonempty.args[0],))
+        if empty is not None and nonempty is not None and nonempty.args:
+            # Find MRO common supertype between the two container types
+            e_obj, ne_obj = cast(type, empty.type_obj), cast(type, nonempty.type_obj)
+            for cls in ne_obj.__mro__:
+                if issubclass(e_obj, cls) and cls is not object:
+                    return get_type_name(cls).replace(args=nonempty.args)
+            # Fallback to ABC if no direct MRO relationship
+            if isinstance(nonempty.args[0], TypeInfo):
+                if (common := _find_common_container_abc(empty, nonempty)):
+                    nparams = 2 if common in _TWO_PARAM_ABCS else 1
+                    return get_type_name(common).replace(
+                        args=tuple(a for a in nonempty.args[:nparams] if isinstance(a, TypeInfo))
+                    )
 
     # Rule 7: MRO common supertype (non-generic types only).
     if not a.args and not b.args:

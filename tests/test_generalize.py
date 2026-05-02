@@ -1044,6 +1044,19 @@ def test_lub_empty_dict_and_list_to_collection():
     assert issubclass(result.type_obj, collections.abc.Collection)
 
 
+def test_lub_empty_dict_and_defaultdict():
+    """lub(dict[Never,Never], defaultdict[str, list[int]]) → dict[str, list[int]]
+    (MRO common supertype with the non-empty container's args)."""
+    import collections
+    from righttyper.generalize import lub
+    empty_dict = TypeInfo.from_type(dict, args=(TypeInfo.from_type(Never), TypeInfo.from_type(Never)))
+    dd = TypeInfo.from_type(collections.defaultdict, args=(TypeInfo.from_type(str),
+                            TypeInfo.from_type(list, args=(TypeInfo.from_type(int),))))
+    result = lub(empty_dict, dd)
+    assert result == TypeInfo.from_type(dict, args=(TypeInfo.from_type(str),
+                      TypeInfo.from_type(list, args=(TypeInfo.from_type(int),))))
+
+
 def test_lub_empty_tuple_subsumed_by_varlen():
     """lub(tuple[()], tuple[int, ...]) → tuple[int, ...] (empty subsumed by varlen)."""
     from righttyper.generalize import lub
