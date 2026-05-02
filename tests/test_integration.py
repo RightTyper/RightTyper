@@ -7708,5 +7708,50 @@ def test_main_module_types_not_leaked():
 
     code = cst.parse_module(output)
     func = get_function(code, 'process')
-    # Accept either 'Widget' or 'pkg._impl.Widget' — the key check is no __main__
-    assert 'Widget' in func, f"Expected Widget in annotation, got: {func}"
+    assert func is not None
+    # Widget isn't imported in pkg/api.py, so the annotation must qualify it
+    # via its real module — pkg._impl.Widget (not __main__.Widget).
+    assert 'pkg._impl.Widget' in func, (
+        f"Expected pkg._impl.Widget in annotation, got: {func}"
+    )
+
+
+def test_main_module_defined_class_not_leaked():
+    """A class DEFINED in the exercise script (outside --root) is purely
+    test scaffolding from the package's perspective — it must not appear
+    in the package's annotations. RightTyper detects that the runner
+    script is outside --root and adds its main_name to obs.test_modules,
+    so ExcludeTestTypesT filters out types defined in it."""
+
+    Path("pkg").mkdir()
+    Path("pkg/__init__.py").write_text("")
+    Path("pkg/api.py").write_text(textwrap.dedent("""\
+        def process(w):
+            return w.render()
+    """))
+
+    # Exercise script OUTSIDE the --root tree, defining its OWN class.
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        f.write(textwrap.dedent("""\
+            class MyWidget:
+                def render(self):
+                    return "<widget>"
+
+            from pkg.api import process
+            process(MyWidget())
+        """))
+        script = f.name
+
+    try:
+        rt_run('--only-collect', '--root', '.', script)
+        rt_run('process', '--output-files', '--overwrite')
+    finally:
+        os.unlink(script)
+
+    output = Path("pkg/api.py").read_text()
+    assert "__main__" not in output, output
+    # MyWidget is runner-only scaffolding; it should not appear in pkg.api's annotations.
+    assert "MyWidget" not in output, (
+        f"runner-defined MyWidget leaked into pkg's annotations:\n{output}"
+    )
