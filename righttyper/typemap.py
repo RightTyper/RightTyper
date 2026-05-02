@@ -75,6 +75,10 @@ class TypeMap:
             # str() because __module__ might be a getset_attribute (hello, cython)
             t_package = str(t.__module__).split('.')[0]
             return (
+                # prefer anything else over __main__: when a type is also reachable
+                # under a real module name (e.g. via 'from pkg._impl import C'), that
+                # name should win over the __main__ entry from main_globals
+                module == '__main__',
                 # prefer non-test to test
                 is_test_module(module),
                 # prefer public to private
