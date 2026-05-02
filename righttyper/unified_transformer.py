@@ -125,6 +125,16 @@ _DEPRECATED_TYPING_TYPES: typing.Final[tuple[tuple[str, str], ...]] = (
     ("typing.Sized",         "collections.abc.Sized"),
 )
 
+# Reverse map for deprecated typing aliases: fully qualified new name → typing
+# short name.  E.g. "collections.abc.Iterator" → "Iterator".  Used by the
+# Renamer to emit the typing short name (with a 'from typing import ...')
+# instead of the verbose collections.abc form.
+_DEPRECATED_TO_TYPING: dict[str, str] = {
+    new: old.removeprefix("typing.")
+    for old, new in _DEPRECATED_TYPING_TYPES
+    if old.startswith("typing.") and new.startswith("collections.abc.")
+}
+
 def _dotted_name_to_nodes(name: str) -> cst.Attribute | cst.Name:
     """Creates Attribute/Name to build a module name, dotted or not."""
     parts = name.split(".")
@@ -283,6 +293,18 @@ class UnifiedTransformer(cst.CSTTransformer):
                 ):
                     return node.replace(module='', name=a)
 
+                # typing types: use short name as-needed and track the import.
+                # Handles both direct typing.X and deprecated aliases
+                # (e.g. collections.abc.Iterator → Iterator via typing).
+                typing_name = (
+                    node.name if node.module == 'typing' and node.name in _TYPING_TYPES
+                    else _DEPRECATED_TO_TYPING.get(node.fullname())
+                )
+                if typing_name and not self._is_defined(typing_name):
+                    self.aliases[node.fullname()] = typing_name
+                    self.needed_typing_imports.add(typing_name)
+                    return node.replace(module='', name=typing_name)
+
                 assert node.module
                 if node.module:
                     if node.module == self.module_name:
@@ -405,18 +427,15 @@ class UnifiedTransformer(cst.CSTTransformer):
         self.known_names: list[set[str]] = [set(_BUILTIN_TYPES)]
 
         # global aliases from 'from .. import ..' and 'import .. as ..';
-        # maps from qualified name to local name
-        self.aliases: dict[str, str] = {
-            # we will add any such "typing." names, so add them as aliases
-            f"typing.{t}": t
-            for t in _TYPING_TYPES
-        }
+        # maps from qualified name to local name.
+        # Note: typing names are NOT pre-populated here.  They are resolved
+        # as-needed by the Renamer, which checks for collisions with locally
+        # defined names and tracks the result in needed_typing_imports.
+        self.aliases: dict[str, str] = {}
 
-        # We automatically import 'typing' types, so for now it is convenient
-        # to continue using 'typing', by default (unless imported)
-        for old, new in _DEPRECATED_TYPING_TYPES:
-            if old.startswith('typing.') and new.startswith('collections.abc'):
-                self.aliases[new] = old[7:]
+        # Typing names that the Renamer actually used (e.g. typing.Self → Self).
+        # Drives import emission instead of guessing via _TYPING_TYPES.
+        self.needed_typing_imports: set[str] = set()
 
         # "import ... as ..." within "if TYPE_CHECKING:".
         self.if_checking_aliases: dict[str, str] = dict()
@@ -938,7 +957,7 @@ class UnifiedTransformer(cst.CSTTransformer):
 
         if (
             self.always_quote_annotations
-            or (not self.has_future_annotations and (unknown.types - _TYPING_TYPES))
+            or (not self.has_future_annotations and (unknown.types - self.needed_typing_imports))
         ):
             annotation_expr = cst.SimpleString(_quote(str(annotation)))
 
@@ -1103,7 +1122,7 @@ class UnifiedTransformer(cst.CSTTransformer):
                                        ])
                             )
                         ]))
-                        self.unknown_types.add("TypeVar")
+                        self.needed_typing_imports.add("TypeVar")
 
                 # Now update the parameters
                 class ParamChanger(cst.CSTTransformer):
@@ -1234,7 +1253,7 @@ class UnifiedTransformer(cst.CSTTransformer):
             mod
             for mod in (
                 self._module_for(t)[0]
-                for t in self.unknown_types - _TYPING_TYPES
+                for t in self.unknown_types - self.needed_typing_imports
                 if '.' in t
                 and t.split('.')[0] not in self.known_names[-1]
             )
@@ -1320,10 +1339,10 @@ class UnifiedTransformer(cst.CSTTransformer):
                 and cstm.matches(inserted.test, cstm.Name("TYPE_CHECKING"))
                 and 'TYPE_CHECKING' not in self.known_names[-1]
             ):
-                self.unknown_types.add('TYPE_CHECKING')
+                self.needed_typing_imports.add('TYPE_CHECKING')
 
         # Emit "from typing import ..."
-        if (typing_types := (self.unknown_types & _TYPING_TYPES)):
+        if (typing_types := set(self.needed_typing_imports)):
             existing = stmt_index(new_body, cstm.SimpleStatementLine(
                     body=[cstm.ImportFrom(module=cstm.Name("typing"))]
                 )
