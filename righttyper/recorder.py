@@ -637,6 +637,21 @@ class ObservationsRecorder:
 
         self._assign_attributes_to_scopes()
 
+        # Populate accessed_attributes from the loader's static analysis.
+        # Done here (vs. at collect_annotations time) so the data survives
+        # serialization to .rt files for the --only-collect + process flow.
+        # co_varnames/co_freevars are only available while the code object
+        # is live, so module_accessed_attributes must be computed now.
+        for co, cv in code2variables.items():
+            if cv.accessed_attributes:
+                self._obs.accessed_attributes[CodeId.from_code(co)] = cv.accessed_attributes
+                module_attrs = self._obs.module_accessed_attributes.setdefault(
+                    Filename(co.co_filename), {}
+                )
+                for var_name, attrs in cv.accessed_attributes.items():
+                    if var_name not in co.co_varnames and var_name not in co.co_freevars:
+                        module_attrs.setdefault(var_name, set()).update(attrs)
+
         obs, self._obs = self._obs, Observations()
         self._code2func_info.clear()
         self._pending_traces.clear()

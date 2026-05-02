@@ -1000,21 +1000,6 @@ def run(
                 for m in detected_test_modules:
                     logger.debug(f"test module: {m}")
 
-            # Populate accessed_attributes on obs from the loader's static
-            # analysis.  Done before either save or process so both paths
-            # get the data.  co_varnames/co_freevars are only available at
-            # runtime, so module_accessed_attributes must be computed now.
-            from righttyper.variable_capture import code2variables
-            for co, cv in code2variables.items():
-                if cv.accessed_attributes:
-                    obs.accessed_attributes[CodeId.from_code(co)] = cv.accessed_attributes
-                    fn = Filename(co.co_filename)
-                    if fn not in obs.module_accessed_attributes:
-                        obs.module_accessed_attributes[fn] = {}
-                    for var_name, attrs in cv.accessed_attributes.items():
-                        if var_name not in co.co_varnames and var_name not in co.co_freevars:
-                            obs.module_accessed_attributes[fn].setdefault(var_name, set()).update(attrs)
-
             if only_collect:
                 from righttyper.type_transformers import MakePickleableT
                 obs.transform_types(MakePickleableT())
