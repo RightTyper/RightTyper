@@ -201,7 +201,7 @@ def test_to_name_map_skips_non_string_module():
     """to_name_map must skip types whose __module__ is not a string (e.g. Cython metaclasses)."""
     # Simulate a C extension type whose __module__ is a descriptor, not a string
     bad_type = type('CythonLike', (object,), {})
-    bad_type.__module__ = property(lambda self: 'fake')  # non-string descriptor  # type: ignore
+    bad_type.__module__ = property(lambda self: 'fake')  # type: ignore[assignment]  # non-string descriptor
 
     tm = TypeMap({})
     # Force-register: _map stores type → [TypeName, ...]
