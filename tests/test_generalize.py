@@ -1578,3 +1578,37 @@ def test_lub_bare_reversible_subsumes_parametrized():
     parametrized = TypeInfo.from_type(abc.Reversible).replace(args=(TypeInfo.from_type(float),))
     assert lub(bare, parametrized) == bare
     assert lub(parametrized, bare) == bare
+
+
+def test_is_private_type():
+    """Types in private modules without public re-export should be detected."""
+    from righttyper.generalize import _is_private_type
+    import io
+
+    # _io.BytesIO: __module__='_io' but re-exported via io → not private
+    assert not _is_private_type(io.BytesIO)
+    assert not _is_private_type(io.StringIO)
+
+    # builtins are not private
+    assert not _is_private_type(int)
+    assert not _is_private_type(dict)
+
+    # A type genuinely stuck in a private module (no public re-export)
+    private_type = type('HiddenType', (object,), {'__module__': '_secret_impl'})
+    assert _is_private_type(private_type)
+
+
+def test_lub_skips_private_mro_ancestors():
+    """lub should not merge to a common ancestor defined in a private module."""
+    from righttyper.generalize import lub
+
+    # Build a class hierarchy where the common ancestor is in a private module
+    _Base = type('_Base', (object,), {'__module__': '_internal.base', 'x': 1})
+    A = type('A', (_Base,), {'__module__': 'mypkg', 'x': 1})
+    B = type('B', (_Base,), {'__module__': 'mypkg', 'x': 1})
+
+    a = TypeInfo.from_type(A)
+    b = TypeInfo.from_type(B)
+    result = lub(a, b)
+    # Should NOT merge to _Base (private) — should be a union
+    assert result.is_union(), f"expected union, got {result}"

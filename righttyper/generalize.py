@@ -2,7 +2,9 @@ from typing import cast, Sequence, Iterator, Any, Never, NoReturn
 from abc import ABCMeta
 import collections.abc as abc
 from collections import Counter
+from functools import cache
 from types import EllipsisType
+import sys
 from righttyper.typeinfo import TypeInfo, ListTypeInfo, CallTrace
 from righttyper.type_id import get_type_name
 from righttyper.options import output_options
@@ -89,6 +91,26 @@ def _find_common_container_abc(t1: TypeInfo, t2: TypeInfo) -> type | None:
         if issubclass(o1, g) and issubclass(o2, g):
             return g
     return None
+
+
+@cache
+def _is_private_type(cls: type) -> bool:
+    """Check if cls is defined in a private module without public re-export.
+
+    This partially duplicates TypeMap's is_private logic; done here to avoid
+    threading the TypeMap through to lub.
+    """
+    mod = getattr(cls, '__module__', '') or ''
+    if mod == '__main__' or not any(p.startswith('_') for p in mod.split('.')):
+        return False
+    # Private module — but check if any public module re-exports this type
+    name = getattr(cls, '__name__', '')
+    for m in sys.modules.values():
+        m_name = getattr(m, '__name__', '')
+        if m_name and not any(p.startswith('_') for p in m_name.split('.')):
+            if getattr(m, name, None) is cls:
+                return False
+    return True
 
 
 # Numeric tower: int <: float <: complex (PEP 3141)
@@ -276,6 +298,8 @@ def lub(
         for base in b.type_obj.__mro__:
             if base in a_mro and base is not object:
                 if base in (int, float, complex):
+                    continue
+                if _is_private_type(base):
                     continue
                 if common_attrs.issubset(dir(base)):
                     return get_type_name(base)
