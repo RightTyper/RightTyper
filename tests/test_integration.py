@@ -7634,6 +7634,40 @@ def test_self_detection_through_collect_and_process():
     """)
 
 
+def test_accessed_attributes_survive_collect_process():
+    """accessed_attributes must survive the --only-collect / process
+    round-trip so that attribute-based simplification works."""
+    # Types in an imported module so LoadTypeObjT can resolve them.
+    # Sub inherits greet() without overriding, and adds extra() which
+    # Base lacks.  Without accessed_attributes, lub's dir() intersection
+    # includes extra(), blocking generalization to Base.
+    Path("mylib.py").write_text(textwrap.dedent("""\
+        class Base:
+            def greet(self): return "hi"
+
+        class Sub(Base):
+            def extra(self): pass  # not on Base; greet() inherited
+    """))
+    Path("t.py").write_text(textwrap.dedent("""\
+        from mylib import Sub
+
+        def f(x):
+            return x.greet()
+
+        f(Sub())
+    """))
+
+    rt_run('--only-collect', 't.py')
+    rt_run('process')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # f only accesses .greet() (inherited, not overridden), so Sub should
+    # simplify to Base.  This requires accessed_attributes to survive the
+    # .rt round-trip.
+    assert 'Base' in get_function(code, 'f')
+
+
 def test_parent_type_propagation_classmethod():
     """Unobserved parent classmethod gets arg types from child."""
     Path("t.py").write_text(textwrap.dedent("""\

@@ -453,6 +453,17 @@ class Observations:
         # All strings, serializable for .rt files.
         self.type_name_map: dict[tuple[str, str], tuple[str, str]] = {}
 
+        # Per-function accessed attributes, gathered by static analysis of the
+        # source in the loader.  Maps CodeId → {variable_name → {attr, ...}}.
+        # Serialized in .rt files so that the process step can use them for
+        # attribute-based type simplification (lub Rule 7/8).
+        self.accessed_attributes: dict[CodeId, dict[str, set[str]]] = {}
+
+        # Per-file accessed attributes for module-level globals only.
+        # Precomputed during the run step (where co_varnames is available to
+        # filter out function-local variables) and serialized for process.
+        self.module_accessed_attributes: dict[Filename, dict[str, set[str]]] = {}
+
 
     def transform_types(self, tr: TypeInfo.Transformer) -> None:
         """Applies the 'tr' transformer to all TypeInfo objects in this class."""
@@ -540,6 +551,8 @@ class Observations:
         self.test_modules |= obs2.test_modules
         self.wrapper_code_ids |= obs2.wrapper_code_ids
         self.type_name_map |= obs2.type_name_map
+        self.accessed_attributes.update(obs2.accessed_attributes)
+        self.module_accessed_attributes.update(obs2.module_accessed_attributes)
 
 
     def _propagate_to_parents(self, raw_annotations: dict[CodeId, FuncAnnotation]) -> None:
@@ -868,27 +881,9 @@ class Observations:
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars], dict[CodeId, list[TraceDistribution]]]:
         """Collects function type annotations from the observed types."""
 
-        # Build CodeId → accessed_attributes from the variable capture data.
-        from righttyper.variable_capture import code2variables
-        accessed_attrs: dict[CodeId, dict[str, set[str]]] = {
-            CodeId.from_code(co): cv.accessed_attributes
-            for co, cv in code2variables.items()
-            if cv.accessed_attributes
-        }
+        accessed_attrs = self.accessed_attributes
 
-        # Aggregate per-file accessed_attributes for module globals only.
-        # A name accessed inside a function is module-global iff it's neither a
-        # local/parameter (co_varnames) nor a closure reference (co_freevars).
-        module_accessed: dict[Filename, dict[str, set[str]]] = defaultdict(
-            lambda: defaultdict(set)
-        )
-        for co, cv in code2variables.items():
-            if cv.accessed_attributes:
-                fn = Filename(co.co_filename)
-                for var_name, attrs in cv.accessed_attributes.items():
-                    if var_name in co.co_varnames or var_name in co.co_freevars:
-                        continue
-                    module_accessed[fn][var_name] |= attrs
+        module_accessed = self.module_accessed_attributes
 
         annotations: dict[CodeId, FuncAnnotation] = {}
         for code_id in self.code_id_topo_sort():
@@ -910,7 +905,7 @@ class Observations:
                 var_name: mv_resolver.visit(merged_types(
                     var_types,
                     for_variable=True,
-                    accessed_attributes=module_accessed[filename].get(var_name) or None,
+                    accessed_attributes=module_accessed.get(filename, {}).get(var_name) or None,
                 ))
                 for var_name, var_types in var_dict.items()
             })
