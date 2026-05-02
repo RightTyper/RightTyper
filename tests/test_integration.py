@@ -7657,3 +7657,56 @@ def test_local_class_not_imported_from_typing():
     assert get_function(code, 'Text.append') == textwrap.dedent("""\
         def append(self: Self, other: "Text") -> None: ...
     """)
+
+
+def test_main_module_types_not_leaked():
+    """Types imported by the __main__ script from a private submodule should
+    be annotated with their real module path, not __main__.
+    Uses --only-collect then process, like the eval pipeline.
+
+    The bug: runpy.run_path sets __spec__=None, so TypeMap falls through
+    to main_name='__main__'.  Then __main__ has is_private=False while
+    the private submodule (pkg._impl) has is_private=True, so __main__
+    wins the TypeMap sort and becomes the canonical name."""
+
+    # Package with a private submodule defining the type (no re-export)
+    Path("pkg").mkdir()
+    Path("pkg/__init__.py").write_text("")
+    Path("pkg/_impl.py").write_text(textwrap.dedent("""\
+        class Widget:
+            def render(self):
+                return "<widget>"
+    """))
+    Path("pkg/api.py").write_text(textwrap.dedent("""\
+        def process(w):
+            return w.render()
+    """))
+
+    # Exercise script OUTSIDE the --root tree.  Use an absolute path in
+    # /tmp so source_to_module_fqn can't resolve it to a module name
+    # (its parent dir isn't on sys.path) and main_name falls to "__main__".
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        f.write(textwrap.dedent("""\
+            from pkg._impl import Widget
+            from pkg.api import process
+            process(Widget())
+        """))
+        script = f.name
+
+    try:
+        rt_run('--only-collect', '--root', '.', script)
+        rt_run('process', '--output-files', '--overwrite')
+    finally:
+        os.unlink(script)
+    output = Path("pkg/api.py").read_text()
+
+    # The annotation must NOT use __main__.Widget
+    assert "__main__" not in output, (
+        f"__main__ leaked into annotations:\n{output}"
+    )
+
+    code = cst.parse_module(output)
+    func = get_function(code, 'process')
+    # Accept either 'Widget' or 'pkg._impl.Widget' — the key check is no __main__
+    assert 'Widget' in func, f"Expected Widget in annotation, got: {func}"
