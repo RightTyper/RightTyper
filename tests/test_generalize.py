@@ -1057,6 +1057,39 @@ def test_lub_empty_dict_and_defaultdict():
                       TypeInfo.from_type(list, args=(TypeInfo.from_type(int),))))
 
 
+def test_lub_empty_tuple_and_generator():
+    """lub(tuple[()], Generator[str, None, None]) should reduce Generator to
+    Iterator[str] first, then merge with the empty tuple → Iterable[str]."""
+    import collections.abc
+    from righttyper.generalize import lub
+    empty_tuple = TypeInfo.from_type(tuple, args=((),))
+    gen = TypeInfo.from_type(collections.abc.Generator, args=(
+        TypeInfo.from_type(str),
+        TypeInfo.from_type(type(None)),
+        TypeInfo.from_type(type(None)),
+    ))
+    result = lub(empty_tuple, gen)
+    assert result == TypeInfo.from_type(collections.abc.Iterable, args=(TypeInfo.from_type(str),))
+
+
+def test_lub_generator_reduced_to_iterator_before_merge():
+    """lub should reduce Generator[X, None, None] to Iterator[X] before
+    merging, so 3 Generator args don't leak into the result."""
+    import collections.abc
+    from righttyper.generalize import lub
+    gen = TypeInfo.from_type(collections.abc.Generator, args=(
+        TypeInfo.from_type(int),
+        TypeInfo.from_type(type(None)),
+        TypeInfo.from_type(type(None)),
+    ))
+    lst = TypeInfo.from_type(list, args=(TypeInfo.from_type(int),))
+    result = lub(gen, lst)
+    assert result == TypeInfo.from_set({
+        TypeInfo.from_type(collections.abc.Iterator, args=(TypeInfo.from_type(int),)),
+        TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
+    })
+
+
 def test_lub_empty_tuple_subsumed_by_varlen():
     """lub(tuple[()], tuple[int, ...]) → tuple[int, ...] (empty subsumed by varlen)."""
     from righttyper.generalize import lub

@@ -1,4 +1,5 @@
 from typing import cast, Sequence, Iterator, Any, Never, NoReturn
+from abc import ABCMeta
 import collections.abc as abc
 from collections import Counter
 from types import EllipsisType
@@ -26,8 +27,6 @@ _CONTAINER_ABCS: list[type] = [
     if isinstance(obj, type) and hasattr(obj, '__class_getitem__') and issubclass(obj, abc.Container)
 ]
 
-# Container ABCs that take 2 type parameters (KT, VT); all others take 1.
-_TWO_PARAM_ABCS: frozenset[type] = frozenset({abc.Mapping, abc.MutableMapping, abc.ItemsView})
 
 
 def is_homogeneous(types: tuple[TypeInfo, ...] | list[TypeInfo]) -> bool:
@@ -65,7 +64,6 @@ def is_homogeneous(types: tuple[TypeInfo, ...] | list[TypeInfo]) -> bool:
 # Precomputed ABC data for structural matching in lub.
 def _build_abc_own_attrs() -> dict[type, frozenset[str]]:
     """Precompute the own attributes (excluding object) for each collections.abc ABC."""
-    from abc import ABCMeta
     result: dict[type, frozenset[str]] = {}
     for obj in vars(abc).values():
         if isinstance(obj, ABCMeta):
@@ -142,6 +140,19 @@ def lub(
         return a
     if b.type_obj is Any:
         return b
+
+    # Reduce Generator/AsyncGenerator to Iterator/AsyncIterator before merging,
+    # so their extra args (send, return) don't leak into ABC matches.
+    def _reduce_generator(t: TypeInfo) -> TypeInfo:
+        if t.type_obj is abc.Generator and len(t.args) == 3:
+            return TypeInfo.from_type(abc.Iterator, args=(t.args[0],) if isinstance(t.args[0], TypeInfo) else ())
+        if t.type_obj is abc.AsyncGenerator and len(t.args) == 2:
+            return TypeInfo.from_type(abc.AsyncIterator, args=(t.args[0],) if isinstance(t.args[0], TypeInfo) else ())
+        return t
+
+    a, b = _reduce_generator(a), _reduce_generator(b)
+    if a == b:
+        return a
 
     # Without a real type (could be None or a typing special form),
     # no merging rules apply.
@@ -225,18 +236,25 @@ def lub(
     if a.type_obj is not b.type_obj:  # different containers only
         empty, nonempty = (a, b) if _is_empty_container(a) else (b, a) if _is_empty_container(b) else (None, None)
         if empty is not None and nonempty is not None and nonempty.args:
-            # Find MRO common supertype between the two container types
             e_obj, ne_obj = cast(type, empty.type_obj), cast(type, nonempty.type_obj)
+            # MRO walk: find nearest common supertype (includes ABCs
+            # explicitly inherited, e.g. Generator → Iterator → Iterable)
+            common: type | None = None
             for cls in ne_obj.__mro__:
                 if issubclass(e_obj, cls) and cls is not object:
-                    return get_type_name(cls).replace(args=nonempty.args)
-            # Fallback to ABC if no direct MRO relationship
-            if isinstance(nonempty.args[0], TypeInfo):
-                if (common := _find_common_container_abc(empty, nonempty)):
-                    nparams = 2 if common in _TWO_PARAM_ABCS else 1
-                    return get_type_name(common).replace(
-                        args=tuple(a for a in nonempty.args[:nparams] if isinstance(a, TypeInfo))
-                    )
+                    common = cls
+                    break
+            else:
+                # Fallback: virtual ABC registration (e.g. list + dict → Collection)
+                if isinstance(nonempty.args[0], TypeInfo):
+                    common = _find_common_container_abc(empty, nonempty)
+
+            if common is not None:
+                # Mappings (abc or concrete) take 2 type params; all other
+                # containers take 1.
+                nparams = 2 if issubclass(common, abc.Mapping) else 1
+                args = tuple(a for a in nonempty.args[:nparams] if isinstance(a, TypeInfo))
+                return get_type_name(common).replace(args=args)
 
     # Rule 7: MRO common supertype (non-generic types only).
     if not a.args and not b.args:
