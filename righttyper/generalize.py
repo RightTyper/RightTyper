@@ -349,8 +349,18 @@ def _merge_set(
                 ):
                     return get_type_name(base)
 
+    # Flatten any non-typevar unions in the input so each leaf type
+    # participates in the pairwise reduction. Otherwise lub treats `int|str`
+    # as opaque (its type_obj isn't a real `type`) and never gets to compare
+    # `bool` against `int` to discover `bool ⊆ int`. Typevar'd unions stay
+    # opaque — they represent a single named variable, not a leaf set.
+    types = list({
+        leaf
+        for t in typeinfoset
+        for leaf in ({t} if t.is_typevar() else t.to_set())
+    })
+
     # Iteratively reduce: try to merge pairs until stable
-    types = list(typeinfoset)
     changed = True
     while changed:
         changed = False

@@ -3078,7 +3078,7 @@ def test_varargs():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: bool, *args: float|int|str) -> None: ...
+        def foo(x: bool, *args: float|str) -> None: ...
     """)
 
 
@@ -3115,7 +3115,7 @@ def test_varargs_json():
     print(data)
 
     foo = data['files'][str(Path('t.py').resolve())]['functions']['foo']
-    assert "tuple[float|int|str, ...]" == foo['args']['rest']
+    assert "tuple[float|str, ...]" == foo['args']['rest']
 
 
 def test_kwargs():
@@ -3131,7 +3131,7 @@ def test_kwargs():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: bool, **kwargs: float|int|str) -> None: ...
+        def foo(x: bool, **kwargs: float|str) -> None: ...
     """)
 
 
@@ -3168,7 +3168,7 @@ def test_kwargs_json():
     print(data)
 
     foo = data['files'][str(Path('t.py').resolve())]['functions']['foo']
-    assert "dict[str, float|int|str]" == foo['args']['kwargs']
+    assert "dict[str, float|str]" == foo['args']['kwargs']
 
 
 def test_none_arg():
@@ -4571,6 +4571,45 @@ def test_self_widen_callable_retval(python_version):
         assert 'Self' not in output, (
             f"unexpected typing.Self in {python_version}-target output:\n{output}"
         )
+
+
+def test_widen_flattens_unions_for_lub(tmp_cwd):
+    """Phase 2 widens an abstract parent's args from its children. When one
+    child has already merged its observations into a union (e.g. `int | str`)
+    and another child has a type that is a subtype of one component of that
+    union (e.g. `bool ⊆ int`), the merge set passed to `merged_types` looks
+    like `{int | str, bool}`. Without flattening unions on entry to
+    `_merge_set`, lub treats the union opaquely (its `type_obj` isn't a real
+    `type`) and never compares `bool` against `int`, so the parent ends up
+    with `int | str | bool` instead of collapsing `bool` into `int`.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        from abc import ABC, abstractmethod
+        class Base(ABC):
+            @abstractmethod
+            def m(self, x): ...
+        class C1(Base):
+            def m(self, x):
+                pass
+        class C2(Base):
+            def m(self, x):
+                pass
+        C1().m(1)
+        C1().m("a")
+        C2().m(True)
+        """))
+
+    rt_run('--python-version=3.11', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # With flattening, the merge set becomes {int, str, bool}; pairwise lub
+    # collapses bool into int, leaving int|str. Without flattening, bool
+    # survives and the annotation is `int|bool|str` (or similar order).
+    assert get_function(code, 'Base.m') == textwrap.dedent("""\
+        @abstractmethod
+        def m(self: Self, x: int|str) -> None: ...
+    """)
 
 
 def test_returns_or_yields_generator():
