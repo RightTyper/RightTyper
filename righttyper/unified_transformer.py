@@ -125,6 +125,16 @@ _DEPRECATED_TYPING_TYPES: typing.Final[tuple[tuple[str, str], ...]] = (
     ("typing.Sized",         "collections.abc.Sized"),
 )
 
+# Reverse map for deprecated typing aliases: fully qualified new name → typing
+# short name.  E.g. "collections.abc.Iterator" → "Iterator".  Used by the
+# Renamer to emit the typing short name (with a 'from typing import ...')
+# instead of the verbose collections.abc form.
+_DEPRECATED_TO_TYPING: dict[str, str] = {
+    new: old.removeprefix("typing.")
+    for old, new in _DEPRECATED_TYPING_TYPES
+    if old.startswith("typing.") and new.startswith("collections.abc.")
+}
+
 def _dotted_name_to_nodes(name: str) -> cst.Attribute | cst.Name:
     """Creates Attribute/Name to build a module name, dotted or not."""
     parts = name.split(".")
@@ -281,17 +291,19 @@ class UnifiedTransformer(cst.CSTTransformer):
                     (a := self.aliases.get(node.fullname()))
                     and (not self._is_defined(a) or self._name_is(a, node.fullname()))
                 ):
-                    if a in _TYPING_TYPES and not self._is_defined(a):
-                        self.needed_typing_imports.add(a)
                     return node.replace(module='', name=a)
 
-                # typing types not in aliases: use short name as-needed,
-                # unless a local name would be shadowed.
-                if node.module == 'typing' and node.name in _TYPING_TYPES:
-                    if not self._is_defined(node.name):
-                        self.aliases[node.fullname()] = node.name
-                        self.needed_typing_imports.add(node.name)
-                        return node.replace(module='')
+                # typing types: use short name as-needed and track the import.
+                # Handles both direct typing.X and deprecated aliases
+                # (e.g. collections.abc.Iterator → Iterator via typing).
+                typing_name = (
+                    node.name if node.module == 'typing' and node.name in _TYPING_TYPES
+                    else _DEPRECATED_TO_TYPING.get(node.fullname())
+                )
+                if typing_name and not self._is_defined(typing_name):
+                    self.aliases[node.fullname()] = typing_name
+                    self.needed_typing_imports.add(typing_name)
+                    return node.replace(module='', name=typing_name)
 
                 assert node.module
                 if node.module:
@@ -420,13 +432,6 @@ class UnifiedTransformer(cst.CSTTransformer):
         # as-needed by the Renamer, which checks for collisions with locally
         # defined names and tracks the result in needed_typing_imports.
         self.aliases: dict[str, str] = {}
-
-        # Reverse map for deprecated typing aliases: when the Renamer sees
-        # e.g. collections.abc.Iterator, it can use the short typing name
-        # (Iterator) and add it to needed_typing_imports.
-        for old, new in _DEPRECATED_TYPING_TYPES:
-            if old.startswith('typing.') and new.startswith('collections.abc'):
-                self.aliases[new] = old[7:]
 
         # Typing names that the Renamer actually used (e.g. typing.Self → Self).
         # Drives import emission instead of guessing via _TYPING_TYPES.
