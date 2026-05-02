@@ -366,6 +366,8 @@ def _merge_set(
             for base in t.type_obj.__mro__:
                 if base is t.type_obj or base is object:
                     continue
+                if _is_private_type(base):
+                    continue
                 if all(
                     (a := getattr(base, attr, sentinel)) is not sentinel
                     and a is getattr(t.type_obj, attr, sentinel)

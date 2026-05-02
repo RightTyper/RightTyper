@@ -1612,3 +1612,16 @@ def test_lub_skips_private_mro_ancestors():
     result = lub(a, b)
     # Should NOT merge to _Base (private) — should be a union
     assert result.is_union(), f"expected union, got {result}"
+
+
+def test_merged_types_single_type_skips_private_ancestor():
+    """merged_types with a single type and accessed_attributes should not
+    generalize to an ancestor in a private module."""
+    from righttyper.generalize import merged_types
+
+    _Base = type('_Base', (object,), {'__module__': '_internal.base', 'do_thing': lambda self: None})
+    Concrete = type('Concrete', (_Base,), {'__module__': 'mypkg'})
+
+    result = merged_types({TypeInfo.from_type(Concrete)}, accessed_attributes={'do_thing'})
+    # Should stay as Concrete, not generalize to _Base
+    assert result == TypeInfo.from_type(Concrete)
