@@ -7665,7 +7665,9 @@ def test_accessed_attributes_survive_collect_process():
     # f only accesses .greet() (inherited, not overridden), so Sub should
     # simplify to Base.  This requires accessed_attributes to survive the
     # .rt round-trip.
-    assert 'Base' in get_function(code, 'f')
+    func = get_function(code, 'f')
+    assert func is not None
+    assert 'Base' in func
 
 
 def test_parent_type_propagation_classmethod():
