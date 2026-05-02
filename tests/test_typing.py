@@ -197,6 +197,21 @@ def test_local_type_module_invalid(monkeypatch, adjust_type_names):
     assert get_type_name(Invalid).module == "does_not_exist"
 
 
+def test_to_name_map_skips_non_string_module():
+    """to_name_map must skip types whose __module__ is not a string (e.g. Cython metaclasses)."""
+    # Simulate a C extension type whose __module__ is a descriptor, not a string
+    bad_type = type('CythonLike', (object,), {})
+    bad_type.__module__ = property(lambda self: 'fake')  # non-string descriptor  # type: ignore
+
+    tm = TypeMap({})
+    # Force-register: _map stores type → [TypeName, ...]
+    tm._map[bad_type] = [('some_module', 'CythonLike')]
+
+    name_map = tm.to_name_map()
+    # bad_type should be skipped — no key with 'CythonLike' in the map
+    assert not any('CythonLike' in k[1] for k in name_map)
+
+
 def test_items_from_typing():
     assert TypeInfo("typing", "Any") == get_type_name(Any)
     assert TypeInfo("typing", "Self") == get_type_name(Self)

@@ -185,10 +185,13 @@ class TypeMap:
         result: dict[tuple[str, str], tuple[str, str]] = {}
         for t, names in self._map.items():
             if names:
-                original = (
-                    normalize_module_name(getattr(t, '__module__', '')),
-                    getattr(t, '__qualname__', getattr(t, '__name__', ''))
-                )
+                mod = getattr(t, '__module__', '')
+                name = getattr(t, '__qualname__', getattr(t, '__name__', ''))
+                # Some C extension types (e.g. Cython metaclasses) have
+                # non-string __module__ descriptors; skip those.
+                if not isinstance(mod, str) or not isinstance(name, str):
+                    continue
+                original = (normalize_module_name(mod), name)
                 canonical = names[0]
                 if original != canonical:
                     result[original] = canonical
