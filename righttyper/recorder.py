@@ -665,6 +665,23 @@ class ObservationsRecorder:
             if is_test_module(mod_name)
         }
 
+        # If the runner script lives outside --root, treat its module as a
+        # test module: any classes defined in the runner are scaffolding,
+        # not part of any package's contract.
+        main_file = main_globals.get('__file__') if main_globals else None
+        if main_file and run_options.script_dir:
+            script_dir = Path(run_options.script_dir).resolve()
+            main_path = Path(main_file).resolve()
+            if not main_path.is_relative_to(script_dir):
+                if (
+                    (main_spec := main_globals.get('__spec__'))
+                    and main_spec.origin
+                    and (main_name := source_to_module_fqn(Path(main_spec.origin)))
+                ):
+                    obs.test_modules.add(main_name)
+                else:
+                    obs.test_modules.add('__main__')
+
         if run_options.exclude_test_files:
             # should_skip_function doesn't know to skip test files until they are detected,
             # so we can't help but get events for test modules while they are being loaded.
