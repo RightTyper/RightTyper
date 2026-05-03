@@ -381,12 +381,15 @@ def _merge_set(
                     continue
                 if _is_private_type(base):
                     continue
+                # First public ancestor: de-privatize if it has all
+                # accessed attributes, otherwise keep the private name.
                 if all(
                     (a := getattr(base, attr, sentinel)) is not sentinel
                     and a is getattr(t.type_obj, attr, sentinel)
                     for attr in check_attrs
                 ):
                     return get_type_name(base)
+                break
 
     # Flatten any non-typevar unions in the input so each leaf type
     # participates in the pairwise reduction. Otherwise lub treats `int|str`
