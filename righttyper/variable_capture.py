@@ -219,13 +219,6 @@ class VariableFinder(ast.NodeVisitor):
         """Resolve a variable name to all names it could refer to (including itself)."""
         return self._aliases_stack[-1].get(name, set()) | {name}
 
-    def _record_attribute_access(self, var_name: str, attr_name: str) -> None:
-        """Record that attr_name is accessed on var_name (and its aliases)."""
-        code_name = self._code_stack[-1]
-        attrs = self._accessed_attributes.setdefault(code_name, {})
-        for name in self._resolve_aliases(var_name):
-            attrs.setdefault(name, set()).add(attr_name)
-
     def _record_target(self, t: ast.AST, value: ast.expr | None = None) -> None:
         if isinstance(t, ast.Name):
             self._record_variable(t.id, value)
@@ -375,6 +368,129 @@ class VariableFinder(ast.NodeVisitor):
         return (name not in self._not_locals_stack[-1]  # not a parameter
                 and name not in self.code_vars.get(self._code_stack[-1], CodeVars("")).variables)
 
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        # any NamedExpr within stay within the lambda's scope
+        pass
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        # Only pass value for simple single-target assignments like "x = None"
+        # or "self.x = None". We skip multi-target (x = y = 1) and tuple
+        # unpacking (a, b = 0, 1) to keep the implementation simple.
+        value = node.value if (len(node.targets) == 1
+                               and isinstance(node.targets[0], (ast.Name, ast.Attribute))) else None
+
+        # Check if we're in a class body (not in a function)
+        in_class_body = (
+            self._class_stack
+            and self._code_stack[-1] == self._class_stack[-1].name
+        )
+
+        for tgt in node.targets:
+            for t in _iter_target_atoms(tgt):
+                # Capture class-body assignments like `monitor = None`
+                if in_class_body and isinstance(t, ast.Name):
+                    class_info = self._class_stack[-1]
+                    # Only record first assignment; capture initial constant type if applicable
+                    if t.id not in class_info.class_attributes:
+                        const_type = type(value.value) if (value is not None and isinstance(value, ast.Constant)) else None
+                        class_info.class_attributes[t.id] = const_type
+                self._record_target(t, value)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        # require value to filter out pure type declarations
+        if node.value is not None and node.target is not None:
+            for t in _iter_target_atoms(node.target):
+                self._record_target(t, node.value)
+        self.generic_visit(node)
+
+    def visit_TypeAlias(self, node: ast.TypeAlias) -> None:
+        # Is 'type X = ...' a declaration or variable definition?
+        # For now, we err on the side of capturing it.
+        for t in _iter_target_atoms(node.name):
+            self._record_target(t)
+        self.generic_visit(node)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        for t in _iter_target_atoms(node.target):
+            self._record_target(t)
+        self.generic_visit(node)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        for t in _iter_target_atoms(node.target):
+            self._record_target(t)
+        self.generic_visit(node)
+
+    def visit_For(self, node: ast.For) -> None:
+        for t in _iter_target_atoms(node.target):
+            self._record_target(t)
+        self.generic_visit(node)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        for t in _iter_target_atoms(node.target):
+            self._record_target(t)
+        self.generic_visit(node)
+
+    def visit_With(self, node: ast.With) -> None:
+        for item in node.items:
+            if item.optional_vars is not None:
+                for t in _iter_target_atoms(item.optional_vars):
+                    self._record_target(t)
+        self.generic_visit(node)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        for item in node.items:
+            if item.optional_vars is not None:
+                for t in _iter_target_atoms(item.optional_vars):
+                    self._record_target(t)
+        self.generic_visit(node)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if isinstance(node.name, str):
+            self._record_variable(node.name)
+        self.generic_visit(node)
+
+    def visit_Match(self, node: ast.Match) -> None:
+        # Bind names from patterns
+        for case in node.cases:
+            for nm in _from_pattern(case.pattern):
+                self._record_variable(nm)
+        self.generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        pass # don't need these
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        pass # don't need these
+
+
+def _walk_code_objects(co: types.CodeType) -> abc.Iterator[types.CodeType]:
+    """Iterates through all code objects within a code object."""
+    yield co
+
+    for c in co.co_consts:
+        if isinstance(c, types.CodeType):
+            yield from _walk_code_objects(c)
+
+
+class AttributeTrackingVariableFinder(VariableFinder):
+    """Adds static analysis of attribute accesses on top of variable tracking.
+
+    The pure-attribute visit methods (visit_Attribute, visit_Subscript, ...) live
+    only on this subclass so that, when `--no-use-attribute-simplification` is in
+    effect, ast.NodeVisitor.visit() finds no override and falls straight to
+    generic_visit — eliminating per-node dispatch overhead. Mixed methods
+    (visit_For, visit_AugAssign, ...) override the base's variable-only
+    implementation and call super() to add the attribute-recording side.
+    """
+
+    def _record_attribute_access(self, var_name: str, attr_name: str) -> None:
+        """Record that attr_name is accessed on var_name (and its aliases)."""
+        code_name = self._code_stack[-1]
+        attrs = self._accessed_attributes.setdefault(code_name, {})
+        for name in self._resolve_aliases(var_name):
+            attrs.setdefault(name, set()).add(attr_name)
+
     def visit_Attribute(self, node: ast.Attribute) -> None:
         # Record attribute accesses on variables: x.foo, x.foo(), x.foo = val
         if isinstance(node.value, ast.Name):
@@ -449,128 +565,45 @@ class VariableFinder(ast.NodeVisitor):
                 self._record_attribute_access(gen.iter.id, "__iter__")
         self.generic_visit(node)
 
-    def visit_Lambda(self, node: ast.Lambda) -> None:
-        # any NamedExpr within stay within the lambda's scope
-        pass
-
-    def visit_Assign(self, node: ast.Assign) -> None:
-        # Only pass value for simple single-target assignments like "x = None"
-        # or "self.x = None". We skip multi-target (x = y = 1) and tuple
-        # unpacking (a, b = 0, 1) to keep the implementation simple.
-        value = node.value if (len(node.targets) == 1
-                               and isinstance(node.targets[0], (ast.Name, ast.Attribute))) else None
-
-        # Check if we're in a class body (not in a function)
-        in_class_body = (
-            self._class_stack
-            and self._code_stack[-1] == self._class_stack[-1].name
-        )
-
-        for tgt in node.targets:
-            for t in _iter_target_atoms(tgt):
-                # Capture class-body assignments like `monitor = None`
-                if in_class_body and isinstance(t, ast.Name):
-                    class_info = self._class_stack[-1]
-                    # Only record first assignment; capture initial constant type if applicable
-                    if t.id not in class_info.class_attributes:
-                        const_type = type(value.value) if (value is not None and isinstance(value, ast.Constant)) else None
-                        class_info.class_attributes[t.id] = const_type
-                self._record_target(t, value)
-        self.generic_visit(node)
-
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        # require value to filter out pure type declarations
-        if node.value is not None and node.target is not None:
-            for t in _iter_target_atoms(node.target):
-                self._record_target(t, node.value)
-        self.generic_visit(node)
-
-    def visit_TypeAlias(self, node: ast.TypeAlias) -> None:
-        # Is 'type X = ...' a declaration or variable definition?
-        # For now, we err on the side of capturing it.
-        for t in _iter_target_atoms(node.name):
-            self._record_target(t)
-        self.generic_visit(node)
-
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         if isinstance(node.target, ast.Name) and (d := _AUGASSIGN_TO_DUNDER.get(type(node.op))):
             self._record_attribute_access(node.target.id, d)
-        for t in _iter_target_atoms(node.target):
-            self._record_target(t)
-        self.generic_visit(node)
-
-    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
-        for t in _iter_target_atoms(node.target):
-            self._record_target(t)
-        self.generic_visit(node)
+        super().visit_AugAssign(node)
 
     def visit_For(self, node: ast.For) -> None:
         if isinstance(node.iter, ast.Name):
             self._record_attribute_access(node.iter.id, "__iter__")
-        for t in _iter_target_atoms(node.target):
-            self._record_target(t)
-        self.generic_visit(node)
+        super().visit_For(node)
 
     def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
         if isinstance(node.iter, ast.Name):
             self._record_attribute_access(node.iter.id, "__iter__")
-        for t in _iter_target_atoms(node.target):
-            self._record_target(t)
-        self.generic_visit(node)
+        super().visit_AsyncFor(node)
 
     def visit_With(self, node: ast.With) -> None:
         for item in node.items:
             if isinstance(item.context_expr, ast.Name):
                 self._record_attribute_access(item.context_expr.id, "__enter__")
                 self._record_attribute_access(item.context_expr.id, "__exit__")
-            if item.optional_vars is not None:
-                for t in _iter_target_atoms(item.optional_vars):
-                    self._record_target(t)
-        self.generic_visit(node)
+        super().visit_With(node)
 
     def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
         for item in node.items:
             if isinstance(item.context_expr, ast.Name):
                 self._record_attribute_access(item.context_expr.id, "__aenter__")
                 self._record_attribute_access(item.context_expr.id, "__aexit__")
-            if item.optional_vars is not None:
-                for t in _iter_target_atoms(item.optional_vars):
-                    self._record_target(t)
-        self.generic_visit(node)
-
-    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
-        if isinstance(node.name, str):
-            self._record_variable(node.name)
-        self.generic_visit(node)
-
-    def visit_Match(self, node: ast.Match) -> None:
-        # Bind names from patterns
-        for case in node.cases:
-            for nm in _from_pattern(case.pattern):
-                self._record_variable(nm)
-        self.generic_visit(node)
-
-    def visit_Import(self, node: ast.Import) -> None:
-        pass # don't need these
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        pass # don't need these
+        super().visit_AsyncWith(node)
 
 
-def _walk_code_objects(co: types.CodeType) -> abc.Iterator[types.CodeType]:
-    """Iterates through all code objects within a code object."""
-    yield co
-
-    for c in co.co_consts:
-        if isinstance(c, types.CodeType):
-            yield from _walk_code_objects(c)
-
-
-def map_variables(tree: ast.Module, module_code: types.CodeType) -> dict[types.CodeType, CodeVars]:
+def map_variables(
+    tree: ast.Module,
+    module_code: types.CodeType,
+    track_attributes: bool = True,
+) -> dict[types.CodeType, CodeVars]:
     """Creates a map of code objects to the variables assigned to in that code,
        to facilitate variable sampling."""
 
-    f = VariableFinder()
+    f: VariableFinder = AttributeTrackingVariableFinder() if track_attributes else VariableFinder()
     f.visit(tree)
 
     qualname2code: dict[str|None, types.CodeType] = {

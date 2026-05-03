@@ -5,10 +5,18 @@ import ast
 import types
 
 
-def map_variables(source: str) -> dict[types.CodeType, variables.CodeVars]:
-    tree = ast.parse(source)
-    code = compile(tree, "<string>", "exec", optimize=0)
-    return variables.map_variables(tree, code)
+@pytest.fixture(params=[True, False], ids=['track_attrs', 'no_track_attrs'])
+def track_attributes(request):
+    return request.param
+
+
+@pytest.fixture
+def map_variables(track_attributes):
+    def _impl(source: str) -> dict[types.CodeType, variables.CodeVars]:
+        tree = ast.parse(source)
+        code = compile(tree, "<string>", "exec", optimize=0)
+        return variables.map_variables(tree, code, track_attributes=track_attributes)
+    return _impl
 
 
 def get(mapping: dict[types.CodeType, variables.CodeVars], name: str):
@@ -22,7 +30,7 @@ def get(mapping: dict[types.CodeType, variables.CodeVars], name: str):
     return set()
 
 
-def test_simple_assign_and_augassign():
+def test_simple_assign_and_augassign(map_variables):
     src = textwrap.dedent("""
         x = 1
         def f(y):
@@ -36,7 +44,7 @@ def test_simple_assign_and_augassign():
     assert get(m, "f") == {"a"}
 
 
-def test_annassign_requires_value():
+def test_annassign_requires_value(map_variables):
     src = textwrap.dedent("""
         x: int
         y: int = 3
@@ -45,7 +53,7 @@ def test_annassign_requires_value():
     assert get(m, "<module>") == {"y"}
 
 
-def test_typealias():
+def test_typealias(map_variables):
     src = textwrap.dedent("""
         type x = int
         type y[T: int] = list[T]
@@ -54,7 +62,7 @@ def test_typealias():
     assert get(m, "<module>") == {"x", "y"}
 
 
-def test_unpacking_tuple_list_starred():
+def test_unpacking_tuple_list_starred(map_variables):
     src = textwrap.dedent("""
         (a, (b, *c)) = (1, (2, 3, 4))
         """)
@@ -62,7 +70,7 @@ def test_unpacking_tuple_list_starred():
     assert get(m, "<module>") == {"a", "b", "c"}
 
 
-def test_namedexpr_walrus_and_nested():
+def test_namedexpr_walrus_and_nested(map_variables):
     src = textwrap.dedent("""
         def g():
             d = (e := 10)
@@ -72,7 +80,7 @@ def test_namedexpr_walrus_and_nested():
     assert get(m, "g") == {"d", "e", "f", "h", "i"}
 
 
-def test_attribute_chains_and_subscripts():
+def test_attribute_chains_and_subscripts(map_variables):
     src = textwrap.dedent("""
         x.y = 1
         z[2] = None
@@ -81,7 +89,7 @@ def test_attribute_chains_and_subscripts():
     assert get(m, "<module>") == set()
 
 
-def test_for_asyncfor_with_targets():
+def test_for_asyncfor_with_targets(map_variables):
     src = textwrap.dedent("""
         async def a():
             async for (x, y) in agen():
@@ -96,7 +104,7 @@ def test_for_asyncfor_with_targets():
     assert {"u", "v"}.issubset(get(m, "b"))
 
 
-def test_with_and_asyncwith():
+def test_with_and_asyncwith(map_variables):
     src = textwrap.dedent("""
         from contextlib import asynccontextmanager, contextmanager
 
@@ -119,7 +127,7 @@ def test_with_and_asyncwith():
     assert "aw" in get(m, "g")
 
 
-def test_except_handler_name():
+def test_except_handler_name(map_variables):
     src = textwrap.dedent("""
         def f():
             try:
@@ -131,7 +139,7 @@ def test_except_handler_name():
     assert get(m, "f") == {"e", "msg"}
 
 
-def test_import():
+def test_import(map_variables):
     src = textwrap.dedent("""
         import os as myos
         from math import sin as mysin, cos
@@ -140,7 +148,7 @@ def test_import():
     assert get(m, "<module>") == set()
 
 
-def test_class_and_method_bodies():
+def test_class_and_method_bodies(map_variables):
     src = textwrap.dedent("""
         class A:
             def __init__(myself):
@@ -170,7 +178,7 @@ def test_class_and_method_bodies():
     assert get(m, "C.__init__") == {"self.z", "self.a"}
 
 
-def test_class_and_method_bodies_nested():
+def test_class_and_method_bodies_nested(map_variables):
     src = textwrap.dedent("""
         def f():
             class C:
@@ -188,7 +196,7 @@ def test_class_and_method_bodies_nested():
     assert get(m, "f.<locals>.C.__init__") == {"self.z"}
 
 
-def test_self_not_in_method():
+def test_self_not_in_method(map_variables):
     src = textwrap.dedent("""
         def __init__(self):
             self.a = None
@@ -209,7 +217,7 @@ def test_self_not_in_method():
     assert get(m, "C.bar") == set()
 
 
-def test_self_nested_in_method():
+def test_self_nested_in_method(map_variables):
     src = textwrap.dedent("""
         class C:
             def f1(self):
@@ -235,7 +243,7 @@ def test_self_nested_in_method():
     assert get(m, "C.f3.<locals>.f.<locals>.g") == set()
 
 
-def test_self_attribute_in_various_methods():
+def test_self_attribute_in_various_methods(map_variables):
     src = textwrap.dedent("""
         class C:
             def __init__(self):
@@ -265,7 +273,7 @@ def test_self_attribute_in_various_methods():
     assert get(m, "C.f3") == {"self.x", "self.y", "self.z"}
 
 
-def test_lambdas_and_comprehensions_have_their_own_code_objects():
+def test_lambdas_and_comprehensions_have_their_own_code_objects(map_variables):
     src = textwrap.dedent("""
         L = [(a:=w) for w in range(2)]
         S = {(b:=w) for w in range(2)}
@@ -280,7 +288,7 @@ def test_lambdas_and_comprehensions_have_their_own_code_objects():
     assert get(mapping, "<lambda>") == set()
 
 
-def test_match_tuple_pattern():
+def test_match_tuple_pattern(map_variables):
     src = textwrap.dedent("""
         def f(data):
             match data:
@@ -291,7 +299,7 @@ def test_match_tuple_pattern():
     assert get(m, "f") == {"x", "y", "z"}
 
 
-def test_match_class_pattern_with_fields():
+def test_match_class_pattern_with_fields(map_variables):
     src = textwrap.dedent("""
         def f(obj):
             match obj:
@@ -302,7 +310,7 @@ def test_match_class_pattern_with_fields():
     assert get(m, "f") == {"a", "b", "total"}
 
 
-def test_match_nested_mapping_and_sequence():
+def test_match_nested_mapping_and_sequence(map_variables):
     src = textwrap.dedent("""
         def f(record):
             match record:
@@ -313,7 +321,7 @@ def test_match_nested_mapping_and_sequence():
     assert get(m, "f") == {"uid", "name", "seen"}
 
 
-def test_match_sequence_starred_and_count():
+def test_match_sequence_starred_and_count(map_variables):
     src = textwrap.dedent("""
         def f(seq):
             match seq:
@@ -324,7 +332,7 @@ def test_match_sequence_starred_and_count():
     assert get(m, "f") == {"first", "rest", "count"}
 
 
-def test_match_or_requires_same_bindings():
+def test_match_or_requires_same_bindings(map_variables):
     src = textwrap.dedent("""
         def f(value):
             match value:
@@ -335,7 +343,7 @@ def test_match_or_requires_same_bindings():
     assert get(m, "f") == {"n", "result"}
 
 
-def test_match_mapping_with_rest():
+def test_match_mapping_with_rest(map_variables):
     src = textwrap.dedent("""
         def f(d):
             match d:
@@ -346,7 +354,7 @@ def test_match_mapping_with_rest():
     assert get(m, "f") == {"x", "rest"}
 
 
-def test_match_class_pattern_with_as_binding():
+def test_match_class_pattern_with_as_binding(map_variables):
     src = textwrap.dedent("""
         def f(node):
             match node:
@@ -357,7 +365,7 @@ def test_match_class_pattern_with_as_binding():
     assert get(m, "f") == {"l", "r", "tree", "depth"}
 
 
-def test_match_as_simple_name_only():
+def test_match_as_simple_name_only(map_variables):
     src = textwrap.dedent("""
         def f(x):
             match x:
@@ -376,7 +384,7 @@ def get_initial_constants(mapping: dict[types.CodeType, variables.CodeVars], nam
     return {}
 
 
-def test_initial_constant_none_captured():
+def test_initial_constant_none_captured(map_variables):
     """Test that x = None captures NoneType as initial constant."""
     src = textwrap.dedent("""
         def foo():
@@ -389,7 +397,7 @@ def test_initial_constant_none_captured():
     assert consts.get("x") == type(None)
 
 
-def test_initial_constant_int_captured():
+def test_initial_constant_int_captured(map_variables):
     """Test that x = 0 captures int as initial constant."""
     src = textwrap.dedent("""
         def foo():
@@ -402,7 +410,7 @@ def test_initial_constant_int_captured():
     assert consts.get("x") == int
 
 
-def test_initial_constant_str_captured():
+def test_initial_constant_str_captured(map_variables):
     """Test that x = "" captures str as initial constant."""
     src = textwrap.dedent("""
         def foo():
@@ -414,7 +422,7 @@ def test_initial_constant_str_captured():
     assert consts.get("x") == str
 
 
-def test_non_constant_not_captured():
+def test_non_constant_not_captured(map_variables):
     """Test that x = [] does NOT capture (not ast.Constant)."""
     src = textwrap.dedent("""
         def foo():
@@ -426,7 +434,7 @@ def test_non_constant_not_captured():
     assert "x" not in consts
 
 
-def test_function_call_not_captured():
+def test_function_call_not_captured(map_variables):
     """Test that x = foo() does NOT capture (not ast.Constant)."""
     src = textwrap.dedent("""
         def foo():
@@ -438,7 +446,7 @@ def test_function_call_not_captured():
     assert "x" not in consts
 
 
-def test_reassignment_preserves_initial():
+def test_reassignment_preserves_initial(map_variables):
     """Test that reassignment doesn't overwrite initial constant."""
     src = textwrap.dedent("""
         def foo():
@@ -453,7 +461,7 @@ def test_reassignment_preserves_initial():
     assert consts.get("x") == type(None)
 
 
-def test_initial_constant_bool_captured():
+def test_initial_constant_bool_captured(map_variables):
     """Test that x = True captures bool as initial constant."""
     src = textwrap.dedent("""
         def foo():
@@ -465,7 +473,7 @@ def test_initial_constant_bool_captured():
     assert consts.get("x") == bool
 
 
-def test_initial_constant_float_captured():
+def test_initial_constant_float_captured(map_variables):
     """Test that x = 3.14 captures float as initial constant."""
     src = textwrap.dedent("""
         def foo():
@@ -477,7 +485,7 @@ def test_initial_constant_float_captured():
     assert consts.get("x") == float
 
 
-def test_module_level_initial_constant():
+def test_module_level_initial_constant(map_variables):
     """Test initial constants at module level."""
     src = textwrap.dedent("""
         x = None
@@ -491,7 +499,7 @@ def test_module_level_initial_constant():
     assert "z" not in consts
 
 
-def test_annotated_assignment_initial_constant():
+def test_annotated_assignment_initial_constant(map_variables):
     """Test that x: int = None captures NoneType."""
     src = textwrap.dedent("""
         def foo():
@@ -503,7 +511,7 @@ def test_annotated_assignment_initial_constant():
     assert consts.get("x") == type(None)
 
 
-def test_declaration_without_assignment_not_captured():
+def test_declaration_without_assignment_not_captured(map_variables):
     """Test that x: str (no value) does NOT capture anything from declaration."""
     src = textwrap.dedent("""
         def foo():
@@ -518,7 +526,7 @@ def test_declaration_without_assignment_not_captured():
     assert consts.get("x") == int
 
 
-def test_tuple_unpacking_not_captured():
+def test_tuple_unpacking_not_captured(map_variables):
     """Test that a, b = 0, 1 does NOT capture (can't match values to targets)."""
     src = textwrap.dedent("""
         def foo():
@@ -542,7 +550,7 @@ def get_attribute_initial_constants(mapping: dict[types.CodeType, variables.Code
     return {}
 
 
-def test_attribute_initial_constant_none_captured():
+def test_attribute_initial_constant_none_captured(map_variables):
     """Test that self.x = None captures NoneType for attribute."""
     src = textwrap.dedent("""
         class C:
@@ -556,7 +564,7 @@ def test_attribute_initial_constant_none_captured():
     assert consts.get("x") == type(None)
 
 
-def test_attribute_initial_constant_int_captured():
+def test_attribute_initial_constant_int_captured(map_variables):
     """Test that self.x = 0 captures int for attribute."""
     src = textwrap.dedent("""
         class C:
@@ -568,7 +576,7 @@ def test_attribute_initial_constant_int_captured():
     assert consts.get("x") == int
 
 
-def test_attribute_non_constant_not_captured():
+def test_attribute_non_constant_not_captured(map_variables):
     """Test that self.x = foo() does NOT capture."""
     src = textwrap.dedent("""
         class C:
@@ -602,7 +610,7 @@ def get_class_attribute_initial_constants(mapping: dict[types.CodeType, variable
     return {}
 
 
-def test_class_body_attribute_captured():
+def test_class_body_attribute_captured(map_variables):
     """Class body assignment like `monitor = None` captures class attribute."""
     src = textwrap.dedent("""
         class C:
@@ -615,7 +623,7 @@ def test_class_body_attribute_captured():
     assert "monitor" in attrs
 
 
-def test_class_body_attribute_initial_constant():
+def test_class_body_attribute_initial_constant(map_variables):
     """Class body assignment `x = None` captures NoneType as initial constant."""
     src = textwrap.dedent("""
         class C:
@@ -626,7 +634,7 @@ def test_class_body_attribute_initial_constant():
     assert consts.get("x") == type(None)
 
 
-def test_class_body_non_constant_not_captured():
+def test_class_body_non_constant_not_captured(map_variables):
     """Class body assignment `x = []` does NOT capture initial constant."""
     src = textwrap.dedent("""
         class C:
@@ -637,7 +645,7 @@ def test_class_body_non_constant_not_captured():
     assert "x" not in consts
 
 
-def test_cls_assignment_captured():
+def test_cls_assignment_captured(map_variables):
     """cls.x = value in classmethod captures class attribute."""
     src = textwrap.dedent("""
         class C:
@@ -651,7 +659,7 @@ def test_cls_assignment_captured():
     assert "monitor" in attrs
 
 
-def test_cls_assignment_initial_constant():
+def test_cls_assignment_initial_constant(map_variables):
     """cls.x = None in classmethod captures NoneType as initial constant."""
     src = textwrap.dedent("""
         class C:
@@ -664,7 +672,7 @@ def test_cls_assignment_initial_constant():
     assert consts.get("x") == type(None)
 
 
-def test_cls_assignment_non_constant():
+def test_cls_assignment_non_constant(map_variables):
     """cls.x = foo() in classmethod does NOT capture initial constant."""
     src = textwrap.dedent("""
         class C:
@@ -677,7 +685,7 @@ def test_cls_assignment_non_constant():
     assert "x" not in consts
 
 
-def test_class_body_and_cls_combined():
+def test_class_body_and_cls_combined(map_variables):
     """Class body + classmethod assignments both contribute to class_attributes."""
     src = textwrap.dedent("""
         class C:
@@ -698,7 +706,7 @@ def test_class_body_and_cls_combined():
     assert "monitor" in method_attrs
 
 
-def test_cls_parameter_tracked():
+def test_cls_parameter_tracked(map_variables):
     """The cls parameter is tracked for classmethods."""
     src = textwrap.dedent("""
         class C:
@@ -716,7 +724,7 @@ def test_cls_parameter_tracked():
         assert False, "C.setup not found"
 
 
-def test_staticmethod_no_cls():
+def test_staticmethod_no_cls(map_variables):
     """Static methods should not have cls tracked."""
     src = textwrap.dedent("""
         class C:
@@ -734,7 +742,7 @@ def test_staticmethod_no_cls():
         assert False, "C.helper not found"
 
 
-def test_regular_method_no_cls():
+def test_regular_method_no_cls(map_variables):
     """Regular methods should have self but not cls."""
     src = textwrap.dedent("""
         class C:
@@ -763,7 +771,8 @@ def get_accessed_attributes(mapping: dict[types.CodeType, variables.CodeVars], n
     return {}
 
 
-def test_accessed_attributes_simple():
+def test_accessed_attributes_simple(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """x.foo collects 'foo' on parameter x."""
     src = textwrap.dedent("""
         def f(x):
@@ -774,7 +783,8 @@ def test_accessed_attributes_simple():
     assert attrs.get("x") == {"name"}
 
 
-def test_accessed_attributes_method_call():
+def test_accessed_attributes_method_call(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """x.foo() still collects 'foo' — it's an attribute access followed by a call."""
     src = textwrap.dedent("""
         def f(x):
@@ -785,7 +795,8 @@ def test_accessed_attributes_method_call():
     assert attrs.get("x") == {"process"}
 
 
-def test_accessed_attributes_multiple_vars():
+def test_accessed_attributes_multiple_vars(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """Different attributes on different variables are tracked separately."""
     src = textwrap.dedent("""
         def f(x, y):
@@ -797,7 +808,8 @@ def test_accessed_attributes_multiple_vars():
     assert attrs.get("y") == {"value"}
 
 
-def test_accessed_attributes_multiple_on_same_var():
+def test_accessed_attributes_multiple_on_same_var(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """Multiple attributes on the same variable are all collected."""
     src = textwrap.dedent("""
         def f(x):
@@ -808,7 +820,8 @@ def test_accessed_attributes_multiple_on_same_var():
     assert attrs.get("x") == {"name", "value"}
 
 
-def test_accessed_attributes_chained():
+def test_accessed_attributes_chained(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """x.foo.bar collects 'foo' on x (bar is on foo's result, not x)."""
     src = textwrap.dedent("""
         def f(x):
@@ -820,7 +833,8 @@ def test_accessed_attributes_chained():
     assert "name" not in attrs.get("x", set())
 
 
-def test_accessed_attributes_includes_writes():
+def test_accessed_attributes_includes_writes(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """x.foo = val is still an attribute access — the type needs to support it."""
     src = textwrap.dedent("""
         def f(x):
@@ -831,7 +845,8 @@ def test_accessed_attributes_includes_writes():
     assert "name" in attrs.get("x", set())
 
 
-def test_accessed_attributes_locals():
+def test_accessed_attributes_locals(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """Attribute access on local variables, not just parameters."""
     src = textwrap.dedent("""
         def f():
@@ -843,7 +858,8 @@ def test_accessed_attributes_locals():
     assert attrs.get("result") == {"count"}
 
 
-def test_accessed_attributes_alias():
+def test_accessed_attributes_alias(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """y = x; y.name records 'name' on x."""
     src = textwrap.dedent("""
         def f(x):
@@ -855,7 +871,8 @@ def test_accessed_attributes_alias():
     assert "name" in attrs.get("x", set())
 
 
-def test_accessed_attributes_transitive_alias():
+def test_accessed_attributes_transitive_alias(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """z = y; y = x; z still aliases through to x."""
     src = textwrap.dedent("""
         def f(x):
@@ -868,7 +885,8 @@ def test_accessed_attributes_transitive_alias():
     assert "name" in attrs.get("x", set())
 
 
-def test_accessed_attributes_alias_reassigned():
+def test_accessed_attributes_alias_reassigned(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """Reassignment after alias: conservatively keeps the alias (could be a branch)."""
     src = textwrap.dedent("""
         def f(x):
@@ -885,7 +903,8 @@ def test_accessed_attributes_alias_reassigned():
     assert "name" in attrs.get("x", set())
 
 
-def test_accessed_attributes_alias_branch_conservative():
+def test_accessed_attributes_alias_branch_conservative(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """Aliases from different branches are unioned (conservative)."""
     src = textwrap.dedent("""
         def f(x, y):
@@ -902,7 +921,8 @@ def test_accessed_attributes_alias_branch_conservative():
     assert "value" in attrs.get("y", set())
 
 
-def test_aliases_do_not_leak_across_sibling_functions():
+def test_aliases_do_not_leak_across_sibling_functions(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """An alias recorded in one function (y = x) must not be visible to a
     sibling function's same-named variable. With shared alias state, h's
     y.foo would erroneously be recorded as foo on x — even though h's y is
@@ -929,7 +949,8 @@ def test_aliases_do_not_leak_across_sibling_functions():
     assert "h_only" in h_attrs.get("y", set())
 
 
-def test_aliases_propagate_into_nested_functions():
+def test_aliases_propagate_into_nested_functions(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """Closures should still see their enclosing scope's aliases."""
     src = textwrap.dedent("""
         def f(x):
@@ -945,7 +966,8 @@ def test_aliases_propagate_into_nested_functions():
     assert "name" in f_attrs.get("x", set()) or "name" in inner_attrs.get("x", set())
 
 
-def test_accessed_attributes_non_name_assignment_no_alias():
+def test_accessed_attributes_non_name_assignment_no_alias(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """y = x.child is not an alias — attribute access on y stays on y."""
     src = textwrap.dedent("""
         def f(x):
@@ -963,7 +985,8 @@ def test_accessed_attributes_non_name_assignment_no_alias():
 # Tests for operator/builtin desugaring to dunder attributes
 # =============================================================================
 
-def test_desugar_subscript_getitem():
+def test_desugar_subscript_getitem(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """x[i] → __getitem__ on x."""
     src = textwrap.dedent("""
         def f(x, i):
@@ -974,7 +997,8 @@ def test_desugar_subscript_getitem():
     assert "__getitem__" in attrs.get("x", set())
 
 
-def test_desugar_subscript_setitem():
+def test_desugar_subscript_setitem(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """x[i] = v → __setitem__ on x."""
     src = textwrap.dedent("""
         def f(x, i, v):
@@ -985,7 +1009,8 @@ def test_desugar_subscript_setitem():
     assert "__setitem__" in attrs.get("x", set())
 
 
-def test_desugar_subscript_delitem():
+def test_desugar_subscript_delitem(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """del x[i] → __delitem__ on x."""
     src = textwrap.dedent("""
         def f(x, i):
@@ -996,7 +1021,8 @@ def test_desugar_subscript_delitem():
     assert "__delitem__" in attrs.get("x", set())
 
 
-def test_desugar_for_iter():
+def test_desugar_for_iter(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """for item in x → __iter__ on x."""
     src = textwrap.dedent("""
         def f(x):
@@ -1008,7 +1034,8 @@ def test_desugar_for_iter():
     assert "__iter__" in attrs.get("x", set())
 
 
-def test_desugar_comprehension_iter():
+def test_desugar_comprehension_iter(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """[... for item in x] → __iter__ on x."""
     src = textwrap.dedent("""
         def f(x):
@@ -1019,7 +1046,8 @@ def test_desugar_comprehension_iter():
     assert "__iter__" in attrs.get("x", set())
 
 
-def test_desugar_binop():
+def test_desugar_binop(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """x + y → __add__ on x."""
     src = textwrap.dedent("""
         def f(x, y):
@@ -1030,7 +1058,8 @@ def test_desugar_binop():
     assert "__add__" in attrs.get("x", set())
 
 
-def test_desugar_augassign():
+def test_desugar_augassign(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """x += y → __iadd__ on x."""
     src = textwrap.dedent("""
         def f(x, y):
@@ -1041,7 +1070,8 @@ def test_desugar_augassign():
     assert "__iadd__" in attrs.get("x", set())
 
 
-def test_desugar_unaryop():
+def test_desugar_unaryop(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """-x → __neg__ on x."""
     src = textwrap.dedent("""
         def f(x):
@@ -1052,7 +1082,8 @@ def test_desugar_unaryop():
     assert "__neg__" in attrs.get("x", set())
 
 
-def test_desugar_compare():
+def test_desugar_compare(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """x < y → __lt__ on x."""
     src = textwrap.dedent("""
         def f(x, y):
@@ -1063,7 +1094,8 @@ def test_desugar_compare():
     assert "__lt__" in attrs.get("x", set())
 
 
-def test_desugar_contains():
+def test_desugar_contains(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """item in x → __contains__ on x (right operand)."""
     src = textwrap.dedent("""
         def f(item, x):
@@ -1074,7 +1106,8 @@ def test_desugar_contains():
     assert "__contains__" in attrs.get("x", set())
 
 
-def test_desugar_with():
+def test_desugar_with(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """with x: → __enter__ and __exit__ on x."""
     src = textwrap.dedent("""
         def f(x):
@@ -1087,7 +1120,8 @@ def test_desugar_with():
     assert "__exit__" in attrs.get("x", set())
 
 
-def test_desugar_builtin_len():
+def test_desugar_builtin_len(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """len(x) → __len__ on x."""
     src = textwrap.dedent("""
         def f(x):
@@ -1098,7 +1132,8 @@ def test_desugar_builtin_len():
     assert "__len__" in attrs.get("x", set())
 
 
-def test_desugar_builtin_iter():
+def test_desugar_builtin_iter(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """iter(x) → __iter__ on x."""
     src = textwrap.dedent("""
         def f(x):
@@ -1109,7 +1144,8 @@ def test_desugar_builtin_iter():
     assert "__iter__" in attrs.get("x", set())
 
 
-def test_desugar_builtin_reversed():
+def test_desugar_builtin_reversed(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """reversed(x) → __reversed__ on x."""
     src = textwrap.dedent("""
         def f(x):
@@ -1120,7 +1156,8 @@ def test_desugar_builtin_reversed():
     assert "__reversed__" in attrs.get("x", set())
 
 
-def test_desugar_builtin_shadowed():
+def test_desugar_builtin_shadowed(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """If len is shadowed by a local, don't desugar."""
     src = textwrap.dedent("""
         def f(x):
@@ -1132,7 +1169,8 @@ def test_desugar_builtin_shadowed():
     assert "__len__" not in attrs.get("x", set())
 
 
-def test_desugar_builtin_shadowed_by_param():
+def test_desugar_builtin_shadowed_by_param(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """If len is a parameter name, don't desugar."""
     src = textwrap.dedent("""
         def f(len, x):
@@ -1143,7 +1181,8 @@ def test_desugar_builtin_shadowed_by_param():
     assert "__len__" not in attrs.get("x", set())
 
 
-def test_desugar_await():
+def test_desugar_await(map_variables, track_attributes):
+    if not track_attributes: pytest.skip("requires attribute tracking")
     """await x → __await__ on x."""
     src = textwrap.dedent("""
         async def f(x):

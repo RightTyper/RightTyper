@@ -13,7 +13,7 @@ from typing import Final, Any, NewType, overload
 import typing
 from righttyper.observations import Observations, FuncInfo, OverriddenFunction, ArgInfo
 from righttyper.variable_capture import code2variables
-from righttyper.options import run_options
+from righttyper.options import run_options, output_options
 from righttyper.righttyper_utils import (
     source_to_module_fqn, get_main_module_fqn, skip_this_file,
     detected_test_files, detected_test_modules, is_test_module,
@@ -642,15 +642,19 @@ class ObservationsRecorder:
         # serialization to .rt files for the --only-collect + process flow.
         # co_varnames/co_freevars are only available while the code object
         # is live, so module_accessed_attributes must be computed now.
-        for co, cv in code2variables.items():
-            if cv.accessed_attributes:
-                self._obs.accessed_attributes[CodeId.from_code(co)] = cv.accessed_attributes
-                module_attrs = self._obs.module_accessed_attributes.setdefault(
-                    Filename(co.co_filename), {}
-                )
-                for var_name, attrs in cv.accessed_attributes.items():
-                    if var_name not in co.co_varnames and var_name not in co.co_freevars:
-                        module_attrs.setdefault(var_name, set()).update(attrs)
+        # Skipped when --no-use-attribute-simplification: the loader will not
+        # have populated cv.accessed_attributes either, but the dict-write
+        # overhead is still worth avoiding.
+        if output_options.use_attribute_simplification:
+            for co, cv in code2variables.items():
+                if cv.accessed_attributes:
+                    self._obs.accessed_attributes[CodeId.from_code(co)] = cv.accessed_attributes
+                    module_attrs = self._obs.module_accessed_attributes.setdefault(
+                        Filename(co.co_filename), {}
+                    )
+                    for var_name, attrs in cv.accessed_attributes.items():
+                        if var_name not in co.co_varnames and var_name not in co.co_freevars:
+                            module_attrs.setdefault(var_name, set()).update(attrs)
 
         obs, self._obs = self._obs, Observations()
         self._code2func_info.clear()

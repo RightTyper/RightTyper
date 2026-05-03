@@ -13,6 +13,7 @@ from righttyper.ast_instrument import instrument
 from righttyper.variable_capture import code2variables, map_variables
 from righttyper.righttyper_utils import skip_this_file, skip_this_code
 from righttyper.righttyper_tool import setup_monitoring_for_code
+from righttyper.options import output_options
 
 
 class RightTyperLoader(ExecutionLoader):
@@ -44,7 +45,9 @@ class RightTyperLoader(ExecutionLoader):
         tree = ast.parse(self.get_source(fullname))
         tree = instrument(tree, replace_dict=self.replace_dict)
         code = compile(tree, str(self.path), "exec")
-        code2variables.update(map_variables(tree, code))
+        code2variables.update(map_variables(
+            tree, code, track_attributes=output_options.use_attribute_simplification
+        ))
         if not skip_this_code(code):
             setup_monitoring_for_code(code)
         return code
