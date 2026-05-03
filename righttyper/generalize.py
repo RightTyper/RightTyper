@@ -100,6 +100,11 @@ def _is_private_type(cls: type) -> bool:
     This partially duplicates TypeMap's is_private logic; done here to avoid
     threading the TypeMap through to lub.
     """
+    # A _-prefixed class name signals a private implementation detail,
+    # regardless of which module it lives in.
+    name = getattr(cls, '__name__', '') or ''
+    if name.startswith('_') and not name.startswith('__'):
+        return True
     mod = getattr(cls, '__module__', '') or ''
     if mod == '__main__' or not any(p.startswith('_') for p in mod.split('.')):
         return False

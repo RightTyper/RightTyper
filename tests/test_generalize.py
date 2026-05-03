@@ -751,14 +751,14 @@ def test_list_and_empty_tuple_without_accessed_attrs():
 # With accessed_attributes={'name'}, the merge should still work (Base has .name).
 # With accessed_attributes={'extra_a'}, merge should NOT happen (Base lacks .extra_a).
 
-class _Base:
+class Base:
     name: str = ""
     value: int = 0
 
-class _ChildA(_Base):
+class ChildA(Base):
     extra_a: str = ""
 
-class _ChildB(_Base):
+class ChildB(Base):
     extra_b: str = ""
 
 
@@ -766,38 +766,38 @@ def test_lub_with_accessed_attributes():
     """When accessed_attributes are provided and the common base has them, merge happens."""
     from righttyper.generalize import merged_types
 
-    a = TypeInfo.from_type(_ChildA)
-    b = TypeInfo.from_type(_ChildB)
+    a = TypeInfo.from_type(ChildA)
+    b = TypeInfo.from_type(ChildB)
 
     result = merged_types({a, b}, accessed_attributes={"name"})
     assert not result.is_union()
-    assert result.type_obj is _Base
+    assert result.type_obj is Base
 
 
 def test_lub_without_accessed_attributes():
     """Without accessed_attributes, dir()-based MRO merge to common base."""
     from righttyper.generalize import merged_types
 
-    a = TypeInfo.from_type(_ChildA)
-    b = TypeInfo.from_type(_ChildB)
+    a = TypeInfo.from_type(ChildA)
+    b = TypeInfo.from_type(ChildB)
 
     result = merged_types({a, b})
     assert not result.is_union()
-    assert result.type_obj is _Base
+    assert result.type_obj is Base
 
 
 def test_lub_accessed_attrs_prevents_over_merge():
     """When accessed_attributes include an attr not on the common base, merge is prevented."""
     from righttyper.generalize import merged_types
 
-    a = TypeInfo.from_type(_ChildA)
-    b = TypeInfo.from_type(_ChildB)
+    a = TypeInfo.from_type(ChildA)
+    b = TypeInfo.from_type(ChildB)
 
     # extra_a is only on ChildA, not on Base → can't merge to Base
     result = merged_types({a, b}, accessed_attributes={"extra_a"})
     assert result.is_union()
     types = {t.type_obj for t in result.to_set()}
-    assert types == {_ChildA, _ChildB}
+    assert types == {ChildA, ChildB}
 
 
 def test_lub_single_type_with_accessed_attributes():
@@ -805,21 +805,21 @@ def test_lub_single_type_with_accessed_attributes():
     are all present on that base."""
     from righttyper.generalize import merged_types
 
-    a = TypeInfo.from_type(_ChildA)
+    a = TypeInfo.from_type(ChildA)
 
-    # 'name' is on _Base → ChildA can be generalized to Base
+    # 'name' is on Base → ChildA can be generalized to Base
     result = merged_types({a}, accessed_attributes={"name"})
-    assert result.type_obj is _Base
+    assert result.type_obj is Base
 
 
 def test_lub_single_type_no_generalization_without_attrs():
     """Without accessed_attributes, a single type stays as-is."""
     from righttyper.generalize import merged_types
 
-    a = TypeInfo.from_type(_ChildA)
+    a = TypeInfo.from_type(ChildA)
 
     result = merged_types({a})
-    assert result.type_obj is _ChildA
+    assert result.type_obj is ChildA
 
 
 # =============================================================================
@@ -857,13 +857,13 @@ def test_lub_abc_not_used_when_concrete_base_exists():
     prefer it over ABC matching."""
     from righttyper.generalize import merged_types
 
-    a = TypeInfo.from_type(_ChildA)
-    b = TypeInfo.from_type(_ChildB)
+    a = TypeInfo.from_type(ChildA)
+    b = TypeInfo.from_type(ChildB)
 
-    # 'name' is on _Base → concrete merge to _Base, not to some ABC
+    # 'name' is on Base → concrete merge to Base, not to some ABC
     result = merged_types({a, b}, accessed_attributes={"name"})
     assert not result.is_union()
-    assert result.type_obj is _Base
+    assert result.type_obj is Base
 
 
 def test_lub_abc_single_type():
@@ -1103,21 +1103,21 @@ def test_lub_empty_tuple_subsumed_by_varlen():
 def test_lub_mro_common_base_with_attrs():
     """lub(ChildA, ChildB) → Base with accessed_attributes."""
     from righttyper.generalize import lub
-    a = TypeInfo.from_type(_ChildA)
-    b = TypeInfo.from_type(_ChildB)
+    a = TypeInfo.from_type(ChildA)
+    b = TypeInfo.from_type(ChildB)
     result = lub(a, b, accessed_attributes={"name"})
     assert not result.is_union()
-    assert result.type_obj is _Base
+    assert result.type_obj is Base
 
 
 def test_lub_mro_common_base_without_attrs():
     """lub(ChildA, ChildB) → Base even without accessed_attributes (dir() check passes)."""
     from righttyper.generalize import lub
-    a = TypeInfo.from_type(_ChildA)
-    b = TypeInfo.from_type(_ChildB)
+    a = TypeInfo.from_type(ChildA)
+    b = TypeInfo.from_type(ChildB)
     result = lub(a, b)
     assert not result.is_union()
-    assert result.type_obj is _Base
+    assert result.type_obj is Base
 
 
 def test_lub_mro_no_useful_base():
@@ -1233,8 +1233,8 @@ def test_lub_dict_and_list_of_tuples():
 def test_lub_subtype_narrowing():
     """lub(ChildA, Base) → Base (ChildA <: Base)."""
     from righttyper.generalize import lub
-    a = TypeInfo.from_type(_ChildA)
-    base = TypeInfo.from_type(_Base)
+    a = TypeInfo.from_type(ChildA)
+    base = TypeInfo.from_type(Base)
     assert lub(a, base) == base
     assert lub(base, a) == base
 
@@ -1379,24 +1379,24 @@ def test_lub_abc_cross_container_different_args_for_variable():
 #  / \     |
 # B   C    E
 
-class _A_mypy: pass
-class _B_mypy(_A_mypy): pass
-class _C_mypy(_A_mypy): pass
-class _D_mypy: pass
+class A_mypy: pass
+class B_mypy(A_mypy): pass
+class C_mypy(A_mypy): pass
+class D_mypy: pass
 
 from abc import ABC
-class _F_mypy(ABC): pass
-class _E_mypy(_F_mypy): pass
+class F_mypy(ABC): pass
+class E_mypy(F_mypy): pass
 
 
 def test_lub_mypy_class_subtyping():
     """From mypy JoinSuite.test_class_subtyping."""
     from righttyper.generalize import lub
-    a, b, c, d, o = (TypeInfo.from_type(t) for t in (_A_mypy, _B_mypy, _C_mypy, _D_mypy, object))
+    a, b, c, d, o = (TypeInfo.from_type(t) for t in (A_mypy, B_mypy, C_mypy, D_mypy, object))
     # join(a, o) = o
     assert lub(a, o) == o
     # join(b, c) = a
-    assert lub(b, c).type_obj is _A_mypy
+    assert lub(b, c).type_obj is A_mypy
     # join(b, d) = union (only object in common, excluded)
     assert lub(b, d).is_union()
     assert lub(b, d).to_set() == {b, d}
@@ -1409,8 +1409,8 @@ def test_lub_mypy_interface_types():
     """From mypy JoinSuite.test_join_interface_and_class_types.
     E implements F (abstract). join(e, f) = f."""
     from righttyper.generalize import lub
-    e = TypeInfo.from_type(_E_mypy)
-    f = TypeInfo.from_type(_F_mypy)
+    e = TypeInfo.from_type(E_mypy)
+    f = TypeInfo.from_type(F_mypy)
     assert lub(e, f) == f
     assert lub(f, e) == f
 
@@ -1418,8 +1418,8 @@ def test_lub_mypy_interface_types():
 def test_lub_mypy_unrelated_with_object():
     """Unrelated types join to union (no useful base besides object)."""
     from righttyper.generalize import lub
-    a = TypeInfo.from_type(_A_mypy)
-    d = TypeInfo.from_type(_D_mypy)
+    a = TypeInfo.from_type(A_mypy)
+    d = TypeInfo.from_type(D_mypy)
     result = lub(a, d)
     assert result.is_union()
     assert result.to_set() == {a, d}
@@ -1429,7 +1429,7 @@ def test_lub_mypy_varlen_tuples():
     """From mypy JoinSuite.test_var_tuples.
     join(tuple[a], tuple[a, ...]) = tuple[a, ...]."""
     from righttyper.generalize import lub
-    a_t = TypeInfo.from_type(_A_mypy)
+    a_t = TypeInfo.from_type(A_mypy)
     fixed = TypeInfo.from_type(tuple).replace(args=(a_t,))
     varlen = TypeInfo.from_type(tuple).replace(args=(a_t, Ellipsis))
     assert lub(fixed, varlen) == varlen
@@ -1508,27 +1508,27 @@ def test_lub_callable_ellipsis_params():
 def test_lub_type_of_subtype():
     """lub(type[B], type[C]) = type[A] when B, C both extend A."""
     from righttyper.generalize import lub
-    b_t = TypeInfo.from_type(type).replace(args=(TypeInfo.from_type(_B_mypy),))
-    c_t = TypeInfo.from_type(type).replace(args=(TypeInfo.from_type(_C_mypy),))
+    b_t = TypeInfo.from_type(type).replace(args=(TypeInfo.from_type(B_mypy),))
+    c_t = TypeInfo.from_type(type).replace(args=(TypeInfo.from_type(C_mypy),))
     result = lub(b_t, c_t)
     assert result.type_obj is type
     assert not result.is_union()
     # type arg should be A (common base of B and C)
-    assert _ti(result.args[0]).type_obj is _A_mypy
+    assert _ti(result.args[0]).type_obj is A_mypy
 
 
 def test_lub_type_of_same():
     """lub(type[B], type[B]) = type[B]."""
     from righttyper.generalize import lub
-    b_t = TypeInfo.from_type(type).replace(args=(TypeInfo.from_type(_B_mypy),))
+    b_t = TypeInfo.from_type(type).replace(args=(TypeInfo.from_type(B_mypy),))
     assert lub(b_t, b_t) == b_t
 
 
 def test_lub_type_of_unrelated():
     """lub(type[A], type[D]) = type[A|D] (covariant merge of unrelated args)."""
     from righttyper.generalize import lub
-    a_ti = TypeInfo.from_type(_A_mypy)
-    d_ti = TypeInfo.from_type(_D_mypy)
+    a_ti = TypeInfo.from_type(A_mypy)
+    d_ti = TypeInfo.from_type(D_mypy)
     a_t = TypeInfo.from_type(type).replace(args=(a_ti,))
     d_t = TypeInfo.from_type(type).replace(args=(d_ti,))
     result = lub(a_t, d_t)
@@ -1597,20 +1597,24 @@ def test_is_private_type():
     private_type = type('HiddenType', (object,), {'__module__': '_secret_impl'})
     assert _is_private_type(private_type)
 
+    # A _-prefixed class name in a public module
+    private_name = type('_InternalHelper', (object,), {'__module__': 'mypkg.utils'})
+    assert _is_private_type(private_name)
+
 
 def test_lub_skips_private_mro_ancestors():
     """lub should not merge to a common ancestor defined in a private module."""
     from righttyper.generalize import lub
 
     # Build a class hierarchy where the common ancestor is in a private module
-    _Base = type('_Base', (object,), {'__module__': '_internal.base', 'x': 1})
-    A = type('A', (_Base,), {'__module__': 'mypkg', 'x': 1})
-    B = type('B', (_Base,), {'__module__': 'mypkg', 'x': 1})
+    Base = type('Base', (object,), {'__module__': '_internal.base', 'x': 1})
+    A = type('A', (Base,), {'__module__': 'mypkg', 'x': 1})
+    B = type('B', (Base,), {'__module__': 'mypkg', 'x': 1})
 
     a = TypeInfo.from_type(A)
     b = TypeInfo.from_type(B)
     result = lub(a, b)
-    # Should NOT merge to _Base (private) — should be a union
+    # Should NOT merge to Base (private) — should be a union
     assert result.is_union(), f"expected union, got {result}"
 
 
@@ -1619,9 +1623,9 @@ def test_merged_types_single_type_skips_private_ancestor():
     generalize to an ancestor in a private module."""
     from righttyper.generalize import merged_types
 
-    _Base = type('_Base', (object,), {'__module__': '_internal.base', 'do_thing': lambda self: None})
-    Concrete = type('Concrete', (_Base,), {'__module__': 'mypkg'})
+    Base = type('Base', (object,), {'__module__': '_internal.base', 'do_thing': lambda self: None})
+    Concrete = type('Concrete', (Base,), {'__module__': 'mypkg'})
 
     result = merged_types({TypeInfo.from_type(Concrete)}, accessed_attributes={'do_thing'})
-    # Should stay as Concrete, not generalize to _Base
+    # Should stay as Concrete, not generalize to Base
     assert result == TypeInfo.from_type(Concrete)
