@@ -364,10 +364,18 @@ def _merge_set(
     # not be overridden in a closer descendant. Otherwise we'd simplify to a
     # base whose attribute (e.g. a method with a narrower signature) doesn't
     # match the actual usage at runtime.
-    if len(typeinfoset) == 1 and accessed_attributes:
+    # De-privatize: if the sole observed type is private, walk up the MRO
+    # to find the nearest public ancestor that still has all accessed
+    # attributes.  Does NOT generalize public types.
+    if len(typeinfoset) == 1:
         t = next(iter(typeinfoset))
-        if isinstance(t.type_obj, type) and not t.args:
+        if isinstance(t.type_obj, type) and not t.args and _is_private_type(t.type_obj):
             sentinel = object()
+            check_attrs = accessed_attributes or frozenset(
+                attr for attr in dir(t.type_obj)
+                if getattr(t.type_obj, attr, None) is not None
+                if not attr.startswith("_") or attr.startswith("__")
+            )
             for base in t.type_obj.__mro__:
                 if base is t.type_obj or base is object:
                     continue
@@ -376,7 +384,7 @@ def _merge_set(
                 if all(
                     (a := getattr(base, attr, sentinel)) is not sentinel
                     and a is getattr(t.type_obj, attr, sentinel)
-                    for attr in accessed_attributes
+                    for attr in check_attrs
                 ):
                     return get_type_name(base)
 

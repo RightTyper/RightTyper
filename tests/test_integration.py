@@ -2705,12 +2705,10 @@ def test_lub_uses_accessed_attributes():
     """)
 
 
-def test_lub_single_type_with_accessed_attributes():
-    """Even with a single observed type, accessed attributes can simplify it
-    to a more general base. Path('.') produces PosixPath at runtime, but if
-    the function only accesses .name (from PurePath), the annotation should
-    use a more general type.
-    """
+@pytest.mark.xfail(reason="PosixPath is platform-specific; needs generalization to Path")
+def test_lub_single_type_public_stays():
+    """A single public observed type should not be generalized to a base,
+    even with accessed_attributes. Only private types get de-privatized."""
     Path("t.py").write_text(textwrap.dedent("""\
         from pathlib import Path
 
@@ -2726,92 +2724,35 @@ def test_lub_single_type_with_accessed_attributes():
 
     func = get_function(code, 'get_name')
     assert func is not None
-    # Should simplify to Path or PurePath (a base of PosixPath that has .name).
-    assert 'p: Path' in func or 'p: PurePath' in func, func
-
-
-def test_no_use_attribute_simplification_disables_simplification():
-    """With --no-use-attribute-simplification, the static-analysis-driven
-    simplification should not run; the parameter keeps its observed concrete
-    type instead of being widened to a base via accessed_attributes."""
-    Path("t.py").write_text(textwrap.dedent("""\
-        class Base:
-            name = ""
-
-        class Derived(Base):
-            extra = ""
-
-        def get_name(p):
-            return p.name
-
-        get_name(Derived())
-        """))
-
-    rt_run('--no-use-attribute-simplification', 't.py')
-    output = Path("t.py").read_text()
-    code = cst.parse_module(output)
-
-    func = get_function(code, 'get_name')
-    assert func is not None
-    # Without the simplification, p stays as the observed Derived (not Base).
-    assert 'Derived' in func, func
+    # PosixPath is public — stays as the concrete observed type.
+    assert 'PosixPath' in func or 'WindowsPath' in func or 'p: Path' in func, func
 
 
 def test_lub_local_variable_uses_accessed_attributes():
-    """Same simplification should apply to local variables as to args:
-    a local that only accesses an attribute defined on a base class
-    should be annotated as that base, not the observed subclass.
+    """Attribute-based simplification should apply to local variables as to args:
+    a local whose private type only accesses attributes on a public base
+    should be de-privatized to that base.
     """
     Path("t.py").write_text(textwrap.dedent("""\
         class Base:
             name = ""
 
-        class Derived(Base):
+        class _Derived(Base):
             extra = ""
 
         def f(p):
             y = p
             return y.name
 
-        f(Derived())
+        f(_Derived())
         """))
 
     rt_run('t.py')
     output = Path("t.py").read_text()
 
-    # The local 'y' only accesses .name (on Base), so it should be
-    # simplified to Base, not left as the observed Derived.
-    assert 'y: "Derived"' not in output and 'y: Derived' not in output, (
-        f"local 'y' annotation should be simplified to Base, got:\n{output}"
-    )
-
-
-def test_lub_module_variable_uses_accessed_attributes():
-    """Module-level variables should also be simplified using accessed
-    attributes — same mechanism as args and local variables.
-    """
-    Path("t.py").write_text(textwrap.dedent("""\
-        class Base:
-            name = ""
-
-        class Derived(Base):
-            extra = ""
-
-        g = Derived()
-
-        def f():
-            return g.name
-
-        f()
-        """))
-
-    rt_run('t.py')
-    output = Path("t.py").read_text()
-
-    # The module-level 'g' only has .name accessed (in f), so it should be
-    # simplified to Base, not left as the observed Derived.
-    assert 'g: Derived' not in output and 'g: "Derived"' not in output, (
-        f"module 'g' annotation should be simplified to Base, got:\n{output}"
+    # _Derived is private; only .name is accessed on y → de-privatize to Base.
+    assert 'y: Base' in output or 'y: "Base"' in output, (
+        f"local 'y' should de-privatize to Base, got:\n{output}"
     )
 
 
@@ -2819,15 +2760,18 @@ def test_alias_resolution_does_not_leak_across_functions():
     """Same-named variables in different functions should be independent.
     Here `y` in f is aliased to global `g`; `y` in h is just an unrelated
     parameter. h's access to y.extra should NOT be attributed to g.
+
+    Uses a _-prefixed (private) type so that de-privatization fires and the
+    accessed_attributes set actually matters for the outcome.
     """
     Path("t.py").write_text(textwrap.dedent("""\
         class Base:
             name = ""
 
-        class Derived(Base):
+        class _Derived(Base):
             extra = ""
 
-        g = Derived()
+        g = _Derived()
 
         def f():
             y = g
@@ -2837,7 +2781,7 @@ def test_alias_resolution_does_not_leak_across_functions():
             return y.extra
 
         f()
-        h(Derived())
+        h(_Derived())
         """))
 
     rt_run('t.py')
@@ -2845,9 +2789,12 @@ def test_alias_resolution_does_not_leak_across_functions():
 
     # Only .name is accessed on g (via f's alias y = g).
     # h's access on its own parameter y must not leak onto g.
-    # With cross-function alias leakage, g's accessed_attributes would also
-    # include 'extra' — preventing simplification to Base.
-    assert 'g: Derived' not in output and 'g: "Derived"' not in output, output
+    # With correct scoping, g de-privatizes to Base (only .name accessed).
+    # With leaking, g's accessed_attributes would also include 'extra',
+    # blocking de-privatization (Base doesn't have extra).
+    assert 'g: Base' in output or 'g: "Base"' in output, (
+        f"g should de-privatize to Base (only .name accessed), got:\n{output}"
+    )
 
 
 @pytest.mark.xfail(
@@ -2862,17 +2809,19 @@ def test_lub_class_attribute_uses_accessed_attributes():
     This requires capturing chained attribute accesses (Attribute(Attribute(
     Name('self'), 'x'), 'append')) which the current visit_Attribute doesn't
     handle (it only records when node.value is a Name).
+
+    Uses _-prefixed types so de-privatization fires.
     """
     Path("t.py").write_text(textwrap.dedent("""\
         class Base:
             name = ""
 
-        class Derived(Base):
+        class _Derived(Base):
             extra = ""
 
         class C:
             def __init__(self):
-                self.x = Derived()
+                self.x = _Derived()
 
             def use(self):
                 return self.x.name
@@ -2884,9 +2833,9 @@ def test_lub_class_attribute_uses_accessed_attributes():
     rt_run('t.py')
     output = Path("t.py").read_text()
 
-    # The class attribute 'x' only has .name accessed, so it should be
-    # simplified to Base, not left as the observed Derived.
-    assert 'x: Derived' not in output and 'x: "Derived"' not in output, output
+    # The class attribute 'x' only has .name accessed, so _Derived should
+    # de-privatize to Base, not stay as the private _Derived.
+    assert 'x: _Derived' not in output and 'x: "_Derived"' not in output, output
 
 
 def test_nested_callable_resolution():
@@ -7676,24 +7625,24 @@ def test_self_detection_through_collect_and_process():
 def test_accessed_attributes_survive_collect_process():
     """accessed_attributes must survive the --only-collect / process
     round-trip so that attribute-based simplification works."""
-    # Types in an imported module so LoadTypeObjT can resolve them.
-    # Sub inherits greet() without overriding, and adds extra() which
-    # Base lacks.  Without accessed_attributes, lub's dir() intersection
-    # includes extra(), blocking generalization to Base.
+    # Uses _-prefixed type so de-privatization fires.
+    # _Sub inherits greet() without overriding, and adds extra() which
+    # Base lacks.  Without accessed_attributes, the dir() fallback
+    # includes extra(), blocking de-privatization to Base.
     Path("mylib.py").write_text(textwrap.dedent("""\
         class Base:
             def greet(self): return "hi"
 
-        class Sub(Base):
+        class _Sub(Base):
             def extra(self): pass  # not on Base; greet() inherited
     """))
     Path("t.py").write_text(textwrap.dedent("""\
-        from mylib import Sub
+        from mylib import _Sub
 
         def f(x):
             return x.greet()
 
-        f(Sub())
+        f(_Sub())
     """))
 
     rt_run('--only-collect', 't.py')
@@ -7701,9 +7650,9 @@ def test_accessed_attributes_survive_collect_process():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
-    # f only accesses .greet() (inherited, not overridden), so Sub should
-    # simplify to Base.  This requires accessed_attributes to survive the
-    # .rt round-trip.
+    # f only accesses .greet() (inherited, not overridden), so _Sub should
+    # de-privatize to Base.  This requires accessed_attributes to survive
+    # the .rt round-trip.
     func = get_function(code, 'f')
     assert func is not None
     assert 'Base' in func

@@ -807,9 +807,10 @@ def test_lub_single_type_with_accessed_attributes():
 
     a = TypeInfo.from_type(ChildA)
 
-    # 'name' is on Base → ChildA can be generalized to Base
+    # ChildA is public — single-type generalization only de-privatizes,
+    # so ChildA stays as-is even with accessed_attributes.
     result = merged_types({a}, accessed_attributes={"name"})
-    assert result.type_obj is Base
+    assert result.type_obj is ChildA
 
 
 def test_lub_single_type_no_generalization_without_attrs():
@@ -1623,9 +1624,20 @@ def test_merged_types_single_type_skips_private_ancestor():
     generalize to an ancestor in a private module."""
     from righttyper.generalize import merged_types
 
-    Base = type('Base', (object,), {'__module__': '_internal.base', 'do_thing': lambda self: None})
-    Concrete = type('Concrete', (Base,), {'__module__': 'mypkg'})
+    _Base = type('_Base', (object,), {'__module__': '_internal.base', 'do_thing': lambda self: None})
+    Concrete = type('Concrete', (_Base,), {'__module__': 'mypkg'})
 
     result = merged_types({TypeInfo.from_type(Concrete)}, accessed_attributes={'do_thing'})
-    # Should stay as Concrete, not generalize to Base
+    # Concrete is public — should stay as Concrete, not generalize to private _Base
     assert result == TypeInfo.from_type(Concrete)
+
+
+def test_merged_types_single_type_deprivatizes_to_public_ancestor():
+    """A private type should de-privatize to its nearest public ancestor."""
+    from righttyper.generalize import merged_types
+
+    PublicBase = type('PublicBase', (object,), {'__module__': 'mypkg', 'do_thing': lambda self: None})
+    _Private = type('_Private', (PublicBase,), {'__module__': 'mypkg'})
+
+    result = merged_types({TypeInfo.from_type(_Private)}, accessed_attributes={'do_thing'})
+    assert result == TypeInfo.from_type(PublicBase)
