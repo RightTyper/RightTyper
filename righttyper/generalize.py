@@ -370,26 +370,27 @@ def _merge_set(
     if len(typeinfoset) == 1:
         t = next(iter(typeinfoset))
         if isinstance(t.type_obj, type) and not t.args and _is_private_type(t.type_obj):
-            sentinel = object()
-            check_attrs = accessed_attributes or frozenset(
-                attr for attr in dir(t.type_obj)
-                if getattr(t.type_obj, attr, None) is not None
-                if not attr.startswith("_") or attr.startswith("__")
+            # Find the nearest public ancestor.
+            public_base = next(
+                (base for base in t.type_obj.__mro__
+                 if base is not t.type_obj and base is not object
+                 and not _is_private_type(base)),
+                None
             )
-            for base in t.type_obj.__mro__:
-                if base is t.type_obj or base is object:
-                    continue
-                if _is_private_type(base):
-                    continue
-                # First public ancestor: de-privatize if it has all
-                # accessed attributes, otherwise keep the private name.
+            if public_base is not None:
+                # De-privatize if the public ancestor has all accessed attributes.
+                sentinel = object()
+                check_attrs = accessed_attributes or frozenset(
+                    attr for attr in dir(t.type_obj)
+                    if getattr(t.type_obj, attr, None) is not None
+                    if not attr.startswith("_") or attr.startswith("__")
+                )
                 if all(
-                    (a := getattr(base, attr, sentinel)) is not sentinel
+                    (a := getattr(public_base, attr, sentinel)) is not sentinel
                     and a is getattr(t.type_obj, attr, sentinel)
                     for attr in check_attrs
                 ):
-                    return get_type_name(base)
-                break
+                    return get_type_name(public_base)
 
     # Flatten any non-typevar unions in the input so each leaf type
     # participates in the pairwise reduction. Otherwise lub treats `int|str`
