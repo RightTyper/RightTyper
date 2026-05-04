@@ -59,15 +59,23 @@ class FuncInfo:
 
     traces: Counter[CallTrace] = field(default_factory=Counter)
 
-    # Per-variable observed types.  The recorder also injects a constructor
-    # ceiling: `p = Foo(...)` adds `Foo` (the resolved callee type) to the
-    # set, so `merged_types`'s lub naturally subsumes runtime subtypes
-    # (e.g. PosixPath ⊆ Path → Path).  The synthetic key `'<return>'` carries
-    # the same kind of ceiling for the function's return value (extracted
-    # by mk_annotation and lubbed into the retval).
+    # Per-variable observed runtime types.
     # TODO ideally the variables should be included in the trace, so that they can be filtered
     # and also included in any type patterns.
     variables: dict[VariableName, set[TypeInfo]] = field(default_factory=lambda: defaultdict(set))
+
+    # Per-variable static type from the AST-detected `var = Foo(...)` callee
+    # (resolved via TypeMap canonicalization + typeshed Self lookup at
+    # finish_recording).  mk_annotation propagates this as the variable's
+    # annotation iff the runtime observation is a strict subclass — preserves
+    # the user's source-level type when the dynamic type matches, falls back
+    # to the observation when it diverges (e.g. attrs replacing `attr.Factory(set)`
+    # with the produced `set` on the instance).  The synthetic key
+    # RETURN_CONSTRUCTOR_KEY carries the function's return-expression
+    # constructor type.
+    constructor_types: dict[VariableName, set[TypeInfo]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
 
 
     def most_common_traces(self) -> list[CallTrace]:
@@ -195,6 +203,35 @@ class FuncInfo:
 
         for var_name, var_types in list(self.variables.items()):
             self.variables[var_name] = set(tr.visit(t) for t in var_types)
+
+
+def _apply_constructor_type(annotation: TypeInfo, candidates: set[TypeInfo]) -> TypeInfo:
+    """Propagate the constructor's static type (from `var = Foo(...)`) as
+    the variable's annotation, but only when it's still consistent with
+    the observed dynamic type — i.e., the observation is a strict
+    subclass of the constructor type.  Falls back to the observed
+    annotation when the dynamic type diverges (`attr.Factory(set)` →
+    runtime `set`) or when applying the constructor type would drop
+    information (bare `Foo` over a parametrized `SubFoo[X]`)."""
+    if len(candidates) != 1:
+        return annotation
+    ct = next(iter(candidates))
+    if not isinstance(ct.type_obj, type):
+        return annotation
+    members = annotation.to_set() if annotation.is_union() else {annotation}
+    if not all(
+        isinstance(m.type_obj, type)
+        and m.type_obj is not ct.type_obj
+        and issubclass(m.type_obj, ct.type_obj)
+        # Don't drop type arguments: if observed is parametrized
+        # (`SubFoo[X]`) and the constructor type is bare (`Foo`),
+        # applying would lose the args. Same-type_obj cases are
+        # already excluded above.
+        and not (m.args and not ct.args)
+        for m in members
+    ):
+        return annotation
+    return ct
 
 
 def _stamp_self(
@@ -444,6 +481,12 @@ class Observations:
         # per-module variables
         self.module_variables: dict[Filename, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
 
+        # per-module constructor types (mirrors module_variables; see
+        # FuncInfo.constructor_types for the per-function counterpart).
+        self.module_constructor_types: dict[Filename, dict[VariableName, set[TypeInfo]]] = defaultdict(
+            lambda: defaultdict(set)
+        )
+
         # Mapping of sources to their module names
         self.source_to_module_name: dict[Filename, str] = {}
 
@@ -543,6 +586,9 @@ class Observations:
 
                 for varname, typeset in func_info2.variables.items():
                     func_info.variables[varname] |= typeset
+
+                for varname, typeset in func_info2.constructor_types.items():
+                    func_info.constructor_types[varname] |= typeset
             else:
                 self.func_info[func_id] = func_info2
 
@@ -552,6 +598,13 @@ class Observations:
                     var_dict[varname] |= typeset
             else:
                 self.module_variables[filename] = var_dict2
+
+        for filename, ct_dict2 in obs2.module_constructor_types.items():
+            if (ct_dict := self.module_constructor_types.get(filename)):
+                for varname, typeset in ct_dict2.items():
+                    ct_dict[varname] |= typeset
+            else:
+                self.module_constructor_types[filename] = ct_dict2
 
         self.source_to_module_name |= obs2.source_to_module_name
         self.test_modules |= obs2.test_modules
@@ -798,26 +851,24 @@ class Observations:
 
         n_sig_args = len(signature) - 1  # last element is the return type
 
-        # Pull the return-ceiling set off `func_info.variables` (synthetic
-        # `<return>` key populated by the recorder). It will be lubbed into
-        # the retval below.
-        from righttyper.recorder import RETURN_CEILING_KEY
-        return_ceilings = func_info.variables.get(RETURN_CEILING_KEY, set())
+        from righttyper.recorder import RETURN_CONSTRUCTOR_KEY
 
         # Resolve code_ids in variable types too (they don't go through traces).
         variables = {
-            var_name: merged_types(
-                {resolver.visit(t) for t in var_types} if annotations else var_types,
-                for_variable=True,
-                accessed_attributes=accessed_attributes.get(var_name) if accessed_attributes else None,
+            var_name: _apply_constructor_type(
+                merged_types(
+                    {resolver.visit(t) for t in var_types} if annotations else var_types,
+                    for_variable=True,
+                    accessed_attributes=accessed_attributes.get(var_name) if accessed_attributes else None,
+                ),
+                func_info.constructor_types.get(var_name, set()),
             )
             for var_name, var_types in func_info.variables.items()
-            if var_name != RETURN_CEILING_KEY
         }
 
-        retval = (
-            merged_types({signature[-1], *return_ceilings})
-            if return_ceilings else signature[-1]
+        retval = _apply_constructor_type(
+            signature[-1],
+            func_info.constructor_types.get(RETURN_CONSTRUCTOR_KEY, set()),
         )
 
         ann = FuncAnnotation(
@@ -920,11 +971,14 @@ class Observations:
         mv_resolver = ResolvingT(annotations, self.func_info)
         module_vars: dict[Filename, ModuleVars] = {
             filename: ModuleVars({
-                var_name: mv_resolver.visit(merged_types(
-                    var_types,
-                    for_variable=True,
-                    accessed_attributes=module_accessed.get(filename, {}).get(var_name) or None,
-                ))
+                var_name: _apply_constructor_type(
+                    mv_resolver.visit(merged_types(
+                        var_types,
+                        for_variable=True,
+                        accessed_attributes=module_accessed.get(filename, {}).get(var_name) or None,
+                    )),
+                    self.module_constructor_types.get(filename, {}).get(var_name, set()),
+                )
                 for var_name, var_types in var_dict.items()
             })
             for filename, var_dict in self.module_variables.items()

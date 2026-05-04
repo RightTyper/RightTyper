@@ -2815,6 +2815,46 @@ def test_var_assigned_typeshed_factory_uses_declared_return(tmp_cwd):
     assert "p: Path" in output, output
 
 
+def test_constructor_type_preserves_container_parametrization(tmp_cwd):
+    """Bare constructor types must not clobber parametrized observations
+    via lub Rule 4b ("bare subsumes parametrized"). Uses an imported
+    generic so the constructor-type resolution actually fires —
+    builtin sets/lists/dicts are skipped at resolution."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from collections import OrderedDict
+        def f():
+            d = OrderedDict()
+            d["x"] = 1
+            return d
+        f()
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert "d: OrderedDict[str, int]" in output, output
+
+
+def test_constructor_type_round_trip(tmp_cwd):
+    """Constructor-type widening survives the .rt round-trip: collect with
+    --only-collect, then process. The resulting annotations must match what
+    a single-pass run produces (`p: Path`, `f() -> Path`)."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+        def f():
+            p = Path("/tmp")
+            return p
+        f()
+        """))
+
+    rt_run('--only-collect', 't.py')
+    rt_run('process', '--output-files', '--overwrite')
+    output = Path("t.py").read_text()
+
+    assert "p: Path" in output, output
+    assert "-> Path" in output, output
+
+
 def test_alias_resolution_does_not_leak_across_functions():
     """Same-named variables in different functions should be independent.
     Here `y` in f is aliased to global `g`; `y` in h is just an unrelated
