@@ -7659,6 +7659,50 @@ def test_local_class_not_imported_from_typing():
     """)
 
 
+@pytest.mark.dont_run_mypy
+def test_out_of_root_script_not_annotated(tmp_cwd, monkeypatch):
+    """When the main script is outside --root, it should not be annotated.
+    Only files under --root should be modified."""
+    # Package directory — CWD will be here, --root=.
+    pkgdir = tmp_cwd / "pkgdir"
+    pkgdir.mkdir()
+    (pkgdir / "pkg").mkdir()
+    (pkgdir / "pkg" / "__init__.py").write_text("")
+    (pkgdir / "pkg" / "api.py").write_text(textwrap.dedent("""\
+        def greet(name):
+            return f"hello {name}"
+    """))
+
+    # Exercise script outside pkgdir — defines its own function that
+    # calls into the package (like the eval's exercise scripts do)
+    script = tmp_cwd / "exercise.py"
+    script.write_text(textwrap.dedent("""\
+        from pkg.api import greet
+
+        def exercise():
+            return greet("world")
+
+        exercise()
+    """))
+
+    script_before = script.read_text()
+
+    monkeypatch.chdir(pkgdir)
+    rt_run('--only-collect', '--root', '.', str(script))
+    rt_run('process', '--output-files', '--overwrite')
+
+    # The exercise script must not be modified
+    assert script.read_text() == script_before, (
+        f"Out-of-root script was modified:\n{script.read_text()}"
+    )
+
+    # The package file should be annotated
+    output = (pkgdir / "pkg" / "api.py").read_text()
+    assert 'def greet(name: str)' in output, (
+        f"Package file should be annotated, got:\n{output}"
+    )
+
+
 def test_main_module_types_not_leaked():
     """Types imported by the __main__ script from a private submodule should
     be annotated with their real module path, not __main__.
