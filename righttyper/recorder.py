@@ -806,6 +806,21 @@ class ObservationsRecorder:
         # which operates on deserialized data (vs. data just collected).
         type_map = TypeMap(main_globals)
 
+        # Finalize constructor types staged at record time *before*
+        # AdjustTypeNamesT runs, so the new entries get canonicalized
+        # alongside everything else in obs (avoids leaking private
+        # __module__ paths like `_io` or `pathlib._local`).  type_obj is
+        # set on each new entry for the canonicalization pass; it's
+        # cleared at .rt save by the Pickler dispatch_table.  `obs` is the
+        # swapped-out Observations; its func_info is keyed by CodeId.
+        for code, var_callees in self._func_var_callees.items():
+            if (fi := obs.func_info.get(CodeId.from_code(code))):
+                self._finalize_constructor_types(
+                    var_callees, fi.constructor_types, type_map)
+        for filename, var_callees in self._module_var_callees.items():
+            self._finalize_constructor_types(
+                var_callees, obs.module_constructor_types[filename], type_map)
+
         if run_options.adjust_type_names:
             type_name_adjuster = AdjustTypeNamesT(type_map)
             obs.transform_types(type_name_adjuster)
@@ -816,19 +831,6 @@ class ObservationsRecorder:
 
         if run_options.resolve_mocks:
             obs.transform_types(ResolveMocksT(type_name_adjuster))
-
-        # Finalize constructor ceilings staged at record time:
-        # canonicalize the resolved class via TypeMap, do typeshed Self
-        # lookup for factory cases, and add the ceiling TypeInfo to
-        # scope_vars.  `obs` is the swapped-out Observations; its func_info
-        # is keyed by CodeId.
-        for code, var_callees in self._func_var_callees.items():
-            if (fi := obs.func_info.get(CodeId.from_code(code))):
-                self._finalize_constructor_types(
-                    var_callees, fi.constructor_types, type_map)
-        for filename, var_callees in self._module_var_callees.items():
-            self._finalize_constructor_types(
-                var_callees, obs.module_constructor_types[filename], type_map)
 
         obs.test_modules = set(run_options.test_modules) | set(detected_test_modules) | {
             mod_name

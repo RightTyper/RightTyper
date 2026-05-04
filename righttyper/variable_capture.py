@@ -184,7 +184,11 @@ class VariableFinder(ast.NodeVisitor):
     assigned or bound within each scope.
     Imports, comprehensions, generator expressions are ignored.
     """
-    def __init__(self) -> None:
+    def __init__(self, track_constructors: bool = True) -> None:
+        # When False, skip recording `var = Foo(...)` callee info — the
+        # `--no-use-constructor-types` path doesn't need it.
+        self._track_constructors = track_constructors
+
         # Used to build an item's qualified name
         self._qualname_stack: list[str] = []
 
@@ -253,7 +257,7 @@ class VariableFinder(ast.NodeVisitor):
         new_init: type | Constructor | None = None
         if isinstance(value, ast.Constant):
             new_init = type(value.value)
-        elif isinstance(value, ast.Call):
+        elif self._track_constructors and isinstance(value, ast.Call):
             new_init = _extract_call_target(value)
             if new_init is not None and self._is_receiver_call(new_init):
                 # `cls(...)` / `self(...)` patterns: existing Self detection
@@ -539,8 +543,11 @@ class VariableFinder(ast.NodeVisitor):
     def visit_Return(self, node: ast.Return) -> None:
         # Record a candidate Constructor for this return statement.
         # Returns outside any function (parser-syntax error normally) have no
-        # active stack — ignore to be safe.
-        if self._returns_stack:
+        # active stack — ignore to be safe.  When constructor tracking is
+        # off, `_record_variable` never set Constructor entries, so the
+        # `return Name` lookup below would always fall through; skip the
+        # whole pass.
+        if self._returns_stack and self._track_constructors:
             candidate: Constructor | None = None
             value = node.value
             if isinstance(value, ast.Call):
@@ -712,11 +719,16 @@ def map_variables(
     tree: ast.Module,
     module_code: types.CodeType,
     track_attributes: bool = True,
+    track_constructors: bool = True,
 ) -> dict[types.CodeType, CodeVars]:
     """Creates a map of code objects to the variables assigned to in that code,
        to facilitate variable sampling."""
 
-    f: VariableFinder = AttributeTrackingVariableFinder() if track_attributes else VariableFinder()
+    f: VariableFinder = (
+        AttributeTrackingVariableFinder(track_constructors=track_constructors)
+        if track_attributes
+        else VariableFinder(track_constructors=track_constructors)
+    )
     f.visit(tree)
 
     qualname2code: dict[str|None, types.CodeType] = {

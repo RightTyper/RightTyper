@@ -29,6 +29,7 @@ class OutputOptions:
     always_quote_annotations: bool = False
     type_distribution_comments: bool = False
     use_attribute_simplification: bool = True
+    use_constructor_types: bool = True
 
 
     def process_args(self, kwargs: dict[str, Any]) -> None:

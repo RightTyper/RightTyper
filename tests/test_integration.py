@@ -2779,6 +2779,29 @@ def test_var_assigned_constructor_uses_typeshed_return(tmp_cwd):
     assert "-> Path" in output, output
 
 
+@pytest.mark.dont_run_mypy  # without widening, `Path() -> Path` is assigned to a `PosixPath`-typed variable; mypy rejects.
+def test_no_use_constructor_types_disables_widening(tmp_cwd):
+    """`--no-use-constructor-types` skips both AST capture (so `.rt` files
+    don't carry constructor_types) and load-time application (so a `.rt`
+    recorded with the feature on is honored at process time).  The
+    variable falls back to the runtime-observed type."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+
+        def f():
+            p = Path("/tmp")
+            return p
+        f()
+        """))
+
+    rt_run('--no-use-constructor-types', 't.py')
+    output = Path("t.py").read_text()
+
+    # Without the feature, the variable shows the runtime-observed
+    # PosixPath rather than being widened to Path.
+    assert "PosixPath" in output, output
+
+
 def test_direct_return_uses_typeshed_return(tmp_cwd):
     """A function directly returning Constructor(...) gets the typeshed-
     declared return type as its return annotation."""

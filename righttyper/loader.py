@@ -46,7 +46,9 @@ class RightTyperLoader(ExecutionLoader):
         tree = instrument(tree, replace_dict=self.replace_dict)
         code = compile(tree, str(self.path), "exec")
         code2variables.update(map_variables(
-            tree, code, track_attributes=output_options.use_attribute_simplification
+            tree, code,
+            track_attributes=output_options.use_attribute_simplification,
+            track_constructors=output_options.use_constructor_types,
         ))
         if not skip_this_code(code):
             setup_monitoring_for_code(code)

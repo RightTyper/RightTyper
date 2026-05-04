@@ -215,7 +215,11 @@ def _apply_constructor_type(annotation: TypeInfo, candidates: set[TypeInfo]) -> 
     subclass of the constructor type.  Falls back to the observed
     annotation when the dynamic type diverges (`attr.Factory(set)` →
     runtime `set`) or when applying the constructor type would drop
-    information (bare `Foo` over a parametrized `SubFoo[X]`)."""
+    information (bare `Foo` over a parametrized `SubFoo[X]`).
+
+    `--no-use-constructor-types` is honored at load time by clearing
+    `constructor_types` / `module_constructor_types`, so empty
+    `candidates` is the only signal to skip — no per-call flag check."""
     if len(candidates) != 1:
         return annotation
     ct = next(iter(candidates))
