@@ -204,6 +204,9 @@ class FuncInfo:
         for var_name, var_types in list(self.variables.items()):
             self.variables[var_name] = set(tr.visit(t) for t in var_types)
 
+        for var_name, ct_types in list(self.constructor_types.items()):
+            self.constructor_types[var_name] = set(tr.visit(t) for t in ct_types)
+
 
 def _apply_constructor_type(annotation: TypeInfo, candidates: set[TypeInfo]) -> TypeInfo:
     """Propagate the constructor's static type (from `var = Foo(...)`) as
@@ -523,6 +526,10 @@ class Observations:
         for var_dict in list(self.module_variables.values()):
             for var_name, var_types in list(var_dict.items()):
                 var_dict[var_name] = set(tr.visit(t) for t in var_types)
+
+        for ct_dict in list(self.module_constructor_types.values()):
+            for var_name, ct_types in list(ct_dict.items()):
+                ct_dict[var_name] = set(tr.visit(t) for t in ct_types)
 
 
     def merge_observations(self, obs2: "Observations") -> None:

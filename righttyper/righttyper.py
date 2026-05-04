@@ -1001,9 +1001,6 @@ def run(
                     logger.debug(f"test module: {m}")
 
             if only_collect:
-                from righttyper.type_transformers import MakePickleableT
-                obs.transform_types(MakePickleableT())
-
                 collected = {
                     'file_version': PKL_FILE_VERSION,
                     'software': TOOL_NAME,
@@ -1019,7 +1016,19 @@ def run(
                     filename = Path(PKL_FILE_NAME.format(N=index))
                     try:
                         with filename.open("xb") as pklf:
-                            pickle.dump(collected, pklf)
+                            # Strip `type_obj` from TypeInfos as we write —
+                            # see `TypeInfo._strip_type_obj_for_pickle` for why.
+                            # Stdlib pickle (used by multiprocessing) is
+                            # unaffected since this dispatch_table lives on this
+                            # pickler instance only.
+                            import copyreg
+                            from righttyper.typeinfo import TypeInfo
+                            pickler = pickle.Pickler(pklf)
+                            pickler.dispatch_table = {
+                                **copyreg.dispatch_table,
+                                **TypeInfo._pickle_dispatch_entries(),
+                            }
+                            pickler.dump(collected)
                             break
 
                     except FileExistsError:
