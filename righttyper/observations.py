@@ -25,7 +25,7 @@ from righttyper.typeinfo import TypeInfo, TypeInfoArg, UnknownTypeInfo, UnionTyp
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId
 from righttyper.annotation import FuncAnnotation, ModuleVars, TraceDistribution
 from righttyper.type_id import PostponedArg0, get_type_name
-from righttyper.typeshed import get_typeshed_func_params
+from righttyper.typeshed import get_typeshed_func_signature
 
 
 @dataclass
@@ -1105,7 +1105,7 @@ def get_typeshed_arg_types(
     """Returns typeshed type annotations for a parent's method's arguments."""
 
     module = parents_func.module if parents_func.module else 'builtins'
-    if not (args := get_typeshed_func_params(module, parents_func.qualname)):
+    if not (args := get_typeshed_func_signature(module, parents_func.qualname)):
         return None
 
     t = LoadAndCheckTypesT()

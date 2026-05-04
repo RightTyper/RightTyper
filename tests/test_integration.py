@@ -2835,14 +2835,47 @@ def test_constructor_type_preserves_container_parametrization(tmp_cwd):
     assert "d: OrderedDict[str, int]" in output, output
 
 
+def test_constructor_type_skips_newtype_callable(tmp_cwd):
+    """`NewType("Index", int)` returns a callable that is not a `type`
+    instance.  Treating it as one would corrupt the .rt file (dill can't
+    pickle the local callable) — `_walk_constructor_callee` must
+    `isinstance(obj, type)`-filter to skip it."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import NewType
+
+        Index = NewType("Index", int)
+
+        def f():
+            i = Index(5)
+            return i
+        f()
+        """))
+
+    rt_run('--only-collect', 't.py')
+    rt_run('process', '--output-files', '--overwrite')
+    output = Path("t.py").read_text()
+
+    # The variable is annotated as int (the underlying type from NewType
+    # observation), not as the NewType callable.
+    assert "i: int" in output, output
+
+
 def test_constructor_type_round_trip(tmp_cwd):
     """Constructor-type widening survives the .rt round-trip: collect with
     --only-collect, then process. The resulting annotations must match what
-    a single-pass run produces (`p: Path`, `f() -> Path`)."""
+    a single-pass run produces. Includes both a stdlib type (Path) and a
+    user-defined class — the latter needs `type_obj` to be cleared from
+    `constructor_types` before pickling, since the live class reference
+    can't survive serialization across processes."""
     Path("t.py").write_text(textwrap.dedent("""\
         from pathlib import Path
+
+        class Widget:
+            pass
+
         def f():
             p = Path("/tmp")
+            w = Widget()
             return p
         f()
         """))
@@ -2853,6 +2886,7 @@ def test_constructor_type_round_trip(tmp_cwd):
 
     assert "p: Path" in output, output
     assert "-> Path" in output, output
+    assert "w: Widget" in output, output
 
 
 def test_alias_resolution_does_not_leak_across_functions():
