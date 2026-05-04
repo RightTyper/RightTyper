@@ -2796,17 +2796,11 @@ def test_direct_return_uses_typeshed_return(tmp_cwd):
     assert "-> Path" in output, output
 
 
-@pytest.mark.xfail(
-    reason="needs typeshed lookup: Path.cwd resolves to a classmethod, not "
-           "a type, so the live-frame resolution can't supply a ceiling. "
-           "Typeshed declares Path.cwd() -> Self (= Path).",
-)
 def test_var_assigned_typeshed_factory_uses_declared_return(tmp_cwd):
     """A variable assigned the result of a typeshed-known factory (a callable
-    that is not itself a type — here a classmethod) should still get the
-    typeshed-declared return type as its ceiling. Phase A only resolves
-    callees that are `type` instances; extending to typeshed signature
-    lookup would handle the factory case."""
+    that isn't itself a type — here a classmethod) gets the typeshed-declared
+    return type as its ceiling. Path.cwd is declared `-> Self`; since the
+    walk passes through Path, Self resolves to Path."""
     Path("t.py").write_text(textwrap.dedent("""\
         from pathlib import Path
 

@@ -40,31 +40,55 @@ def _resolve_constructor_callee(
     f_locals: abc.Mapping[str, Any],
     f_globals: abc.Mapping[str, Any],
 ) -> type | None:
-    """Walk the dotted callee parts (`["Path"]` or `["pathlib", "Path"]`)
-    against the live frame.  Locals are tried first so local aliases like
-    `P = Path; p = P(...)` resolve correctly; globals cover imports.  Returns
-    the resolved type if the leading lookup succeeds and every attribute
-    walk lands on a `type`; else None."""
+    """Walk the dotted callee parts (`["Path"]`, `["pathlib", "Path"]`,
+    `["Path", "cwd"]`) against the live frame.  Locals are tried first so
+    local aliases like `P = Path; p = P(...)` resolve correctly; globals
+    cover imports.
+
+    If the walk lands on a `type`, that's the ceiling — `Foo(...)` returns
+    Self, so Foo is the natural ceiling.  If the walk lands on a callable
+    (e.g. `Path.cwd`, a classmethod), consult typeshed for the declared
+    return type; if it's `Self`, fall back to the most-recent class on the
+    walk.  Returns None for shapes that don't fit either pattern."""
     from righttyper.random_dict import RandomDict
+    from righttyper.typeshed import get_typeshed_func_return
     obj = f_locals.get(parts[0], NO_OBJECT)
     if obj is NO_OBJECT:
         obj = f_globals.get(parts[0], NO_OBJECT)
     if obj is NO_OBJECT or obj is None:
         return None
+    last_class = obj if isinstance(obj, type) else None
     for p in parts[1:]:
-        obj = getattr(obj, p, NO_OBJECT)
-        if obj is NO_OBJECT or obj is None:
+        nxt = getattr(obj, p, NO_OBJECT)
+        if nxt is NO_OBJECT or nxt is None:
             return None
-    if not isinstance(obj, type):
-        return None
+        obj = nxt
+        if isinstance(obj, type):
+            last_class = obj
+
+    ceiling: type | None = None
+    if isinstance(obj, type):
+        ceiling = obj
+    elif callable(obj) and last_class is not None:
+        # Factory case: walk landed on a callable defined under a class.
+        # Typeshed for `Class.factory(...) -> Self` resolves Self to the
+        # class.  Other declared returns are skipped for now (would need
+        # full TypeInfo→type resolution and TypeVar handling).
+        module = getattr(obj, '__module__', None)
+        qualname = getattr(obj, '__qualname__', None)
+        if isinstance(module, str) and isinstance(qualname, str):
+            ret = get_typeshed_func_return(module, qualname)
+            if ret is not None and ret.name == 'Self':
+                ceiling = last_class
+
     # RandomDict is RightTyper's internal stand-in for dict (under
     # --replace-dict).  type_id._handle_randomdict already masquerades it as
     # plain `dict` for type-reporting; using it as an annotation ceiling
     # would introduce RandomDict into user output, which it intentionally
     # avoids.  Drop it here for symmetry.
-    if obj is RandomDict:
+    if ceiling is RandomDict:
         return None
-    return obj
+    return ceiling
 
 
 def _get_field_names(cls: type) -> tuple[str, ...]|None:

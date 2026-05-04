@@ -1055,7 +1055,8 @@ def get_typeshed_arg_types(
         return None
 
     t = LoadAndCheckTypesT()
+    # `signature[-1]` is the return type; this consumer wants only args.
     return tuple(
         t.visit(arg) if arg is not None else None
-        for arg in args
+        for arg in args[:-1]
     )

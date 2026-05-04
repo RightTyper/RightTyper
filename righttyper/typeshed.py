@@ -39,7 +39,7 @@ class FunctionFinder(cst.CSTVisitor):
         self._module_name = module_name
         self._name_stack: list[str] = []
         self._want = want.split('.')
-        self.result: list[TypeInfo] = []
+        self.result: list[TypeInfo | None] = []
 
     def _type_from_name(self, scope, node: cst.Name|cst.Attribute) -> TypeInfo:
         full_name = get_full_name(node)
@@ -189,6 +189,10 @@ class FunctionFinder(cst.CSTVisitor):
         if isinstance(p := f.params.star_kwarg, cst.Param):
             self.result.append(self._parse_annotation(p.annotation))
 
+        # Return type as the last element, matching RightTyper's signature
+        # convention (`signature[-1]` is retval).
+        self.result.append(self._parse_annotation(f.returns))
+
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
         self._name_stack.append(node.name.value)
         return True
@@ -210,7 +214,7 @@ class FunctionFinder(cst.CSTVisitor):
         self._name_stack.pop()
 
 
-def get_func_params(code: cst.Module, module_name: str, func_name: str) -> list[TypeInfo]:
+def get_func_params(code: cst.Module, module_name: str, func_name: str) -> list[TypeInfo | None]:
     finder = FunctionFinder(module_name, func_name)
     w = MetadataWrapper(code)
     w.visit(finder)
@@ -226,8 +230,15 @@ def get_typeshed_module(module_name: str) -> cst.Module|None:
 
 
 @cache
-def get_typeshed_func_params(module_name: str, qualname: str) -> list[TypeInfo] | None:
+def get_typeshed_func_params(module_name: str, qualname: str) -> list[TypeInfo | None] | None:
     if not (module := get_typeshed_module(module_name)):
         return None
 
     return get_func_params(module, module_name, qualname)
+
+
+def get_typeshed_func_return(module_name: str, qualname: str) -> TypeInfo | None:
+    """Returns the typeshed-declared return type of `module_name.qualname`,
+    or None if not found / not annotated."""
+    sig = get_typeshed_func_params(module_name, qualname)
+    return sig[-1] if sig else None
