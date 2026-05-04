@@ -177,3 +177,56 @@ def test_from_typeshed():
         None,   # self
         TypeInfo.from_type(object),
     ]
+
+
+def test_overloaded_func_returns_empty():
+    """A function whose stub uses `@overload` cannot be matched by a single
+    signature without runtime arg-shape resolution.  Picking an arbitrary
+    overload would silently produce wrong types, so we discard everything
+    and let the caller treat it as 'no typeshed info'."""
+    code = cst.parse_module(textwrap.dedent("""\
+        from typing import overload
+
+        @overload
+        def f(x: int) -> int: ...
+        @overload
+        def f(x: str) -> str: ...
+    """))
+    assert get_func_params(code, "foo", "f") == []
+
+
+def test_overloaded_func_typing_attr_form():
+    """Same detection for the `@typing.overload` qualified form."""
+    code = cst.parse_module(textwrap.dedent("""\
+        import typing
+
+        @typing.overload
+        def f(x: int) -> int: ...
+        @typing.overload
+        def f(x: str) -> str: ...
+    """))
+    assert get_func_params(code, "foo", "f") == []
+
+
+def test_overloaded_func_typing_extensions():
+    """typing_extensions reexports `overload`; stubs targeting older
+    Pythons commonly use it."""
+    code = cst.parse_module(textwrap.dedent("""\
+        from typing_extensions import overload
+
+        @overload
+        def f(x: int) -> int: ...
+        @overload
+        def f(x: str) -> str: ...
+    """))
+    assert get_func_params(code, "foo", "f") == []
+
+
+def test_non_overloaded_func_unaffected():
+    """Sanity: an undecorated `def` still yields its signature."""
+    code = cst.parse_module(textwrap.dedent("""\
+        def f(x: int) -> str: ...
+    """))
+    assert get_func_params(code, "foo", "f") == [
+        TypeInfo('', 'int'),
+    ]
