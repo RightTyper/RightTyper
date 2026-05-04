@@ -222,17 +222,22 @@ def _apply_constructor_type(annotation: TypeInfo, candidates: set[TypeInfo]) -> 
     if not isinstance(ct.type_obj, type):
         return annotation
     members = annotation.to_set() if annotation.is_union() else {annotation}
-    if not all(
-        isinstance(m.type_obj, type)
-        and m.type_obj is not ct.type_obj
-        and issubclass(m.type_obj, ct.type_obj)
-        # Don't drop type arguments: if observed is parametrized
-        # (`SubFoo[X]`) and the constructor type is bare (`Foo`),
-        # applying would lose the args. Same-type_obj cases are
-        # already excluded above.
-        and not (m.args and not ct.args)
-        for m in members
-    ):
+
+    ct_type = ct.type_obj  # known to be `type` from the guard above
+
+    def _is_strict_subtype(m: TypeInfo) -> bool:
+        """Check if m is a strict subclass of ct, guarding against types
+        like TypedDict that override __subclasscheck__ to raise."""
+        if not isinstance(m.type_obj, type) or m.type_obj is ct_type:
+            return False
+        if m.args and not ct.args:
+            return False
+        try:
+            return issubclass(m.type_obj, ct_type)
+        except TypeError:
+            return False
+
+    if not all(_is_strict_subtype(m) for m in members):
         return annotation
     return ct
 

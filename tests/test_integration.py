@@ -8134,3 +8134,27 @@ def test_main_module_defined_class_not_leaked():
     assert "MyWidget" not in output, (
         f"runner-defined MyWidget leaked into pkg's annotations:\n{output}"
     )
+
+
+@pytest.mark.dont_run_mypy
+def test_typeddict_does_not_crash_constructor_ceiling():
+    """TypedDict overrides __subclasscheck__ to raise TypeError.
+    The constructor ceiling must not crash on TypedDict-typed variables."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import TypedDict
+
+        class Config(TypedDict):
+            name: str
+            value: int
+
+        def make_config():
+            c = Config(name="x", value=1)
+            return c
+
+        make_config()
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    # Just verify it doesn't crash; the annotation content is secondary.
+    assert 'def make_config' in output
