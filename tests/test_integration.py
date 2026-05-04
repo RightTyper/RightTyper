@@ -2779,7 +2779,7 @@ def test_var_assigned_constructor_uses_typeshed_return(tmp_cwd):
     assert "-> Path" in output, output
 
 
-@pytest.mark.dont_run_mypy  # without widening, `Path() -> Path` is assigned to a `PosixPath`-typed variable; mypy rejects.
+@pytest.mark.dont_run_mypy  # without widening, the runtime subtype (Posix/WindowsPath) leaks; mypy rejects.
 def test_no_use_constructor_types_disables_widening(tmp_cwd):
     """`--no-use-constructor-types` skips both AST capture (so `.rt` files
     don't carry constructor_types) and load-time application (so a `.rt`
@@ -2797,9 +2797,12 @@ def test_no_use_constructor_types_disables_widening(tmp_cwd):
     rt_run('--no-use-constructor-types', 't.py')
     output = Path("t.py").read_text()
 
-    # Without the feature, the variable shows the runtime-observed
-    # PosixPath rather than being widened to Path.
-    assert "PosixPath" in output, output
+    # Without the feature, the variable shows the runtime-observed concrete
+    # subtype (PosixPath on POSIX, WindowsPath on Windows) rather than being
+    # widened to Path.
+    concrete = type(Path("/")).__name__
+    assert concrete in output, output
+    assert concrete != "Path"  # sanity: we are checking a real subtype
 
 
 def test_direct_return_uses_typeshed_return(tmp_cwd):
