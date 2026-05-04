@@ -2756,6 +2756,71 @@ def test_lub_local_variable_uses_accessed_attributes():
     )
 
 
+def test_var_assigned_constructor_uses_typeshed_return(tmp_cwd):
+    """A variable assigned the result of a typeshed-known constructor gets
+    the constructor's declared return as its annotation, not the runtime
+    subtype. When the variable is returned, the function's return widens
+    consistently so mypy stays happy. Path('/tmp') returns PosixPath at
+    runtime; typeshed declares Path. No attribute access so the existing
+    accessed-attribute MRO walk does not fire."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+
+        def f():
+            p = Path("/tmp")
+            return p
+        f()
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert "p: Path" in output, output
+    assert "-> Path" in output, output
+
+
+def test_direct_return_uses_typeshed_return(tmp_cwd):
+    """A function directly returning Constructor(...) gets the typeshed-
+    declared return type as its return annotation."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+
+        def f():
+            return Path("/tmp")
+        f()
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert "-> Path" in output, output
+
+
+@pytest.mark.xfail(
+    reason="needs typeshed lookup: Path.cwd resolves to a classmethod, not "
+           "a type, so the live-frame resolution can't supply a ceiling. "
+           "Typeshed declares Path.cwd() -> Self (= Path).",
+)
+def test_var_assigned_typeshed_factory_uses_declared_return(tmp_cwd):
+    """A variable assigned the result of a typeshed-known factory (a callable
+    that is not itself a type — here a classmethod) should still get the
+    typeshed-declared return type as its ceiling. Phase A only resolves
+    callees that are `type` instances; extending to typeshed signature
+    lookup would handle the factory case."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+
+        def f():
+            p = Path.cwd()
+        f()
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    assert "p: Path" in output, output
+
+
 def test_alias_resolution_does_not_leak_across_functions():
     """Same-named variables in different functions should be independent.
     Here `y` in f is aliased to global `g`; `y` in h is just an unrelated

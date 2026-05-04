@@ -41,6 +41,16 @@ _BUILTIN_TO_DUNDER: dict[str, str] = {
 
 
 @dataclass
+class Constructor:
+    """Identifies that a variable was initialized as `var = Name(...)` (or
+    `var = pkg.Name(...)`), with the dotted source-level callee parts
+    (e.g. ["Path"], ["pathlib", "Path"]). Used to look up the callee's
+    typeshed-declared return type and apply it as a ceiling on the
+    variable's annotation."""
+    parts: list[str]
+
+
+@dataclass
 class CodeVars:
     """Identifies variables and attributes for a code object, facilitating their capture."""
 
@@ -53,8 +63,13 @@ class CodeVars:
     # prefix for qualified variable names (e.g., "C." for class C, "" for functions)
     var_prefix: str = ""
 
-    # local variable names: var_name -> initial constant type (or None if not a constant)
-    variables: dict[str, type | None] = field(default_factory=dict)
+    # Local variable names mapped to what we know about their initialization:
+    #   - `type` (e.g., int) for `x = <constant of that type>`
+    #   - `Constructor(parts=...)` for `var = Foo(...)` where every assignment
+    #     in the function is a Call with that callee (kill-on-mismatch)
+    #   - None when the var is bound but neither pattern fits, or for vars
+    #     whose constructor entry was killed by an inconsistent reassignment
+    variables: dict[str, type | Constructor | None] = field(default_factory=dict)
 
     # qualified name of this code object's class, if it's a method
     class_name: str | None = None
@@ -77,6 +92,13 @@ class CodeVars:
     # attributes accessed on each variable (from static analysis of the function body)
     accessed_attributes: dict[str, set[str]] = field(default_factory=dict)
 
+    # For functions whose every `return` is `return Name(...)` or `return var`
+    # (where var has a Constructor entry in `variables`), the constructor.
+    # Used to widen the function's return annotation consistently with its
+    # variable annotations, so `def f(): p = Path(...); return p` has both
+    # `p: Path` and `f() -> Path` (avoiding mypy return-covariance errors).
+    return_constructor: Constructor | None = None
+
 
 """Maps code objects to the variables assigned/bound within each object."""
 code2variables: dict[types.CodeType, CodeVars] = dict()
@@ -96,6 +118,22 @@ def _extract_name(node: ast.AST) -> str:
         parts.append(node.id)
 
     return ".".join(reversed(parts))
+
+
+def _extract_call_target(call: ast.Call) -> Constructor | None:
+    """If `call.func` is a Name or an Attribute chain ending in a Name,
+    return a Constructor with the dotted source-level parts; else None.
+    Skips dynamic call targets (e.g. `factories[i](...)` or `make()(...)`)."""
+    func = call.func
+    parts: list[str] = []
+    while isinstance(func, ast.Attribute):
+        parts.append(func.attr)
+        func = func.value
+    if isinstance(func, ast.Name):
+        parts.append(func.id)
+        parts.reverse()
+        return Constructor(parts=parts)
+    return None
 
 
 def _iter_target_atoms(target: ast.AST) -> abc.Iterator[ast.AST]:
@@ -182,6 +220,20 @@ class VariableFinder(ast.NodeVisitor):
         # Stored as code_qualname -> {var_name -> {attr_names}}
         self._accessed_attributes: dict[str, dict[str, set[str]]] = {}
 
+        # One entry per active function scope; each entry collects the candidate
+        # for every `return` encountered: a Constructor (resolved from the return
+        # expression at the time it is visited) or None (kill marker — bare
+        # return, complex expression, name without a Constructor entry, etc.).
+        # After the function body is visited, codevars.return_constructor is set
+        # iff every entry is a Constructor and they all agree.
+        self._returns_stack: list[list[Constructor | None]] = []
+
+    def _is_receiver_call(self, ctor: "Constructor") -> bool:
+        """True if the constructor's leading name is the current scope's
+        `self` or `cls` parameter — these are Self-typed constructions and
+        should not get a concrete-class ceiling layered on top."""
+        return ctor.parts[0] in (self._self_stack[-1], self._cls_stack[-1])
+
     def _record_variable(self, name: str, value: ast.expr | None = None) -> None:
         if name in self._not_locals_stack[-1]:
             return
@@ -197,10 +249,29 @@ class VariableFinder(ast.NodeVisitor):
             if prefix_parts:
                 codevars.var_prefix = '.'.join(prefix_parts) + "."
 
-        # Only record if this is the first assignment (variable definition)
+        # What we know about THIS particular assignment.
+        new_init: type | Constructor | None = None
+        if isinstance(value, ast.Constant):
+            new_init = type(value.value)
+        elif isinstance(value, ast.Call):
+            new_init = _extract_call_target(value)
+            if new_init is not None and self._is_receiver_call(new_init):
+                # `cls(...)` / `self(...)` patterns: existing Self detection
+                # already infers Self for these, more precisely than a
+                # concrete-class ceiling. Drop the Constructor entry.
+                new_init = None
+
         if name not in codevars.variables:
-            const_type = type(value.value) if (value is not None and isinstance(value, ast.Constant)) else None
-            codevars.variables[name] = const_type
+            # First assignment — record whatever we have.
+            codevars.variables[name] = new_init
+        elif isinstance(codevars.variables[name], Constructor):
+            # Subsequent assignment to a Constructor entry: every assignment
+            # must agree, otherwise the entry is killed (ceiling can't apply).
+            existing = codevars.variables[name]
+            if not (isinstance(new_init, Constructor)
+                    and isinstance(existing, Constructor)
+                    and new_init.parts == existing.parts):
+                codevars.variables[name] = None
 
     def _record_alias(self, name: str, value: ast.expr | None) -> None:
         """Track name-to-name aliases for attribute access propagation.
@@ -310,6 +381,8 @@ class VariableFinder(ast.NodeVisitor):
         # Inherit a copy of the parent's aliases so closure refs still propagate,
         # but isolate this scope's new aliases from siblings.
         self._aliases_stack.append(dict(self._aliases_stack[-1]))
+        # Per-function return-candidate accumulator (consumed after generic_visit).
+        self._returns_stack.append([])
 
         if self._class_stack:
             class_info = self._class_stack[-1]
@@ -323,6 +396,24 @@ class VariableFinder(ast.NodeVisitor):
             )
 
         self.generic_visit(node)
+
+        # Resolve the function's return-constructor: every collected candidate
+        # must be a Constructor and they must all agree. Bare returns, complex
+        # return expressions, and `return name` where name has no Constructor
+        # entry come through as None and kill the result.
+        candidates = self._returns_stack.pop()
+        first = candidates[0] if candidates else None
+        if (
+            isinstance(first, Constructor)
+            and all(isinstance(c, Constructor) and c.parts == first.parts
+                    for c in candidates)
+        ):
+            codevars = self.code_vars.setdefault(
+                self._code_stack[-1],
+                CodeVars('.'.join(self._scope_stack[-1][:-1])
+                         if self._scope_stack[-1] else '<module>'),
+            )
+            codevars.return_constructor = first
 
         self._aliases_stack.pop()
         self._not_locals_stack.pop()
@@ -443,6 +534,28 @@ class VariableFinder(ast.NodeVisitor):
             if item.optional_vars is not None:
                 for t in _iter_target_atoms(item.optional_vars):
                     self._record_target(t)
+        self.generic_visit(node)
+
+    def visit_Return(self, node: ast.Return) -> None:
+        # Record a candidate Constructor for this return statement.
+        # Returns outside any function (parser-syntax error normally) have no
+        # active stack — ignore to be safe.
+        if self._returns_stack:
+            candidate: Constructor | None = None
+            value = node.value
+            if isinstance(value, ast.Call):
+                candidate = _extract_call_target(value)
+                if candidate is not None and self._is_receiver_call(candidate):
+                    candidate = None
+            elif isinstance(value, ast.Name):
+                # Look up the variable's current entry; only Constructor counts.
+                codevars = self.code_vars.get(self._code_stack[-1])
+                if codevars is not None:
+                    existing = codevars.variables.get(value.id)
+                    if isinstance(existing, Constructor):
+                        candidate = existing
+            # value is None (bare return) or a more complex expression → kill.
+            self._returns_stack[-1].append(candidate)
         self.generic_visit(node)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:

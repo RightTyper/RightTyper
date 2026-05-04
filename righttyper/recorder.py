@@ -12,7 +12,7 @@ from righttyper.typeinfo import TypeInfo, NoneTypeInfo, UnknownTypeInfo, CallTra
 from typing import Final, Any, NewType, overload
 import typing
 from righttyper.observations import Observations, FuncInfo, OverriddenFunction, ArgInfo
-from righttyper.variable_capture import code2variables
+from righttyper.variable_capture import code2variables, Constructor
 from righttyper.options import run_options, output_options
 from righttyper.righttyper_utils import (
     source_to_module_fqn, get_main_module_fqn, skip_this_file,
@@ -26,6 +26,45 @@ from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
 
 # Singleton used to differentiate from None
 NO_OBJECT: Final = object()
+
+
+# Synthetic key in `func_info.variables` used to carry the resolved
+# return-constructor ceiling.  mk_annotation pops this and lubs it with the
+# retval annotation so `def f(): p = Path(...); return p` widens consistently
+# (both `p` and the function's return become Path, not PosixPath).
+RETURN_CEILING_KEY: Final = VariableName("<return>")
+
+
+def _resolve_constructor_callee(
+    parts: list[str],
+    f_locals: abc.Mapping[str, Any],
+    f_globals: abc.Mapping[str, Any],
+) -> type | None:
+    """Walk the dotted callee parts (`["Path"]` or `["pathlib", "Path"]`)
+    against the live frame.  Locals are tried first so local aliases like
+    `P = Path; p = P(...)` resolve correctly; globals cover imports.  Returns
+    the resolved type if the leading lookup succeeds and every attribute
+    walk lands on a `type`; else None."""
+    from righttyper.random_dict import RandomDict
+    obj = f_locals.get(parts[0], NO_OBJECT)
+    if obj is NO_OBJECT:
+        obj = f_globals.get(parts[0], NO_OBJECT)
+    if obj is NO_OBJECT or obj is None:
+        return None
+    for p in parts[1:]:
+        obj = getattr(obj, p, NO_OBJECT)
+        if obj is NO_OBJECT or obj is None:
+            return None
+    if not isinstance(obj, type):
+        return None
+    # RandomDict is RightTyper's internal stand-in for dict (under
+    # --replace-dict).  type_id._handle_randomdict already masquerades it as
+    # plain `dict` for type-reporting; using it as an annotation ceiling
+    # would introduce RandomDict into user output, which it intentionally
+    # avoids.  Drop it here for symmetry.
+    if obj is RandomDict:
+        return None
+    return obj
 
 
 def _get_field_names(cls: type) -> tuple[str, ...]|None:
@@ -447,14 +486,32 @@ class ObservationsRecorder:
         f_locals = frame.f_locals
         prefix = codevars.var_prefix
 
-        for var_name, const_type in codevars.variables.items():
+        for var_name, init in codevars.variables.items():
             qualified = f"{prefix}{var_name}"
             # Record runtime value
             if (value := f_locals.get(var_name, NO_OBJECT)) is not NO_OBJECT:
                 scope_vars[VariableName(qualified)].add(get_value_type(value))
             # Include initial constant type if present (e.g., x = None)
-            if const_type is not None:
-                scope_vars[VariableName(qualified)].add(TypeInfo.from_type(const_type))
+            if isinstance(init, type):
+                scope_vars[VariableName(qualified)].add(TypeInfo.from_type(init))
+            elif isinstance(init, Constructor):
+                # Resolve `var = Foo(...)` against the live frame: locals (for
+                # local aliases like `P = Path`), then globals (for imports).
+                # The resolved type acts as a ceiling — added to the observed
+                # set so lub will subsume runtime subtypes (e.g. PosixPath ⊆ Path).
+                if (ceiling := _resolve_constructor_callee(
+                        init.parts, f_locals, frame.f_globals)) is not None:
+                    scope_vars[VariableName(qualified)].add(get_type_name(ceiling))
+
+        # Same idea for the function's return: when every return agrees on a
+        # callee, that callee's type is a ceiling on the return annotation.
+        # Stored under a synthetic key that mk_annotation extracts and lubs
+        # into the retval before serialization.
+        if codevars.return_constructor is not None:
+            if (ceiling := _resolve_constructor_callee(
+                    codevars.return_constructor.parts,
+                    f_locals, frame.f_globals)) is not None:
+                scope_vars[RETURN_CEILING_KEY].add(get_type_name(ceiling))
 
         if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
             obj_attrs = self._object_attributes[codevars.class_key]

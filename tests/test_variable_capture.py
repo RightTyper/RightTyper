@@ -377,10 +377,11 @@ def test_match_as_simple_name_only(map_variables):
 
 
 def get_initial_constants(mapping: dict[types.CodeType, variables.CodeVars], name: str):
-    """Returns initial constants mapping by code name (variables where value is not None)."""
+    """Returns initial constants mapping by code name (variables whose value
+    is a Python type — i.e. recorded from a literal constant assignment)."""
     for co, codevars in mapping.items():
         if co.co_qualname == name:
-            return {k: v for k, v in codevars.variables.items() if v is not None}
+            return {k: v for k, v in codevars.variables.items() if isinstance(v, type)}
     return {}
 
 
@@ -1191,3 +1192,197 @@ def test_desugar_await(map_variables, track_attributes):
     m = map_variables(src)
     attrs = get_accessed_attributes(m, "f")
     assert "__await__" in attrs.get("x", set())
+
+
+# =============================================================================
+# Tests for variable-constructor / return-constructor capture
+# =============================================================================
+
+def get_variable(mapping, name, var):
+    """Return the `variables[var]` entry for code object `name`."""
+    for co, codevars in mapping.items():
+        if co.co_qualname == name:
+            return codevars.variables.get(var)
+    return None
+
+
+def get_return_constructor(mapping, name):
+    """Return `return_constructor` for code object `name`."""
+    for co, codevars in mapping.items():
+        if co.co_qualname == name:
+            return codevars.return_constructor
+    return None
+
+
+def test_constructor_simple_name(map_variables):
+    """`p = Path(...)` records Constructor(['Path']) on p."""
+    src = textwrap.dedent("""
+        def f():
+            p = Path("/tmp")
+        """)
+    m = map_variables(src)
+    assert get_variable(m, "f", "p") == variables.Constructor(parts=["Path"])
+
+
+def test_constructor_attribute_chain(map_variables):
+    """`p = pathlib.Path(...)` records Constructor(['pathlib', 'Path'])."""
+    src = textwrap.dedent("""
+        def f():
+            p = pathlib.Path("/tmp")
+        """)
+    m = map_variables(src)
+    assert get_variable(m, "f", "p") == variables.Constructor(parts=["pathlib", "Path"])
+
+
+def test_constructor_consistent_reassignment_keeps(map_variables):
+    """Two assignments with the same callee → Constructor preserved."""
+    src = textwrap.dedent("""
+        def f():
+            p = Path("/a")
+            p = Path("/b")
+        """)
+    m = map_variables(src)
+    assert get_variable(m, "f", "p") == variables.Constructor(parts=["Path"])
+
+
+def test_constructor_inconsistent_callee_kills(map_variables):
+    """Two assignments with different callees → entry killed (None).
+    Sibling `q` (not reassigned) must still carry its Constructor — that
+    asserts the kill is from mismatch, not from the impl being absent."""
+    src = textwrap.dedent("""
+        def f():
+            p = Path("/a")
+            p = PurePath("/b")
+            q = Path("/c")
+        """)
+    m = map_variables(src)
+    assert get_variable(m, "f", "p") is None
+    assert get_variable(m, "f", "q") == variables.Constructor(parts=["Path"])
+
+
+def test_constructor_non_call_reassignment_kills(map_variables):
+    """A non-Call reassignment after a Constructor entry kills it."""
+    src = textwrap.dedent("""
+        def f():
+            p = Path("/a")
+            p = something
+            q = Path("/c")
+        """)
+    m = map_variables(src)
+    assert get_variable(m, "f", "p") is None
+    assert get_variable(m, "f", "q") == variables.Constructor(parts=["Path"])
+
+
+def test_constructor_dynamic_call_target_no_entry(map_variables):
+    """`p = factories[i](...)` (non-Name/Attribute func) records None."""
+    src = textwrap.dedent("""
+        def f():
+            p = factories[i]("/tmp")
+            q = Path("/c")
+        """)
+    m = map_variables(src)
+    assert get_variable(m, "f", "p") is None
+    assert get_variable(m, "f", "q") == variables.Constructor(parts=["Path"])
+
+
+def test_constant_assignment_records_type(map_variables):
+    """Existing semantics preserved: `x = 1` records int."""
+    src = textwrap.dedent("""
+        def f():
+            x = 1
+        """)
+    m = map_variables(src)
+    assert get_variable(m, "f", "x") is int
+
+
+def test_return_direct_call(map_variables):
+    """`return Path(...)` sets return_constructor."""
+    src = textwrap.dedent("""
+        def f():
+            return Path("/tmp")
+        """)
+    m = map_variables(src)
+    assert get_return_constructor(m, "f") == variables.Constructor(parts=["Path"])
+
+
+def test_return_variable_with_constructor(map_variables):
+    """`return p` where p was assigned Path(...) → return_constructor set."""
+    src = textwrap.dedent("""
+        def f():
+            p = Path("/tmp")
+            return p
+        """)
+    m = map_variables(src)
+    assert get_return_constructor(m, "f") == variables.Constructor(parts=["Path"])
+
+
+def test_return_bare_kills(map_variables):
+    """A bare `return` kills return_constructor.
+    Sibling `g` confirms the impl is live (otherwise both would be None
+    for the wrong reason)."""
+    src = textwrap.dedent("""
+        def f():
+            if cond:
+                return Path("/tmp")
+            return
+        def g():
+            return Path("/g")
+        """)
+    m = map_variables(src)
+    assert get_return_constructor(m, "f") is None
+    assert get_return_constructor(m, "g") == variables.Constructor(parts=["Path"])
+
+
+def test_return_mismatched_callees_kill(map_variables):
+    """Multiple returns with different callees → return_constructor killed."""
+    src = textwrap.dedent("""
+        def f(x):
+            if x:
+                return Path("/a")
+            return PurePath("/b")
+        def g():
+            return Path("/g")
+        """)
+    m = map_variables(src)
+    assert get_return_constructor(m, "f") is None
+    assert get_return_constructor(m, "g") == variables.Constructor(parts=["Path"])
+
+
+def test_no_returns_no_constructor(map_variables):
+    """Function with no explicit returns → return_constructor stays None."""
+    src = textwrap.dedent("""
+        def f():
+            x = 1
+        def g():
+            return Path("/g")
+        """)
+    m = map_variables(src)
+    assert get_return_constructor(m, "f") is None
+    assert get_return_constructor(m, "g") == variables.Constructor(parts=["Path"])
+
+
+def test_return_variable_without_constructor_kills(map_variables):
+    """`return p` where p is a parameter (no Constructor entry) → killed."""
+    src = textwrap.dedent("""
+        def f(p):
+            return p
+        def g():
+            return Path("/g")
+        """)
+    m = map_variables(src)
+    assert get_return_constructor(m, "f") is None
+    assert get_return_constructor(m, "g") == variables.Constructor(parts=["Path"])
+
+
+def test_inner_function_isolated(map_variables):
+    """An inner function's returns don't leak into the outer's
+    return_constructor, and vice versa."""
+    src = textwrap.dedent("""
+        def outer():
+            def inner():
+                return Path("/inner")
+            return PurePath("/outer")
+        """)
+    m = map_variables(src)
+    assert get_return_constructor(m, "outer") == variables.Constructor(parts=["PurePath"])
+    assert get_return_constructor(m, "outer.<locals>.inner") == variables.Constructor(parts=["Path"])

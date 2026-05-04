@@ -59,6 +59,12 @@ class FuncInfo:
 
     traces: Counter[CallTrace] = field(default_factory=Counter)
 
+    # Per-variable observed types.  The recorder also injects a constructor
+    # ceiling: `p = Foo(...)` adds `Foo` (the resolved callee type) to the
+    # set, so `merged_types`'s lub naturally subsumes runtime subtypes
+    # (e.g. PosixPath ⊆ Path → Path).  The synthetic key `'<return>'` carries
+    # the same kind of ceiling for the function's return value (extracted
+    # by mk_annotation and lubbed into the retval).
     # TODO ideally the variables should be included in the trace, so that they can be filtered
     # and also included in any type patterns.
     variables: dict[VariableName, set[TypeInfo]] = field(default_factory=lambda: defaultdict(set))
@@ -792,6 +798,12 @@ class Observations:
 
         n_sig_args = len(signature) - 1  # last element is the return type
 
+        # Pull the return-ceiling set off `func_info.variables` (synthetic
+        # `<return>` key populated by the recorder). It will be lubbed into
+        # the retval below.
+        from righttyper.recorder import RETURN_CEILING_KEY
+        return_ceilings = func_info.variables.get(RETURN_CEILING_KEY, set())
+
         # Resolve code_ids in variable types too (they don't go through traces).
         variables = {
             var_name: merged_types(
@@ -800,7 +812,13 @@ class Observations:
                 accessed_attributes=accessed_attributes.get(var_name) if accessed_attributes else None,
             )
             for var_name, var_types in func_info.variables.items()
+            if var_name != RETURN_CEILING_KEY
         }
+
+        retval = (
+            merged_types({signature[-1], *return_ceilings})
+            if return_ceilings else signature[-1]
+        )
 
         ann = FuncAnnotation(
             args={
@@ -814,7 +832,7 @@ class Observations:
                     )
                 for i, arg in enumerate(func_info.args)
             },
-            retval=signature[-1],
+            retval=retval,
             varargs=func_info.varargs,
             kwargs=func_info.kwargs,
             variables=variables,
