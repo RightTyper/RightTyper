@@ -2747,7 +2747,7 @@ def test_lub_local_variable_uses_accessed_attributes():
         f(_Derived())
         """))
 
-    rt_run('t.py')
+    rt_run('--use-attribute-simplification', 't.py')
     output = Path("t.py").read_text()
 
     # _Derived is private; only .name is accessed on y → de-privatize to Base.
@@ -2772,7 +2772,7 @@ def test_var_assigned_constructor_uses_typeshed_return(tmp_cwd):
         f()
         """))
 
-    rt_run('t.py')
+    rt_run('--use-constructor-types', 't.py')
     output = Path("t.py").read_text()
 
     assert "p: Path" in output, output
@@ -2813,7 +2813,7 @@ def test_direct_return_uses_typeshed_return(tmp_cwd):
         f()
         """))
 
-    rt_run('t.py')
+    rt_run('--use-constructor-types', 't.py')
     output = Path("t.py").read_text()
 
     assert "-> Path" in output, output
@@ -2832,7 +2832,7 @@ def test_var_assigned_typeshed_factory_uses_declared_return(tmp_cwd):
         f()
         """))
 
-    rt_run('t.py')
+    rt_run('--use-constructor-types', 't.py')
     output = Path("t.py").read_text()
 
     assert "p: Path" in output, output
@@ -2852,7 +2852,7 @@ def test_constructor_type_preserves_container_parametrization(tmp_cwd):
         f()
         """))
 
-    rt_run('t.py')
+    rt_run('--use-constructor-types', 't.py')
     output = Path("t.py").read_text()
 
     assert "d: OrderedDict[str, int]" in output, output
@@ -2874,8 +2874,8 @@ def test_constructor_type_skips_newtype_callable(tmp_cwd):
         f()
         """))
 
-    rt_run('--only-collect', 't.py')
-    rt_run('process', '--output-files', '--overwrite')
+    rt_run('--use-constructor-types', '--only-collect', 't.py')
+    rt_run('process', '--use-constructor-types', '--output-files', '--overwrite')
     output = Path("t.py").read_text()
 
     # The variable is annotated as int (the underlying type from NewType
@@ -2903,8 +2903,8 @@ def test_constructor_type_round_trip(tmp_cwd):
         f()
         """))
 
-    rt_run('--only-collect', 't.py')
-    rt_run('process', '--output-files', '--overwrite')
+    rt_run('--use-constructor-types', '--only-collect', 't.py')
+    rt_run('process', '--use-constructor-types', '--output-files', '--overwrite')
     output = Path("t.py").read_text()
 
     assert "p: Path" in output, output
@@ -2940,7 +2940,7 @@ def test_alias_resolution_does_not_leak_across_functions():
         h(_Derived())
         """))
 
-    rt_run('t.py')
+    rt_run('--use-attribute-simplification', 't.py')
     output = Path("t.py").read_text()
 
     # Only .name is accessed on g (via f's alias y = g).
@@ -7801,8 +7801,8 @@ def test_accessed_attributes_survive_collect_process():
         f(_Sub())
     """))
 
-    rt_run('--only-collect', 't.py')
-    rt_run('process')
+    rt_run('--use-attribute-simplification', '--only-collect', 't.py')
+    rt_run('process', '--use-attribute-simplification')
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 

@@ -34,6 +34,11 @@ def generalize(samples):
     return result
 
 
+@pytest.fixture(autouse=True)
+def _enable_attribute_simplification(monkeypatch):
+    monkeypatch.setattr(output_options, 'use_attribute_simplification', True)
+
+
 def test_no_simplify_types(monkeypatch):
     monkeypatch.setattr(output_options, 'simplify_types', False)
 
