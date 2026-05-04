@@ -39,11 +39,11 @@ class FunctionFinder(cst.CSTVisitor):
         self._module_name = module_name
         self._name_stack: list[str] = []
         self._want = want.split('.')
-        self.result: list[TypeInfo] = []
+        self.result: list[TypeInfo | None] = []
         # Set to True if any matching `def` is decorated with `@overload`
         # (typing or typing_extensions).  We don't match runtime arg shapes
         # against alternatives, so picking any one overload would silently
-        # produce wrong types.  `get_func_params` discards `result` when
+        # produce wrong types.  `get_func_signature` discards `result` when
         # this flag is set — same as a missing stub.
         self._is_overloaded: bool = False
 
@@ -195,6 +195,10 @@ class FunctionFinder(cst.CSTVisitor):
         if isinstance(p := f.params.star_kwarg, cst.Param):
             self.result.append(self._parse_annotation(p.annotation))
 
+        # Return annotation as the last element, matching RightTyper's
+        # signature convention (`signature[-1]` is the retval).
+        self.result.append(self._parse_annotation(f.returns))
+
     def visit_ClassDef(self, node: cst.ClassDef) -> bool:
         self._name_stack.append(node.name.value)
         return True
@@ -234,7 +238,7 @@ class FunctionFinder(cst.CSTVisitor):
         self._name_stack.pop()
 
 
-def get_func_params(code: cst.Module, module_name: str, func_name: str) -> list[TypeInfo]:
+def get_func_signature(code: cst.Module, module_name: str, func_name: str) -> list[TypeInfo | None]:
     finder = FunctionFinder(module_name, func_name)
     w = MetadataWrapper(code)
     w.visit(finder)
@@ -252,8 +256,8 @@ def get_typeshed_module(module_name: str) -> cst.Module|None:
 
 
 @cache
-def get_typeshed_func_params(module_name: str, qualname: str) -> list[TypeInfo] | None:
+def get_typeshed_func_signature(module_name: str, qualname: str) -> list[TypeInfo | None] | None:
     if not (module := get_typeshed_module(module_name)):
         return None
 
-    return get_func_params(module, module_name, qualname)
+    return get_func_signature(module, module_name, qualname)
