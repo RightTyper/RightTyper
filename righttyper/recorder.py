@@ -681,6 +681,8 @@ class ObservationsRecorder:
                     obs.test_modules.add(main_name)
                 else:
                     obs.test_modules.add('__main__')
+                # Don't annotate out-of-root scripts
+                obs.source_to_module_name.pop(Filename(str(main_path)), None)
 
         if run_options.exclude_test_files:
             # should_skip_function doesn't know to skip test files until they are detected,
