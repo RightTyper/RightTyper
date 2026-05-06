@@ -197,6 +197,21 @@ def test_local_type_module_invalid(monkeypatch, adjust_type_names):
     assert get_type_name(Invalid).module == "does_not_exist"
 
 
+def test_to_name_map_skips_non_string_module():
+    """to_name_map must skip types whose __module__ is not a string (e.g. Cython metaclasses)."""
+    # Simulate a C extension type whose __module__ is a descriptor, not a string
+    bad_type = type('CythonLike', (object,), {})
+    bad_type.__module__ = property(lambda self: 'fake')  # type: ignore[assignment]  # non-string descriptor
+
+    tm = TypeMap({})
+    # Force-register: _map stores type → [TypeName, ...]
+    tm._map[bad_type] = [('some_module', 'CythonLike')]
+
+    name_map = tm.to_name_map()
+    # bad_type should be skipped — no key with 'CythonLike' in the map
+    assert not any('CythonLike' in k[1] for k in name_map)
+
+
 def test_items_from_typing():
     assert TypeInfo("typing", "Any") == get_type_name(Any)
     assert TypeInfo("typing", "Self") == get_type_name(Self)
@@ -777,7 +792,7 @@ def test_merged_types_for_variable_simple():
     ))
 
     # With for_variable=True, should merge type arguments.
-    # bool is a subtype of int, so simplify() further reduces to list[int]
+    # bool is a subtype of int, so lub further reduces to list[int]
     assert "list[int]" == str(merged_types({
             TypeInfo.from_type(list, args=(TypeInfo.from_type(int),)),
             TypeInfo.from_type(list, args=(TypeInfo.from_type(bool),))
@@ -842,16 +857,14 @@ def test_merged_types_for_variable_different_containers():
 
 
 def test_merged_types_for_variable_different_arity():
-    """Test that generics with different number of args are not merged."""
-    # tuple[int] | tuple[int, str] should stay separate
+    """Different-arity tuples merge to varlen (wider but valid, see test_generalize.py)."""
     result = str(merged_types({
             TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int),)),
             TypeInfo.from_type(tuple, args=(TypeInfo.from_type(int), TypeInfo.from_type(str)))
         },
         for_variable=True
     ))
-    # Check both types are present as separate union members
-    assert result == "tuple[int]|tuple[int, str]" or result == "tuple[int, str]|tuple[int]"
+    assert result == "tuple[int|str, ...]"
 
 
 # =============================================================================

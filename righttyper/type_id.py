@@ -122,7 +122,7 @@ def hint2type(hint: object) -> TypeInfo:
     ):
         # jaxtyping arrays are really dynamic types formed by indexing on their
         # base type.  I am not quite sure whether type_obj should be base_type here:
-        # it may yield incorrect results in generalize.simplify()
+        # it may yield incorrect results in generalize.lub
         return TypeInfo.from_type(base_type, args=(
             get_type_name(array_type), hint.dim_str
         ))

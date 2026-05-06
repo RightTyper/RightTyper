@@ -59,9 +59,23 @@ class FuncInfo:
 
     traces: Counter[CallTrace] = field(default_factory=Counter)
 
+    # Per-variable observed runtime types.
     # TODO ideally the variables should be included in the trace, so that they can be filtered
     # and also included in any type patterns.
     variables: dict[VariableName, set[TypeInfo]] = field(default_factory=lambda: defaultdict(set))
+
+    # Per-variable static type from the AST-detected `var = Foo(...)` callee
+    # (resolved via TypeMap canonicalization + typeshed Self lookup at
+    # finish_recording).  mk_annotation propagates this as the variable's
+    # annotation iff the runtime observation is a strict subclass — preserves
+    # the user's source-level type when the dynamic type matches, falls back
+    # to the observation when it diverges (e.g. attrs replacing `attr.Factory(set)`
+    # with the produced `set` on the instance).  The synthetic key
+    # RETURN_CONSTRUCTOR_KEY carries the function's return-expression
+    # constructor type.
+    constructor_types: dict[VariableName, set[TypeInfo]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
 
 
     def most_common_traces(self) -> list[CallTrace]:
@@ -189,6 +203,47 @@ class FuncInfo:
 
         for var_name, var_types in list(self.variables.items()):
             self.variables[var_name] = set(tr.visit(t) for t in var_types)
+
+        for var_name, ct_types in list(self.constructor_types.items()):
+            self.constructor_types[var_name] = set(tr.visit(t) for t in ct_types)
+
+
+def _apply_constructor_type(annotation: TypeInfo, candidates: set[TypeInfo]) -> TypeInfo:
+    """Propagate the constructor's static type (from `var = Foo(...)`) as
+    the variable's annotation, but only when it's still consistent with
+    the observed dynamic type — i.e., the observation is a strict
+    subclass of the constructor type.  Falls back to the observed
+    annotation when the dynamic type diverges (`attr.Factory(set)` →
+    runtime `set`) or when applying the constructor type would drop
+    information (bare `Foo` over a parametrized `SubFoo[X]`).
+
+    `--no-use-constructor-types` is honored at load time by clearing
+    `constructor_types` / `module_constructor_types`, so empty
+    `candidates` is the only signal to skip — no per-call flag check."""
+    if len(candidates) != 1:
+        return annotation
+    ct = next(iter(candidates))
+    if not isinstance(ct.type_obj, type):
+        return annotation
+    members = annotation.to_set() if annotation.is_union() else {annotation}
+
+    ct_type = ct.type_obj  # known to be `type` from the guard above
+
+    def _is_strict_subtype(m: TypeInfo) -> bool:
+        """Check if m is a strict subclass of ct, guarding against types
+        like TypedDict that override __subclasscheck__ to raise."""
+        if not isinstance(m.type_obj, type) or m.type_obj is ct_type:
+            return False
+        if m.args and not ct.args:
+            return False
+        try:
+            return issubclass(m.type_obj, ct_type)
+        except TypeError:
+            return False
+
+    if not all(_is_strict_subtype(m) for m in members):
+        return annotation
+    return ct
 
 
 def _stamp_self(
@@ -438,6 +493,12 @@ class Observations:
         # per-module variables
         self.module_variables: dict[Filename, dict[VariableName, set[TypeInfo]]] = defaultdict(lambda: defaultdict(set))
 
+        # per-module constructor types (mirrors module_variables; see
+        # FuncInfo.constructor_types for the per-function counterpart).
+        self.module_constructor_types: dict[Filename, dict[VariableName, set[TypeInfo]]] = defaultdict(
+            lambda: defaultdict(set)
+        )
+
         # Mapping of sources to their module names
         self.source_to_module_name: dict[Filename, str] = {}
 
@@ -446,6 +507,23 @@ class Observations:
 
         # CodeIds of wrapper functions (with __wrapped__) — skip annotation
         self.wrapper_code_ids: set[CodeId] = set()
+
+        # Canonical type name map: (original_module, original_name) → (canonical_module, canonical_name).
+        # Set by recorder from TypeMap. Used in collect_annotations to fix names
+        # of types introduced by lub (e.g., pathlib._local.Path → pathlib.Path).
+        # All strings, serializable for .rt files.
+        self.type_name_map: dict[tuple[str, str], tuple[str, str]] = {}
+
+        # Per-function accessed attributes, gathered by static analysis of the
+        # source in the loader.  Maps CodeId → {variable_name → {attr, ...}}.
+        # Serialized in .rt files so that the process step can use them for
+        # attribute-based type simplification (lub Rule 7/8).
+        self.accessed_attributes: dict[CodeId, dict[str, set[str]]] = {}
+
+        # Per-file accessed attributes for module-level globals only.
+        # Precomputed during the run step (where co_varnames is available to
+        # filter out function-local variables) and serialized for process.
+        self.module_accessed_attributes: dict[Filename, dict[str, set[str]]] = {}
 
 
     def transform_types(self, tr: TypeInfo.Transformer) -> None:
@@ -457,6 +535,10 @@ class Observations:
         for var_dict in list(self.module_variables.values()):
             for var_name, var_types in list(var_dict.items()):
                 var_dict[var_name] = set(tr.visit(t) for t in var_types)
+
+        for ct_dict in list(self.module_constructor_types.values()):
+            for var_name, ct_types in list(ct_dict.items()):
+                ct_dict[var_name] = set(tr.visit(t) for t in ct_types)
 
 
     def merge_observations(self, obs2: "Observations") -> None:
@@ -520,6 +602,9 @@ class Observations:
 
                 for varname, typeset in func_info2.variables.items():
                     func_info.variables[varname] |= typeset
+
+                for varname, typeset in func_info2.constructor_types.items():
+                    func_info.constructor_types[varname] |= typeset
             else:
                 self.func_info[func_id] = func_info2
 
@@ -530,9 +615,19 @@ class Observations:
             else:
                 self.module_variables[filename] = var_dict2
 
+        for filename, ct_dict2 in obs2.module_constructor_types.items():
+            if (ct_dict := self.module_constructor_types.get(filename)):
+                for varname, typeset in ct_dict2.items():
+                    ct_dict[varname] |= typeset
+            else:
+                self.module_constructor_types[filename] = ct_dict2
+
         self.source_to_module_name |= obs2.source_to_module_name
         self.test_modules |= obs2.test_modules
         self.wrapper_code_ids |= obs2.wrapper_code_ids
+        self.type_name_map |= obs2.type_name_map
+        self.accessed_attributes.update(obs2.accessed_attributes)
+        self.module_accessed_attributes.update(obs2.module_accessed_attributes)
 
 
     def _propagate_to_parents(self, raw_annotations: dict[CodeId, FuncAnnotation]) -> None:
@@ -696,6 +791,7 @@ class Observations:
     def mk_annotation(func_info: FuncInfo,
                       annotations: dict[CodeId, FuncAnnotation] | None = None,
                       func_info_map: dict[CodeId, FuncInfo] | None = None,
+                      accessed_attributes: dict[str, set[str]] | None = None,
                       ) -> FuncAnnotation|None:
         traces = func_info.most_common_traces()
         if not traces:
@@ -771,25 +867,39 @@ class Observations:
 
         n_sig_args = len(signature) - 1  # last element is the return type
 
+        from righttyper.recorder import RETURN_CONSTRUCTOR_KEY
+
         # Resolve code_ids in variable types too (they don't go through traces).
         variables = {
-            var_name: merged_types(
-                {resolver.visit(t) for t in var_types} if annotations else var_types,
-                for_variable=True,
+            var_name: _apply_constructor_type(
+                merged_types(
+                    {resolver.visit(t) for t in var_types} if annotations else var_types,
+                    for_variable=True,
+                    accessed_attributes=accessed_attributes.get(var_name) if accessed_attributes else None,
+                ),
+                func_info.constructor_types.get(var_name, set()),
             )
             for var_name, var_types in func_info.variables.items()
         }
 
+        retval = _apply_constructor_type(
+            signature[-1],
+            func_info.constructor_types.get(RETURN_CONSTRUCTOR_KEY, set()),
+        )
+
         ann = FuncAnnotation(
             args={
                 arg.arg_name:
-                    merged_types({
-                        signature[i] if i < n_sig_args else UnknownTypeInfo,
-                        *((arg.default,) if arg.default is not None else ()),
-                    })
+                    merged_types(
+                        {
+                            signature[i] if i < n_sig_args else UnknownTypeInfo,
+                            *((arg.default,) if arg.default is not None else ()),
+                        },
+                        accessed_attributes=accessed_attributes.get(arg.arg_name) if accessed_attributes else None,
+                    )
                 for i, arg in enumerate(func_info.args)
             },
-            retval=signature[-1],
+            retval=retval,
             varargs=func_info.varargs,
             kwargs=func_info.kwargs,
             variables=variables,
@@ -856,12 +966,17 @@ class Observations:
     def collect_annotations(self) -> tuple[dict[CodeId, FuncAnnotation], dict[Filename, ModuleVars], dict[CodeId, list[TraceDistribution]]]:
         """Collects function type annotations from the observed types."""
 
+        accessed_attrs = self.accessed_attributes
+
+        module_accessed = self.module_accessed_attributes
+
         annotations: dict[CodeId, FuncAnnotation] = {}
         for code_id in self.code_id_topo_sort():
             annotation = Observations.mk_annotation(
                 self.func_info[code_id],
                 annotations=annotations,
                 func_info_map=self.func_info,
+                accessed_attributes=accessed_attrs.get(code_id),
             )
             if annotation is not None:
                 annotations[code_id] = annotation
@@ -872,7 +987,14 @@ class Observations:
         mv_resolver = ResolvingT(annotations, self.func_info)
         module_vars: dict[Filename, ModuleVars] = {
             filename: ModuleVars({
-                var_name: mv_resolver.visit(merged_types(var_types, for_variable=True))
+                var_name: _apply_constructor_type(
+                    mv_resolver.visit(merged_types(
+                        var_types,
+                        for_variable=True,
+                        accessed_attributes=module_accessed.get(filename, {}).get(var_name) or None,
+                    )),
+                    self.module_constructor_types.get(filename, {}).get(var_name, set()),
+                )
                 for var_name, var_types in var_dict.items()
             })
             for filename, var_dict in self.module_variables.items()
@@ -962,6 +1084,20 @@ class Observations:
             ))
 
         transform_types(UnionSizeT())
+
+        # Fix type names introduced by lub (e.g., MRO supertypes
+        # with internal module paths like pathlib._local.Path → pathlib.Path).
+        if self.type_name_map:
+            class _AdjustNewTypeNames(TypeInfo.Transformer):
+                """Remap type names using the serializable name map."""
+                def visit(vself, node: TypeInfo) -> TypeInfo:
+                    key = (node.module, node.name)
+                    if (canonical := self.type_name_map.get(key)):
+                        if canonical != key:
+                            node = node.replace(module=canonical[0], name=canonical[1])
+                    return super().visit(node)
+            transform_types(_AdjustNewTypeNames())
+
         transform_types(MakePickleableT())
 
         return annotations, module_vars, type_distributions

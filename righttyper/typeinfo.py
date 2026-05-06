@@ -1,7 +1,7 @@
 import typing
 from typing import Iterator, Iterable, Final, Callable, Any, cast
 import types
-from dataclasses import dataclass, replace, field
+from dataclasses import dataclass, fields, replace, field
 from righttyper.righttyper_types import CodeId
 from righttyper.righttyper_utils import normalize_module_name
 
@@ -95,6 +95,12 @@ class TypeInfo:
 
     @staticmethod
     def from_set(s: "set[TypeInfo]", empty_is_none=False, **kwargs: Any) -> "TypeInfo":
+        """Form a union from a set, with simplification.
+
+        Expands nested unions, subsumes Any, removes Never/NoReturn,
+        cleans up Never-generics, caps oversized unions, and sorts
+        for deterministic output.
+        """
         if not s:
             return NoneTypeInfo if empty_is_none else TypeInfo.from_type(typing.Never)
 
@@ -148,6 +154,36 @@ class TypeInfo:
         )
 
 
+    @staticmethod
+    def from_set_new(s: "set[TypeInfo]", **kwargs: Any) -> "TypeInfo":
+        """Form a union from a set of already-simplified types.
+
+        Assumes the caller (lub/merge_set) already handled Never removal,
+        Any subsumption, and Never-generic cleanup. Only flattens nested
+        unions, deduplicates, and sorts for deterministic output.
+        """
+        if not s:
+            return TypeInfo.from_type(typing.Never)
+
+        # Flatten nested unions
+        expanded: set[TypeInfo] = set()
+        for t in s:
+            if t.is_union() and not t.typevar_index:
+                expanded |= {a for a in t.args if isinstance(a, TypeInfo)}
+            else:
+                expanded.add(t)
+
+        if len(expanded) == 1:
+            return next(iter(expanded))
+
+        return UnionTypeInfo.from_type(
+            UnionTypeInfo,
+            # Sort for deterministic output (None at end for readability)
+            args=tuple(sorted(expanded, key=lambda x: (x == NoneTypeInfo, str(x)))),
+            **kwargs
+        )
+
+
     def is_union(self) -> bool:
         return False
 
@@ -158,6 +194,35 @@ class TypeInfo:
 
     def replace(self, **kwargs: Any) -> "TypeInfo":
         return replace(self, **kwargs)
+
+
+    @staticmethod
+    def _strip_type_obj_for_pickle(t: "TypeInfo") -> tuple[Any, ...]:
+        """Pickle reducer that drops `type_obj`.  Registered on the
+        `Pickler.dispatch_table` used to write `.rt` files: without it,
+        the live class reference (often a __main__-defined class) leaks
+        through the round-trip and overrides the canonical (module, name)
+        chosen by `AdjustTypeNamesT`, producing names like
+        `__main__.Foo` at process time.  Walks `fields()` so it stays
+        correct as TypeInfo evolves."""
+        return type(t), tuple(
+            None if f.name == 'type_obj' else getattr(t, f.name)
+            for f in fields(type(t))
+        )
+
+
+    @classmethod
+    def _pickle_dispatch_entries(cls) -> dict[type, Callable[[Any], tuple[Any, ...]]]:
+        """Returns dispatch_table entries mapping `cls` and every loaded
+        subclass to `_strip_type_obj_for_pickle`.  Recurses so future
+        subclasses (and sub-subclasses) are picked up automatically as
+        long as they're imported before `.rt` save."""
+        entries: dict[type, Callable[[Any], tuple[Any, ...]]] = {
+            cls: cls._strip_type_obj_for_pickle,
+        }
+        for sub in cls.__subclasses__():
+            entries.update(sub._pickle_dispatch_entries())
+        return entries
 
 
     def is_typevar(self) -> bool:

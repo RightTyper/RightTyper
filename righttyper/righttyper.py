@@ -693,6 +693,18 @@ def add_output_options(group=None):
                 default=output_options.inline_generics,
                 help="""Whether to use PEP 695 inline type parameter syntax (Python 3.12+). Disable for module-level TypeVar declarations."""
             ),
+            base.option(
+                "--use-attribute-simplification/--no-use-attribute-simplification",
+                is_flag=True,
+                default=output_options.use_attribute_simplification,
+                help="""Whether to widen types via static analysis of which attributes the code actually accesses, generalizing to a base class when the code only uses attributes inherited from it.""",
+            ),
+            base.option(
+                "--use-constructor-types/--no-use-constructor-types",
+                is_flag=True,
+                default=output_options.use_constructor_types,
+                help="""Whether to use a variable's source-level constructor or factory call (e.g., `p = Path("/tmp")` or `p = Path.cwd()`) as its annotation, when the observed runtime type is consistent with the call's declared return.""",
+            ),
         ]):
             func = opt(func)
         return func
@@ -995,9 +1007,6 @@ def run(
                     logger.debug(f"test module: {m}")
 
             if only_collect:
-                from righttyper.type_transformers import MakePickleableT
-                obs.transform_types(MakePickleableT())
-
                 collected = {
                     'file_version': PKL_FILE_VERSION,
                     'software': TOOL_NAME,
@@ -1005,7 +1014,7 @@ def run(
                     'timestamp': datetime.datetime.now().isoformat(),
                     'run_options': run_options,
                     'script': Path(script).resolve(),
-                    'observations': obs
+                    'observations': obs,
                 }
 
                 index = 1
@@ -1013,7 +1022,19 @@ def run(
                     filename = Path(PKL_FILE_NAME.format(N=index))
                     try:
                         with filename.open("xb") as pklf:
-                            pickle.dump(collected, pklf)
+                            # Strip `type_obj` from TypeInfos as we write —
+                            # see `TypeInfo._strip_type_obj_for_pickle` for why.
+                            # Stdlib pickle (used by multiprocessing) is
+                            # unaffected since this dispatch_table lives on this
+                            # pickler instance only.
+                            import copyreg
+                            from righttyper.typeinfo import TypeInfo
+                            pickler = pickle.Pickler(pklf)
+                            pickler.dispatch_table = {
+                                **copyreg.dispatch_table,
+                                **TypeInfo._pickle_dispatch_entries(),
+                            }
+                            pickler.dump(collected)
                             break
 
                     except FileExistsError:
@@ -1091,6 +1112,15 @@ def process(**kwargs):
     obs = obs_list[0]
     for obs2 in obs_list[1:]:
         obs.merge_observations(obs2)
+
+    if not output_options.use_constructor_types:
+        # Honors `--no-use-constructor-types` at process time even when
+        # the .rt was recorded with the feature on.  Clearing here is the
+        # single point of action; downstream `_apply_constructor_type`
+        # naturally short-circuits on empty candidates.
+        for fi in obs.func_info.values():
+            fi.constructor_types.clear()
+        obs.module_constructor_types.clear()
 
     from righttyper.type_transformers import LoadTypeObjT
     obs.transform_types(LoadTypeObjT())

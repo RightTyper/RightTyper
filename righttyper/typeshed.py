@@ -261,3 +261,10 @@ def get_typeshed_func_signature(module_name: str, qualname: str) -> list[TypeInf
         return None
 
     return get_func_signature(module, module_name, qualname)
+
+
+def get_typeshed_func_return(module_name: str, qualname: str) -> TypeInfo | None:
+    """Returns the typeshed-declared return type of `module_name.qualname`,
+    or None if not found / not annotated / overloaded."""
+    sig = get_typeshed_func_signature(module_name, qualname)
+    return sig[-1] if sig else None

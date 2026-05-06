@@ -2669,6 +2669,334 @@ def test_discovered_function_type_in_yield():
     """)
 
 
+def test_lub_uses_accessed_attributes():
+    """When a function accesses an attribute on a parameter, lub should use
+    that to make better type merging decisions — merging to the common base that
+    has the accessed attribute rather than relying on dir() overlap.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Base:
+            def get_name(self):
+                return ""
+
+        class ChildA(Base):
+            def extra_a(self):
+                return "a"
+
+        class ChildB(Base):
+            def extra_b(self):
+                return "b"
+
+        def process(x):
+            return x.get_name()
+
+        process(ChildA())
+        process(ChildB())
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # With accessed-attribute-aware simplification, x is accessed via .get_name()
+    # which exists on Base, so ChildA|ChildB should merge to Base.
+    assert get_function(code, 'process') == textwrap.dedent("""\
+        def process(x: Base) -> str: ...
+    """)
+
+
+@pytest.mark.xfail(reason="PosixPath is platform-specific; needs generalization to Path")
+def test_lub_single_type_public_stays():
+    """A single public observed type should not be generalized to a base,
+    even with accessed_attributes. Only private types get de-privatized."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+
+        def get_name(p):
+            return p.name
+
+        get_name(Path("."))
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    func = get_function(code, 'get_name')
+    assert func is not None
+    # PosixPath is public — stays as the concrete observed type.
+    assert 'PosixPath' in func or 'WindowsPath' in func or 'p: Path' in func, func
+
+
+def test_lub_local_variable_uses_accessed_attributes():
+    """Attribute-based simplification should apply to local variables as to args:
+    a local whose private type only accesses attributes on a public base
+    should be de-privatized to that base.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Base:
+            name = ""
+
+        class _Derived(Base):
+            extra = ""
+
+        def f(p):
+            y = p
+            return y.name
+
+        f(_Derived())
+        """))
+
+    rt_run('--use-attribute-simplification', 't.py')
+    output = Path("t.py").read_text()
+
+    # _Derived is private; only .name is accessed on y → de-privatize to Base.
+    assert 'y: Base' in output or 'y: "Base"' in output, (
+        f"local 'y' should de-privatize to Base, got:\n{output}"
+    )
+
+
+def test_var_assigned_constructor_uses_typeshed_return(tmp_cwd):
+    """A variable assigned the result of a typeshed-known constructor gets
+    the constructor's declared return as its annotation, not the runtime
+    subtype. When the variable is returned, the function's return widens
+    consistently so mypy stays happy. Path('/tmp') returns PosixPath at
+    runtime; typeshed declares Path. No attribute access so the existing
+    accessed-attribute MRO walk does not fire."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+
+        def f():
+            p = Path("/tmp")
+            return p
+        f()
+        """))
+
+    rt_run('--use-constructor-types', 't.py')
+    output = Path("t.py").read_text()
+
+    assert "p: Path" in output, output
+    assert "-> Path" in output, output
+
+
+@pytest.mark.dont_run_mypy  # without widening, the runtime subtype (Posix/WindowsPath) leaks; mypy rejects.
+def test_no_use_constructor_types_disables_widening(tmp_cwd):
+    """`--no-use-constructor-types` skips both AST capture (so `.rt` files
+    don't carry constructor_types) and load-time application (so a `.rt`
+    recorded with the feature on is honored at process time).  The
+    variable falls back to the runtime-observed type."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+
+        def f():
+            p = Path("/tmp")
+            return p
+        f()
+        """))
+
+    rt_run('--no-use-constructor-types', 't.py')
+    output = Path("t.py").read_text()
+
+    # Without the feature, the variable shows the runtime-observed concrete
+    # subtype (PosixPath on POSIX, WindowsPath on Windows) rather than being
+    # widened to Path.
+    concrete = type(Path("/")).__name__
+    assert concrete in output, output
+    assert concrete != "Path"  # sanity: we are checking a real subtype
+
+
+def test_direct_return_uses_typeshed_return(tmp_cwd):
+    """A function directly returning Constructor(...) gets the typeshed-
+    declared return type as its return annotation."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+
+        def f():
+            return Path("/tmp")
+        f()
+        """))
+
+    rt_run('--use-constructor-types', 't.py')
+    output = Path("t.py").read_text()
+
+    assert "-> Path" in output, output
+
+
+def test_var_assigned_typeshed_factory_uses_declared_return(tmp_cwd):
+    """A variable assigned the result of a typeshed-known factory (a callable
+    that isn't itself a type — here a classmethod) gets the typeshed-declared
+    return type as its ceiling. Path.cwd is declared `-> Self`; since the
+    walk passes through Path, Self resolves to Path."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+
+        def f():
+            p = Path.cwd()
+        f()
+        """))
+
+    rt_run('--use-constructor-types', 't.py')
+    output = Path("t.py").read_text()
+
+    assert "p: Path" in output, output
+
+
+def test_constructor_type_preserves_container_parametrization(tmp_cwd):
+    """Bare constructor types must not clobber parametrized observations
+    via lub Rule 4b ("bare subsumes parametrized"). Uses an imported
+    generic so the constructor-type resolution actually fires —
+    builtin sets/lists/dicts are skipped at resolution."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from collections import OrderedDict
+        def f():
+            d = OrderedDict()
+            d["x"] = 1
+            return d
+        f()
+        """))
+
+    rt_run('--use-constructor-types', 't.py')
+    output = Path("t.py").read_text()
+
+    assert "d: OrderedDict[str, int]" in output, output
+
+
+def test_constructor_type_skips_newtype_callable(tmp_cwd):
+    """`NewType("Index", int)` returns a callable that is not a `type`
+    instance.  Treating it as one would corrupt the .rt file (dill can't
+    pickle the local callable) — `_walk_constructor_callee` must
+    `isinstance(obj, type)`-filter to skip it."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import NewType
+
+        Index = NewType("Index", int)
+
+        def f():
+            i = Index(5)
+            return i
+        f()
+        """))
+
+    rt_run('--use-constructor-types', '--only-collect', 't.py')
+    rt_run('process', '--use-constructor-types', '--output-files', '--overwrite')
+    output = Path("t.py").read_text()
+
+    # The variable is annotated as int (the underlying type from NewType
+    # observation), not as the NewType callable.
+    assert "i: int" in output, output
+
+
+def test_constructor_type_round_trip(tmp_cwd):
+    """Constructor-type widening survives the .rt round-trip: collect with
+    --only-collect, then process. The resulting annotations must match what
+    a single-pass run produces. Includes both a stdlib type (Path) and a
+    user-defined class — the latter needs `type_obj` to be cleared from
+    `constructor_types` before pickling, since the live class reference
+    can't survive serialization across processes."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from pathlib import Path
+
+        class Widget:
+            pass
+
+        def f():
+            p = Path("/tmp")
+            w = Widget()
+            return p
+        f()
+        """))
+
+    rt_run('--use-constructor-types', '--only-collect', 't.py')
+    rt_run('process', '--use-constructor-types', '--output-files', '--overwrite')
+    output = Path("t.py").read_text()
+
+    assert "p: Path" in output, output
+    assert "-> Path" in output, output
+    assert "w: Widget" in output, output
+
+
+def test_alias_resolution_does_not_leak_across_functions():
+    """Same-named variables in different functions should be independent.
+    Here `y` in f is aliased to global `g`; `y` in h is just an unrelated
+    parameter. h's access to y.extra should NOT be attributed to g.
+
+    Uses a _-prefixed (private) type so that de-privatization fires and the
+    accessed_attributes set actually matters for the outcome.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Base:
+            name = ""
+
+        class _Derived(Base):
+            extra = ""
+
+        g = _Derived()
+
+        def f():
+            y = g
+            return y.name
+
+        def h(y):
+            return y.extra
+
+        f()
+        h(_Derived())
+        """))
+
+    rt_run('--use-attribute-simplification', 't.py')
+    output = Path("t.py").read_text()
+
+    # Only .name is accessed on g (via f's alias y = g).
+    # h's access on its own parameter y must not leak onto g.
+    # With correct scoping, g de-privatizes to Base (only .name accessed).
+    # With leaking, g's accessed_attributes would also include 'extra',
+    # blocking de-privatization (Base doesn't have extra).
+    assert 'g: Base' in output or 'g: "Base"' in output, (
+        f"g should de-privatize to Base (only .name accessed), got:\n{output}"
+    )
+
+
+@pytest.mark.xfail(
+    reason="class-attribute simplification needs chained attribute path tracking; "
+           "see CodeVars.attributes / class_attributes flow"
+)
+def test_lub_class_attribute_uses_accessed_attributes():
+    """Class attributes should also be simplified using accessed attributes —
+    e.g., `self.x.append(...)` should record `append` as accessed on attribute
+    x, allowing simplification from the runtime type to a base that has append.
+
+    This requires capturing chained attribute accesses (Attribute(Attribute(
+    Name('self'), 'x'), 'append')) which the current visit_Attribute doesn't
+    handle (it only records when node.value is a Name).
+
+    Uses _-prefixed types so de-privatization fires.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        class Base:
+            name = ""
+
+        class _Derived(Base):
+            extra = ""
+
+        class C:
+            def __init__(self):
+                self.x = _Derived()
+
+            def use(self):
+                return self.x.name
+
+        c = C()
+        c.use()
+        """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+
+    # The class attribute 'x' only has .name accessed, so _Derived should
+    # de-privatize to Base, not stay as the private _Derived.
+    assert 'x: _Derived' not in output and 'x: "_Derived"' not in output, output
+
+
 def test_nested_callable_resolution():
     """When a function returns another function that itself returns a function,
     the nested Callable types should be fully resolved.
@@ -2858,7 +3186,7 @@ def test_varargs():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: bool, *args: float|int|str) -> None: ...
+        def foo(x: bool, *args: float|str) -> None: ...
     """)
 
 
@@ -2895,7 +3223,7 @@ def test_varargs_json():
     print(data)
 
     foo = data['files'][str(Path('t.py').resolve())]['functions']['foo']
-    assert "tuple[float|int|str, ...]" == foo['args']['rest']
+    assert "tuple[float|str, ...]" == foo['args']['rest']
 
 
 def test_kwargs():
@@ -2911,7 +3239,7 @@ def test_kwargs():
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
     assert get_function(code, 'foo') == textwrap.dedent("""\
-        def foo(x: bool, **kwargs: float|int|str) -> None: ...
+        def foo(x: bool, **kwargs: float|str) -> None: ...
     """)
 
 
@@ -2948,7 +3276,7 @@ def test_kwargs_json():
     print(data)
 
     foo = data['files'][str(Path('t.py').resolve())]['functions']['foo']
-    assert "dict[str, float|int|str]" == foo['args']['kwargs']
+    assert "dict[str, float|str]" == foo['args']['kwargs']
 
 
 def test_none_arg():
@@ -4353,6 +4681,45 @@ def test_self_widen_callable_retval(python_version):
         )
 
 
+def test_widen_flattens_unions_for_lub(tmp_cwd):
+    """Phase 2 widens an abstract parent's args from its children. When one
+    child has already merged its observations into a union (e.g. `int | str`)
+    and another child has a type that is a subtype of one component of that
+    union (e.g. `bool ⊆ int`), the merge set passed to `merged_types` looks
+    like `{int | str, bool}`. Without flattening unions on entry to
+    `_merge_set`, lub treats the union opaquely (its `type_obj` isn't a real
+    `type`) and never compares `bool` against `int`, so the parent ends up
+    with `int | str | bool` instead of collapsing `bool` into `int`.
+    """
+    Path("t.py").write_text(textwrap.dedent("""\
+        from abc import ABC, abstractmethod
+        class Base(ABC):
+            @abstractmethod
+            def m(self, x): ...
+        class C1(Base):
+            def m(self, x):
+                pass
+        class C2(Base):
+            def m(self, x):
+                pass
+        C1().m(1)
+        C1().m("a")
+        C2().m(True)
+        """))
+
+    rt_run('--python-version=3.11', 't.py')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # With flattening, the merge set becomes {int, str, bool}; pairwise lub
+    # collapses bool into int, leaving int|str. Without flattening, bool
+    # survives and the annotation is `int|bool|str` (or similar order).
+    assert get_function(code, 'Base.m') == textwrap.dedent("""\
+        @abstractmethod
+        def m(self: Self, x: int|str) -> None: ...
+    """)
+
+
 def test_returns_or_yields_generator():
     t = textwrap.dedent("""\
         def test(a):
@@ -4637,18 +5004,20 @@ def test_empty_container(python_version, opt):
     output = Path("t.py").read_text()
     code = cst.parse_module(output)
 
+    # f accesses only __len__; lub picks Collection as the tightest ABC that
+    # covers both list and dict — preferred over keeping them as a union.
     if python_version == "3.11" and opt == '--use-typing-never':
         assert get_function(code, 'f', body=True) == textwrap.dedent("""\
-            def f(x: dict[Never, Never]|list[Never]) -> int:
-                y: dict[Never, Never]|list[Never] = x
+            def f(x: Collection[Never]) -> int:
+                y: Collection[Never] = x
                 return len(y)
         """)
         assert "g: dict[Never, Never] = {}" in output
 
     else:
         assert get_function(code, 'f', body=True) == textwrap.dedent("""\
-            def f(x: dict[Any, Any]|list[Any]) -> int:
-                y: dict[Any, Any]|list[Any] = x
+            def f(x: Collection[Any]) -> int:
+                y: Collection[Any] = x
                 return len(y)
         """)
         assert "g: dict[Any, Any] = {}" in output
@@ -7412,6 +7781,42 @@ def test_self_detection_through_collect_and_process():
     """)
 
 
+def test_accessed_attributes_survive_collect_process():
+    """accessed_attributes must survive the --only-collect / process
+    round-trip so that attribute-based simplification works."""
+    # Uses _-prefixed type so de-privatization fires.
+    # _Sub inherits greet() without overriding, and adds extra() which
+    # Base lacks.  Without accessed_attributes, the dir() fallback
+    # includes extra(), blocking de-privatization to Base.
+    Path("mylib.py").write_text(textwrap.dedent("""\
+        class Base:
+            def greet(self): return "hi"
+
+        class _Sub(Base):
+            def extra(self): pass  # not on Base; greet() inherited
+    """))
+    Path("t.py").write_text(textwrap.dedent("""\
+        from mylib import _Sub
+
+        def f(x):
+            return x.greet()
+
+        f(_Sub())
+    """))
+
+    rt_run('--use-attribute-simplification', '--only-collect', 't.py')
+    rt_run('process', '--use-attribute-simplification')
+    output = Path("t.py").read_text()
+    code = cst.parse_module(output)
+
+    # f only accesses .greet() (inherited, not overridden), so _Sub should
+    # de-privatize to Base.  This requires accessed_attributes to survive
+    # the .rt round-trip.
+    func = get_function(code, 'f')
+    assert func is not None
+    assert 'Base' in func
+
+
 def test_parent_type_propagation_classmethod():
     """Unobserved parent classmethod gets arg types from child."""
     Path("t.py").write_text(textwrap.dedent("""\
@@ -7799,3 +8204,27 @@ def test_main_module_defined_class_not_leaked():
     assert "MyWidget" not in output, (
         f"runner-defined MyWidget leaked into pkg's annotations:\n{output}"
     )
+
+
+@pytest.mark.dont_run_mypy
+def test_typeddict_does_not_crash_constructor_ceiling():
+    """TypedDict overrides __subclasscheck__ to raise TypeError.
+    The constructor ceiling must not crash on TypedDict-typed variables."""
+    Path("t.py").write_text(textwrap.dedent("""\
+        from typing import TypedDict
+
+        class Config(TypedDict):
+            name: str
+            value: int
+
+        def make_config():
+            c = Config(name="x", value=1)
+            return c
+
+        make_config()
+    """))
+
+    rt_run('t.py')
+    output = Path("t.py").read_text()
+    # Just verify it doesn't crash; the annotation content is secondary.
+    assert 'def make_config' in output

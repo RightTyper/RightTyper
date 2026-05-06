@@ -12,8 +12,8 @@ from righttyper.typeinfo import TypeInfo, NoneTypeInfo, UnknownTypeInfo, CallTra
 from typing import Final, Any, NewType, overload
 import typing
 from righttyper.observations import Observations, FuncInfo, OverriddenFunction, ArgInfo
-from righttyper.variable_capture import code2variables
-from righttyper.options import run_options
+from righttyper.variable_capture import code2variables, Constructor
+from righttyper.options import run_options, output_options
 from righttyper.righttyper_utils import (
     source_to_module_fqn, get_main_module_fqn, skip_this_file,
     detected_test_files, detected_test_modules, is_test_module,
@@ -26,6 +26,61 @@ from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
 
 # Singleton used to differentiate from None
 NO_OBJECT: Final = object()
+
+
+# Synthetic key in `func_info.constructor_types` used to carry the resolved
+# return-expression constructor type.  `return` is a Python keyword, so it
+# cannot collide with any user-defined variable name.  mk_annotation
+# extracts this and applies it post-merge to the retval annotation so
+# `def f(): p = Path(...); return p` widens consistently (both `p` and the
+# function's return become Path, not PosixPath).
+RETURN_CONSTRUCTOR_KEY: Final = VariableName("return")
+
+
+def _walk_constructor_callee(
+    parts: list[str],
+    f_locals: abc.Mapping[str, Any],
+    f_globals: abc.Mapping[str, Any],
+) -> tuple[type, str | None] | None:
+    """Walk the dotted callee parts (`["Path"]`, `["pathlib", "Path"]`,
+    `["Path", "cwd"]`) against the live frame.  Locals are tried first so
+    local aliases like `P = Path; p = P(...)` resolve correctly; globals
+    cover imports.  Builtins (`set`, `list`, `dict`, ...) are not looked up
+    — for them, ceiling and observation share the same `type_obj` and the
+    post-merge widening is a no-op anyway.
+
+    Returns `(last_class, method_name)` where `last_class` is the most
+    recent class encountered on the walk and `method_name` is None if the
+    final target *is* `last_class` (direct constructor call) or the last
+    part name if the final target is something else (a method/function on
+    the class — factory pattern).  Returns None for shapes that don't fit
+    either pattern (e.g. free function `os.getcwd`).
+
+    The actual constructor type, including typeshed lookup for factory
+    cases, is determined later in finish_recording (when TypeMap is
+    available)."""
+    from righttyper.random_dict import RandomDict
+    obj = f_locals.get(parts[0], NO_OBJECT)
+    if obj is NO_OBJECT:
+        obj = f_globals.get(parts[0], NO_OBJECT)
+    if obj is NO_OBJECT or obj is None:
+        return None
+    last_class = obj if isinstance(obj, type) else None
+    for p in parts[1:]:
+        nxt = getattr(obj, p, NO_OBJECT)
+        if nxt is NO_OBJECT or nxt is None:
+            return None
+        obj = nxt
+        if isinstance(obj, type):
+            last_class = obj
+    if last_class is None or last_class is RandomDict:
+        # RandomDict is RightTyper's internal stand-in for dict (under
+        # --replace-dict).  type_id._handle_randomdict masquerades it as
+        # plain `dict` for type-reporting; surfacing it as a ceiling
+        # would introduce RandomDict into user output.  Drop here.
+        return None
+    method_name = None if isinstance(obj, type) else parts[-1]
+    return (last_class, method_name)
 
 
 def _get_field_names(cls: type) -> tuple[str, ...]|None:
@@ -128,6 +183,19 @@ class ObservationsRecorder:
     def __init__(self) -> None:
         # Finds FuncInfo by their CodeType
         self._code2func_info: dict[CodeType, FuncInfo] = {}
+
+        # Record-time staging for constructor ceilings.  At record time we
+        # walk the live frame to resolve `var = Foo(...)` / `Class.method(...)`
+        # shapes to a (last_class, method_name) tuple — handles local
+        # aliases.  Final canonicalization and typeshed Self-lookup happen
+        # in finish_recording, once TypeMap is built.  Two parallel dicts
+        # mirror the function-level vs module-level split of scope_vars.
+        self._func_var_callees: dict[
+            CodeType, dict[VariableName, set[tuple[type, str | None]]]
+        ] = defaultdict(lambda: defaultdict(set))
+        self._module_var_callees: dict[
+            Filename, dict[VariableName, set[tuple[type, str | None]]]
+        ] = defaultdict(lambda: defaultdict(set))
 
         # Started, but not (yet) completed traces
         self._pending_traces: dict[CodeType, dict[FrameId, PendingCallTrace]] = defaultdict(dict)
@@ -439,22 +507,43 @@ class ObservationsRecorder:
             return
 
         # scope_code is guaranteed non-None in code2variables
+        scope_callees: dict[VariableName, set[tuple[type, str | None]]]
         if (func_info := self._code2func_info.get(cast_not_None(codevars.scope_code))):
             scope_vars = func_info.variables
+            scope_callees = self._func_var_callees[cast_not_None(codevars.scope_code)]
         else:
             scope_vars = self._obs.module_variables[Filename(code.co_filename)]
+            scope_callees = self._module_var_callees[Filename(code.co_filename)]
 
         f_locals = frame.f_locals
         prefix = codevars.var_prefix
 
-        for var_name, const_type in codevars.variables.items():
+        for var_name, init in codevars.variables.items():
             qualified = f"{prefix}{var_name}"
             # Record runtime value
             if (value := f_locals.get(var_name, NO_OBJECT)) is not NO_OBJECT:
                 scope_vars[VariableName(qualified)].add(get_value_type(value))
             # Include initial constant type if present (e.g., x = None)
-            if const_type is not None:
-                scope_vars[VariableName(qualified)].add(TypeInfo.from_type(const_type))
+            if isinstance(init, type):
+                scope_vars[VariableName(qualified)].add(TypeInfo.from_type(init))
+            elif isinstance(init, Constructor):
+                # Resolve the source-level dotted name against the live frame
+                # — locals first (for `P = Path; p = P(...)`), then globals.
+                # The result is staged; canonicalization (private-module
+                # paths like Python 3.13's `pathlib._local.Path`) and the
+                # typeshed Self lookup happen in finish_recording, where
+                # TypeMap is available.
+                if (callee := _walk_constructor_callee(
+                        init.parts, f_locals, frame.f_globals)) is not None:
+                    scope_callees[VariableName(qualified)].add(callee)
+
+        # Same idea for the function's return: stage the callee under the
+        # synthetic <return> key; finalized in finish_recording.
+        if codevars.return_constructor is not None:
+            if (callee := _walk_constructor_callee(
+                    codevars.return_constructor.parts,
+                    f_locals, frame.f_globals)) is not None:
+                scope_callees[RETURN_CONSTRUCTOR_KEY].add(callee)
 
         if codevars.self and (self_obj := f_locals.get(codevars.self)) is not None:
             obj_attrs = self._object_attributes[codevars.class_key]
@@ -628,6 +717,55 @@ class ObservationsRecorder:
                                 scope_vars[VariableName(qualified_name)].update(class_attrs[VariableName(attr)])
 
 
+    def _finalize_constructor_types(
+        self,
+        var_callees: dict[VariableName, set[tuple[type, str | None]]],
+        out: "abc.MutableMapping[VariableName, set[TypeInfo]]",
+        type_map: TypeMap,
+    ) -> None:
+        """Finalize staged constructor-type candidates: canonicalize the
+        resolved class via TypeMap and consult typeshed for the callee's
+        declared return type (`__new__` for direct constructor calls, the
+        named method for factory calls).  Write the resolved TypeInfo into
+        `out[var_name]` — typically `func_info.constructor_types[var_name]`
+        or `obs.module_constructor_types[filename][var_name]`.
+
+        The runtime-vs-static consistency check (whether the observed
+        runtime type is actually a strict subclass of the constructor
+        type) lives at mk_annotation time, where retval observations from
+        traces are available alongside per-variable observations."""
+        from righttyper.typeshed import get_typeshed_func_return
+        for var_name, callees in var_callees.items():
+            for last_class, method_name in callees:
+                names = type_map.find(last_class)
+                if not names:
+                    continue
+                module, qualname = names[0]
+                lookup = method_name if method_name is not None else '__new__'
+                ret = get_typeshed_func_return(
+                    module if module else 'builtins', f"{qualname}.{lookup}")
+                if ret is None:
+                    # No typeshed entry: for direct calls fall back to
+                    # last_class (most classes inherit object.__new__,
+                    # which is `Self`).  For factory calls we don't know
+                    # what's returned, so skip.
+                    if method_name is not None:
+                        continue
+                elif (
+                    (ret.module in ('typing', 'typing_extensions') and ret.name == 'Self')
+                    or (ret.module == module and ret.name == qualname)
+                ):
+                    # Self (from typing / typing_extensions), or the class
+                    # explicitly named — both resolve to last_class.
+                    pass
+                else:
+                    # TODO resolve specific non-Self return types — needs
+                    # a sys.modules lookup, parametrization-loss handling,
+                    # and TypeVar substitution.
+                    continue
+                out[var_name].add(get_type_name(last_class))
+
+
     def finish_recording(self, main_globals: dict[str, Any]) -> Observations:
         # Any generators left?
         for code, per_frame in self._pending_traces.items():
@@ -636,6 +774,25 @@ class ObservationsRecorder:
                     self._record_return_type(tr, code, None)
 
         self._assign_attributes_to_scopes()
+
+        # Populate accessed_attributes from the loader's static analysis.
+        # Done here (vs. at collect_annotations time) so the data survives
+        # serialization to .rt files for the --only-collect + process flow.
+        # co_varnames/co_freevars are only available while the code object
+        # is live, so module_accessed_attributes must be computed now.
+        # Skipped when --no-use-attribute-simplification: the loader will not
+        # have populated cv.accessed_attributes either, but the dict-write
+        # overhead is still worth avoiding.
+        if output_options.use_attribute_simplification:
+            for co, cv in code2variables.items():
+                if cv.accessed_attributes:
+                    self._obs.accessed_attributes[CodeId.from_code(co)] = cv.accessed_attributes
+                    module_attrs = self._obs.module_accessed_attributes.setdefault(
+                        Filename(co.co_filename), {}
+                    )
+                    for var_name, attrs in cv.accessed_attributes.items():
+                        if var_name not in co.co_varnames and var_name not in co.co_freevars:
+                            module_attrs.setdefault(var_name, set()).update(attrs)
 
         obs, self._obs = self._obs, Observations()
         self._code2func_info.clear()
@@ -649,9 +806,25 @@ class ObservationsRecorder:
         # which operates on deserialized data (vs. data just collected).
         type_map = TypeMap(main_globals)
 
+        # Finalize constructor types staged at record time *before*
+        # AdjustTypeNamesT runs, so the new entries get canonicalized
+        # alongside everything else in obs (avoids leaking private
+        # __module__ paths like `_io` or `pathlib._local`).  type_obj is
+        # set on each new entry for the canonicalization pass; it's
+        # cleared at .rt save by the Pickler dispatch_table.  `obs` is the
+        # swapped-out Observations; its func_info is keyed by CodeId.
+        for code, var_callees in self._func_var_callees.items():
+            if (fi := obs.func_info.get(CodeId.from_code(code))):
+                self._finalize_constructor_types(
+                    var_callees, fi.constructor_types, type_map)
+        for filename, var_callees in self._module_var_callees.items():
+            self._finalize_constructor_types(
+                var_callees, obs.module_constructor_types[filename], type_map)
+
         if run_options.adjust_type_names:
             type_name_adjuster = AdjustTypeNamesT(type_map)
             obs.transform_types(type_name_adjuster)
+            obs.type_name_map = type_map.to_name_map()
         else:
             type_name_adjuster = None
             obs.transform_types(CheckTypeNamesT(type_map))
