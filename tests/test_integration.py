@@ -63,9 +63,11 @@ def runmypy(tmp_cwd, request):
             print(f"{lineno:3}: {line}")
 
     if exit_status:
-        print(stdout)
-        filename = stdout.split(':')[0]
-        print_file(Path(filename))
+        print("STDOUT:", stdout)
+        print("STDERR:", stderr)
+        filename = stdout.split(':', 1)[0] if stdout and ':' in stdout else ''
+        if filename and Path(filename).is_file():
+            print_file(Path(filename))
         pytest.fail("see mypy errors")
 
 
