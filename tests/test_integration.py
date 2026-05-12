@@ -44,12 +44,17 @@ def runmypy(tmp_cwd, request):
     mypy_args = request.node.get_closest_marker('mypy_args')
 
     # if we are specifying a Python version in the test, have mypy check for that as well
-    python_version = (
-        ('--python-version', request.node.callspec.params.get('python_version'))
+    pv = (
+        request.node.callspec.params.get('python_version')
         if hasattr(request.node, 'callspec')
         and 'python_version' in request.node.callspec.params
-        else ()
+        else None
     )
+    # mypy 1.18 dropped --python-version 3.9; RT is still exercised at that target,
+    # but mypy can no longer validate it.
+    if pv == "3.9":
+        return
+    python_version = ('--python-version', pv) if pv else ()
     from mypy import api
     stdout, stderr, exit_status = api.run([
         '--cache-dir', str(MYPY_CACHE_DIR), # speeds up mypy
