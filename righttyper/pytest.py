@@ -1,8 +1,10 @@
 import pytest
-from righttyper.righttyper_utils import set_test_files_and_modules
+from righttyper.righttyper_utils import set_pytest_collected, set_test_files_and_modules
 
 def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config, items: list[pytest.Item]) -> None:
     """Collects the names of pytest test modules."""
+
+    set_pytest_collected()
 
     files: set[str] = set()
     modules: set[str] = set()

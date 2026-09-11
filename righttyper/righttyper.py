@@ -36,6 +36,7 @@ from righttyper.righttyper_tool import (
     enabled_code
 )
 import righttyper.loader as loader
+from righttyper import righttyper_utils
 from righttyper.righttyper_utils import detected_test_modules
 from righttyper.typeinfo import TypeInfo
 from righttyper.righttyper_types import Filename, FuncLoc, FunctionName
@@ -1009,8 +1010,13 @@ def run(
     if run_options.call_sampling:
         schedule_next_capture()
 
+    target_aborted = False
+
     try:
         execute_script_or_module(script, is_module=bool(module), args=args)
+    except BaseException:
+        target_aborted = True
+        raise
     finally:
         rec.try_close_generators()
         shutdown_monitoring()
@@ -1029,7 +1035,21 @@ def run(
                 for m in detected_test_modules:
                     logger.debug(f"test module: {m}")
 
-            if only_collect:
+            if target_aborted and module == 'pytest' and not righttyper_utils.pytest_collected:
+                # pytest died before collecting: a usage error, a bad rootdir, a plugin
+                # that failed to load.  It reports those *after* importing conftest, so
+                # observations are not empty -- conftest's imports ran, and annotating
+                # from them rewrote the tree.  Collection is the signal that the run the
+                # user asked for actually began; a suite that merely *fails* collects
+                # first, and still annotates.  See #189.
+                #
+                # Ahead of `only_collect` because a pickle written here annotates the
+                # tree just the same, one `process` later.
+                print(
+                    "pytest exited before collecting any tests; no output was written.",
+                    file=sys.stderr,
+                )
+            elif only_collect:
                 collected = {
                     'file_version': PKL_FILE_VERSION,
                     'software': TOOL_NAME,
