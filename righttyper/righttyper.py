@@ -740,12 +740,19 @@ def add_output_options(group=None):
     type=str,
     multiple=True,
     callback=validate_fnmatch,
-    help="Exclude the given files (using fnmatch). Can be passed multiple times.",
+    help="Exclude the given files (using fnmatch). Patterns are resolved relative to the"
+         " current directory before matching, so write them as they appear in your project"
+         " (e.g. 'src/generated/*'); a leading '*/' makes a pattern match nothing."
+         " Can be passed multiple times.",
 )
 @click.option(
     "--exclude-test-files/--no-exclude-test-files",
     default=run_options.exclude_test_files,
-    help="Automatically exclude test modules from typing.",
+    help="Automatically exclude types originating in test modules from the generated"
+         " annotations. Test modules are still imported and traced: they are only"
+         " identified during pytest collection, after import, so this reduces output"
+         " noise rather than tracing overhead. Use --exclude-files to skip them"
+         " entirely.",
 )
 @click.option(
     "--include-functions",
@@ -794,7 +801,9 @@ def add_output_options(group=None):
     multiple=True,
     callback=validate_regexes,
     default=run_options.no_sampling_for,
-    help=f"Rather than sample, record every invocation of any functions matching the given regular expression. Can be passed multiple times.",
+    help=f"Rather than sample, record every invocation of any function whose qualified name"
+         f" ('co_qualname', e.g. 'MyClass.my_method') matches the given regular expression."
+         f" This does not match module or file paths. Can be passed multiple times.",
 )
 @click.option(
     "--replace-dict/--no-replace-dict",
@@ -891,7 +900,10 @@ def add_output_options(group=None):
     "--allow-runtime-exceptions/--no-allow-runtime-exceptions",
     is_flag=True,
     default=run_options.allow_runtime_exceptions,
-    hidden=True,
+    help="Re-raise exceptions raised after your program finishes, while types are being"
+         " processed and files written. By default such an exception is logged to"
+         " \"righttyper.log\" and swallowed, so the run still exits 0 having written no"
+         " annotations. Pass this to get the traceback and a non-zero exit instead.",
 )
 @click.option(
     "--generalize-tuples",

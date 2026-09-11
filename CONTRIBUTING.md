@@ -40,6 +40,42 @@ GitHub provides additional document on [forking a repository](https://help.githu
 [creating a pull request](https://help.github.com/articles/creating-a-pull-request/).
 
 
+## Development
+
+Install the package and its test dependencies in editable mode:
+
+```bash
+python3 -m pip install -e ".[tests]"
+```
+
+Then run the tests:
+
+```bash
+python3 -m pytest                          # everything
+python3 -m pytest -n0 -x tests/test_issues.py   # serially, stopping at the first failure
+```
+
+Use `-n0` rather than `-p no:xdist` to run serially. `addopts = "-n auto"` in
+`pyproject.toml` means pytest injects `-n` into every invocation, and disabling the plugin
+outright makes pytest reject its own injected flag.
+
+Pull requests are gated by `.github/workflows/tests.yml`, which runs `pytest` on
+{ubuntu, macos, windows} × Python {3.12, 3.13, 3.14}. There is no lint job, so no formatter
+or type checker gates a change.
+
+Please do not run `make`. The `Makefile` invokes `black -l 79 righttyper` while
+`pyproject.toml` sets `line-length = 100`; the two disagree, nothing in CI enforces either,
+and running it reformats the whole package — producing exactly the kind of diff the previous
+section asks you to avoid. Match the style of the lines you touch and leave the rest alone.
+(`black`, `ruff` and `pyright` are also not declared in any extra, so they are not installed
+by the command above.)
+
+RightTyper inspects objects belonging to the program under test, and those objects do not
+always honour the introspection protocols they appear to. Before adding or reviewing a call
+that probes one — `getattr`, `hash`, `issubclass`, following `__wrapped__` — read
+[docs/probing-runtime-objects.md](docs/probing-runtime-objects.md), which collects the
+shapes already met and the helper to use for each.
+
 ## Finding contributions to work on
 Looking at the existing issues is a great way to find something to contribute on. As our projects, by default, use the default GitHub issue labels (enhancement/bug/duplicate/help wanted/invalid/question/wontfix), looking at any 'help wanted' issues is a great place to start.
 

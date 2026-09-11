@@ -48,6 +48,11 @@ backups as `.py.bak`). To preview annotations without modifying files,
 use `--no-output-files` — annotations will only be written to
 `righttyper.out`.
 
+For an end-to-end walkthrough — recommended invocations for annotating an
+existing codebase, what each output file contains, the inference
+limitations you are likely to meet, and how to triage the `mypy` errors
+that follow — see [RightTyper-workflow.md](RightTyper-workflow.md).
+
 ### Example
 
 Given this unannotated code:
@@ -199,6 +204,27 @@ python3 -m righttyper run --only-collect -m pytest tests/integration/
 python3 -m righttyper process
 ```
 
+Each `--only-collect` run writes the next free `righttyper-N.rt` in the
+working directory, and `process` merges every `righttyper-*.rt` it finds
+there.
+
+To do the same across machines — sharding a suite over a CI matrix, say —
+collect on each shard and merge the files afterwards, keeping four things
+in mind:
+
+- **Rename the files before they meet.** Numbering restarts per
+  directory, so every shard writes `righttyper-1.rt`. Any suffix works
+  (`righttyper-shard1.rt`), since `process` globs.
+- **Use the same RightTyper build everywhere.** `process` refuses to
+  merge files whose format version differs.
+- **Run the same target on every shard.** The resolved path of the script
+  or module is recorded and must match across files. Differing pytest
+  arguments are fine — those are not part of the check.
+- **Check out to the same absolute path on every shard.** Observations
+  are keyed on source filenames as the interpreter reports them, which
+  are absolute; shards that use different checkout paths produce
+  observations that never merge.
+
 ### Output Formats
 
 - Annotated source files (default, with `.py.bak` backups)
@@ -219,7 +245,53 @@ to make them more readable:
 - `--max-union-size N` — collapses large unions:
   `int | float | str | bytes | list` → `Any` (with N=4)
 
-### Option Overview
+## Troubleshooting
+
+### RightTyper exits successfully but writes no annotations
+
+Exceptions raised *after* your program finishes — while types are
+generalized and files are written — are logged and swallowed, so the run
+still exits 0 with nothing on the console. Look in `righttyper.log`, which
+is written to the working directory on every run, and re-run with
+`--allow-runtime-exceptions` to get the traceback and a non-zero exit.
+
+### `--exclude-files` does not exclude anything
+
+Patterns are made absolute before matching, so write them the way they
+appear in your project (`src/generated/*`). Prefixing a pattern with `*/`
+to "match anywhere" has the opposite effect: it produces an absolute
+pattern that matches nothing, silently.
+
+### Test modules are traced even with `--exclude-test-files`
+
+That option removes types *originating* in test modules from the
+annotations RightTyper writes. It cannot keep them from being traced:
+test modules are only identified during pytest collection, which happens
+after they have been imported. To avoid tracing them at all, exclude them
+by path with `--exclude-files`.
+
+### `--no-sampling-for` does not match my module
+
+It is matched against qualified *function* names (`MyClass.my_method`),
+never against module or file paths. To exempt a whole package from
+sampling, name its functions with a regular expression, or turn sampling
+off entirely with `--no-call-sampling`.
+
+### RightTyper crashes on a file I excluded
+
+Call and unwind monitoring is enabled process-wide, so RightTyper observes
+every call in the process regardless of which files you excluded.
+`--exclude-files` filters what gets *recorded*, not what gets *observed*.
+A crash inside RightTyper's own handlers can therefore be triggered by
+code in a file you excluded.
+
+### Much slower than expected
+
+The overhead figure above is measured with call sampling on, which is the
+default. `--no-call-sampling` records every invocation of every function
+and is substantially slower; it is a diagnostic setting, not a faster one.
+
+## Option Overview
 
 Below is the full list of options:
 
