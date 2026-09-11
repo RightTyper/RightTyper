@@ -1126,6 +1126,29 @@ def test_lub_mro_common_base_without_attrs():
     assert result.type_obj is Base
 
 
+def test_lub_typeddict_parametrized_operands():
+    """Rule 6.5 compares the two operands directly, so a TypedDict lands as the
+    second argument of issubclass -- where __subclasscheck__ lives and raises.
+
+    Rule 4's guard does not cover this: 6.5 requires both operands to carry args,
+    which keeps it out of Rule 4 entirely. Regression test for issue #200.
+    """
+    from typing import TypedDict
+    from righttyper.generalize import lub
+
+    class Payload(TypedDict):
+        a: int
+
+    # Premise: the raise is asymmetric -- only as the second argument.
+    assert issubclass(Payload, dict)
+    with pytest.raises(TypeError):
+        issubclass(str, Payload)
+
+    a = TypeInfo.from_type(list, args=(TypeInfo.from_type(int),))
+    b = TypeInfo.from_type(Payload, args=(TypeInfo.from_type(int),))
+    assert lub(a, b).is_union()
+
+
 def test_lub_mro_no_useful_base():
     """lub(int, str) stays as union (only 'object' in common)."""
     from righttyper.generalize import lub

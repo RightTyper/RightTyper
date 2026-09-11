@@ -11,6 +11,24 @@ from righttyper.logger import logger
 from righttyper.options import run_options
 
 
+def safe_issubclass(a: type, b: type) -> bool:
+    """``issubclass`` that answers False instead of raising ``TypeError``.
+
+    A TypedDict subclass, or a Protocol with non-method members, refuses class
+    checks by design, and reaches us as a *declared* annotation.  False is the
+    right answer to a subtype query that cannot be evaluated.  See #200.
+
+    ``__subclasscheck__`` lives on the second argument, so only calls whose
+    second operand is caller-derived need this.  TypeError alone is caught:
+    anything else is a bug in that class, and a swallowed one would skew the
+    inferred type instead of surfacing the fault.
+    """
+    try:
+        return issubclass(a, b)
+    except TypeError:
+        return False
+
+
 def unwrap(method: abc.Callable|None) -> abc.Callable|None:
     """Follows a chain of `__wrapped__` attributes to find the original function."""
 

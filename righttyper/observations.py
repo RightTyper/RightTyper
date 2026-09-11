@@ -26,6 +26,7 @@ from righttyper.righttyper_types import ArgumentName, FunctionName, VariableName
 from righttyper.annotation import FuncAnnotation, ModuleVars, TraceDistribution
 from righttyper.type_id import PostponedArg0, get_type_name
 from righttyper.typeshed import get_typeshed_func_signature
+from righttyper.righttyper_utils import safe_issubclass
 
 
 @dataclass
@@ -230,16 +231,12 @@ def _apply_constructor_type(annotation: TypeInfo, candidates: set[TypeInfo]) -> 
     ct_type = ct.type_obj  # known to be `type` from the guard above
 
     def _is_strict_subtype(m: TypeInfo) -> bool:
-        """Check if m is a strict subclass of ct, guarding against types
-        like TypedDict that override __subclasscheck__ to raise."""
+        """Check if m is a strict subclass of ct."""
         if not isinstance(m.type_obj, type) or m.type_obj is ct_type:
             return False
         if m.args and not ct.args:
             return False
-        try:
-            return issubclass(m.type_obj, ct_type)
-        except TypeError:
-            return False
+        return safe_issubclass(m.type_obj, ct_type)
 
     if not all(_is_strict_subtype(m) for m in members):
         return annotation
@@ -319,7 +316,7 @@ class _CloneForContextT(TypeInfo.Transformer):
                 and dest_self_class is not None
                 and isinstance(source_self_class.type_obj, type)
                 and isinstance(dest_self_class.type_obj, type)
-                and issubclass(source_self_class.type_obj, dest_self_class.type_obj)
+                and safe_issubclass(source_self_class.type_obj, dest_self_class.type_obj)
             )
         )
         # Gate Self re-stamping on the same option that gates trace-time

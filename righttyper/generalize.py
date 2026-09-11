@@ -8,6 +8,7 @@ import sys
 from righttyper.typeinfo import TypeInfo, ListTypeInfo, CallTrace, NoneTypeInfo
 from righttyper.type_id import get_type_name
 from righttyper.options import output_options
+from righttyper.righttyper_utils import safe_issubclass
 
 
 # Types that are covariant (immutable), so merging their type arguments
@@ -148,7 +149,7 @@ def _is_subtype(a: type, b: type) -> bool:
     """Check if a is a subtype of b, including the numeric tower."""
     if a is b:
         return True
-    if issubclass(a, b):
+    if safe_issubclass(a, b):
         return True
     # Numeric tower: int <: float <: complex. Walk a's MRO for the nearest
     # tower entry, then promote up the tower checking against b.
@@ -157,7 +158,7 @@ def _is_subtype(a: type, b: type) -> bool:
             t = ancestor
             while t in _NUMERIC_TOWER:
                 t = _NUMERIC_TOWER[t]
-                if issubclass(t, b):
+                if safe_issubclass(t, b):
                     return True
             break
     return False
@@ -305,7 +306,7 @@ def lub(
             # explicitly inherited, e.g. Generator → Iterator → Iterable)
             common: type | None = None
             for cls in ne_obj.__mro__:
-                if issubclass(e_obj, cls) and cls is not object:
+                if safe_issubclass(e_obj, cls) and cls is not object:
                     common = cls
                     break
             else:
@@ -336,9 +337,9 @@ def lub(
     ):
         a_obj, b_obj = cast(type, a.type_obj), cast(type, b.type_obj)
         common = None
-        if issubclass(a_obj, b_obj):
+        if safe_issubclass(a_obj, b_obj):
             common = b_obj
-        elif issubclass(b_obj, a_obj):
+        elif safe_issubclass(b_obj, a_obj):
             common = a_obj
         if (
             common is not None
