@@ -1024,7 +1024,12 @@ class UnifiedTransformer(cst.CSTTransformer):
         def _will_update(existing_annotation: cst.Annotation|None) -> bool:
             if (
                 (self.only_update_annotations and existing_annotation is None)
-                or (not self.override_annotations and existing_annotation is not None)
+                or (
+                    # --only-update-annotations is mutually exclusive with
+                    # --ignore-annotations, so it must allow the update itself.
+                    not (self.override_annotations or self.only_update_annotations)
+                    and existing_annotation is not None
+                )
             ):
                 return False
             return True
