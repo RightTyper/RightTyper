@@ -2,12 +2,43 @@ from typing import cast, Sequence, Iterator, Any, Never, NoReturn
 from abc import ABCMeta
 import collections.abc as abc
 from collections import Counter
-from functools import cache
+from functools import cache, lru_cache
 from types import EllipsisType
 import sys
 from righttyper.typeinfo import TypeInfo, ListTypeInfo, CallTrace, NoneTypeInfo
-from righttyper.type_id import get_type_name
+from righttyper.type_id import get_type_name, _safe_getattr
 from righttyper.options import output_options
+
+
+# _safe_getattr's default doubles as its "not found" answer, so None cannot be
+# both.  A unique sentinel keeps "no such attribute" distinct from "attribute
+# whose value is None".
+_MISSING: Any = object()
+
+
+# Bounded, not @cache: the key is a type and the entry holds it alive, so an
+# unbounded table would pin every class a long pytest run manufactures per test
+# for the life of the process.
+@lru_cache(maxsize=2048)
+def _probed_attrs(type_obj: type) -> frozenset[str]:
+    """The attributes of ``type_obj`` that lub()'s Rule 7 safety filter considers.
+
+    Memoized because getattr_static costs ~17x a plain getattr and lub() re-probes
+    the same handful of types thousands of times per run.
+
+    Not merely a faster version of the old dynamic probe: a static lookup answers
+    for attributes a dynamic one cannot resolve, and drops any a metaclass
+    ``__getattr__`` would have supplied.  The first only makes Rule 7 merge less;
+    the second can narrow the filter.  Not running third-party descriptor code is
+    worth that.  The set is a snapshot, so a class mutated later keeps what it had.
+    """
+    return frozenset(
+        attr for attr in dir(type_obj)
+        # A sentinel, not None: an attribute whose value is None is still an
+        # attribute the class has.
+        if _safe_getattr(type_obj, attr, _MISSING) is not _MISSING
+        if not attr.startswith("_") or attr.startswith("__")
+    )
 
 
 # Types that are covariant (immutable), so merging their type arguments
@@ -356,15 +387,7 @@ def lub(
         else:
             # Without accessed_attributes, use dir() intersection as safety filter:
             # only merge to a supertype that has all the shared attributes.
-            common_attrs = (
-                {attr for attr in dir(a.type_obj)
-                 if getattr(a.type_obj, attr, None) is not None
-                 if not attr.startswith("_") or attr.startswith("__")}
-                &
-                {attr for attr in dir(b.type_obj)
-                 if getattr(b.type_obj, attr, None) is not None
-                 if not attr.startswith("_") or attr.startswith("__")}
-            )
+            common_attrs = _probed_attrs(a.type_obj) & _probed_attrs(b.type_obj)
         a_mro = set(a.type_obj.__mro__)
         for base in b.type_obj.__mro__:
             if base in a_mro and base is not object:
@@ -445,15 +468,13 @@ def _merge_set(
             )
             if public_base is not None:
                 # De-privatize if the public ancestor has all accessed attributes.
-                sentinel = object()
-                check_attrs = accessed_attributes or frozenset(
-                    attr for attr in dir(t.type_obj)
-                    if getattr(t.type_obj, attr, None) is not None
-                    if not attr.startswith("_") or attr.startswith("__")
-                )
+                #
+                # Statically here too: the singleton path reaches this without ever
+                # calling lub(), so guarding Rule 7 alone left #188 exposed.
+                check_attrs = accessed_attributes or _probed_attrs(t.type_obj)
                 if all(
-                    (a := getattr(public_base, attr, sentinel)) is not sentinel
-                    and a is getattr(t.type_obj, attr, sentinel)
+                    (a := _safe_getattr(public_base, attr, _MISSING)) is not _MISSING
+                    and a is _safe_getattr(t.type_obj, attr, _MISSING)
                     for attr in check_attrs
                 ):
                     return get_type_name(public_base)

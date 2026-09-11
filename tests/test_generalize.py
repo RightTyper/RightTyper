@@ -1126,6 +1126,100 @@ def test_lub_mro_common_base_without_attrs():
     assert result.type_obj is Base
 
 
+# A class whose attribute access raises rather than returning a value. Probing
+# it with a bare getattr() runs the descriptor and propagates the error; this is
+# the shape of issue #188, where zope.interface's machinery raised a TypeError
+# from a class RightTyper merely inspected.
+
+class _RaisingDescriptor:
+    def __get__(self, obj: object, objtype: type|None = None) -> object:
+        raise TypeError("unsupported operand type(s) for +: 'property' and 'str'")
+
+
+class RaisingChildA(Base):
+    boom = _RaisingDescriptor()
+
+
+class RaisingChildB(Base):
+    pass
+
+
+def test_lub_mro_tolerates_raising_attribute():
+    """A type whose attribute access raises must not take lub() down."""
+    from righttyper.generalize import lub
+
+    # Guard the premise: a bare getattr() on this class really does raise.
+    with pytest.raises(TypeError):
+        getattr(RaisingChildA, "boom", None)
+
+    result = lub(TypeInfo.from_type(RaisingChildA), TypeInfo.from_type(RaisingChildB))
+    assert not result.is_union()
+    assert result.type_obj is Base
+
+
+def test_merged_types_tolerates_raising_attribute():
+    """The de-privatization probe must not execute descriptors either.
+
+    _merge_set's singleton path reaches the same dir()/getattr filter without
+    ever calling lub(), so guarding Rule 7 left #188 live here. A private class
+    with a raising descriptor took merged_types() down.
+    """
+    from righttyper.generalize import merged_types
+
+    class _PrivateRaising(Base):
+        boom = RaisingChildA.__dict__["boom"]
+
+    # Guard the premise: a bare getattr() on this class really does raise.
+    with pytest.raises(TypeError):
+        getattr(_PrivateRaising, "boom", None)
+
+    # Must not raise. Base lacks `boom`, so de-privatizing to it would be wrong.
+    result = merged_types({TypeInfo.from_type(_PrivateRaising)})
+    assert result.type_obj is _PrivateRaising
+
+
+def test_merged_types_still_deprivatizes():
+    """The static probe must not break de-privatization in the ordinary case.
+
+    Only the accessed_attributes path actually de-privatizes: the dir() fallback
+    always includes __module__ and __firstlineno__, which necessarily differ
+    between a class and its base, so it can never succeed. That is true of the
+    plain-getattr version too -- it is not something the static probe changed.
+    """
+    from righttyper.generalize import merged_types
+
+    class _PrivateOrdinary(Base):
+        pass
+
+    result = merged_types({TypeInfo.from_type(_PrivateOrdinary)},
+                          accessed_attributes={"name"})
+    assert result.type_obj is Base
+
+
+def test_merged_types_deprivatizes_with_none_valued_attribute():
+    """An attribute whose value is None is still an attribute the class has.
+
+    _safe_getattr returns its default for an attribute it cannot resolve, so
+    probing with a default of None made `marker = None` indistinguishable from
+    "no such attribute": the base and the subclass both looked like they lacked
+    it, the check failed, and the type stayed needlessly private.
+    """
+    from righttyper.generalize import merged_types
+
+    class NoneAttrBase:
+        marker = None
+
+    class _PrivateNoneAttr(NoneAttrBase):
+        pass
+
+    # Premise: the attribute is genuinely there, and its value is None.
+    assert _PrivateNoneAttr.marker is None
+
+    result = merged_types({TypeInfo.from_type(_PrivateNoneAttr)},
+                          accessed_attributes={"marker"})
+    assert result.type_obj is NoneAttrBase
+
+
 def test_lub_mro_no_useful_base():
     """lub(int, str) stays as union (only 'object' in common)."""
     from righttyper.generalize import lub
