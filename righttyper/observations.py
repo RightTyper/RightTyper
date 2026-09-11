@@ -14,6 +14,7 @@ from righttyper.type_transformers import (
     UnionSizeT,
     NeverSayNeverT,
     NoReturnToNeverT,
+    MissingSayNothingT,
     ExcludeTestTypesT,
     GeneratorToIteratorT,
     TypesUnionT,
@@ -1138,6 +1139,9 @@ class Observations:
             transform_types(NeverSayNeverT())
         else:
             transform_types(NoReturnToNeverT())
+            # NeverSayNeverT would have absorbed the unobserved-parameter filler;
+            # since it didn't run, drop the filler on its own. See #199.
+            transform_types(MissingSayNothingT())
 
         # Exclude test types before capping union size: removing test-module
         # members from unions can bring their size below max_union_size.

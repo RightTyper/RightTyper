@@ -355,6 +355,14 @@ class ListTypeInfo(TypeInfo):
 NoneTypeInfo: Final = TypeInfo("", "None", type_obj=types.NoneType)
 UnknownTypeInfo: Final = TypeInfo.from_type(typing.Any, is_unknown=True)
 AnyTypeInfo: Final = TypeInfo.from_type(typing.Any)
+# The union identity: from_set() drops it as soon as anything else is present.
+# Use it for "this observation contributes nothing here", not UnknownTypeInfo,
+# which is Any and subsumes the union instead of vanishing from it.
+NeverTypeInfo: Final = TypeInfo.from_type(typing.Never)
+# The same, marked as a slot we never observed.  ``is_unknown`` is excluded from
+# comparison, so this merges exactly as NeverTypeInfo does while staying
+# distinguishable once it is the lone survivor (see MissingSayNothingT).
+MissingTypeInfo: Final = TypeInfo.from_type(typing.Never, is_unknown=True)
 
 
 class CallTrace(tuple[TypeInfo, ...]):

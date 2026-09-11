@@ -9,7 +9,7 @@ from pathlib import Path
 import logging
 from righttyper.logger import logger
 from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, CallableWithCode, cast_not_None
-from righttyper.typeinfo import TypeInfo, NoneTypeInfo, UnknownTypeInfo, CallTrace, UnionTypeInfo
+from righttyper.typeinfo import TypeInfo, NoneTypeInfo, UnknownTypeInfo, MissingTypeInfo, CallTrace, UnionTypeInfo
 from typing import Final, Any, NewType, overload
 import typing
 from righttyper.observations import Observations, FuncInfo, OverriddenFunction, ArgInfo
@@ -120,12 +120,22 @@ class PendingCallTrace:
     ) -> None:
         self.arg_info = arg_info
         # PY_START's arg_info.locals always contains every arg name (Python
-        # binds parameters before the body runs), so no element here is
-        # ever None — the per-entry None case in _get_arg_types only
-        # applies to later samples where a name may have been del'd.
-        self.args_start = typing.cast(
-            "tuple[TypeInfo, ...]",
-            self._get_arg_types(arg_info, arg_info.locals),
+        # binds parameters before the body runs), so no element is None on that
+        # path — the per-entry None case in _get_arg_types only applies to later
+        # samples where a name may have been del'd.
+        #
+        # The synthetic ArgInfo built for wrapped-function propagation can leave a
+        # parameter unbound, though: bind_partial permits missing arguments. Fill
+        # the gap rather than casting the None away, which crashed the first type
+        # transformer to run in finish_recording. See #199.
+        #
+        # MissingTypeInfo is the union identity, so from_set() drops it as soon as
+        # the parameter has any real observation -- unlike UnknownTypeInfo, which
+        # is Any and subsumes the union instead of vanishing from it. The mark
+        # distinguishes it from a genuine Never once it is the lone survivor.
+        self.args_start: tuple[TypeInfo, ...] = tuple(
+            t if t is not None else MissingTypeInfo
+            for t in self._get_arg_types(arg_info, arg_info.locals)
         )
         self.yields: set[TypeInfo] = set()
         self.sends: set[TypeInfo] = set()
