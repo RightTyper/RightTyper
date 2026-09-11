@@ -212,6 +212,102 @@ def test_to_name_map_skips_non_string_module():
     assert not any('CythonLike' in k[1] for k in name_map)
 
 
+def test_typemap_skips_unhashable_type():
+    """TypeMap keys its work map by type, so an unhashable class must be skipped.
+
+    TypeMap walks every class reachable from the namespaces it is given, so a single
+    unhashable class anywhere in sys.modules would otherwise abort the whole scan.
+    Regression test for issue #197.
+    """
+    class Meta(type):
+        def __eq__(cls, other: object) -> bool:
+            return NotImplemented       # type: ignore[return-value]
+        __hash__ = None                 # type: ignore[assignment]
+
+    class Unhashable(metaclass=Meta):
+        pass
+
+    class Nameable:
+        pass
+
+    # Premise: this really is unhashable, and would blow up as a dict key.
+    with pytest.raises(TypeError):
+        hash(Unhashable)
+
+    # Must not raise, and must still pick up the hashable sibling in the namespace.
+    tm = TypeMap({'Unhashable': Unhashable, 'Nameable': Nameable})
+    assert Nameable in tm._map
+
+    # Looking one up must not raise either: find() hashes its argument just as the
+    # scan did, and observations carrying such a class do reach it (via
+    # AdjustTypeNamesT/CheckTypeNamesT and recorder's enclosing-class lookup).
+    assert tm.find(Unhashable) == []
+    assert tm.find(Nameable) != []
+
+
+def test_typemap_and_lookup_tolerate_raising_hash():
+    """A __hash__ that raises anything must be skipped and looked up alike.
+
+    is_hashable() -- which decides what the map build skips -- treats any
+    exception from hash() as unhashable, so the lookups have to catch as broadly
+    or a class whose __hash__ raises RuntimeError sails past the build and then
+    aborts the lookup instead.  Regression test for issue #197.
+    """
+    class Meta(type):
+        def __hash__(cls) -> int:
+            raise RuntimeError("no hashing here")
+
+    class Hostile(metaclass=Meta):
+        pass
+
+    class Nameable:
+        pass
+
+    # Premise: hash() raises, and it isn't a TypeError.
+    with pytest.raises(RuntimeError):
+        hash(Hostile)
+
+    tm = TypeMap({'Hostile': Hostile, 'Nameable': Nameable})
+    assert tm.find(Hostile) == []
+    assert tm.find(Nameable) != []
+
+    # The recording path's type-keyed lookups, well before TypeMap runs.
+    assert t_id._lookup_type({int: 'int'}, Hostile) is None
+    assert t_id.get_value_type(Hostile()) is not None
+
+
+def test_typemap_recursion_does_not_invoke_metaclass_eq():
+    """Recursing into a class skipped as unhashable must not compare it either.
+
+    The unhashable-class guard names nothing but still recurses, so the scan now
+    reaches the cycle check with such a class on the path.  A metaclass that
+    fails to hash may equally raise from __eq__, and the check used `not in` --
+    equality -- where identity was all it ever needed.  Regression test for
+    issue #197.
+    """
+    class Meta(type):
+        def __hash__(cls) -> int:
+            raise RuntimeError("no hashing here")
+
+        def __eq__(cls, other: object) -> bool:
+            raise RuntimeError("no comparing here")
+
+    class Outer(metaclass=Meta):
+        class Inner:
+            pass
+
+    # Premise: both operations on this class raise.
+    with pytest.raises(RuntimeError):
+        hash(Outer)
+    with pytest.raises(RuntimeError):
+        Outer == object
+
+    # Must not raise, and must still name the nested class the recursion found.
+    tm = TypeMap({'Outer': Outer})
+    assert tm.find(Outer) == []
+    assert tm.find(Outer.Inner) != []
+
+
 def test_items_from_typing():
     assert TypeInfo("typing", "Any") == get_type_name(Any)
     assert TypeInfo("typing", "Self") == get_type_name(Self)

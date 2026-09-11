@@ -11,6 +11,22 @@ from righttyper.logger import logger
 from righttyper.options import run_options
 
 
+def is_hashable(obj: object) -> bool:
+    """Whether ``obj`` can safely be used as a dict key or set member.
+
+    ``isinstance(obj, type)`` does not imply hashable: a metaclass may define
+    ``__eq__`` without ``__hash__`` (which implicitly sets ``__hash__ = None``), or
+    supply a ``__hash__`` that raises -- the latter also slips past
+    ``isinstance(obj, abc.Hashable)``, which only checks that ``__hash__`` is not
+    None.  Probing with ``hash()`` is the only reliable test.
+    """
+    try:
+        hash(obj)
+    except Exception:
+        return False
+    return True
+
+
 def unwrap(method: abc.Callable|None) -> abc.Callable|None:
     """Follows a chain of `__wrapped__` attributes to find the original function."""
 

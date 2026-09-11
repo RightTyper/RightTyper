@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from righttyper.typeinfo import TypeInfo, UnknownTypeInfo
 from righttyper.logger import logger
-from righttyper.righttyper_utils import source_to_module_fqn, is_test_module
+from righttyper.righttyper_utils import source_to_module_fqn, is_test_module, is_hashable
 
 
 # TODO use TypeAliasType-valued names when possible (the type is in its __value__)
@@ -35,7 +35,15 @@ class TypeMap:
 
     def find(self, t: type) -> list[tuple[str, str]]:
         """Given a type object, return all its module and qualified name as strings."""
-        return self._map.get(t, [])
+        # dict.get() hashes its key, so guarding the build alone left lookup
+        # raising on the classes the build had skipped; "no names" is the honest
+        # answer for a class never entered.  try/except rather than is_hashable()
+        # because this runs per type node in every annotation, and it catches what
+        # is_hashable catches, so skip and lookup agree on the same classes.
+        try:
+            return self._map.get(t, [])
+        except Exception:
+            return []
 
 
     def _build_map(self, main_globals: dict[str, typing.Any]|None) -> dict[type, list[tuple[str, str]]]:
@@ -162,7 +170,10 @@ class TypeMap:
 
                 new_name_parts = name_parts + [name]
 
-                if not isinstance(obj, types.ModuleType):
+                # An unhashable class (metaclass defining __eq__ without __hash__)
+                # can't be a work_map key.  Skip naming it, but still recurse into
+                # it below -- the types it contains may well be nameable.
+                if not isinstance(obj, types.ModuleType) and is_hashable(obj):
                     work_map[typing.cast(type, obj)].append(
                         self.TypeName(
                             mod_parts,
@@ -171,7 +182,13 @@ class TypeMap:
                         )
                     )
 
-                if isinstance(obj, (type, types.ModuleType)) and obj not in objs_in_path:
+                # Identity, not equality: `in` calls __eq__, which a metaclass with
+                # a failing __hash__ may well also define to raise.  Cycle detection
+                # only ever needed identity, and the list is recursion depth.
+                if (
+                    isinstance(obj, (type, types.ModuleType))
+                    and not any(obj is seen for seen in objs_in_path)
+                ):
                     self._add_types_from(
                         work_map,
                         obj.__dict__,

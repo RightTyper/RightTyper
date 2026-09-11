@@ -8,6 +8,7 @@ import sys
 from righttyper.typeinfo import TypeInfo, ListTypeInfo, CallTrace, NoneTypeInfo
 from righttyper.type_id import get_type_name
 from righttyper.options import output_options
+from righttyper.righttyper_utils import is_hashable
 
 
 # Types that are covariant (immutable), so merging their type arguments
@@ -110,8 +111,21 @@ def _find_common_container_abc(t1: TypeInfo, t2: TypeInfo) -> type | None:
     return None
 
 
-@cache
 def _is_private_type(cls: type) -> bool:
+    """Whether cls is defined in a private module without public re-export.
+
+    Uncached front for the cached probe below, since ``@cache`` hashes its
+    argument.  An unhashable class is reported as not private -- the conservative
+    answer, leaving the type alone rather than triggering an MRO walk on a class
+    we could not probe.
+    """
+    if not is_hashable(cls):
+        return False
+    return _is_private_type_cached(cls)
+
+
+@cache
+def _is_private_type_cached(cls: type) -> bool:
     """Check if cls is defined in a private module without public re-export.
 
     This partially duplicates TypeMap's is_private logic; done here to avoid
@@ -214,6 +228,13 @@ def lub(
     # Without a real type (could be None or a typing special form),
     # no merging rules apply.
     if not isinstance(a.type_obj, type) or not isinstance(b.type_obj, type):
+        return TypeInfo.from_set_new({a, b})
+
+    # Every merging rule below hashes both type objects, so an unhashable class
+    # (metaclass defining __eq__ without __hash__) has to bail out here.  Safe to
+    # build the union: TypeInfo excludes type_obj from comparison, so hashing a
+    # TypeInfo never touches it.
+    if not is_hashable(a.type_obj) or not is_hashable(b.type_obj):
         return TypeInfo.from_set_new({a, b})
 
     # Rule 4: Subtype check (MRO + numeric tower)
