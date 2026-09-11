@@ -8,7 +8,9 @@ from functools import cache
 from pathlib import Path
 import logging
 from righttyper.logger import logger
-from righttyper.righttyper_types import ArgumentName, VariableName, Filename, CodeId, CallableWithCode, cast_not_None
+from righttyper.righttyper_types import (
+    ArgumentName, VariableName, Filename, CodeId, CallableWithCode, cast_not_None, code_of
+)
 from righttyper.typeinfo import TypeInfo, NoneTypeInfo, UnknownTypeInfo, CallTrace, UnionTypeInfo
 from typing import Final, Any, NewType, overload
 import typing
@@ -1037,7 +1039,7 @@ def find_method_info(code: CodeType, first_arg: object) -> MethodInfo | None:
                 (is_property and name in ancestor.__dict__)
                 or (
                     (f := unwrap(ancestor.__dict__.get(name, None)))
-                    and getattr(f, "__code__", None) is code
+                    and code_of(f) is code
                 )
             )
         ),
@@ -1079,15 +1081,27 @@ class OverrideFinder:
         """
         for idx, ancestor in enumerate(self._mro[self._index:]):
             f = unwrap(ancestor.__dict__.get(self._method_name, None))
-            if f and getattr(f, "__code__", None) is not code:
-                self._index = self._index + idx + 1
-                return (
-                    OverriddenFunction(
+            f_code = code_of(f)
+            if f and f_code is not code:
+                try:
+                    overridden = OverriddenFunction(
                         normalize_module_name(getattr(f, "__module__", ancestor.__module__)),
                         f.__qualname__,
-                        CodeId.from_code(f.__code__) if hasattr(f, "__code__") else None,
+                        CodeId.from_code(f_code) if f_code else None,
                         get_parent_arg_types(f, child_arg_info)
-                    ),
+                    )
+                except Exception:
+                    # __qualname__ and __module__ are read off a class __dict__ value, so a
+                    # hostile __getattr__ gets a say.  code_of can't cover them: a builtin
+                    # legitimately has no __code__ (hence f_code's None branch), and
+                    # getattr_static answers these with the descriptor, not the value.
+                    logger.debug(f"skipping override of {self._method_name} in {ancestor}",
+                                 exc_info=True)
+                    continue
+
+                self._index = self._index + idx + 1
+                return (
+                    overridden,
                     f if isinstance(f, FunctionType) else None,
                     ancestor,
                 )

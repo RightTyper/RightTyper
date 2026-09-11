@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple, NewType, Protocol, TypeGuard
 from types import CodeType
 
+from righttyper.logger import logger
+
 
 class CallableWithCode(Protocol):
     """A callable that has a __code__ attribute."""
@@ -12,9 +14,34 @@ class CallableWithCode(Protocol):
     def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
+def code_of(obj: object) -> CodeType | None:
+    """Return obj's ``__code__``, but only if it is a real code object.
+
+    An object may synthesize the attribute rather than raise (mock's _Call answers
+    any name with a child _Call, unhashable and not code), or raise something
+    getattr won't suppress.  Both reach the process-global CALL handler, so catch
+    broadly and check the result's type -- unlike safe_issubclass, a swallowed
+    failure here only means "not code we can annotate".  See #193.
+
+    Note this must read dynamically: inspect.getattr_static answers __code__ with
+    the descriptor rather than the code object.
+    """
+    try:
+        code = getattr(obj, '__code__', None)
+    except Exception:
+        logger.debug(f"code_of: {type(obj).__name__} raised on __code__", exc_info=True)
+        return None
+
+    return code if isinstance(code, CodeType) else None
+
+
 def has_code(obj: object) -> TypeGuard[CallableWithCode]:
-    """TypeGuard that narrows to CallableWithCode."""
-    return hasattr(obj, '__code__')
+    """TypeGuard that narrows to CallableWithCode.
+
+    CallableWithCode declares __code__ as a CodeType, so hasattr alone made this
+    guard lie.  Defer to code_of so there is a single probe to keep honest.
+    """
+    return code_of(obj) is not None
 
 
 Filename = NewType("Filename", str)
