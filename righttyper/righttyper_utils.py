@@ -95,7 +95,10 @@ def skip_this_file(filename: str) -> bool:
         # FIXME how about packages installed with 'pip install -e' (editable)?
         or any(filename.startswith(p) for p in PYTHON_LIBS)
         or filename.startswith(RIGHTTYPER_PATH)
-        or run_options.script_dir not in os.path.abspath(filename)
+        or (
+            run_options.script_dir
+            and not Path(filename).resolve().is_relative_to(Path(run_options.script_dir))
+        )
     )
 
     if not should_skip:
