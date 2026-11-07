@@ -10,6 +10,7 @@ from types import CodeType
 
 from righttyper.logger import logger
 from righttyper.options import run_options
+from righttyper.righttyper_types import wrapped_of
 
 
 # A functools.wraps chain is a handful of links; anything past this is pathological.
@@ -19,27 +20,13 @@ _MAX_UNWRAP_DEPTH = 100
 _ABSENT: typing.Final = object()
 
 
-def _wrapped_of(obj: object) -> typing.Any:
-    """``obj.__wrapped__``, or ``_ABSENT`` if it has none -- or refuses to say.
-
-    getattr suppresses only AttributeError, and anything else raised by a
-    ``__getattr__`` would escape the process-global CALL handler into the program
-    under observation.  "Not a wrapper" keeps it running, and can only leave a
-    wrapper unresolved.  See #193.
-    """
-    try:
-        return getattr(obj, "__wrapped__", _ABSENT)
-    except Exception:
-        return _ABSENT
-
-
 def unwrap(method: abc.Callable|None) -> abc.Callable|None:
     """Follows a chain of `__wrapped__` attributes to find the original function."""
 
     # Remember objects by id to work around unhashable items, but point to object so
     # that the object can't go away (possibly reusing the id)
     visited = {}
-    while (wrapped := _wrapped_of(method)) is not _ABSENT:
+    while (wrapped := wrapped_of(method, _ABSENT)) is not _ABSENT:
         if id(method) in visited: return None
 
         # The id check cannot catch an object that *synthesizes* attributes: mock's

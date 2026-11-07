@@ -35,6 +35,20 @@ def code_of(obj: object) -> CodeType | None:
     return code if isinstance(code, CodeType) else None
 
 
+def wrapped_of(obj: object, default: Any) -> Any:
+    """``obj.__wrapped__``, or ``default`` if it has none -- or refuses to say.
+
+    getattr suppresses only AttributeError, and anything else raised by a
+    ``__getattr__`` would escape the process-global CALL handler into the program
+    under observation.  "Not a wrapper" keeps it running, and can only leave a
+    wrapper unresolved.  See #193.
+    """
+    try:
+        return getattr(obj, "__wrapped__", default)
+    except Exception:
+        return default
+
+
 def has_code(obj: object) -> TypeGuard[CallableWithCode]:
     """TypeGuard that narrows to CallableWithCode.
 
