@@ -258,6 +258,14 @@ result can be **some** annotations rather than none. `righttyper.log` is
 written to the working directory on every run; re-run with
 `--allow-runtime-exceptions` to get the traceback and a non-zero exit.
 
+### Annotations reflect only `conftest.py` under `pytest-xdist`
+
+RightTyper observes only the process it starts. With `pytest -n auto`,
+the tests run in xdist worker processes it never sees, so the
+annotations come from whatever the controller ran: `conftest.py` and
+module imports. The run still exits 0 and writes them. Run with `-n0`,
+which also overrides an `-n` set in `addopts`.
+
 ### `--exclude-files` does not exclude anything
 
 Patterns are made absolute against the working directory before matching,
