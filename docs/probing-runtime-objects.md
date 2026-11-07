@@ -42,7 +42,8 @@ still under review rather than being on `main` today.
 | know whether an attribute exists, without running a descriptor | `_safe_getattr` | `type_id.py` | on `main` |
 | know which attributes a type actually resolves | `_probed_attrs` | `generalize.py` | #196 |
 | get a code object, if there really is one | `code_of` | `righttyper_types.py` | #195 |
-| check something really is a code object | `has_code` | `righttyper_types.py` | on `main` |
+| check something really is a code object | `has_code` | `righttyper_types.py` | #195 |
+| read `__wrapped__` without letting `__getattr__` escape | `wrapped_of` | `righttyper_types.py` | #195 |
 | use a value as a dict key or set member | `is_hashable` | `righttyper_utils.py` | #198 |
 | ask a subtype question that may be refused | `safe_issubclass` | `righttyper_utils.py` | #202 |
 | look up a possibly-unhashable class in a dict | `_lookup_type` | `type_id.py` | #198 |
