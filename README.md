@@ -247,12 +247,15 @@ to make them more readable:
 
 ## Troubleshooting
 
-### RightTyper exits successfully but writes no annotations
+### RightTyper exits successfully but writes no annotations, or only some
 
 Exceptions raised *after* your program finishes — while types are
-generalized and files are written — are logged and swallowed, so the run
-still exits 0 with nothing on the console. Look in `righttyper.log`, which
-is written to the working directory on every run, and re-run with
+generalized and files are written — are logged to `righttyper.log` and
+swallowed, so the run still exits 0. You may see nothing on the console,
+or only a one-line `Failed to parse/transform <file>` notice. Files
+processed before the failure may already have been rewritten, so the
+result can be **some** annotations rather than none. `righttyper.log` is
+written to the working directory on every run; re-run with
 `--allow-runtime-exceptions` to get the traceback and a non-zero exit.
 
 ### `--exclude-files` does not exclude anything

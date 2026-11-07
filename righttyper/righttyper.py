@@ -903,8 +903,8 @@ def add_output_options(group=None):
     default=run_options.allow_runtime_exceptions,
     help="Re-raise exceptions raised after your program finishes, while types are being"
          " processed and files written. By default such an exception is logged to"
-         " \"righttyper.log\" and swallowed, so the run still exits 0 having written no"
-         " annotations. Pass this to get the traceback and a non-zero exit instead.",
+         " \"righttyper.log\" and swallowed, so the run still exits 0, possibly with only"
+         " some files annotated. Pass this to get the traceback and a non-zero exit instead.",
 )
 @click.option(
     "--generalize-tuples",

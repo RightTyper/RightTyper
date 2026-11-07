@@ -108,12 +108,15 @@ CLI (righttyper.py)
 
 The post-run phase — generalization, type transformation, file writing — is wrapped in a
 bare `except:` that logs and returns, re-raising only under `--allow-runtime-exceptions`.
-A failure there therefore produces **exit 0, no console output and no annotations**, which
-is indistinguishable from a run that found nothing. The traceback goes to `righttyper.log`,
-which `logger.py` opens in the working directory on every run, successful or not.
+A failure there therefore still **exits 0**. The console shows nothing, or at most a
+one-line `Failed to parse/transform <file>` from `righttyper_process.py`. Files are
+rewritten one at a time, so those processed before the failure keep their new annotations
+(and `.bak` copies): the result can be *some* annotations, not none, which is easy to
+mistake for a run that found little. The traceback goes to `righttyper.log`, which
+`logger.py` opens in the working directory on every run, successful or not.
 
-When debugging a run that "did nothing", read `righttyper.log` first and re-run with
-`--allow-runtime-exceptions`.
+When debugging a run that "did nothing" or "did too little", read `righttyper.log` first
+and re-run with `--allow-runtime-exceptions`.
 
 `sys.monitoring`'s `CALL` and `PY_UNWIND` events are registered process-globally via
 `set_events` (not `set_local_events`), so the handlers fire for every call in the process.
