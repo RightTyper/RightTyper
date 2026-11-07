@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from righttyper.typeinfo import TypeInfo, UnknownTypeInfo
 from righttyper.logger import logger
-from righttyper.righttyper_utils import source_to_module_fqn, is_test_module, is_hashable
+from righttyper.righttyper_utils import source_to_module_fqn, is_test_module, is_hashable, lookup_type
 
 
 # TODO use TypeAliasType-valued names when possible (the type is in its __value__)
@@ -35,15 +35,7 @@ class TypeMap:
 
     def find(self, t: type) -> list[tuple[str, str]]:
         """Given a type object, return all its module and qualified name as strings."""
-        # dict.get() hashes its key, so guarding the build alone left lookup
-        # raising on the classes the build had skipped; "no names" is the honest
-        # answer for a class never entered.  try/except rather than is_hashable()
-        # because this runs per type node in every annotation, and it catches what
-        # is_hashable catches, so skip and lookup agree on the same classes.
-        try:
-            return self._map.get(t, [])
-        except Exception:
-            return []
+        return lookup_type(self._map, t) or []
 
 
     def _build_map(self, main_globals: dict[str, typing.Any]|None) -> dict[type, list[tuple[str, str]]]:

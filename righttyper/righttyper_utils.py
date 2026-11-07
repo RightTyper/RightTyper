@@ -27,6 +27,15 @@ def is_hashable(obj: object) -> bool:
     return True
 
 
+def lookup_type[V](table: dict[type, V], t: type) -> V | None:
+    """``table.get(t)``, but a miss for a class ``is_hashable`` rejects -- which is
+    why it catches as broadly: such a class can't be a key, so a miss is the truth."""
+    try:
+        return table.get(t)
+    except Exception:
+        return None
+
+
 def unwrap(method: abc.Callable|None) -> abc.Callable|None:
     """Follows a chain of `__wrapped__` attributes to find the original function."""
 

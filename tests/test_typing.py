@@ -9,6 +9,7 @@ import pytest
 import importlib
 import types
 from righttyper.options import run_options
+from righttyper.righttyper_utils import lookup_type
 from enum import Enum
 import sys
 from righttyper.typemap import TypeMap, AdjustTypeNamesT, CheckTypeNamesT
@@ -272,7 +273,7 @@ def test_typemap_and_lookup_tolerate_raising_hash():
     assert tm.find(Nameable) != []
 
     # The recording path's type-keyed lookups, well before TypeMap runs.
-    assert t_id._lookup_type({int: 'int'}, Hostile) is None
+    assert lookup_type({int: 'int'}, Hostile) is None
     assert t_id.get_value_type(Hostile()) is not None
 
 
