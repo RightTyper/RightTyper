@@ -257,10 +257,11 @@ is written to the working directory on every run, and re-run with
 
 ### `--exclude-files` does not exclude anything
 
-Patterns are made absolute before matching, so write them the way they
-appear in your project (`src/generated/*`). Prefixing a pattern with `*/`
-to "match anywhere" has the opposite effect: it produces an absolute
-pattern that matches nothing, silently.
+Patterns are made absolute against the working directory before matching,
+so write them the way they appear in your project (`src/generated/*`). A
+leading `*/` does not mean "anywhere": `*/generated/*` becomes
+`<cwd>/*/generated/*`. That matches `src/generated/x.py` but not a
+top-level `generated/x.py`, and nothing outside the working directory.
 
 ### Test modules are traced even with `--exclude-test-files`
 

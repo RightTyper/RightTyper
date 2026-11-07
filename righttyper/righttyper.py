@@ -742,7 +742,8 @@ def add_output_options(group=None):
     callback=validate_fnmatch,
     help="Exclude the given files (using fnmatch). Patterns are resolved relative to the"
          " current directory before matching, so write them as they appear in your project"
-         " (e.g. 'src/generated/*'); a leading '*/' makes a pattern match nothing."
+         " (e.g. 'src/generated/*'); a leading '*/' does not mean \"anywhere\", since the"
+         " pattern stays anchored to the current directory."
          " Can be passed multiple times.",
 )
 @click.option(
