@@ -46,6 +46,7 @@ def wrapped_of(obj: object, default: Any) -> Any:
     try:
         return getattr(obj, "__wrapped__", default)
     except Exception:
+        logger.debug(f"wrapped_of: {type(obj).__name__} raised on __wrapped__", exc_info=True)
         return default
 
 
