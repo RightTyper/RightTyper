@@ -1,11 +1,11 @@
 import sys
 from types import CodeType
-from typing import Any, Final
+from typing import Any, Final, cast
 from collections.abc import Callable
 import functools
 
 from righttyper.righttyper_types import (
-    CallableWithCode, code_of, has_code, CodeId, Filename, FunctionName
+    CallableWithCode, code_of, CodeId, Filename, FunctionName
 )
 from righttyper.righttyper_utils import unwrap, skip_this_file
 
@@ -40,15 +40,16 @@ def _call_handler(code: CodeType, offset: int, callable: Callable, arg0: object)
 
     # Record wrapper->wrapped relationship for type propagation
     if (
-        has_code(wrapped)
-        and (wrapped_code := wrapped.__code__) in setup_code
+        (wrapped_code := code_of(wrapped)) is not None
+        and wrapped_code in setup_code
     ):
         # For class instances, the executing code is __call__'s code
         wrapper_code = callee_code or code_of(
             getattr(type(callable), "__call__", None)
         )
         if wrapper_code and wrapper_code is not wrapped_code:
-            wrapped_by[wrapper_code] = wrapped
+            # code_of just vouched for a real __code__
+            wrapped_by[wrapper_code] = cast(CallableWithCode, wrapped)
 
     if callee_code in code_to_callable:
         call_mapping[(code, offset)] = callable
