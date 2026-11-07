@@ -1214,6 +1214,44 @@ def test_merged_types_singleton_unhashable(unhashable_types):
     assert merged_types({ti}) == ti
 
 
+# Membership in a tuple of special forms calls the metaclass __eq__, so a class
+# whose __eq__ assumes a like-for-like operand raises before any hash is taken.
+
+@pytest.fixture
+def eq_raising_type():
+    class Meta(type):
+        def __eq__(cls, other: object) -> bool:
+            return getattr(cls, "tag") == getattr(other, "tag")
+
+    class C(metaclass=Meta):
+        tag = 1
+
+    return C
+
+
+def test_lub_tolerates_eq_raising_metaclass(eq_raising_type):
+    from righttyper.generalize import lub
+
+    c, i = TypeInfo.from_type(eq_raising_type), TypeInfo.from_type(int)
+    assert lub(c, i).to_set() == {c, i}
+    assert lub(i, c).to_set() == {c, i}
+
+
+def test_from_set_tolerates_eq_raising_metaclass(eq_raising_type):
+    c, i = TypeInfo.from_type(eq_raising_type), TypeInfo.from_type(int)
+    assert TypeInfo.from_set({c, i}).to_set() == {c, i}
+
+    generic = TypeInfo.from_type(eq_raising_type, args=(i,))
+    assert TypeInfo.from_set({generic, i}).to_set() == {generic, i}
+
+
+def test_is_never_advanced_tolerates_eq_raising_metaclass(eq_raising_type):
+    from righttyper.generalize import _is_never_advanced
+
+    generic = TypeInfo.from_type(eq_raising_type, args=(TypeInfo.from_type(int),))
+    assert not _is_never_advanced(generic)
+
+
 def test_lub_mro_no_useful_base():
     """lub(int, str) stays as union (only 'object' in common)."""
     from righttyper.generalize import lub

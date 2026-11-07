@@ -200,10 +200,10 @@ def lub(
     if a == b:
         return a
 
-    # Rule 2: Never/NoReturn subsumption
-    if a.type_obj in (Never, NoReturn):
+    # Rule 2: Never/NoReturn subsumption.  By identity: `in` would call a metaclass __eq__.
+    if a.type_obj is Never or a.type_obj is NoReturn:
         return b
-    if b.type_obj in (Never, NoReturn):
+    if b.type_obj is Never or b.type_obj is NoReturn:
         return a
 
     # Rule 3: Any subsumption
@@ -559,7 +559,8 @@ def _is_never_advanced(t: TypeInfo) -> bool:
     was constructed but never driven past first yield (or the coroutine was
     never awaited to a useful return).
     """
-    if t.type_obj in (abc.Generator, abc.AsyncGenerator, abc.Iterator, abc.AsyncIterator) and t.args:
+    if t.args and any(t.type_obj is g for g in (abc.Generator, abc.AsyncGenerator,
+                                               abc.Iterator, abc.AsyncIterator)):
         first = t.args[0]
         return isinstance(first, TypeInfo) and first == NoneTypeInfo
     if t.type_obj is abc.Coroutine and len(t.args) == 3:
