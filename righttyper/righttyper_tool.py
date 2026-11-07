@@ -1,11 +1,14 @@
 import sys
 from types import CodeType
-from typing import Any, Final
+from typing import Any, Final, cast
 from collections.abc import Callable
 import functools
 
-from righttyper.righttyper_types import CallableWithCode, has_code, CodeId, Filename, FunctionName
+from righttyper.righttyper_types import (
+    CallableWithCode, code_of, CodeId, Filename, FunctionName
+)
 from righttyper.righttyper_utils import unwrap, skip_this_file
+from righttyper.logger import logger
 
 TOOL_NAME: Final[str] = "righttyper"
 
@@ -27,7 +30,17 @@ events = sys.monitoring.events
 
 
 def _call_handler(code: CodeType, offset: int, callable: Callable, arg0: object) -> Any:
-    callee_code = getattr(callable, "__code__", None)
+    # CALL fires process-wide, so whatever escapes here surfaces in the program under
+    # observation.  Every path already returns DISABLE, so failing is "nothing to record".
+    try:
+        return _handle_call(code, offset, callable)
+    except Exception:
+        logger.debug("CALL handler: skipping a call it could not inspect", exc_info=True)
+        return sys.monitoring.DISABLE
+
+
+def _handle_call(code: CodeType, offset: int, callable: Callable) -> Any:
+    callee_code = code_of(callable)
 
     # Check __dict__ directly to avoid triggering __getattr__ (e.g., on MagicMock)
     wrapped = (
@@ -38,15 +51,16 @@ def _call_handler(code: CodeType, offset: int, callable: Callable, arg0: object)
 
     # Record wrapper->wrapped relationship for type propagation
     if (
-        has_code(wrapped)
-        and (wrapped_code := wrapped.__code__) in setup_code
+        (wrapped_code := code_of(wrapped)) is not None
+        and wrapped_code in setup_code
     ):
         # For class instances, the executing code is __call__'s code
-        wrapper_code = callee_code or getattr(
-            getattr(type(callable), "__call__", None), "__code__", None
+        wrapper_code = callee_code or code_of(
+            getattr(type(callable), "__call__", None)
         )
         if wrapper_code and wrapper_code is not wrapped_code:
-            wrapped_by[wrapper_code] = wrapped
+            # code_of just vouched for a real __code__
+            wrapped_by[wrapper_code] = cast(CallableWithCode, wrapped)
 
     if callee_code in code_to_callable:
         call_mapping[(code, offset)] = callable
@@ -54,7 +68,7 @@ def _call_handler(code: CodeType, offset: int, callable: Callable, arg0: object)
         callee_code in setup_code
         or (
             wrapped is not None
-            and (callee_code := getattr(callable := wrapped, "__code__", None)) in setup_code
+            and (callee_code := code_of(callable := wrapped)) in setup_code
         )
     ):
         call_mapping[(code, offset)] = callable
@@ -69,7 +83,7 @@ def _call_handler(code: CodeType, offset: int, callable: Callable, arg0: object)
             target = getattr(callable, '__new__', None)
         else:
             target = getattr(callable, '__init__', None)
-        target_code = getattr(target, '__code__', None)
+        target_code = code_of(target)
         mod = sys.modules.get(callable.__module__)
         source_file = getattr(mod, '__file__', None)
         if target_code and source_file and not skip_this_file(source_file):

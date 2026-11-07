@@ -1,6 +1,7 @@
 import os
 import sys
 import fnmatch
+import typing
 import collections.abc as abc
 
 from functools import cache
@@ -9,6 +10,14 @@ from types import CodeType
 
 from righttyper.logger import logger
 from righttyper.options import run_options
+from righttyper.righttyper_types import wrapped_of
+
+
+# A functools.wraps chain is a handful of links; anything past this is pathological.
+_MAX_UNWRAP_DEPTH = 100
+
+
+_ABSENT: typing.Final = object()
 
 
 def unwrap(method: abc.Callable|None) -> abc.Callable|None:
@@ -17,11 +26,20 @@ def unwrap(method: abc.Callable|None) -> abc.Callable|None:
     # Remember objects by id to work around unhashable items, but point to object so
     # that the object can't go away (possibly reusing the id)
     visited = {}
-    while hasattr(method, "__wrapped__"):
+    while (wrapped := wrapped_of(method, _ABSENT)) is not _ABSENT:
         if id(method) in visited: return None
+
+        # The id check cannot catch an object that *synthesizes* attributes: mock's
+        # _Call answers __wrapped__ with a brand-new child, so the id is never seen
+        # twice and this loop allocates until the process is OOM-killed.  Cap it, as
+        # inspect.unwrap does.
+        if len(visited) >= _MAX_UNWRAP_DEPTH:
+            logger.debug(f"unwrap: giving up after {_MAX_UNWRAP_DEPTH} __wrapped__ links")
+            return None
+
         visited[id(method)] = method
 
-        method = getattr(method, "__wrapped__")
+        method = wrapped
 
     return method
 
