@@ -185,6 +185,57 @@ def test_issue_193_raising_getattr(tmp_path, monkeypatch):
     assert "def observed(v: int) -> int:" in annotated, annotated
 
 
+def _proxied_base_finder():
+    import inspect
+    from righttyper.recorder import OverrideFinder
+
+    class Proxy:
+        "as mock.patch.object leaves in a class __dict__"
+        def __getattr__(self, name):
+            raise ImportError(f"cannot resolve {name}")
+
+        def __call__(self, *a, **kw):
+            return 0
+
+    class Base:
+        def m(self): return 0
+
+    class Child(Base):
+        def m(self): return 1
+
+    setattr(Base, "m", Proxy())
+    code = Child.m.__code__
+    return Base, OverrideFinder(Child.__mro__, "m", 1), code, inspect.getargs(code)
+
+
+def test_issue_193_hostile_override_is_still_the_override():
+    """A proxy in Base's __dict__ is what Child.m overrides, even if it won't say its name."""
+    Base, finder, code, arg_info = _proxied_base_finder()
+
+    result = finder.find_next(code, arg_info)
+
+    assert result is not None
+    overridden, parent_func, defining_class = result
+    assert defining_class is Base
+    assert overridden.qualname == f"{Base.__qualname__}.m"
+    assert parent_func is None
+
+
+def test_issue_193_find_next_does_not_hide_parent_arg_errors(monkeypatch):
+    """Only the attribute reads are guarded; a real bug must not redirect to the grandparent."""
+    import pytest
+    import righttyper.recorder as recorder
+
+    def broken(*args, **kwargs):
+        raise AttributeError("bug in hint handling")
+
+    monkeypatch.setattr(recorder, "get_parent_arg_types", broken)
+    _, finder, code, arg_info = _proxied_base_finder()
+
+    with pytest.raises(AttributeError, match="bug in hint handling"):
+        finder.find_next(code, arg_info)
+
+
 def test_issue_193_raising_getattr_anywhere_in_call_handler(tmp_path, monkeypatch):
     """No probe in the CALL handler may let a hostile __getattr__ out, not just __code__'s."""
     t = textwrap.dedent("""\

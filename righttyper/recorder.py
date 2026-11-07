@@ -1058,6 +1058,16 @@ def is_method_of(code: CodeType, first_arg: object) -> bool:
     return find_method_info(code, first_arg) is not None
 
 
+def _read_attr(obj: object, name: str, default: str) -> str:
+    """getattr that also falls back when a __getattr__ raises something other than
+    AttributeError.  Dynamic, not getattr_static: that answers with the descriptor."""
+    try:
+        return getattr(obj, name, default)
+    except Exception:
+        logger.debug(f"{type(obj).__name__} raised on {name}", exc_info=True)
+        return default
+
+
 class OverrideFinder:
     """Walks a class MRO to find method overrides.
 
@@ -1083,21 +1093,14 @@ class OverrideFinder:
             f = unwrap(ancestor.__dict__.get(self._method_name, None))
             f_code = code_of(f)
             if f and f_code is not code:
-                try:
-                    overridden = OverriddenFunction(
-                        normalize_module_name(getattr(f, "__module__", ancestor.__module__)),
-                        f.__qualname__,
-                        CodeId.from_code(f_code) if f_code else None,
-                        get_parent_arg_types(f, child_arg_info)
-                    )
-                except Exception:
-                    # __qualname__ and __module__ are read off a class __dict__ value, so a
-                    # hostile __getattr__ gets a say.  code_of can't cover them: a builtin
-                    # legitimately has no __code__ (hence f_code's None branch), and
-                    # getattr_static answers these with the descriptor, not the value.
-                    logger.debug(f"skipping override of {self._method_name} in {ancestor}",
-                                 exc_info=True)
-                    continue
+                # f comes out of a class __dict__, so its __getattr__ gets a say.  It is still
+                # the override if it won't name itself; the ancestor can name it instead.
+                overridden = OverriddenFunction(
+                    normalize_module_name(_read_attr(f, "__module__", ancestor.__module__)),
+                    _read_attr(f, "__qualname__", f"{ancestor.__qualname__}.{self._method_name}"),
+                    CodeId.from_code(f_code) if f_code else None,
+                    get_parent_arg_types(f, child_arg_info)
+                )
 
                 self._index = self._index + idx + 1
                 return (
