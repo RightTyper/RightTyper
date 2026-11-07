@@ -183,3 +183,47 @@ def test_issue_193_raising_getattr(tmp_path, monkeypatch):
     # and recording carried on rather than being derailed
     annotated = Path("t.py").read_text()
     assert "def observed(v: int) -> int:" in annotated, annotated
+
+
+def test_issue_193_raising_getattr_anywhere_in_call_handler(tmp_path, monkeypatch):
+    """No probe in the CALL handler may let a hostile __getattr__ out, not just __code__'s."""
+    t = textwrap.dedent("""\
+        class Meta(type):
+            "dataclass/attrs/NamedTuple probe: hasattr on the class"
+            def __getattr__(cls, name):
+                raise RuntimeError(f"cannot resolve {name}")
+
+        class Hostile(metaclass=Meta):
+            pass
+
+        class Slotted:
+            "__dict__ probe: no __dict__, so getattr falls through to __getattr__"
+            __slots__ = ()
+            def __getattr__(self, name):
+                raise RuntimeError(f"cannot resolve {name}")
+
+            def __call__(self, x):
+                return x + 1
+
+        def observed(v):
+            return v * 2
+
+        print(type(Hostile()).__name__)
+        print(Slotted()(1))
+        print(observed(3))
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    p = subprocess.run(
+        [sys.executable, '-m', 'righttyper', 'run', '--root', '.', 't.py'],
+        capture_output=True, text=True, timeout=20,
+    )
+
+    assert p.returncode == 0, f"exit {p.returncode}\n{p.stderr}"
+    assert "RuntimeError" not in p.stderr, p.stderr
+    assert p.stdout.split() == ["Hostile", "2", "6"], p.stdout
+
+    annotated = Path("t.py").read_text()
+    assert "def observed(v: int) -> int:" in annotated, annotated

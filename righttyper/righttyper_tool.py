@@ -8,6 +8,7 @@ from righttyper.righttyper_types import (
     CallableWithCode, code_of, CodeId, Filename, FunctionName
 )
 from righttyper.righttyper_utils import unwrap, skip_this_file
+from righttyper.logger import logger
 
 TOOL_NAME: Final[str] = "righttyper"
 
@@ -29,6 +30,16 @@ events = sys.monitoring.events
 
 
 def _call_handler(code: CodeType, offset: int, callable: Callable, arg0: object) -> Any:
+    # CALL fires process-wide, so whatever escapes here surfaces in the program under
+    # observation.  Every path already returns DISABLE, so failing is "nothing to record".
+    try:
+        return _handle_call(code, offset, callable)
+    except Exception:
+        logger.debug("CALL handler: skipping a call it could not inspect", exc_info=True)
+        return sys.monitoring.DISABLE
+
+
+def _handle_call(code: CodeType, offset: int, callable: Callable) -> Any:
     callee_code = code_of(callable)
 
     # Check __dict__ directly to avoid triggering __getattr__ (e.g., on MagicMock)
