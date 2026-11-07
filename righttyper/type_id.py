@@ -34,7 +34,7 @@ from righttyper.atomic import AtomicCounter
 from righttyper.random_dict import RandomDict
 from righttyper.typeinfo import TypeInfo, TypeInfoArg, NoneTypeInfo, AnyTypeInfo, UnknownTypeInfo
 from righttyper.righttyper_types import Filename, FunctionName, CodeId, CallableWithCode, has_code
-from righttyper.righttyper_utils import is_test_module, normalize_module_name, unwrap
+from righttyper.righttyper_utils import is_test_module, lookup_type, normalize_module_name, unwrap
 from righttyper.options import run_options, output_options
 from righttyper.logger import logger, sampling_logger, update_sampling_summary
 from righttyper.righttyper_tool import call_mapping, code_to_callable
@@ -303,7 +303,7 @@ def get_type_name(t: type, depth: int = 0) -> TypeInfo:
         logger.error(f"RightTyper failed to compute the type of {t}.")
         return UnknownTypeInfo
 
-    if (ti := _BUILTINS.get(t)):
+    if (ti := lookup_type(_BUILTINS, t)):
         return ti
 
     if t.__module__ == "builtins":
@@ -728,7 +728,7 @@ def _handle_dict(value: Any, depth: int) -> TypeInfo:
     sampler = lambda: ((el := _random_item(value)), value[el])
     args = _sample_container(value, 2, sampler, depth)
     t: type = type(value)
-    if (ti := _BUILTINS.get(t)):
+    if (ti := lookup_type(_BUILTINS, t)):
         return ti.replace(args=args, container_id=_cid_for(value))
     return TypeInfo.from_type(t, args=args, container_id=_cid_for(value))
 
@@ -949,11 +949,11 @@ def get_value_type(
     t: type = type(value)
     args: tuple[TypeInfo|str|ellipsis, ...]
 
-    if (h := _type2handler.get(t)):
+    if (h := lookup_type(_type2handler, t)):
         if (ti := h(value, depth)) is not None:
             return ti
 
-    if ti := _BUILTINS.get(t):
+    if ti := lookup_type(_BUILTINS, t):
         return ti
 
     # Is this a spec-based mock?

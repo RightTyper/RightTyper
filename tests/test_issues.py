@@ -29,3 +29,40 @@ def test_issue_22(tmp_path, monkeypatch):
     subprocess.run([sys.executable, '-m', 'righttyper', 'run', 't.py'])
 
     assert "def extracted_function(A: list[int]) -> bool" in Path("t.py").read_text()
+
+
+def test_issue_197_unhashable_class_on_recording_path(tmp_path, monkeypatch):
+    """The recording path keys tables by type too, ahead of lub() and TypeMap.
+
+    get_value_type/get_type_name look the observed type up in _BUILTINS and
+    _type2handler. Those are plain dicts, so an unhashable class raised there
+    before generalize or typemap ever saw it, and the function was left with no
+    annotation at all -- not even the return type, which has nothing to do with
+    the offending argument.
+    """
+    t = textwrap.dedent("""\
+        class Meta(type):
+            def __eq__(cls, other):
+                return NotImplemented
+            __hash__ = None
+
+        class Unhashable(metaclass=Meta):
+            pass
+
+        def f(x):
+            return 1
+
+        f(Unhashable())
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', 'run', '--root', '.', 't.py'])
+
+    log = Path("righttyper.log")
+    assert not log.exists() or "as a dict key" not in log.read_text()
+    # The argument stays unannotated -- TypeMap cannot name a class it could not
+    # enter -- but the rest of the signature must still be inferred.
+    annotated = Path("t.py").read_text()
+    assert "def f(x) -> int:" in annotated, annotated

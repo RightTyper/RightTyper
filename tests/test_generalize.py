@@ -1126,6 +1126,132 @@ def test_lub_mro_common_base_without_attrs():
     assert result.type_obj is Base
 
 
+# A class that is not hashable, because its metaclass defines __eq__ without a
+# matching __hash__ (which implicitly sets __hash__ = None). isinstance(x, type)
+# is still True for these, so lub()'s existing "is it a real type" guard lets
+# them through to rules that hash both operands. This is the shape of issue #197.
+#
+# These are built inside a fixture rather than at module scope on purpose: TypeMap
+# walks every class reachable from every module in sys.modules, so a module-level
+# unhashable class here would leak into unrelated tests.
+
+@pytest.fixture
+def unhashable_types():
+    class Meta(type):
+        def __eq__(cls, other: object) -> bool:
+            return NotImplemented       # type: ignore[return-value]
+        __hash__ = None                 # type: ignore[assignment]
+
+    class A(metaclass=Meta):
+        pass
+
+    class B(metaclass=Meta):
+        pass
+
+    return A, B
+
+
+def test_lub_tolerates_unhashable_type(unhashable_types):
+    """A class whose metaclass makes it unhashable must not take lub() down."""
+    from righttyper.generalize import lub
+
+    A, B = unhashable_types
+    # Guard the premise: these classes really are unhashable.
+    with pytest.raises(TypeError):
+        hash(A)
+
+    a, b = TypeInfo.from_type(A), TypeInfo.from_type(B)
+    result = lub(a, b)
+    assert result.is_union()
+    assert result.to_set() == {a, b}
+
+
+def test_lub_unhashable_against_ordinary_type(unhashable_types):
+    """The guard also covers an unhashable type paired with a normal one."""
+    from righttyper.generalize import lub
+
+    A, _ = unhashable_types
+    a, b = TypeInfo.from_type(A), TypeInfo.from_type(int)
+    result = lub(a, b)
+    assert result.is_union()
+    assert result.to_set() == {a, b}
+
+
+def test_lub_tolerates_raising_hash():
+    """A __hash__ that raises slips past isinstance(x, abc.Hashable); lub() must cope."""
+    import collections.abc as _abc
+    from righttyper.generalize import lub
+
+    class RaisingMeta(type):
+        def __hash__(cls) -> int:
+            raise TypeError("no hashing here")
+
+    class C(metaclass=RaisingMeta):
+        pass
+
+    class D(metaclass=RaisingMeta):
+        pass
+
+    # These *are* abc.Hashable (they define __hash__), yet hashing them raises.
+    assert isinstance(C, _abc.Hashable)
+
+    a, b = TypeInfo.from_type(C), TypeInfo.from_type(D)
+    result = lub(a, b)
+    assert result.is_union()
+
+
+def test_merged_types_singleton_unhashable(unhashable_types):
+    """merged_types() on a single unhashable type must not crash.
+
+    _merge_set's singleton path calls _is_private_type (which is @cache'd, so it
+    hashes its argument) before any pairwise lub(), so lub()'s own guard does not
+    cover this route. Regression test for issue #197.
+    """
+    from righttyper.generalize import merged_types
+
+    A, _ = unhashable_types
+    ti = TypeInfo.from_type(A)
+    assert merged_types({ti}) == ti
+
+
+# Membership in a tuple of special forms calls the metaclass __eq__, so a class
+# whose __eq__ assumes a like-for-like operand raises before any hash is taken.
+
+@pytest.fixture
+def eq_raising_type():
+    class Meta(type):
+        def __eq__(cls, other: object) -> bool:
+            return getattr(cls, "tag") == getattr(other, "tag")
+
+    class C(metaclass=Meta):
+        tag = 1
+
+    return C
+
+
+def test_lub_tolerates_eq_raising_metaclass(eq_raising_type):
+    from righttyper.generalize import lub
+
+    c, i = TypeInfo.from_type(eq_raising_type), TypeInfo.from_type(int)
+    assert lub(c, i).to_set() == {c, i}
+    assert lub(i, c).to_set() == {c, i}
+
+
+def test_from_set_tolerates_eq_raising_metaclass(eq_raising_type):
+    c, i = TypeInfo.from_type(eq_raising_type), TypeInfo.from_type(int)
+    assert TypeInfo.from_set({c, i}).to_set() == {c, i}
+
+    generic = TypeInfo.from_type(eq_raising_type, args=(i,))
+    assert TypeInfo.from_set({generic, i}).to_set() == {generic, i}
+
+
+def test_is_never_advanced_tolerates_eq_raising_metaclass(eq_raising_type):
+    from righttyper.generalize import _is_never_advanced
+
+    generic = TypeInfo.from_type(eq_raising_type, args=(TypeInfo.from_type(int),))
+    assert not _is_never_advanced(generic)
+
+
 def test_lub_mro_no_useful_base():
     """lub(int, str) stays as union (only 'object' in common)."""
     from righttyper.generalize import lub
