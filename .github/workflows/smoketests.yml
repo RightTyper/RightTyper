@@ -13,9 +13,10 @@ jobs:
   smoketests:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ ubuntu-latest ]
-        python: [ '3.12.8', '3.13' ]
+        python: [ '3.12', '3.13' ]
 
     steps:
     - uses: actions/checkout@v4
