@@ -46,8 +46,8 @@ still under review rather than being on `main` today.
 | read `__wrapped__` without letting `__getattr__` escape | `wrapped_of` | `righttyper_types.py` | #195 |
 | use a value as a dict key or set member | `is_hashable` | `righttyper_utils.py` | #198 |
 | ask a subtype question that may be refused | `safe_issubclass` | `righttyper_utils.py` | #202 |
-| look up a possibly-unhashable class in a dict | `_lookup_type` | `type_id.py` | #198 |
-| follow a `__wrapped__` chain | `unwrap` | `righttyper_utils.py` | on `main` |
+| look up a possibly-unhashable class in a dict | `lookup_type` | `righttyper_utils.py` | #198 |
+| follow a `__wrapped__` chain | `unwrap` | `righttyper_utils.py` | on `main`; guarded by #195 |
 | say "this observation contributes nothing" | `NeverTypeInfo` | `typeinfo.py` | #201 |
 
 Note the split between the first row and the third. There is no single "probe safely"
