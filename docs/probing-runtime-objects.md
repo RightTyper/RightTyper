@@ -71,7 +71,7 @@ primitive, and the next section says why.
   operand comes from the traced program. The many `issubclass(x, <fixed ABC>)` calls in this
   codebase cannot raise and need nothing.
 - **A map keyed on `(module, qualname)` is ambiguous.** Distinct classes can share both, as
-  `ml_dtypes` 0.7's scalar and dtype class do. `TypeMap.to_name_map` drops any key that more
+  `ml_dtypes` 0.7's scalar and dtype class do. `TypeMap.to_name_map` (#220) drops any key that more
   than one type claims, so do not add a lookup that assumes a name identifies one class.
 - **A cache keyed on a type object must be bounded.** The key keeps the class alive, so an
   unbounded cache pins every class ever probed — including the throwaway ones that
