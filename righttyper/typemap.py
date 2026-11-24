@@ -187,6 +187,7 @@ class TypeMap:
         for types whose canonical name differs from their __module__.__qualname__."""
         from righttyper.righttyper_utils import normalize_module_name
         result: dict[tuple[str, str], tuple[str, str]] = {}
+        ambiguous: set[tuple[str, str]] = set()  # shared by distinct types, e.g. ml_dtypes >= 0.7
         for t, names in self._map.items():
             if names:
                 mod = getattr(t, '__module__', '')
@@ -198,7 +199,14 @@ class TypeMap:
                 original = (normalize_module_name(mod), name)
                 canonical = names[0]
                 if original != canonical:
+                    if result.get(original, canonical) != canonical:
+                        ambiguous.add(original)
                     result[original] = canonical
+                else:
+                    ambiguous.add(original)
+
+        for key in ambiguous:
+            result.pop(key, None)
         return result
 
 

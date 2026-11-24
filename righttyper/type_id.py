@@ -1015,15 +1015,16 @@ def get_value_type(
             shape = " ".join(str(d) for d in value.shape)
             return TypeInfo.from_type(dtype, args=(get_type_name(t, depth+1), f"{shape}"))
 
-    if t.__module__.startswith('numpy') and (numpy := get_numpy()):
-        if t is numpy.ndarray:
-            return TypeInfo.from_type(numpy.ndarray, args=(
-                AnyTypeInfo,
-                get_value_type(value.dtype, depth+1),
-            ))
-        elif issubclass(t, numpy.dtype):
-            return TypeInfo.from_type(numpy.dtype, args=(
-                get_type_name(value.type, depth+1) if value.type else UnknownTypeInfo,
-            ))
+    if t.__module__.startswith('numpy') and (numpy := get_numpy()) and t is numpy.ndarray:
+        return TypeInfo.from_type(numpy.ndarray, args=(
+            AnyTypeInfo,
+            get_value_type(value.dtype, depth+1),
+        ))
+
+    # Not keyed on t's module: ml_dtypes >= 0.7 defines its dtype classes itself.
+    if (dtype_t := getattr(sys.modules.get('numpy'), 'dtype', None)) and issubclass(t, dtype_t):
+        return TypeInfo.from_type(dtype_t, args=(
+            get_type_name(value.type, depth+1) if value.type else UnknownTypeInfo,
+        ))
 
     return get_type_name(t, depth+1)

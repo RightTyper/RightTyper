@@ -212,6 +212,40 @@ def test_to_name_map_skips_non_string_module():
     assert not any('CythonLike' in k[1] for k in name_map)
 
 
+def test_to_name_map_drops_names_shared_by_distinct_types():
+    """Two types may share a module and qualname (ml_dtypes >= 0.7: scalar and dtype class);
+    a name-keyed rename of one must not rewrite the other."""
+    a = type('Shared', (), {})
+    b = type('Shared', (), {})
+    a.__module__ = b.__module__ = 'some_module'
+
+    tm = TypeMap({})
+    tm._map[a] = [('some_module', 'Shared')]
+    tm._map[b] = [('some_module', 'Shared.inner')]
+
+    assert ('some_module', 'Shared') not in tm.to_name_map()
+
+
+def test_to_name_map_keeps_unambiguous_rename():
+    t = type('Impl', (), {})
+    t.__module__ = 'pkg._impl'
+
+    tm = TypeMap({})
+    tm._map[t] = [('pkg', 'Impl')]
+
+    assert tm.to_name_map()[('pkg._impl', 'Impl')] == ('pkg', 'Impl')
+
+
+def test_get_value_type_survives_a_partially_imported_numpy(monkeypatch):
+    """numpy sits in sys.modules before it has defined dtype, while it is importing."""
+    from righttyper.type_id import get_value_type
+
+    class Foo: pass
+
+    monkeypatch.setitem(sys.modules, 'numpy', types.ModuleType('numpy'))
+    assert get_value_type(Foo()).name.endswith('Foo')
+
+
 def test_items_from_typing():
     assert TypeInfo("typing", "Any") == get_type_name(Any)
     assert TypeInfo("typing", "Self") == get_type_name(Self)
