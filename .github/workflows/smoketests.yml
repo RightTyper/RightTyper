@@ -13,9 +13,10 @@ jobs:
   smoketests:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ ubuntu-latest ]
-        python: [ '3.12.8', '3.13' ]
+        python: [ '3.12', '3.13' ]
 
     steps:
     - uses: actions/checkout@v4
@@ -24,6 +25,12 @@ jobs:
       with:
         python-version: ${{ matrix.python }}
         allow-prereleases: true
+
+    # 3.12.7 hangs the smoke tests; '3.12' must resolve to 3.12.8 or later.
+    - name: python version
+      run: |
+        python3 --version
+        python3 -c 'import sys; assert sys.version_info >= (3, 12, 8), sys.version'
 
     - name: dependencies
       run: |
