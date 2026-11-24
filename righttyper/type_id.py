@@ -911,24 +911,29 @@ _type2handler: dict[type, abc.Callable[[Any, int], TypeInfo|None]] = {
 }
 
 
-def _safe_getattr(obj: object, attr: str) -> Any|None:
+def _safe_getattr(obj: object, attr: str, default: Any = None) -> Any|None:
     """Retrieves the given attribute statically, if possible.
        Using getattr or hasattr can lead to problems when __getattr__ is overridden;
        but even inspect.getattr_static may raise TypeError for objects that lack __mro__
        such as scipy.linalg.lapack.dpotrs (a fortran object)
+
+       'default' is returned both for an attribute that isn't there and for a lookup
+       that failed.  It defaults to None for callers that only test truthiness; pass a
+       unique sentinel to tell those two cases apart from an attribute whose value
+       genuinely *is* None.
     """
 
     try:
-        return inspect.getattr_static(obj, attr, None)
+        return inspect.getattr_static(obj, attr, default)
     except:
         try:
             obj_name = str(obj)
         except:
             obj_name = "(object lacking __str__)"   # really?... just in case.
 
-        logger.error(f"getattr_static({obj_name}, \'{attr}\', None) raised exception", exc_info=True)
+        logger.error(f"getattr_static({obj_name}, \'{attr}\', ...) raised exception", exc_info=True)
 
-    return None
+    return default
 
 
 def get_value_type(
