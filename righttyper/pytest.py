@@ -1,6 +1,12 @@
 import pytest
 from righttyper.righttyper_utils import set_pytest_collected, set_test_files_and_modules
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtestloop(session: pytest.Session) -> None:
+    # an xdist controller never collects, but does reach the test loop
+    set_pytest_collected()
+
+
 def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config, items: list[pytest.Item]) -> None:
     """Collects the names of pytest test modules."""
 

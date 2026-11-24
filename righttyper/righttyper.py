@@ -1039,9 +1039,10 @@ def run(
                 # pytest died before collecting: a usage error, a bad rootdir, a plugin
                 # that failed to load.  It reports those *after* importing conftest, so
                 # observations are not empty -- conftest's imports ran, and annotating
-                # from them rewrote the tree.  Collection is the signal that the run the
-                # user asked for actually began; a suite that merely *fails* collects
-                # first, and still annotates.  See #189.
+                # from them rewrote the tree.  Collection, or reaching the test loop (an
+                # xdist controller never collects), is the signal that the run the user
+                # asked for actually began; a suite that merely *fails* still annotates.
+                # See #189.
                 #
                 # Ahead of `only_collect` because a pickle written here annotates the
                 # tree just the same, one `process` later.
