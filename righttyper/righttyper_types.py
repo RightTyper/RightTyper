@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple, NewType, Protocol, TypeGuard
 from types import CodeType
 
+from righttyper.logger import logger
+
 
 class CallableWithCode(Protocol):
     """A callable that has a __code__ attribute."""
@@ -12,9 +14,33 @@ class CallableWithCode(Protocol):
     def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
+def code_of(obj: object) -> CodeType | None:
+    """Return obj's ``__code__`` if it is a real code object, else None.
+
+    Dynamic read: mock's _Call synthesizes the attribute, and getattr_static
+    would return the descriptor instead of the code.  See #193.
+    """
+    try:
+        code = getattr(obj, '__code__', None)
+    except Exception:
+        logger.debug(f"code_of: {type(obj).__name__} raised on __code__", exc_info=True)
+        return None
+
+    return code if isinstance(code, CodeType) else None
+
+
+def wrapped_of(obj: object, default: Any) -> Any:
+    """``obj.__wrapped__``, or ``default`` if it has none or its __getattr__ raises."""
+    try:
+        return getattr(obj, "__wrapped__", default)
+    except Exception:
+        logger.debug(f"wrapped_of: {type(obj).__name__} raised on __wrapped__", exc_info=True)
+        return default
+
+
 def has_code(obj: object) -> TypeGuard[CallableWithCode]:
     """TypeGuard that narrows to CallableWithCode."""
-    return hasattr(obj, '__code__')
+    return code_of(obj) is not None
 
 
 Filename = NewType("Filename", str)

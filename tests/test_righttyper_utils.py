@@ -1,4 +1,8 @@
-from righttyper.righttyper_utils import is_test_module
+import functools
+
+from unittest import mock
+
+from righttyper.righttyper_utils import is_test_module, unwrap
 
 
 def test_is_test_module_exact():
@@ -23,3 +27,50 @@ def test_is_test_module_not_test():
 def test_is_test_module_partial_name():
     """Module starting with test module name but not a submodule should not match."""
     assert is_test_module('pytestfoo') == False  # not a submodule
+
+
+def test_unwrap_terminates_on_synthesized_wrapped():
+    """The depth cap is what stops it; see test_issue_193_mock_in_class_dict."""
+    assert unwrap(mock.call.patched) is None
+
+
+def test_unwrap_follows_a_wraps_chain():
+    def inner():
+        pass
+
+    @functools.wraps(inner)
+    def outer():
+        pass
+
+    assert unwrap(outer) is inner
+
+
+def test_unwrap_follows_a_decorated_bound_method():
+    """unwrap() is handed bound methods (type_id.find_function, the CALL handler),
+    not just class __dict__ entries.
+    """
+    def deco(fn):
+        @functools.wraps(fn)
+        def w(*args, **kwargs):
+            return fn(*args, **kwargs)
+        return w
+
+    class C:
+        @deco
+        def m(self):
+            pass
+
+    assert unwrap(C().m) is C.__dict__["m"].__wrapped__
+
+
+def test_unwrap_returns_none_on_a_cycle():
+    def a():
+        pass
+
+    def b():
+        pass
+
+    a.__wrapped__ = b   # type: ignore[attr-defined]
+    b.__wrapped__ = a   # type: ignore[attr-defined]
+
+    assert unwrap(a) is None
