@@ -29,3 +29,84 @@ def test_issue_22(tmp_path, monkeypatch):
     subprocess.run([sys.executable, '-m', 'righttyper', 'run', 't.py'])
 
     assert "def extracted_function(A: list[int]) -> bool" in Path("t.py").read_text()
+
+
+def test_issue_197_unhashable_class_on_recording_path(tmp_path, monkeypatch):
+    """The recording path keys tables by type too, ahead of lub() and TypeMap.
+
+    get_value_type/get_type_name look the observed type up in _BUILTINS and
+    _type2handler. Those are plain dicts, so an unhashable class raised there
+    before generalize or typemap ever saw it, and the function was left with no
+    annotation at all -- not even the return type, which has nothing to do with
+    the offending argument.
+    """
+    t = textwrap.dedent("""\
+        class Meta(type):
+            def __eq__(cls, other):
+                return NotImplemented
+            __hash__ = None
+
+        class Unhashable(metaclass=Meta):
+            pass
+
+        def f(x):
+            return 1
+
+        f(Unhashable())
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    subprocess.run([sys.executable, '-m', 'righttyper', 'run', '--root', '.', 't.py'])
+
+    log = Path("righttyper.log")
+    assert not log.exists() or "as a dict key" not in log.read_text()
+    # The argument stays unannotated -- TypeMap cannot name a class it could not
+    # enter -- but the rest of the signature must still be inferred.
+    annotated = Path("t.py").read_text()
+    assert "def f(x) -> int:" in annotated, annotated
+
+
+def test_issue_197_metaclass_eq_in_post_run_transforms(tmp_path, monkeypatch):
+    """`x in (abc.Generator, ...)` runs x's metaclass __eq__, which may raise."""
+    t = textwrap.dedent("""\
+        class Meta(type):
+            def __eq__(cls, other):
+                raise RuntimeError("cannot compare")
+            __hash__ = type.__hash__
+
+        class Hostile(metaclass=Meta):
+            pass
+
+        def make():
+            return Hostile()
+
+        def take(h):
+            return 1
+
+        def gen():
+            yield Hostile()
+
+        def listed():
+            return [Hostile()]
+
+        take(make())
+        list(gen())
+        listed()
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    p = subprocess.run(
+        [sys.executable, '-m', 'righttyper', 'run', '--root', '.', '--allow-runtime-exceptions', 't.py'],
+        capture_output=True, text=True, timeout=60,
+    )
+
+    assert p.returncode == 0, p.stderr
+    annotated = Path("t.py").read_text()
+    assert "def make() -> Hostile:" in annotated, annotated
+    assert "def take(h: Hostile) -> int:" in annotated, annotated
+    assert "def gen() -> Iterator[Hostile]:" in annotated, annotated
+    assert "def listed() -> list[Hostile]:" in annotated, annotated

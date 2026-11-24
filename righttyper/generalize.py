@@ -8,6 +8,7 @@ import sys
 from righttyper.typeinfo import TypeInfo, ListTypeInfo, CallTrace, NoneTypeInfo
 from righttyper.type_id import get_type_name
 from righttyper.options import output_options
+from righttyper.righttyper_utils import is_hashable
 
 
 # Types that are covariant (immutable), so merging their type arguments
@@ -110,8 +111,21 @@ def _find_common_container_abc(t1: TypeInfo, t2: TypeInfo) -> type | None:
     return None
 
 
-@cache
 def _is_private_type(cls: type) -> bool:
+    """Whether cls is defined in a private module without public re-export.
+
+    Uncached front for the cached probe below, since ``@cache`` hashes its
+    argument.  An unhashable class is reported as not private -- the conservative
+    answer, leaving the type alone rather than triggering an MRO walk on a class
+    we could not probe.
+    """
+    if not is_hashable(cls):
+        return False
+    return _is_private_type_cached(cls)
+
+
+@cache
+def _is_private_type_cached(cls: type) -> bool:
     """Check if cls is defined in a private module without public re-export.
 
     This partially duplicates TypeMap's is_private logic; done here to avoid
@@ -186,10 +200,10 @@ def lub(
     if a == b:
         return a
 
-    # Rule 2: Never/NoReturn subsumption
-    if a.type_obj in (Never, NoReturn):
+    # Rule 2: Never/NoReturn subsumption.  By identity: `in` would call a metaclass __eq__.
+    if a.type_obj is Never or a.type_obj is NoReturn:
         return b
-    if b.type_obj in (Never, NoReturn):
+    if b.type_obj is Never or b.type_obj is NoReturn:
         return a
 
     # Rule 3: Any subsumption
@@ -214,6 +228,13 @@ def lub(
     # Without a real type (could be None or a typing special form),
     # no merging rules apply.
     if not isinstance(a.type_obj, type) or not isinstance(b.type_obj, type):
+        return TypeInfo.from_set_new({a, b})
+
+    # Every merging rule below hashes both type objects, so an unhashable class
+    # (metaclass defining __eq__ without __hash__) has to bail out here.  Safe to
+    # build the union: TypeInfo excludes type_obj from comparison, so hashing a
+    # TypeInfo never touches it.
+    if not is_hashable(a.type_obj) or not is_hashable(b.type_obj):
         return TypeInfo.from_set_new({a, b})
 
     # Rule 4: Subtype check (MRO + numeric tower)
@@ -538,7 +559,8 @@ def _is_never_advanced(t: TypeInfo) -> bool:
     was constructed but never driven past first yield (or the coroutine was
     never awaited to a useful return).
     """
-    if t.type_obj in (abc.Generator, abc.AsyncGenerator, abc.Iterator, abc.AsyncIterator) and t.args:
+    if t.args and any(t.type_obj is g for g in (abc.Generator, abc.AsyncGenerator,
+                                               abc.Iterator, abc.AsyncIterator)):
         first = t.args[0]
         return isinstance(first, TypeInfo) and first == NoneTypeInfo
     if t.type_obj is abc.Coroutine and len(t.args) == 3:

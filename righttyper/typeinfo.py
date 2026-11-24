@@ -166,8 +166,9 @@ class TypeInfo:
         if t := next((t for t in s if t.type_obj is typing.Any), None):
             return t
 
-        # Any others subsume "Never" and "NoReturn", so delete them
-        not_never = {t for t in s if t.type_obj not in (typing.Never, typing.NoReturn)}
+        # Any others subsume "Never" and "NoReturn", so delete them.  By identity: `in`
+        # would call a metaclass __eq__.
+        not_never = {t for t in s if t.type_obj is not typing.Never and t.type_obj is not typing.NoReturn}
         if not_never:
             s = not_never
 
@@ -178,7 +179,7 @@ class TypeInfo:
         never_generics = {
             t for t in s
             if t.args
-            and t.type_obj not in (tuple, abc.Sequence, abc.Set, abc.Mapping)
+            and not any(t.type_obj is c for c in (tuple, abc.Sequence, abc.Set, abc.Mapping))
             and isinstance(t.args[0], TypeInfo)
             and t.args[0].type_obj is typing.Never
         }

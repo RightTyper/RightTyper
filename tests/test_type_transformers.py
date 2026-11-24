@@ -163,3 +163,32 @@ def test_exclude_test_types_union_preserves_multiple_non_test():
     assert len(result.args) == 2
     names = {a.name for a in result.args if isinstance(a, TypeInfo)}
     assert names == {'Context', 'Option'}
+
+
+class _EqRaisesMeta(type):
+    def __eq__(cls, other):
+        raise RuntimeError("cannot compare")
+    __hash__ = type.__hash__
+
+
+class _EqRaises(metaclass=_EqRaisesMeta):
+    pass
+
+
+def test_transformers_do_not_compare_a_hostile_class_by_equality():
+    """`type_obj in (abc.X, typing.X)` runs the metaclass __eq__; compare by identity."""
+    import pytest
+    from righttyper.type_transformers import DepthLimitT, GeneratorToIteratorT
+    from righttyper.observations import ResolvingT
+    from righttyper.annotation import FuncAnnotation
+    from righttyper.righttyper_types import CodeId, Filename, FunctionName
+
+    hostile = TypeInfo.from_type(_EqRaises)
+    assert GeneratorToIteratorT().visit(hostile) == hostile
+    # the check only runs once the depth limit is exceeded
+    DepthLimitT(limit=0).visit(TypeInfo.from_type(list, args=(hostile,)))
+
+    code_id = CodeId(Filename('f.py'), FunctionName('f'), 1, 0)
+    ann = FuncAnnotation(args={}, retval=TypeInfo.from_type(int), varargs=None, kwargs=None, variables={})
+    resolved = ResolvingT({code_id: ann}, {}).visit(TypeInfo.from_type(_EqRaises, code_id=code_id))
+    assert resolved == TypeInfo.from_type(int)

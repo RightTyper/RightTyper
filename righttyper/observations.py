@@ -395,7 +395,7 @@ class ResolvingT(TypeInfo.Transformer):
 
         if node.code_id and (ann := self.annotations.get(node.code_id)):
             cl = lambda t: _clone_for_context(t, ann.self_class, self.dest_self_class)
-            if node.type_obj in (abc.Callable, typing.Callable):
+            if any(node.type_obj is c for c in (abc.Callable, typing.Callable)):
                 old_params = (
                     node.args[0].args
                     if node.args and isinstance(node.args[0], TypeInfo) and node.args[0].is_list()
