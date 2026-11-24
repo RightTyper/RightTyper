@@ -30,8 +30,7 @@ events = sys.monitoring.events
 
 
 def _call_handler(code: CodeType, offset: int, callable: Callable, arg0: object) -> Any:
-    # CALL fires process-wide, so whatever escapes here surfaces in the program under
-    # observation.  Every path already returns DISABLE, so failing is "nothing to record".
+    # CALL fires process-wide: nothing may escape into the observed program
     try:
         return _handle_call(code, offset, callable)
     except Exception:
@@ -59,7 +58,7 @@ def _handle_call(code: CodeType, offset: int, callable: Callable) -> Any:
             getattr(type(callable), "__call__", None)
         )
         if wrapper_code and wrapper_code is not wrapped_code:
-            # code_of just vouched for a real __code__
+            # code_of vouched for a real __code__
             wrapped_by[wrapper_code] = cast(CallableWithCode, wrapped)
 
     if callee_code in code_to_callable:

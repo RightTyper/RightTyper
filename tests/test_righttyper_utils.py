@@ -30,11 +30,7 @@ def test_is_test_module_partial_name():
 
 
 def test_unwrap_terminates_on_synthesized_wrapped():
-    """mock's _Call answers __wrapped__ with a brand-new child every time, so the
-    id-based cycle guard never fires; without the depth cap this allocates until
-    the process is OOM-killed.  The end-to-end shape is test_issue_193_mock_in_class_dict;
-    this pins it in microseconds.  See #193.
-    """
+    """The depth cap is what stops it; see test_issue_193_mock_in_class_dict."""
     assert unwrap(mock.call.patched) is None
 
 

@@ -15,16 +15,10 @@ class CallableWithCode(Protocol):
 
 
 def code_of(obj: object) -> CodeType | None:
-    """Return obj's ``__code__``, but only if it is a real code object.
+    """Return obj's ``__code__`` if it is a real code object, else None.
 
-    An object may synthesize the attribute rather than raise (mock's _Call answers
-    any name with a child _Call, unhashable and not code), or raise something
-    getattr won't suppress.  Both reach the process-global CALL handler, so catch
-    broadly and check the result's type: a swallowed failure only means "not
-    code we can annotate".  See #193.
-
-    Note this must read dynamically: inspect.getattr_static answers __code__ with
-    the descriptor rather than the code object.
+    Dynamic read: mock's _Call synthesizes the attribute, and getattr_static
+    would return the descriptor instead of the code.  See #193.
     """
     try:
         code = getattr(obj, '__code__', None)
@@ -36,13 +30,7 @@ def code_of(obj: object) -> CodeType | None:
 
 
 def wrapped_of(obj: object, default: Any) -> Any:
-    """``obj.__wrapped__``, or ``default`` if it has none -- or refuses to say.
-
-    getattr suppresses only AttributeError, and anything else raised by a
-    ``__getattr__`` would escape the process-global CALL handler into the program
-    under observation.  "Not a wrapper" keeps it running, and can only leave a
-    wrapper unresolved.  See #193.
-    """
+    """``obj.__wrapped__``, or ``default`` if it has none or its __getattr__ raises."""
     try:
         return getattr(obj, "__wrapped__", default)
     except Exception:
@@ -51,11 +39,7 @@ def wrapped_of(obj: object, default: Any) -> Any:
 
 
 def has_code(obj: object) -> TypeGuard[CallableWithCode]:
-    """TypeGuard that narrows to CallableWithCode.
-
-    CallableWithCode declares __code__ as a CodeType, so hasattr alone made this
-    guard lie.  Defer to code_of so there is a single probe to keep honest.
-    """
+    """TypeGuard that narrows to CallableWithCode."""
     return code_of(obj) is not None
 
 

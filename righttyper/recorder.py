@@ -1060,8 +1060,7 @@ def is_method_of(code: CodeType, first_arg: object) -> bool:
 
 
 def _read_attr(obj: object, name: str, default: str) -> str:
-    """getattr that also falls back when a __getattr__ raises something other than
-    AttributeError.  Dynamic, not getattr_static: that answers with the descriptor."""
+    """getattr that also falls back when __getattr__ raises a non-AttributeError."""
     try:
         return getattr(obj, name, default)
     except Exception:
@@ -1094,8 +1093,7 @@ class OverrideFinder:
             f = unwrap(ancestor.__dict__.get(self._method_name, None))
             f_code = code_of(f)
             if f and f_code is not code:
-                # f comes out of a class __dict__, so its __getattr__ gets a say.  It is still
-                # the override if it won't name itself; the ancestor can name it instead.
+                # f may refuse to name itself; fall back to the ancestor's name
                 overridden = OverriddenFunction(
                     normalize_module_name(_read_attr(f, "__module__", ancestor.__module__)),
                     _read_attr(f, "__qualname__", f"{ancestor.__qualname__}.{self._method_name}"),

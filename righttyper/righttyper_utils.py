@@ -13,7 +13,7 @@ from righttyper.options import run_options
 from righttyper.righttyper_types import wrapped_of
 
 
-# A functools.wraps chain is a handful of links; anything past this is pathological.
+# a real functools.wraps chain is a handful of links
 _MAX_UNWRAP_DEPTH = 100
 
 
@@ -29,10 +29,8 @@ def unwrap(method: abc.Callable|None) -> abc.Callable|None:
     while (wrapped := wrapped_of(method, _ABSENT)) is not _ABSENT:
         if id(method) in visited: return None
 
-        # The id check cannot catch an object that *synthesizes* attributes: mock's
-        # _Call answers __wrapped__ with a brand-new child, so the id is never seen
-        # twice and this loop allocates until the process is OOM-killed.  Cap it, as
-        # inspect.unwrap does.
+        # mock's _Call synthesizes a fresh __wrapped__ child each time, so the id
+        # check never fires
         if len(visited) >= _MAX_UNWRAP_DEPTH:
             logger.debug(f"unwrap: giving up after {_MAX_UNWRAP_DEPTH} __wrapped__ links")
             return None

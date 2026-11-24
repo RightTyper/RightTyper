@@ -32,9 +32,7 @@ def test_issue_22(tmp_path, monkeypatch):
 
 
 def test_issue_193(tmp_path, monkeypatch):
-    # unittest.mock's _Call answers any attribute access with a child _Call,
-    # so probing for __code__ used to yield an unhashable object that crashed
-    # the (process-global) call handler.
+    # mock's _Call synthesizes __code__ as an unhashable child _Call
     t = textwrap.dedent("""\
         from unittest.mock import call
 
@@ -57,10 +55,7 @@ def test_issue_193(tmp_path, monkeypatch):
 
 
 def test_issue_193_dataclass_init(tmp_path, monkeypatch):
-    # The dataclass/attrs/NamedTuple branch of the call handler reads __code__ off
-    # __init__/__new__, on a second path that the fix above didn't cover.  A class
-    # whose __init__ synthesizes a truthy non-code __code__ reached
-    # setup_monitoring_for_code() and killed the (process-global) handler.
+    # the dataclass/attrs/NamedTuple branch reads __code__ off __init__/__new__
     t = textwrap.dedent("""\
         import dataclasses
         from unittest.mock import call
@@ -95,13 +90,7 @@ def test_issue_193_dataclass_init(tmp_path, monkeypatch):
 
 
 def test_issue_193_mock_in_class_dict(tmp_path, monkeypatch):
-    """unwrap() must terminate on an object that synthesizes __wrapped__.
-
-    mock.patch.object() on a base-class method leaves such an object in a class
-    __dict__, which recorder walks looking for overrides -- so this hit ordinary
-    mock-using suites.  test_unwrap_terminates_on_synthesized_wrapped pins the
-    unit; this is the end-to-end shape.  See #193.
-    """
+    """mock.patch.object leaves a __wrapped__-synthesizing object in a class __dict__."""
     t = textwrap.dedent("""\
         from unittest.mock import call
 
@@ -132,11 +121,7 @@ def test_issue_193_mock_in_class_dict(tmp_path, monkeypatch):
 
 
 def test_issue_193_raising_getattr(tmp_path, monkeypatch):
-    """The process-global CALL handler must not raise on a hostile __getattr__.
-
-    getattr suppresses only AttributeError, so a __getattr__ raising anything else
-    surfaced inside the program under observation, at the call instruction.  See #193.
-    """
+    """A __getattr__ raising a non-AttributeError must not escape the CALL handler."""
     t = textwrap.dedent("""\
         class Proxy:
             "__code__ probe: __getattr__ raises something getattr won't suppress"
@@ -180,7 +165,6 @@ def test_issue_193_raising_getattr(tmp_path, monkeypatch):
     assert p.returncode == 0, f"exit {p.returncode}\n{p.stderr}"
     assert "ImportError" not in p.stderr and "KeyError" not in p.stderr, p.stderr
 
-    # and recording carried on rather than being derailed
     annotated = Path("t.py").read_text()
     assert "def observed(v: int) -> int:" in annotated, annotated
 
