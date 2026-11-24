@@ -26,6 +26,12 @@ jobs:
         python-version: ${{ matrix.python }}
         allow-prereleases: true
 
+    # 3.12.7 hangs the smoke tests; '3.12' must resolve to 3.12.8 or later.
+    - name: python version
+      run: |
+        python3 --version
+        python3 -c 'import sys; assert sys.version_info >= (3, 12, 8), sys.version'
+
     - name: dependencies
       run: |
         python3 -m pip install pytest pytest-asyncio pytest-mock hypothesis ml_dtypes mypy
