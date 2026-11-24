@@ -1028,7 +1028,8 @@ def find_method_info(code: CodeType, first_arg: object) -> MethodInfo | None:
     first_arg_class = first_arg if type(first_arg) is type else type(first_arg)
 
     # @property?
-    is_property = isinstance(getattr(type(first_arg), name, None), property)
+    # static: a metaclass __getattr__ may raise on names the class lacks
+    is_property = isinstance(inspect.getattr_static(type(first_arg), name, None), property)
 
     # find class that defines that name, in case it's inherited
     result = next(

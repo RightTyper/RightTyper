@@ -278,3 +278,32 @@ def test_issue_193_raising_getattr_anywhere_in_call_handler(tmp_path, monkeypatc
 
     annotated = Path("t.py").read_text()
     assert "def observed(v: int) -> int:" in annotated, annotated
+
+
+def test_issue_193_raising_metaclass_getattr_on_first_argument(tmp_path, monkeypatch):
+    """A function whose first argument's class raises from a metaclass __getattr__ is still annotated."""
+    t = textwrap.dedent("""\
+        class Meta(type):
+            def __getattr__(cls, name):
+                raise RuntimeError(f"cannot resolve {name}")
+
+        class Hostile(metaclass=Meta):
+            pass
+
+        def helper(obj, n):
+            return n + 1
+
+        print(helper(Hostile(), 1))
+        """)
+
+    monkeypatch.chdir(tmp_path)
+    Path("t.py").write_text(t)
+
+    p = subprocess.run(
+        [sys.executable, '-m', 'righttyper', 'run', '--root', '.', 't.py'],
+        capture_output=True, text=True, timeout=20,
+    )
+
+    assert p.returncode == 0, f"exit {p.returncode}\n{p.stderr}"
+    assert p.stdout.split() == ["2"], p.stdout
+    assert "def helper(obj: Hostile, n: int) -> int:" in Path("t.py").read_text()
