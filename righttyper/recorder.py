@@ -119,20 +119,9 @@ class PendingCallTrace:
         self_type: TypeInfo|None,
     ) -> None:
         self.arg_info = arg_info
-        # PY_START's arg_info.locals always contains every arg name (Python
-        # binds parameters before the body runs), so no element is None on that
-        # path — the per-entry None case in _get_arg_types only applies to later
-        # samples where a name may have been del'd.
-        #
-        # The synthetic ArgInfo built for wrapped-function propagation can leave a
-        # parameter unbound, though: bind_partial permits missing arguments. Fill
-        # the gap rather than casting the None away, which crashed the first type
-        # transformer to run in finish_recording. See #199.
-        #
-        # MissingTypeInfo is the union identity, so from_set() drops it as soon as
-        # the parameter has any real observation -- unlike UnknownTypeInfo, which
-        # is Any and subsumes the union instead of vanishing from it. The mark
-        # distinguishes it from a genuine Never once it is the lone survivor.
+        # The synthetic ArgInfo for wrapped-function propagation can leave a parameter
+        # unbound; fill it with the union identity (dropped once anything else is
+        # observed) instead of casting the None away.  See #199.
         self.args_start: tuple[TypeInfo, ...] = tuple(
             t if t is not None else MissingTypeInfo
             for t in self._get_arg_types(arg_info, arg_info.locals)
