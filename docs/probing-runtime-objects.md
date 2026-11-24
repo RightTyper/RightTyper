@@ -21,6 +21,8 @@ lies, raises, or synthesizes a fresh attribute on every access. Real examples al
 | a class whose metaclass defines `__eq__` and not `__hash__` | is a class | unhashable, so it cannot key a dict or join a set |
 | a class with a `__hash__` that raises | `isinstance(x, abc.Hashable)` | raises when hashed — the ABC only checks `__hash__ is not None` |
 | a zope-`interface`-hooked class | ordinary attributes | `getattr` runs a descriptor that raises |
+| a class whose metaclass `__getattr__` raises | an ordinary class | `getattr(type(x), name)` raises for any name the class lacks, such as a plain function called with an instance of it |
+| two classes sharing a module and qualname (`ml_dtypes` >= 0.7: a scalar and its dtype class) | distinct names | a map keyed by `(module, qualname)` lets one overwrite the other |
 
 ## How these are found
 
@@ -48,6 +50,7 @@ still under review rather than being on `main` today.
 | ask a subtype question that may be refused | `safe_issubclass` | `righttyper_utils.py` | #202 |
 | look up a possibly-unhashable class in a dict | `lookup_type` | `righttyper_utils.py` | #198 |
 | follow a `__wrapped__` chain | `unwrap` | `righttyper_utils.py` | on `main`; guarded by #195 |
+| ask whether a type has a property, without running its metaclass `__getattr__` | `inspect.getattr_static` | `recorder.py` (`find_method_info`) | #195 |
 | say "this observation contributes nothing" | `NeverTypeInfo` | `typeinfo.py` | #201 |
 
 Note the split between the first row and the third. There is no single "probe safely"
@@ -67,6 +70,9 @@ primitive, and the next section says why.
 - **`issubclass(a, b)`: `__subclasscheck__` lives on `b`.** Only guard calls whose *second*
   operand comes from the traced program. The many `issubclass(x, <fixed ABC>)` calls in this
   codebase cannot raise and need nothing.
+- **A map keyed on `(module, qualname)` is ambiguous.** Distinct classes can share both, as
+  `ml_dtypes` 0.7's scalar and dtype class do. `TypeMap.to_name_map` drops any key that more
+  than one type claims, so do not add a lookup that assumes a name identifies one class.
 - **A cache keyed on a type object must be bounded.** The key keeps the class alive, so an
   unbounded cache pins every class ever probed — including the throwaway ones that
   `make_dataclass`, `namedtuple` and mock autospec generate — for the life of the process.
