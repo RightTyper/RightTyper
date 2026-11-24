@@ -1036,16 +1036,12 @@ def run(
                     logger.debug(f"test module: {m}")
 
             if target_aborted and module == 'pytest' and not righttyper_utils.pytest_collected:
-                # pytest died before collecting: a usage error, a bad rootdir, a plugin
-                # that failed to load.  It reports those *after* importing conftest, so
-                # observations are not empty -- conftest's imports ran, and annotating
-                # from them rewrote the tree.  Collection, or reaching the test loop (an
-                # xdist controller never collects), is the signal that the run the user
-                # asked for actually began; a suite that merely *fails* still annotates.
-                # See #189.
-                #
-                # Ahead of `only_collect` because a pickle written here annotates the
-                # tree just the same, one `process` later.
+                # pytest died before it began: a usage error or an unloadable conftest.
+                # Those surface *after* conftest's imports ran, so observations are not
+                # empty, and annotating from them rewrote the tree.  Collection, or
+                # reaching the test loop (an xdist controller never collects), marks a
+                # run that began; one that merely *fails* still annotates.  See #189.
+                # Ahead of `only_collect`: a pickle written here annotates just the same.
                 print(
                     "pytest exited before collecting any tests; no output was written.",
                     file=sys.stderr,
