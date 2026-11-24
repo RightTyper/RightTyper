@@ -236,6 +236,16 @@ def test_to_name_map_keeps_unambiguous_rename():
     assert tm.to_name_map()[('pkg._impl', 'Impl')] == ('pkg', 'Impl')
 
 
+def test_get_value_type_survives_a_partially_imported_numpy(monkeypatch):
+    """numpy sits in sys.modules before it has defined dtype, while it is importing."""
+    from righttyper.type_id import get_value_type
+
+    class Foo: pass
+
+    monkeypatch.setitem(sys.modules, 'numpy', types.ModuleType('numpy'))
+    assert get_value_type(Foo()).name.endswith('Foo')
+
+
 def test_items_from_typing():
     assert TypeInfo("typing", "Any") == get_type_name(Any)
     assert TypeInfo("typing", "Self") == get_type_name(Self)

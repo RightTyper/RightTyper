@@ -1022,8 +1022,8 @@ def get_value_type(
         ))
 
     # Not keyed on t's module: ml_dtypes >= 0.7 defines its dtype classes itself.
-    if (numpy := sys.modules.get('numpy')) and issubclass(t, numpy.dtype):
-        return TypeInfo.from_type(numpy.dtype, args=(
+    if (dtype_t := getattr(sys.modules.get('numpy'), 'dtype', None)) and issubclass(t, dtype_t):
+        return TypeInfo.from_type(dtype_t, args=(
             get_type_name(value.type, depth+1) if value.type else UnknownTypeInfo,
         ))
 
