@@ -32,6 +32,22 @@ class NeverSayNeverT(TypeInfo.Transformer):
         return super().visit(node)
 
 
+class MissingSayNothingT(TypeInfo.Transformer):
+    """Turns the filler for an unobserved parameter into UnknownTypeInfo.
+
+    Never means uninhabited, so a filler left as the lone survivor would annotate
+    a merely unobserved parameter with a type that rejects every caller.
+    NeverSayNeverT already covers the default path; this covers
+    --use-typing-never, where it doesn't run.  Only the marked filler is
+    affected -- a genuine Never still renders.
+    """
+    def visit(vself, node: TypeInfo) -> TypeInfo:
+        if node.type_obj is typing.Never and node.is_unknown:
+            return UnknownTypeInfo
+
+        return super().visit(node)
+
+
 class NoReturnToNeverT(TypeInfo.Transformer):
     """Converts typing.NoReturn to typing.Never,
        which is the more modern way to type a 'no return'"""
