@@ -53,6 +53,17 @@ PYTHON_LIBS = _get_python_libs()
 detected_test_files: set[str] = set()
 detected_test_modules: set[str] = set()
 
+# Whether pytest got as far as collecting.  A usage error is reported *after* conftest
+# has been imported, so "we observed something" doesn't tell a real run from one that
+# never started.  See #189.
+pytest_collected = False
+
+
+def set_pytest_collected() -> None:
+    global pytest_collected
+    pytest_collected = True
+
+
 def set_test_files_and_modules(files: set[str], modules: set[str]) -> None:
     detected_test_files.update(files)
     detected_test_modules.update(modules)
