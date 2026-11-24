@@ -16,21 +16,14 @@ from righttyper.options import output_options
 _MISSING: Any = object()
 
 
-# Bounded, not @cache: the key is a type and the entry holds it alive, so an
-# unbounded table would pin every class a long pytest run manufactures per test
-# for the life of the process.
+# Bounded: the key holds the class alive, and a long pytest run manufactures one per test.
 @lru_cache(maxsize=2048)
 def _probed_attrs(type_obj: type) -> frozenset[str]:
     """The attributes of ``type_obj`` that lub()'s Rule 7 safety filter considers.
 
-    Memoized because getattr_static costs ~17x a plain getattr and lub() re-probes
-    the same handful of types thousands of times per run.
-
-    Not merely a faster version of the old dynamic probe: a static lookup answers
-    for attributes a dynamic one cannot resolve, and drops any a metaclass
-    ``__getattr__`` would have supplied.  The first only makes Rule 7 merge less;
-    the second can narrow the filter.  Not running third-party descriptor code is
-    worth that.  The set is a snapshot, so a class mutated later keeps what it had.
+    Memoized, as getattr_static is ~17x a plain getattr.  Static, so it never runs a
+    metaclass ``__getattr__`` or descriptor: Rule 7 may merge less, never wrongly.
+    A snapshot: a class mutated later keeps what it had.
     """
     return frozenset(
         attr for attr in dir(type_obj)
