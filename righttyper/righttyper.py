@@ -1110,7 +1110,7 @@ def process(**kwargs):
 
     obs_list = []
     coverage_total: dict | None = None
-    script = None
+    script: Path | None = None
     pkl: dict = {}
     for filename in Path('.').glob(PKL_FILE_NAME.format(N='*')):
         with filename.open("rb") as f:
@@ -1121,9 +1121,14 @@ def process(**kwargs):
                       f"{pkl.get('file_version')}, expected {PKL_FILE_VERSION}")
                 sys.exit(1)
 
-            if script and pkl['script'] != script:
-                print(f"Error: {filename} was collected for {pkl['script']}, but previous file(s) were for {script}")
+            collected_script = pkl['script']
+            if script is not None and collected_script != script:
+                print(
+                    f"Error: {filename} was collected for {collected_script}, "
+                    f"but previous file(s) were for {script}"
+                )
                 sys.exit(1)
+            script = collected_script
 
             # TODO check for compatible options?
             obs_list.append(pkl['observations'])
