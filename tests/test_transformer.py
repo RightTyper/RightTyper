@@ -401,6 +401,56 @@ def test_override_annotations():
     """)
 
 
+
+def test_only_update_annotations():
+    code = cst.parse_module(textwrap.dedent("""\
+        def foo(x: int, y) -> int:
+            return x/2
+
+        def bar(x):
+            return x/2
+    """))
+
+    foo = get_func_loc('foo.py', code, 'foo')
+    bar = get_func_loc('foo.py', code, 'bar')
+    t = UnifiedTransformer(
+            filename='foo.py',
+            type_annotations = {
+                foo: _mkAnnotation(
+                    [
+                        (ArgumentName('x'), TypeInfo.from_type(float, module='')),
+                        (ArgumentName('y'), TypeInfo.from_type(int, module='')),
+                    ],
+                    TypeInfo.from_type(float, module=''),
+                ),
+                bar: _mkAnnotation(
+                    [
+                        (ArgumentName('x'), TypeInfo.from_type(int, module=''))
+                    ],
+                    TypeInfo.from_type(float, module=''),
+                ),
+            },
+            module_variables = ModuleVars({}),
+            module_name='foo',
+            override_annotations=False,
+            only_update_annotations=True,
+            inline_generics=False
+        )
+
+    code = t.transform_code(code)
+
+    # 'y' has no annotation, so it gets none
+    assert get_function(code, 'foo') == textwrap.dedent("""\
+        def foo(x: float, y) -> float:
+            return x/2
+    """)
+
+    assert get_function(code, 'bar') == textwrap.dedent("""\
+        def bar(x):
+            return x/2
+    """)
+
+
 def test_transform_adds_typing_import_for_typing_names():
     code = cst.parse_module(textwrap.dedent("""\
         def foo(x): ...
